@@ -1,0 +1,85 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.api
+    container_name: dnd-api
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/dnd
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./apps/api:/app
+      - /app/.venv  # Preserve container's .venv from being overwritten by bind mount
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+
+  agent:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile.agent
+    container_name: dnd-agent
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/dnd
+    volumes:
+      - ./apps/agent:/app
+      - /app/.venv
+    depends_on:
+      - db
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: apps/ingestion/Dockerfile.ingestion
+    container_name: dnd-ingestion
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/dnd
+      - VECTOR_DB_URL=qdrant://qdrant:6333
+    volumes:
+      - ./apps/ingestion:/app
+      - /app/.venv
+    depends_on:
+      - db
+      - qdrant
+
+  rules_engine:
+    build:
+      context: .
+      dockerfile: apps/rules_engine/Dockerfile.rules_engine
+    container_name: dnd-rules-engine
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/dnd
+    volumes:
+      - ./apps/rules_engine:/app
+      - /app/.venv
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16
+    container_name: dnd-db
+    environment:
+      POSTGRES_DB: dnd
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:latest
+    container_name: dnd-redis
+    ports:
+      - "6379:6379"
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: dnd-qdrant
+    ports:
+      - "6333:6333"
+
+volumes:
+  postgres_data:
