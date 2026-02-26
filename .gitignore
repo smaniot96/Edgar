@@ -63,7 +63,8 @@ Dockerfile.*     # Any custom Dockerfiles
 
 # .env files
 .env             # Environment variables
-.env.*           # Environment variable files
+.env.*           # Environment variable files (except .env.example)
+!.env.example    # Committed template; copy to .env and fill in secrets
 .env.local       # Local environment variables (Do not commit)
 
 # JetBrains IDEs
