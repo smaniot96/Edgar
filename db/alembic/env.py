@@ -1,17 +1,17 @@
-import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
 from logging.config import fileConfig
 
-# Project root = directory containing db/ (so "db" package is importable)
+# Project root = directory containing db/ (so "db" and "config" are importable)
 _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-# Load .env from project root
+from dotenv import load_dotenv
 load_dotenv(_project_root / ".env")
+
+from config import DATABASE_URL
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -24,11 +24,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Read URL from environment (async driver; use same as app)
-config.set_main_option(
-    "sqlalchemy.url",
-    os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/dnd"),
-)
+# Use URL from config (single source of truth)
+config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 from db.postgres.base import Base
 import db.postgres.models  # noqa: F401 - register all models on Base.metadata

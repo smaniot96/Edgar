@@ -1,6 +1,5 @@
 # General
 *.log            # Log files
-*.lock           # Package manager lock files (e.g., npm, pip)
 *.pid            # Process ID files
 *.swp            # Swap files (created by editors like Vim)
 *.swo
@@ -8,6 +7,12 @@
 *.tmp            # Temporary files
 *.DS_Store       # macOS specific
 Thumbs.db        # Windows specific
+
+# Lock files (NOT uv.lock — those must be committed for reproducible builds)
+package-lock.json
+yarn.lock
+Pipfile.lock
+composer.lock
 
 # Node.js
 node_modules/    # Node.js dependencies
@@ -52,13 +57,9 @@ bin/             # Go binary output
 vendor/          # Go vendor dependencies
 
 # Docker
-# Docker build files
 *.tar            # Docker image tarballs
 .docker/         # Docker build temporary files and output
 docker-compose.override.yml  # Local Docker Compose overrides
-
-# Dockerfiles for multiple images
-Dockerfile.*     # Any custom Dockerfiles
 *.dockerignore   # Docker ignore file
 
 # .env files
@@ -100,7 +101,6 @@ obj/             # Temporary object files
 
 # PHP
 /vendor/         # Composer dependencies
-composer.lock    # Composer lock file (not always needed)
 phpunit.xml      # PHPUnit configuration files
 
 # Terraform

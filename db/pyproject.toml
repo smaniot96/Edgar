@@ -10,3 +10,8 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.47",
     "python-dotenv>=1.0.0",
 ]
+
+[tool.uv.workspace]
+members = [
+    "vector",
+]

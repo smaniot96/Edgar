@@ -1,6 +1,9 @@
+from datetime import datetime
+
 from db.postgres.base import Base
-from sqlalchemy import String, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, ForeignKey, DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 
 class Campaign(Base):
     __tablename__ = "campaigns"
@@ -8,3 +11,11 @@ class Campaign(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     system: Mapped[str] = mapped_column(String(255), nullable=False)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    creator: Mapped["User"] = relationship(back_populates="campaigns")  # noqa: F821
+    sessions: Mapped[list["Session"]] = relationship(back_populates="campaign")  # noqa: F821
+    characters: Mapped[list["Character"]] = relationship(back_populates="campaign")  # noqa: F821
+    npcs: Mapped[list["NPC"]] = relationship(back_populates="campaign")  # noqa: F821
+    world_flags: Mapped[list["WorldFlag"]] = relationship(back_populates="campaign")  # noqa: F821
