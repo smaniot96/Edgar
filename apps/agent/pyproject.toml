@@ -6,4 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.12.5",
+    "tools",
 ]
+
+[tool.uv.sources]
+tools = { path = "../../tools" }
