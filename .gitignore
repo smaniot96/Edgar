@@ -23,6 +23,7 @@ yarn-error.log
 # Python
 __pycache__/     # Python bytecode cache
 *.pyc            # Python bytecode files
+*.egg-info/      # setuptools build metadata
 *.pyo            # Optimized Python bytecode files
 *.pyd            # Python dynamic libraries
 env/             # Virtual environments
