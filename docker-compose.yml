@@ -1,15 +1,19 @@
+# Uses .env via env_file. Only overrides host names so containers use the Docker network.
+# No URL construction or credential duplication here.
+
 services:
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile.api
     container_name: dnd-api
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/dnd
-      - REDIS_URL=redis://redis:6379
+      - DB_HOST=db
+      - REDIS_HOST=redis
     volumes:
       - ./apps/api:/app
-      - /app/.venv  # Preserve container's .venv from being overwritten by bind mount
+      - /app/.venv
     ports:
       - "8000:8000"
     depends_on:
@@ -21,8 +25,9 @@ services:
       context: .
       dockerfile: apps/agent/Dockerfile.agent
     container_name: dnd-agent
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/dnd
+      - DB_HOST=db
     volumes:
       - ./apps/agent:/app
       - /app/.venv
@@ -34,9 +39,10 @@ services:
       context: .
       dockerfile: apps/ingestion/Dockerfile.ingestion
     container_name: dnd-ingestion
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/dnd
-      - VECTOR_DB_URL=qdrant://qdrant:6333
+      - DB_HOST=db
+      - QDRANT_HOST=qdrant
     volumes:
       - ./apps/ingestion:/app
       - /app/.venv
@@ -49,8 +55,9 @@ services:
       context: .
       dockerfile: apps/rules_engine/Dockerfile.rules_engine
     container_name: dnd-rules-engine
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/dnd
+      - DB_HOST=db
     volumes:
       - ./apps/rules_engine:/app
       - /app/.venv
@@ -60,10 +67,11 @@ services:
   db:
     image: postgres:16
     container_name: dnd-db
+    env_file: .env
     environment:
-      POSTGRES_DB: dnd
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-dnd}
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:

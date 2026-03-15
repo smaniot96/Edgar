@@ -1,0 +1,47 @@
+"""
+Create a Qdrant collection with the given name.
+Run from db/vector:  uv run scripts/new_collection.py "dnd_rules_phb"
+"""
+import sys
+from pathlib import Path
+
+# Ensure project root (Edgar/) is on path so config and db resolve
+_project_root = Path(__file__).resolve().parent.parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from qdrant_client.models import Distance, VectorParams
+from qdrant_client.http.exceptions import UnexpectedResponse
+
+from db.vector import get_qdrant_client, VECTOR_SIZE
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print("Usage: uv run scripts/new_collection.py <collection_name>")
+        print("Example: uv run scripts/new_collection.py dnd_rules_phb")
+        sys.exit(1)
+
+    name = sys.argv[1].strip()
+    if not name:
+        print("Error: collection name cannot be empty.")
+        sys.exit(1)
+
+    client = get_qdrant_client()
+    try:
+        client.get_collection(name)
+        print(f"Collection '{name}' already exists. Skipping.")
+        return
+    except UnexpectedResponse as e:
+        if e.status_code != 404:
+            raise
+
+    client.create_collection(
+        collection_name=name,
+        vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+    )
+    print(f"Created collection '{name}' (vector_size={VECTOR_SIZE}, distance=COSINE).")
+
+
+if __name__ == "__main__":
+    main()
