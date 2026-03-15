@@ -1,0 +1,13 @@
+README.md
+__init__.py
+dice.py
+main.py
+pyproject.toml
+./__init__.py
+./dice.py
+./main.py
+tools.egg-info/PKG-INFO
+tools.egg-info/SOURCES.txt
+tools.egg-info/dependency_links.txt
+tools.egg-info/requires.txt
+tools.egg-info/top_level.txt
