@@ -21,9 +21,10 @@ yarn-debug.log
 yarn-error.log
 
 # Python
-__pycache__/     # Python bytecode cache
-*.pyc            # Python bytecode files
-*.egg-info/      # setuptools build metadata
+__pycache__/
+*.pyc
+*.egg-info/
+build/
 *.pyo            # Optimized Python bytecode files
 *.pyd            # Python dynamic libraries
 env/             # Virtual environments
@@ -65,9 +66,10 @@ docker-compose.override.yml  # Local Docker Compose overrides
 *.dockerignore   # Docker ignore file
 
 # .env files
-.env             # Environment variables
-.env.*           # Environment variable files (except .env.example)
-!.env.example    # Committed template; copy to .env and fill in secrets
+/.env
+.env
+.env.*
+!.env.example
 .env.local       # Local environment variables (Do not commit)
 
 # JetBrains IDEs
