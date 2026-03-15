@@ -54,3 +54,9 @@ VECTOR_DB_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
 # -----------------------------------------------------------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 VECTOR_DB_API_KEY = os.getenv("VECTOR_DB_API_KEY")
+
+# -----------------------------------------------------------------------------
+# API metadata
+# -----------------------------------------------------------------------------
+API_TITLE = "Edgar API"
+API_VERSION = "0.1.0"
