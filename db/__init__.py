@@ -1,1 +1,1 @@
-# db package: postgres, vector
+"""Database package: postgres, vector (Qdrant)."""
