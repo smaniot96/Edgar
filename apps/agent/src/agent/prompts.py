@@ -1,6 +1,6 @@
 """System prompts for each node."""
 
-INPUT_PARSER = """Classify this player message: intent (combat / rp / exploration), and extract entities (e.g. target, skill). Return JSON only."""
+INPUT_PARSER = """Classify this player message: intent (combat / rp / exploration), and extract entities (e.g. target, skill). If the action requires a dice roll (attack, skill check, saving throw), set dice_expression to the D&D notation (e.g. "1d20+3", "2d6"). Otherwise leave dice_expression null."""
 
 RULES_ADJUDICATOR = """You are a rules referee. Use only the provided rules and lore. Given the player action and the dice result (if any), output a structured outcome: success/fail, damage (if any), conditions, and a short mechanical summary."""
 

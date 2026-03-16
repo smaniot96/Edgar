@@ -8,3 +8,4 @@ class ParsedInput(BaseModel):
 
     intent: str  # combat | rp | exploration
     entities: dict = {}
+    dice_expression: str | None = None
