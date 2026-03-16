@@ -103,21 +103,6 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pydantic" },
-    { name = "tools" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "tools", directory = "../../tools" },
-]
-
-[[package]]
-name = "tools"
-version = "0.1.0"
-source = { directory = "../../tools" }
-dependencies = [
-    { name = "pydantic" },
 ]
 
 [package.metadata]

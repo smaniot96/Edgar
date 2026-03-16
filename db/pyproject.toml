@@ -15,3 +15,8 @@ dependencies = [
 members = [
     "vector",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["db*"]
+exclude = ["db.alembic*", "db.scripts*"]

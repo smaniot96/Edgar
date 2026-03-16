@@ -11,9 +11,6 @@ services:
     environment:
       - DB_HOST=db
       - REDIS_HOST=redis
-    volumes:
-      - ./apps/api:/app
-      - /app/.venv
     ports:
       - "8000:8000"
     depends_on:
@@ -28,9 +25,6 @@ services:
     env_file: .env
     environment:
       - DB_HOST=db
-    volumes:
-      - ./apps/agent:/app
-      - /app/.venv
     depends_on:
       - db
 
@@ -44,8 +38,8 @@ services:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
     volumes:
-      - ./apps/ingestion:/app
-      - /app/.venv
+      - ../data/pdfs:/data
+      - ../data/markdown:/output/markdown
     depends_on:
       - db
       - qdrant
@@ -58,9 +52,6 @@ services:
     env_file: .env
     environment:
       - DB_HOST=db
-    volumes:
-      - ./apps/rules_engine:/app
-      - /app/.venv
     depends_on:
       - db
 

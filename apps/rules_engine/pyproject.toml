@@ -1,13 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "rules-engine"
 version = "0.1.0"
-description = "Add your description here"
+description = "Rules engine for D&D campaign logic"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.12.5",
-    "tools",
 ]
 
-[tool.uv.sources]
-tools = { path = "../../tools" }
+[project.scripts]
+rules-engine = "rules_engine.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
