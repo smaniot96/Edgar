@@ -18,4 +18,4 @@ COPY config.py /app/config.py
 COPY apps/agent/ /app/
 RUN uv sync --locked
 
-CMD ["uv", "run", "python", "agent.py"]
+CMD ["uv", "run", "python", "-m", "main"]

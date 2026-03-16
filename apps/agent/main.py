@@ -1,5 +1,13 @@
+"""Entry point for the agent. Run from Edgar root: uv run --project apps/agent python -m main"""
+
+from agent.graph import app
+
+
 def main():
-    print("Hello from agent!")
+    """Demo: invoke graph with minimal state."""
+    state = {"player_input": "I look around the tavern.", "session_id": 1}
+    result = app.invoke(state)
+    print("Narration:", result.get("narration", "(none)"))
 
 
 if __name__ == "__main__":

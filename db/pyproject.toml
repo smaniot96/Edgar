@@ -11,6 +11,12 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[tool.setuptools.package-dir]
+"db" = "."
+
+[tool.setuptools]
+packages = ["db", "db.postgres", "db.postgres.models", "db.vector"]
+
 [tool.uv.workspace]
 members = [
     "vector",

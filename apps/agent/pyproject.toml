@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "agent"
 version = "0.1.0"
@@ -5,9 +9,19 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "langchain-core>=1.2.19",
+    "langchain-openai>=1.1.11",
+    "langgraph>=1.1.2",
+    "openai>=2.28.0",
     "pydantic>=2.12.5",
+    "qdrant-client>=1.17.1",
+    "db",
     "tools",
 ]
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.uv.sources]
+db = { path = "../../db" }
 tools = { path = "../../tools" }
