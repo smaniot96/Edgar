@@ -7,16 +7,24 @@ WORKDIR /app
 COPY apps/api/pyproject.toml apps/api/uv.lock /app/
 RUN uv sync --locked --no-install-project
 
-# Install shared db package into the same venv (brings sqlalchemy, asyncpg, python-dotenv, etc.)
+# Install shared packages: db, then agent (agent pulls tools)
 COPY db/ /tmp/db/
 RUN uv pip install /tmp/db
 
-# config.py must be in /app so 'from config import ...' resolves when /app is on sys.path
-COPY config.py /app/config.py
+COPY . /tmp/repo
+RUN uv pip install /tmp/repo/apps/agent
 
-# Copy app code and finalize
+# db/ for alembic migrations
+COPY db/ /app/db/
+
+# Copy app code, then config (config must override any empty placeholder)
 COPY apps/api/ /app/
+COPY config.py /app/config.py
 RUN uv sync --locked
+
+# Re-install db and agent after uv sync (sync recreates venv and drops pip-installed pkgs)
+COPY . /tmp/repo
+RUN uv pip install /tmp/repo/db /tmp/repo/apps/agent
 
 EXPOSE 8000
 CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

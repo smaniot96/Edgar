@@ -1,10 +1,14 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres.models import Session as SessionModel
-from dependencies import get_session
+from dependencies import get_session, get_redis, acquire_turn_lock, release_turn_lock
 from schemas.session import SessionCreate, SessionRead, SessionUpdate
+from schemas.turn import TurnRequest, TurnResponse
 
 router = APIRouter(tags=["sessions"])
 
@@ -60,3 +64,51 @@ async def delete_session(session_id: int, db: AsyncSession = Depends(get_session
         raise HTTPException(status_code=404, detail="Session not found")
     db.delete(session)
     await db.commit()
+
+
+@router.post("/sessions/{session_id}/turn", response_model=TurnResponse)
+async def session_turn(
+    session_id: int,
+    body: TurnRequest,
+    db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
+):
+    """Process a player turn: acquire lock, invoke agent, return narration."""
+    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    acquired = await acquire_turn_lock(session_id, redis)
+    if not acquired:
+        raise HTTPException(
+            status_code=409,
+            detail="A turn is already in progress for this session. Please retry.",
+        )
+
+    try:
+        from agent.graph import app
+
+        initial_state = {
+            "player_input": body.message,
+            "session_id": session_id,
+            "campaign_id": session.campaign_id,
+            "messages": [],
+        }
+        result = await asyncio.to_thread(app.invoke, initial_state)
+
+        if result.get("error"):
+            raise HTTPException(status_code=503, detail=result["error"])
+
+        adjudication = result.get("adjudication_result")
+        return TurnResponse(
+            narration=result.get("narration", ""),
+            adjudication=adjudication.model_dump() if adjudication else None,
+            combat_state=result.get("combat_state"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await release_turn_lock(session_id, redis)
