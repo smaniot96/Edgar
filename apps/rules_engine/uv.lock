@@ -100,7 +100,7 @@ wheels = [
 [[package]]
 name = "rules-engine"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
 ]
