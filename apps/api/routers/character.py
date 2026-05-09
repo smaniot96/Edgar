@@ -3,8 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres.models import Character
-from dependencies import get_session
-from schemas.character import CharacterCreate, CharacterRead, CharacterUpdate
+from ..dependencies import get_session
+from ..schemas.character import CharacterCreate, CharacterRead, CharacterUpdate
 
 router = APIRouter(tags=["characters"])
 
@@ -65,5 +65,5 @@ async def delete_character(character_id: int, db: AsyncSession = Depends(get_ses
     character = result.scalar_one_or_none()
     if character is None:
         raise HTTPException(status_code=404, detail="Character not found")
-    db.delete(character)
+    await db.delete(character)
     await db.commit()

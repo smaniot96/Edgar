@@ -5,6 +5,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from db.vector.collections import campaign_lore_collection
 from ingestion.embed import run_pipeline
 from ingestion.extract import extract_and_save_markdown
 
@@ -32,8 +33,15 @@ def main() -> None:
     parser.add_argument(
         "--collection",
         "-c",
-        default="dnd_rules",
-        help="Qdrant collection name (default: dnd_rules)",
+        default=None,
+        metavar="NAME",
+        help="Qdrant collection name (default: dnd_rules unless --campaign-id is set)",
+    )
+    parser.add_argument(
+        "--campaign-id",
+        type=int,
+        default=None,
+        help="If set, ingest into campaign_lore_<id> instead of --collection",
     )
     parser.add_argument(
         "--chunk-size",
@@ -65,6 +73,20 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    def resolved_collection_name() -> str:
+        if args.campaign_id is not None:
+            target = campaign_lore_collection(args.campaign_id)
+            if args.collection is not None:
+                logger.warning(
+                    "--campaign-id overrides --collection {}; using {}",
+                    args.collection,
+                    target,
+                )
+            return target
+        if args.collection is not None:
+            return args.collection
+        return "dnd_rules"
+
     if args.extract_only:
         if not args.path:
             parser.error("path is required for --extract-only")
@@ -86,16 +108,17 @@ def main() -> None:
         logger.error("File not found: {}", args.path)
         sys.exit(1)
 
+    collection_name = resolved_collection_name()
     try:
         n = run_pipeline(
             pdf_path=args.path,
-            collection_name=args.collection,
+            collection_name=collection_name,
             chunk_size=args.chunk_size,
             overlap=args.overlap,
             save_markdown=not args.no_save_markdown,
             markdown_dir=args.markdown_dir,
         )
-        logger.info("Ingested {} chunks from {} into {}", n, args.path.name, args.collection)
+        logger.info("Ingested {} chunks from {} into {}", n, args.path.name, collection_name)
     except Exception:
         logger.exception("Ingestion failed")
         sys.exit(1)

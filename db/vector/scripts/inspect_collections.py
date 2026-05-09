@@ -5,11 +5,6 @@ Run from Edgar: uv run python -m db.vector.scripts.inspect_collections [--sample
 """
 import argparse
 import sys
-from pathlib import Path
-
-_project_root = Path(__file__).resolve().parent.parent.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
 
 from db.vector import get_qdrant_client, get_embeddings
 
@@ -73,8 +68,6 @@ def main() -> None:
 
     if args.search:
         print(f"\n--- Search: \"{args.search}\" ---")
-        from db.vector import get_embeddings
-
         query_vector = get_embeddings([args.search])[0]
         for c in collections:
             results = client.search(

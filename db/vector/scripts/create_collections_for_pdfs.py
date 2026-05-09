@@ -2,18 +2,15 @@
 Create Qdrant collections for all PDFs in data/pdfs. Collection name = PDF filename (without .pdf).
 Uses the same logic as new_collection.py.
 
-Run from db folder with db venv:
-  uv run vector/scripts/create_collections_for_pdfs.py
+Run from Edgar:
+  uv run python db/vector/scripts/create_collections_for_pdfs.py
 """
 import sys
 from pathlib import Path
 
-# Ensure project root (Edgar/) is on path so config and db resolve
-_project_root = Path(__file__).resolve().parent.parent.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
+from edgar_core.config import EDGAR_ROOT
 
-PDFS_DIR = _project_root / ".." / "data" / "pdfs"
+PDFS_DIR = (EDGAR_ROOT.parent / "data" / "pdfs").resolve()
 
 
 def main() -> None:

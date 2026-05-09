@@ -1,12 +1,28 @@
 """FastAPI dependencies: DB session, Redis, agent graph."""
 
+from fastapi import Depends, HTTPException
 from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import REDIS_URL
+from edgar_core.config import REDIS_URL
 from db.postgres import get_session
+from db.postgres.models import User
 
 
 _redis: Redis | None = None
+
+
+async def current_user_id(db: AsyncSession = Depends(get_session)) -> int:
+    """Solo-dev: authoritative user id from seeded `dm@edgar.local` (call POST /api/seed first)."""
+    result = await db.execute(select(User).where(User.email == "dm@edgar.local").limit(1))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No user found. Call POST /api/seed first.",
+        )
+    return user.id
 
 
 async def get_redis() -> Redis:
@@ -40,4 +56,11 @@ async def release_turn_lock(session_id: int, redis: Redis) -> None:
     await redis.delete(key)
 
 
-__all__ = ["get_session", "get_redis", "close_redis", "acquire_turn_lock", "release_turn_lock"]
+__all__ = [
+    "get_session",
+    "get_redis",
+    "close_redis",
+    "acquire_turn_lock",
+    "release_turn_lock",
+    "current_user_id",
+]

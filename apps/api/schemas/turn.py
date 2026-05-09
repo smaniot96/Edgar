@@ -15,3 +15,5 @@ class TurnResponse(BaseModel):
     narration: str
     adjudication: dict | None = None
     combat_state: dict | None = None
+    current_scene_id: str | None = None
+    character: dict | None = None

@@ -8,6 +8,7 @@ class CampaignCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     system: str = Field(..., min_length=1, max_length=255)
     created_by: int | None = None  # optional if set from auth
+    adventure_collections: list[str] | None = None
 
 
 class CampaignRead(BaseModel):
@@ -19,9 +20,11 @@ class CampaignRead(BaseModel):
     system: str
     created_by: int
     created_at: datetime
+    adventure_collections: list[str]
 
 
 class CampaignUpdate(BaseModel):
     """Request body for PATCH /campaigns/{id} — all optional."""
     title: str | None = Field(None, min_length=1, max_length=255)
     system: str | None = Field(None, min_length=1, max_length=255)
+    adventure_collections: list[str] | None = None

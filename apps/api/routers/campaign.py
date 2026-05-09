@@ -3,8 +3,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres.models import Campaign
-from dependencies import get_session
-from schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
+from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
+from ..dependencies import current_user_id, get_session
+from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
 
 router = APIRouter(tags=["campaigns"])
 
@@ -26,8 +27,23 @@ async def get_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)
 
 
 @router.post("/campaigns", response_model=CampaignRead)
-async def create_campaign(body: CampaignCreate, db: AsyncSession = Depends(get_session)):
-    campaign = Campaign(title=body.title, system=body.system, created_by=body.created_by or 1)
+async def create_campaign(
+    body: CampaignCreate,
+    db: AsyncSession = Depends(get_session),
+    owner_id: int = Depends(current_user_id),
+):
+    adv = (
+        body.adventure_collections
+        if body.adventure_collections is not None
+        else list(DEFAULT_ADVENTURE_COLLECTIONS)
+    )
+    created_by = body.created_by if body.created_by is not None else owner_id
+    campaign = Campaign(
+        title=body.title,
+        system=body.system,
+        created_by=created_by,
+        adventure_collections=adv,
+    )
     db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
@@ -56,5 +72,5 @@ async def delete_campaign(campaign_id: int, db: AsyncSession = Depends(get_sessi
     campaign = result.scalar_one_or_none()
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    db.delete(campaign)
+    await db.delete(campaign)
     await db.commit()

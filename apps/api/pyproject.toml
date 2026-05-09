@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "api"
 version = "0.1.0"
@@ -5,8 +9,33 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "agent",
+    "db",
+    "edgar_core",
     "fastapi>=0.128.0",
+    "langchain-core>=1.2.19",
+    "langchain-openai>=1.1.11",
     "pydantic>=2.12.5",
-    "uvicorn>=0.40.0",
     "redis>=5.0.0",
+    "structlog>=25.5.0",
+    "uvicorn>=0.40.0",
 ]
+
+[tool.setuptools.package-dir]
+"apps.api" = "."
+"apps.api.routers" = "routers"
+"apps.api.schemas" = "schemas"
+"apps.api.services" = "services"
+
+[dependency-groups]
+dev = [
+    "asgi-lifespan>=2.1.0",
+    "fakeredis>=2.35.1",
+    "httpx>=0.28.1",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "testcontainers>=4.14.2",
+]
+
+[tool.setuptools]
+packages = ["apps.api", "apps.api.routers", "apps.api.schemas", "apps.api.services"]

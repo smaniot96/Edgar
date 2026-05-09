@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
-from db.postgres import get_session
-from db.postgres.models import User, Campaign, Session
+from ..dependencies import get_session
+from db.postgres.models import User, Campaign, Session, Character
+from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 router = APIRouter(tags=["seed"])
 
@@ -36,7 +37,12 @@ async def seed(db: AsyncSession = Depends(get_session)):
     result = await db.execute(select(Campaign).where(Campaign.created_by == user.id).limit(1))
     campaign = result.scalar_one_or_none()
     if campaign is None:
-        campaign = Campaign(title="Solo Session", system="D&D 5e", created_by=user.id)
+        campaign = Campaign(
+            title="Solo Session",
+            system="D&D 5e",
+            created_by=user.id,
+            adventure_collections=list(DEFAULT_ADVENTURE_COLLECTIONS),
+        )
         db.add(campaign)
         await db.commit()
         await db.refresh(campaign)
@@ -46,6 +52,24 @@ async def seed(db: AsyncSession = Depends(get_session)):
     if session is None:
         session = Session(campaign_id=campaign.id, started_at=datetime.now(timezone.utc))
         db.add(session)
+        await db.commit()
+        await db.refresh(session)
+
+    if session.active_character_id is None:
+        char = Character(
+            campaign_id=campaign.id,
+            name="Eda",
+            character_class="Fighter",
+            level=1,
+            hp_current=12,
+            hp_max=12,
+            stats={"STR": 16, "DEX": 12, "CON": 14, "INT": 10, "WIS": 12, "CHA": 8},
+            inventory={"weapons": ["longsword"], "armor": "chain shirt"},
+        )
+        db.add(char)
+        await db.commit()
+        await db.refresh(char)
+        session.active_character_id = char.id
         await db.commit()
         await db.refresh(session)
 

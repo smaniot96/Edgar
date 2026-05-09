@@ -1,14 +1,8 @@
 """
 Create a Qdrant collection with the given name.
-Run from db/vector:  uv run scripts/new_collection.py "dnd_rules_phb"
+Run from Edgar: uv run python db/vector/scripts/new_collection.py "dnd_rules_phb"
 """
 import sys
-from pathlib import Path
-
-# Ensure project root (Edgar/) is on path so config and db resolve
-_project_root = Path(__file__).resolve().parent.parent.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
 
 from qdrant_client.models import Distance, VectorParams
 from qdrant_client.http.exceptions import UnexpectedResponse

@@ -9,6 +9,8 @@ description = "Rules engine for D&D campaign logic"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "db",
+    "edgar_core",
     "pydantic>=2.12.5",
 ]
 

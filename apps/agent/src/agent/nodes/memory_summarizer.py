@@ -1,23 +1,15 @@
 """MemorySummarizer node: compress long-term context."""
 
-import sys
-from pathlib import Path
-
-_root = Path(__file__).resolve().parents[5]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-import config  # noqa: F401, E402
-
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
+from agent.llm import make_chat_model
 from agent.state import AgentState
 
 MEMORY_THRESHOLD = 10
 MEMORY_SUMMARY_PROMPT = """Summarize the following conversation turns into a short "story so far" (2-3 sentences). Preserve key events, NPCs, and player decisions."""
 
 
-def memory_summarizer_node(state: AgentState) -> dict:
+async def memory_summarizer_node(state: AgentState) -> dict:
     """Summarize old turns if history exceeds threshold."""
     messages = state.get("messages", [])
 
@@ -31,12 +23,12 @@ def memory_summarizer_node(state: AgentState) -> dict:
     if len(to_summarize) < 2:
         return {}
 
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0, api_key=config.OPENAI_API_KEY)
+    llm = make_chat_model(temperature=0)
     summary_input = "\n".join(
         f"{m.type}: {m.content}" if hasattr(m, "content") else str(m)
         for m in to_summarize
     )
-    summary = llm.invoke([
+    summary = await llm.ainvoke([
         SystemMessage(content=MEMORY_SUMMARY_PROMPT),
         HumanMessage(content=summary_input),
     ])

@@ -1,26 +1,17 @@
 """
 Basic async CRUD demo (Tutorial 01, Step 8).
 
-Run from the db directory so the db package is on the path:
-    uv run python scripts/crud_demo.py
-
-Or from the project root (Edgar/):
-    PYTHONPATH=. uv run --project db python db/scripts/crud_demo.py
+Run from Edgar root:
+    uv run python db/scripts/crud_demo.py
 """
 import asyncio
-import sys
 import uuid
-from pathlib import Path
 from datetime import datetime, timezone
-
-# Add project root so "db" package is importable when run from db/ or from project root
-_project_root = Path(__file__).resolve().parent.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
 
 from sqlalchemy import select
 from db.postgres import async_session_factory
 from db.postgres.models import User, Campaign, Session
+from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 
 async def crud_1_user_basic(session) -> None:
@@ -70,7 +61,12 @@ async def crud_2_campaign_under_user(session) -> None:
     owner_id = user.id
 
     # CREATE campaign (FK: created_by -> user.id)
-    campaign = Campaign(title="CRUD2 Campaign", system="D&D 5e", created_by=owner_id)
+    campaign = Campaign(
+        title="CRUD2 Campaign",
+        system="D&D 5e",
+        created_by=owner_id,
+        adventure_collections=list(DEFAULT_ADVENTURE_COLLECTIONS),
+    )
     session.add(campaign)
     await session.flush()
     campaign_id = campaign.id
@@ -113,7 +109,12 @@ async def crud_3_session_lifecycle(session) -> None:
     session.add(user)
     await session.flush()
 
-    campaign = Campaign(title="CRUD3 Campaign", system="D&D 5e", created_by=user.id)
+    campaign = Campaign(
+        title="CRUD3 Campaign",
+        system="D&D 5e",
+        created_by=user.id,
+        adventure_collections=list(DEFAULT_ADVENTURE_COLLECTIONS),
+    )
     session.add(campaign)
     await session.flush()
 

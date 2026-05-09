@@ -1,18 +1,10 @@
 """Combat subgraph: initiative, turn loop, exit condition."""
 
-import sys
-from pathlib import Path
-
-_root = Path(__file__).resolve().parents[5]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-import config  # noqa: F401, E402
-
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from tools import roll
 
+from agent.llm import make_chat_model
 from agent.state import AgentState
 from agent.nodes import (
     input_parser_node,
@@ -26,7 +18,7 @@ MAX_COMBAT_ROUNDS = 10
 ENEMY_ACTION_PROMPT = """Generate a single short D&D combat action for {actor} (e.g. "The goblin attacks with its scimitar"). One sentence only."""
 
 
-def combat_initiative_node(state: AgentState) -> dict:
+async def combat_initiative_node(state: AgentState) -> dict:
     """Roll initiative and set turn order. Runs when combat_state is empty."""
     combat_state = state.get("combat_state") or {}
     if combat_state.get("initiative_order"):
@@ -57,7 +49,7 @@ def combat_initiative_node(state: AgentState) -> dict:
     }
 
 
-def _get_turn_input(state: AgentState) -> str:
+async def _get_turn_input(state: AgentState) -> str:
     """Get input for current turn: player_input for player, LLM-generated for enemies."""
     combat_state = state.get("combat_state") or {}
     initiative_order = combat_state.get("initiative_order", [])
@@ -68,17 +60,17 @@ def _get_turn_input(state: AgentState) -> str:
         return state.get("player_input", "I wait.")
 
     # Generate enemy action
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0.7, api_key=config.OPENAI_API_KEY)
-    response = llm.invoke([
+    llm = make_chat_model(temperature=0.7)
+    response = await llm.ainvoke([
         SystemMessage(content=ENEMY_ACTION_PROMPT.format(actor=actor)),
         HumanMessage(content="Generate the action."),
     ])
     return response.content if hasattr(response, "content") else str(response)
 
 
-def combat_turn_node(state: AgentState) -> dict:
+async def combat_turn_node(state: AgentState) -> dict:
     """Process one combat turn: parser -> retriever -> adjudicator -> updater -> narrator."""
-    turn_input = _get_turn_input(state)
+    turn_input = await _get_turn_input(state)
     merged = dict(state)
     merged["player_input"] = turn_input
 
@@ -89,7 +81,7 @@ def combat_turn_node(state: AgentState) -> dict:
         world_state_updater_node,
         narrator_node,
     ):
-        updates = node(merged)
+        updates = await node(merged)
         if updates.get("error"):
             return updates
         merged.update(updates)

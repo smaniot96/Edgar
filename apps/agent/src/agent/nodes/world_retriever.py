@@ -1,62 +1,57 @@
-"""WorldRetriever node: RAG via Qdrant + embeddings."""
+"""WorldRetriever node: RAG via Qdrant — rules (PHB/DMG/MM) vs adventure modules."""
 
-import sys
-from pathlib import Path
+import asyncio
 
-# Ensure project root on path so db.vector can load config
-_root = Path(__file__).resolve().parents[5]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-
-from db.vector import get_embeddings, get_qdrant_client
+from db.vector import search_adventure_context, search_rules_context
 
 from agent.state import AgentState
 
 
-def world_retriever_node(state: AgentState) -> dict:
-    """Fetch relevant rules and lore from Qdrant."""
+async def world_retriever_node(state: AgentState) -> dict:
+    """Fetch rules excerpts and adventure-module lore from Qdrant (separate buckets)."""
     player_input = state.get("player_input")
     parsed_input = state.get("parsed_input")
     campaign_id = state.get("campaign_id")
+    adventure_collections = state.get("adventure_collections")
 
     if not player_input:
-        return {"retrieved_context": []}
+        return {
+            "rules_context": [],
+            "adventure_context": [],
+            "retrieved_context": [],
+        }
 
-    # Build query from player input and intent
     query_parts = [player_input]
     if parsed_input:
         query_parts.append(f"Intent: {parsed_input.intent}")
     query = " ".join(query_parts)
 
+    client = state.get("qdrant_client")
+
     try:
-        client = get_qdrant_client()
-        embeddings = get_embeddings([query])
-        vector = embeddings[0]
-
-        # Search collections (dm_guide, monster_manual, player_handbook)
-        collections = ["player_handbook", "dm_guide", "monster_manual"]
-        if campaign_id:
-            collections.append(f"campaign_lore_{campaign_id}")
-
-        all_results = []
-        for collection in collections:
-            try:
-                results = client.search(
-                    collection_name=collection,
-                    query_vector=vector,
-                    limit=5,
-                    with_payload=True,
-                )
-                for r in results:
-                    payload = r.payload or {}
-                    all_results.append({
-                        "text": payload.get("text", ""),
-                        "source": payload.get("source", ""),
-                        "page": payload.get("page"),
-                    })
-            except Exception:
-                continue  # Collection may not exist
-
-        return {"retrieved_context": all_results[:10]}
+        rules_context, adventure_context = await asyncio.gather(
+            asyncio.to_thread(
+                search_rules_context, query, limit_per_collection=5, client=client
+            ),
+            asyncio.to_thread(
+                search_adventure_context,
+                query,
+                adventure_collections,
+                campaign_id=campaign_id,
+                limit_per_collection=5,
+                client=client,
+            ),
+        )
+        merged = (rules_context + adventure_context)[:20]
+        return {
+            "rules_context": rules_context,
+            "adventure_context": adventure_context,
+            "retrieved_context": merged,
+        }
     except Exception as e:
-        return {"retrieved_context": [], "error": str(e)}
+        return {
+            "rules_context": [],
+            "adventure_context": [],
+            "retrieved_context": [],
+            "error": str(e),
+        }

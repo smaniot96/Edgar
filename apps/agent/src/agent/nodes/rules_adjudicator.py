@@ -1,26 +1,23 @@
 """RulesAdjudicator node: apply mechanics, call dice tool, produce structured outcome."""
 
-import sys
-from pathlib import Path
-
-_root = Path(__file__).resolve().parents[5]
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-import config  # noqa: F401, E402
-
-from langchain_openai import ChatOpenAI
-
+from agent.llm import make_chat_model
 from agent.state import AgentState
 from agent.models.adjudication import AdjudicationResult
 from agent.prompts import RULES_ADJUDICATOR
 from tools import roll
 
 
-def rules_adjudicator_node(state: AgentState) -> dict:
+async def rules_adjudicator_node(state: AgentState) -> dict:
     """Apply rules and dice. LLM proposes; dice tool decides numbers."""
     player_input = state.get("player_input", "")
     parsed_input = state.get("parsed_input")
-    retrieved_context = state.get("retrieved_context", [])
+    rules_context = state.get("rules_context", [])
+    if not rules_context:
+        rules_context = [
+            c
+            for c in state.get("retrieved_context", [])
+            if c.get("kind") == "rules"
+        ]
 
     dice_result = None
     dice_expression = None
@@ -34,18 +31,27 @@ def rules_adjudicator_node(state: AgentState) -> dict:
 
     # Build context for LLM
     context_parts = [f"Player: {player_input}"]
-    if retrieved_context:
-        context_parts.append("Relevant rules/lore:")
-        for c in retrieved_context:
+    if rules_context:
+        context_parts.append("Official rules excerpts (Player Handbook, DMG, Monster Manual):")
+        for c in rules_context:
             context_parts.append(f"- {c.get('text', '')} (source: {c.get('source', '')})")
     if dice_result is not None:
         context_parts.append(f"Dice roll ({dice_expression}): {dice_result}")
 
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0, api_key=config.OPENAI_API_KEY)
+    character = state.get("character")
+    if character:
+        inv = character.get("inventory")
+        context_parts.append(
+            f"Player character: {character['name']}, level {character['level']} {character['class']}, "
+            f"HP {character['hp_current']}/{character['hp_max']}, stats {character['stats']}, "
+            f"inventory {inv}"
+        )
+
+    llm = make_chat_model(temperature=0)
     structured_llm = llm.with_structured_output(AdjudicationResult, method="function_calling")
 
     try:
-        result = structured_llm.invoke([
+        result = await structured_llm.ainvoke([
             {"role": "system", "content": RULES_ADJUDICATOR},
             {"role": "user", "content": "\n".join(context_parts)},
         ])

@@ -7,6 +7,10 @@ from typing import Any
 from loguru import logger
 from qdrant_client.models import PointStruct
 
+from db.vector import VECTOR_SIZE, get_embeddings, get_qdrant_client
+from ingestion.chunk import chunk_pages
+from ingestion.extract import extract_and_save_markdown, extract_text_by_page
+
 BATCH_SIZE = 50
 BATCH_DELAY_SEC = 0.5
 
@@ -48,18 +52,6 @@ def run_pipeline(
     Returns:
         Number of chunks ingested.
     """
-    import sys
-    from pathlib import Path as P
-
-    # Ensure Edgar root on path for db/config
-    _root = P(__file__).resolve().parent.parent.parent.parent.parent
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
-
-    from db.vector import get_qdrant_client, get_embeddings, VECTOR_SIZE
-    from ingestion.extract import extract_text_by_page, extract_and_save_markdown
-    from ingestion.chunk import chunk_pages
-
     pdf_path = Path(pdf_path)
     source = pdf_path.stem
 

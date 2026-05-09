@@ -8,9 +8,9 @@ import os
 
 from dotenv import load_dotenv
 
-# Load .env from project root (directory containing this file)
-_load_path = Path(__file__).resolve().parent / ".env"
-load_dotenv(_load_path)
+# Edgar repo root (directory containing core/, db/, apps/, .env)
+EDGAR_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(EDGAR_ROOT / ".env")
 
 # -----------------------------------------------------------------------------
 # Runtime: local (default) | cloud
@@ -60,3 +60,9 @@ VECTOR_DB_API_KEY = os.getenv("VECTOR_DB_API_KEY")
 # -----------------------------------------------------------------------------
 API_TITLE = "Edgar API"
 API_VERSION = "0.1.0"
+
+# -----------------------------------------------------------------------------
+# Models (override via env)
+# -----------------------------------------------------------------------------
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")

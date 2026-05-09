@@ -2,18 +2,11 @@
 Qdrant vector database client.
 
 Provides a factory function to create QdrantClient instances
-using configuration from the project's .env / config.py.
+using configuration from the project's .env / edgar_core.config.
 """
-import sys
-from pathlib import Path
-
-# Ensure project root on path so config is importable
-_root = Path(__file__).resolve().parent.parent.parent
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-
 from qdrant_client import QdrantClient
-from config import VECTOR_DB_URL, VECTOR_DB_API_KEY
+
+from edgar_core.config import VECTOR_DB_API_KEY, VECTOR_DB_URL
 
 
 def get_qdrant_client() -> QdrantClient:
