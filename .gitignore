@@ -1,6 +1,5 @@
 # General
 *.log            # Log files
-*.lock           # Package manager lock files (e.g., npm, pip)
 *.pid            # Process ID files
 *.swp            # Swap files (created by editors like Vim)
 *.swo
@@ -9,6 +8,12 @@
 *.DS_Store       # macOS specific
 Thumbs.db        # Windows specific
 
+# Lock files (NOT uv.lock — those must be committed for reproducible builds)
+package-lock.json
+yarn.lock
+Pipfile.lock
+composer.lock
+
 # Node.js
 node_modules/    # Node.js dependencies
 npm-debug.log    # NPM debug log
@@ -16,12 +21,15 @@ yarn-debug.log
 yarn-error.log
 
 # Python
-__pycache__/     # Python bytecode cache
-*.pyc            # Python bytecode files
+__pycache__/
+*.pyc
+*.egg-info/
+build/
 *.pyo            # Optimized Python bytecode files
 *.pyd            # Python dynamic libraries
 env/             # Virtual environments
 venv/            # Python virtual environments
+.venv/           # uv / pip virtual environments
 .idea/           # PyCharm IDE files
 
 # Java
@@ -52,18 +60,16 @@ bin/             # Go binary output
 vendor/          # Go vendor dependencies
 
 # Docker
-# Docker build files
 *.tar            # Docker image tarballs
 .docker/         # Docker build temporary files and output
 docker-compose.override.yml  # Local Docker Compose overrides
-
-# Dockerfiles for multiple images
-Dockerfile.*     # Any custom Dockerfiles
 *.dockerignore   # Docker ignore file
 
 # .env files
-.env             # Environment variables
-.env.*           # Environment variable files
+/.env
+.env
+.env.*
+!.env.example
 .env.local       # Local environment variables (Do not commit)
 
 # JetBrains IDEs
@@ -99,7 +105,6 @@ obj/             # Temporary object files
 
 # PHP
 /vendor/         # Composer dependencies
-composer.lock    # Composer lock file (not always needed)
 phpunit.xml      # PHPUnit configuration files
 
 # Terraform

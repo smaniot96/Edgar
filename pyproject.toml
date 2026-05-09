@@ -1,0 +1,55 @@
+[project]
+name = "edgar"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "api",
+    "agent",
+    "db",
+    "edgar_core",
+    "ingestion",
+    "rules-engine",
+    "tools",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+    "pytest-asyncio>=1.3",
+    "httpx>=0.28",
+    "asgi-lifespan>=2.1",
+    "fakeredis>=2.35",
+    "testcontainers>=4.14",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.uv]
+override-dependencies = [
+    # pymupdf-layout pulls onnxruntime; 1.26 has no cp312 macOS arm64 wheel — pin for local dev + Docker.
+    "onnxruntime>=1.18.0,<1.26",
+]
+
+[tool.uv.workspace]
+members = [
+    "core",
+    "db",
+    "tools",
+    "apps/api",
+    "apps/agent",
+    "apps/ingestion",
+    "apps/rules_engine",
+]
+
+[tool.uv.sources]
+edgar_core = { workspace = true }
+db = { workspace = true }
+tools = { workspace = true }
+agent = { workspace = true }
+api = { workspace = true }
+ingestion = { workspace = true }
+rules-engine = { workspace = true }

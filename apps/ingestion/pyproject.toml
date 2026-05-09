@@ -1,9 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ingestion"
 version = "0.1.0"
-description = "Add your description here"
+description = "PDF ingestion pipeline for RAG: extract, chunk, embed, upsert to Qdrant"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "db",
+    "edgar_core",
+    "loguru>=0.7.0",
+    "openai>=2.28.0",
     "pydantic>=2.12.5",
+    "pymupdf4llm>=1.27.2.1",
+    "qdrant-client>=1.17.1",
 ]
+
+[project.scripts]
+ingest = "ingestion.main:main"
+ingest-inspect = "ingestion.inspect:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

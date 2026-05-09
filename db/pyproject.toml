@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "db"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.4",
+    "asyncpg>=0.31.0",
+    "edgar_core",
+    "openai>=2.24.0",
+    "qdrant-client>=1.17.0",
+    "sqlalchemy[asyncio]>=2.0.47",
+    "python-dotenv>=1.0.0",
+    "tenacity>=9.0.0",
+]
+
+[tool.setuptools.package-dir]
+"db" = "."
+
+[tool.setuptools]
+packages = ["db", "db.postgres", "db.postgres.models", "db.vector", "db.vector.scripts"]

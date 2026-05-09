@@ -1,0 +1,67 @@
+---
+description: Python conventions for Edgar — FastAPI, SQLAlchemy 2 async, LangGraph, uv monorepo.
+alwaysApply: true
+---
+
+You are an expert in this repo’s Python stack: FastAPI services, SQLAlchemy 2.0 async persistence, LangGraph agents, and ingestion/RAG utilities.
+
+## Edgar layout (do not fight it)
+
+- Monorepo under `Edgar/`: apps `api`, `agent`, `ingestion`, `rules_engine`; shared packages `db/`, `tools/`, `core/`. Each app has its own `pyproject.toml`, `uv.lock`, and `.venv` (uv, Python 3.12).
+- Prefer package imports and workspace wiring over ad-hoc `sys.path` hacks when touching imports.
+
+## Stack (authoritative)
+
+- **API**: FastAPI, Pydantic v2, uvicorn, **structlog** for structured logging in `apps/api`.
+- **DB**: PostgreSQL via **SQLAlchemy 2.0 asyncio**, **asyncpg**, **Alembic** migrations. Shared models and sessions live under `db/postgres/`.
+- **Vector / RAG**: **Qdrant** (`qdrant-client`), embeddings and chunk flows under `db/vector/`.
+- **Caching / coordination**: **redis.asyncio** — used for the turn lock and similar coordination, not only generic caching.
+- **Agent**: **LangGraph** / **langchain-openai** (and related langchain packages). The graph may run in threads from the API; be careful at sync/async boundaries (avoid deprecated loop hacks; await all async DB calls).
+- **Ingestion**: may use **loguru**; do not assume the same logging stack as the API unless unifying deliberately.
+
+## Key principles
+
+- Write concise, technical answers with accurate Python examples.
+- Prefer small, composable functions and modules; use classes when they model state or framework hooks clearly (do not ban classes dogmatically).
+- Prefer iteration and modularization over duplication.
+- Use descriptive names with auxiliary verbs (`is_active`, `has_permission`).
+- Use **snake_case** directories and files (e.g. `routers/character.py`).
+- Expose routers and shared helpers from clear module boundaries (Python packages / `__all__` where it helps).
+- Use **Receive an Object, Return an Object (RORO)** for helpers that need several parameters or return structured results.
+
+## Python and style
+
+- Use `def` for synchronous pure logic; use `async def` for I/O (DB, HTTP, Redis, external APIs).
+- Type-hint public functions and Pydantic models for API boundaries; prefer Pydantic **v2** models over untyped dicts for request/response bodies.
+- Prefer shallow nesting: guard clauses and early returns for invalid input; put the happy path after preconditions.
+- Avoid redundant `else` after `return`; use the if-return pattern.
+- Python has no brace-delimited blocks — ignore any legacy advice about “curly braces” in conditionals.
+
+## FastAPI (`apps/api`)
+
+- Route handlers as plain callables with explicit response / dependency types.
+- Prefer **lifespan** context managers over deprecated `@app.on_event("startup"|"shutdown")` for app lifecycle.
+- Use FastAPI **dependency injection** for shared resources (settings, DB session, Redis).
+- Reserve `HTTPException` for expected, API-contract failures; use middleware or centralized handlers for unexpected errors where the app already does.
+- **Await** all async SQLAlchemy operations (`delete`, `flush`, etc.); fire-and-forget coroutines must not be dropped.
+
+## Database and async I/O
+
+- Use **async** SQLAlchemy patterns consistently; blocking ORM calls do not belong on the async request path.
+- Keep transaction boundaries explicit; avoid opening ad-hoc parallel sessions for the same logical unit of work unless the design doc calls for it.
+- Reference **Alembic** for schema changes; keep migrations in sync with models.
+
+## Agent and ingestion code
+
+- LangGraph nodes and tools: respect async vs sync execution; do not mix `run_until_complete` / deprecated loop access into callers that already run inside an event loop without a coordinated design.
+- Vector and embedding code: handle retries/backoff where external APIs are used at scale (project direction: resilient ingestion).
+
+## Performance
+
+- Minimize blocking I/O in async routes; offload truly CPU-heavy work intentionally if needed.
+- Use Pydantic for cheap validation/serialization on boundaries; lazy-load large payloads when the API design requires it.
+
+## References
+
+- Prefer [FastAPI](https://fastapi.tiangolo.com/) docs for dependencies, models, and middleware.
+- Align behavioral and persistence decisions with the numbered plans in `plans/` (e.g. tech stack review `plans/00-tech-stack-review.md`) when changing architecture.
