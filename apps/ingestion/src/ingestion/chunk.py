@@ -1,4 +1,16 @@
-"""Chunking strategy for extracted PDF text."""
+"""Paragraph-aware chunker for extracted PDF text.
+
+Strategy:
+  1. Split each page on blank lines (paragraph boundaries).
+  2. Greedily fill the current chunk up to `chunk_size` characters.
+  3. If a single paragraph exceeds `chunk_size`, fall back to a sliding window with `overlap`
+     characters of carryover so we do not cut mid-sentence at the boundary.
+  4. Chunks never cross page boundaries; that keeps `payload.page` honest for citations.
+
+Each chunk dict carries `{"text", "page", "index", "source"}`. `index` is a global counter so
+`embed._stable_chunk_id` can hash it into an idempotent Qdrant point id.
+"""
+
 import re
 from typing import Any
 
@@ -11,20 +23,6 @@ def chunk_pages(
     chunk_size: int = 1000,
     overlap: int = 100,
 ) -> list[ChunkDict]:
-    """
-    Split per-page text into overlapping chunks suitable for embedding.
-
-    Splits on paragraph boundaries when possible; falls back to fixed-size.
-
-    Args:
-        pages: List of (page_number, text) from extraction.
-        source: Source identifier (e.g. filename or collection name).
-        chunk_size: Target characters per chunk.
-        overlap: Overlap between consecutive chunks.
-
-    Returns:
-        List of dicts: {"text", "page", "index", "source"}.
-    """
     chunks: list[ChunkDict] = []
     global_index = 0
 
@@ -32,10 +30,8 @@ def chunk_pages(
         if not text or not text.strip():
             continue
 
-        # Split on double newlines (paragraphs) first
         paragraphs = re.split(r"\n\s*\n", text.strip())
-
-        current_chunk = []
+        current_chunk: list[str] = []
         current_len = 0
 
         for para in paragraphs:
@@ -43,47 +39,37 @@ def chunk_pages(
             if not para:
                 continue
 
+            # +1 accounts for the "\n\n" join inserted between paragraphs.
             if current_len + len(para) + 1 <= chunk_size:
                 current_chunk.append(para)
                 current_len += len(para) + 1
-            else:
-                if current_chunk:
-                    chunk_text = "\n\n".join(current_chunk)
-                    chunks.append({
-                        "text": chunk_text,
-                        "page": page_num,
-                        "index": global_index,
-                        "source": source,
-                    })
-                    global_index += 1
+                continue
 
-                if len(para) <= chunk_size:
-                    current_chunk = [para]
-                    current_len = len(para) + 1
-                else:
-                    # Fixed-size split for long paragraphs
-                    start = 0
-                    step = chunk_size - overlap
-                    while start < len(para):
-                        end = min(start + chunk_size, len(para))
-                        chunk_text = para[start:end]
-                        chunks.append({
-                            "text": chunk_text,
-                            "page": page_num,
-                            "index": global_index,
-                            "source": source,
-                        })
-                        global_index += 1
-                        start += step
+            if current_chunk:
+                chunks.append(_chunk_dict("\n\n".join(current_chunk), page_num, global_index, source))
+                global_index += 1
+
+            if len(para) <= chunk_size:
+                current_chunk = [para]
+                current_len = len(para) + 1
+            else:
+                # Paragraph longer than chunk_size: sliding window with overlap.
+                start = 0
+                step = chunk_size - overlap
+                while start < len(para):
+                    end = min(start + chunk_size, len(para))
+                    chunks.append(_chunk_dict(para[start:end], page_num, global_index, source))
+                    global_index += 1
+                    start += step
+                current_chunk = []
+                current_len = 0
 
         if current_chunk:
-            chunk_text = "\n\n".join(current_chunk)
-            chunks.append({
-                "text": chunk_text,
-                "page": page_num,
-                "index": global_index,
-                "source": source,
-            })
+            chunks.append(_chunk_dict("\n\n".join(current_chunk), page_num, global_index, source))
             global_index += 1
 
     return chunks
+
+
+def _chunk_dict(text: str, page: int, index: int, source: str) -> ChunkDict:
+    return {"text": text, "page": page, "index": index, "source": source}

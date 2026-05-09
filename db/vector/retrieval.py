@@ -1,4 +1,12 @@
-"""Shared Qdrant RAG search helpers (rules vs adventure modules)."""
+"""Rules vs adventure retrieval helpers shared by the agent and the rules_engine CLI.
+
+The split exists so the adjudicator rules on canonical books only (PHB/DMG/MM) and the
+narrator can pull in module-specific story text. The two functions return the same chunk
+shape (`{text, source, page, kind, collection}`) so callers can merge or label them as needed.
+
+Missing collections are skipped silently: a campaign that has not ingested a particular
+module should not hard-fail retrieval.
+"""
 
 from __future__ import annotations
 
@@ -15,15 +23,6 @@ from db.vector.collections import (
 from db.vector.embeddings import get_embeddings
 
 
-def _chunk_from_payload(payload: dict[str, Any], *, kind: str) -> dict[str, Any]:
-    return {
-        "text": payload.get("text", ""),
-        "source": payload.get("source", ""),
-        "page": payload.get("page"),
-        "kind": kind,
-    }
-
-
 def search_collections(
     query_text: str,
     collection_names: list[str],
@@ -32,17 +31,12 @@ def search_collections(
     kind: str = "rules",
     client: QdrantClient | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    Embed query_text once and search each collection; merge hits in order.
-
-    Missing collections are skipped (no error).
-    """
+    """Embed once, search each collection, return merged hits in collection order."""
     if not query_text.strip() or not collection_names:
         return []
 
     q = _client(client)
-    embeddings = get_embeddings([query_text])
-    vector = embeddings[0]
+    vector = get_embeddings([query_text])[0]
 
     out: list[dict[str, Any]] = []
     for collection_name in collection_names:
@@ -53,13 +47,14 @@ def search_collections(
                 limit=limit_per_collection,
                 with_payload=True,
             )
-            for r in results:
-                payload = r.payload or {}
-                chunk = _chunk_from_payload(payload, kind=kind)
-                chunk["collection"] = collection_name
-                out.append(chunk)
         except Exception:
+            # Most likely "collection not found"; treat as empty result.
             continue
+        for r in results:
+            payload = r.payload or {}
+            chunk = _chunk_from_payload(payload, kind=kind)
+            chunk["collection"] = collection_name
+            out.append(chunk)
     return out
 
 
@@ -70,14 +65,10 @@ def search_rules_context(
     include_legacy_collections: bool = True,
     client: QdrantClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Search PHB, DMG, MM (rules_* names plus optional legacy aliases)."""
+    """PHB + DMG + MM (canonical `rules_*` plus the legacy aliases by default)."""
     names = effective_rules_collection_names(include_legacy=include_legacy_collections)
     return search_collections(
-        query_text,
-        names,
-        limit_per_collection=limit_per_collection,
-        kind="rules",
-        client=client,
+        query_text, names, limit_per_collection=limit_per_collection, kind="rules", client=client
     )
 
 
@@ -89,19 +80,24 @@ def search_adventure_context(
     limit_per_collection: int = 5,
     client: QdrantClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Search bound adventure modules + optional campaign_lore_{id} collection."""
+    """Bound adventure modules plus the per-campaign lore collection if a campaign id is set."""
     names = list(effective_adventure_collection_names(adventure_collections))
     if campaign_id is not None:
         lore = campaign_lore_collection(campaign_id)
         if lore not in names:
             names.append(lore)
     return search_collections(
-        query_text,
-        names,
-        limit_per_collection=limit_per_collection,
-        kind="adventure",
-        client=client,
+        query_text, names, limit_per_collection=limit_per_collection, kind="adventure", client=client
     )
+
+
+def _chunk_from_payload(payload: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    return {
+        "text": payload.get("text", ""),
+        "source": payload.get("source", ""),
+        "page": payload.get("page"),
+        "kind": kind,
+    }
 
 
 def _client(client: QdrantClient | None) -> QdrantClient:

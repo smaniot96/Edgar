@@ -1,4 +1,18 @@
-"""SSE streaming for session turns (Option A: stream narrator only on the non-combat path)."""
+"""SSE turn runner.
+
+Streams the narration to the client token-by-token while the rest of the graph runs to
+completion in the background. The non-combat path is unrolled here so we can call
+`llm.astream` on the narrator step (the graph's compiled narrator uses `ainvoke`); the combat
+path runs the full graph and then synthesises word-level tokens from the final narration so
+the SSE protocol stays uniform.
+
+Event types (see apps/api/README.md for the public contract):
+  status: {"stage": "parsing" | "retrieving" | "adjudicating" | "narrating" | "saving"}
+  token: {"text": "<chunk>"}                        # concatenated they form the narration
+  adjudication: <AdjudicationResult dict>           # emitted once after adjudication
+  done: {"narration", "character", "current_scene_id"}
+  error: {"detail": "<message>"}                    # on any node returning an error
+"""
 
 from __future__ import annotations
 
@@ -6,6 +20,10 @@ import json
 import re
 from collections.abc import AsyncIterator
 from typing import Any
+
+from langchain_core.messages import AIMessage
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.graph import app
 from agent.llm import make_chat_model
@@ -16,19 +34,24 @@ from agent.nodes.rules_adjudicator import rules_adjudicator_node
 from agent.nodes.world_retriever import world_retriever_node
 from agent.nodes.world_state_updater import world_state_updater_node
 from db.postgres.models import Character, EventLog, Session as SessionModel
-from langchain_core.messages import AIMessage
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from .combat import persist_combat
 from .world_writes import apply_adjudication
 
+_NARRATOR_TEMPERATURE = 0.7
+
 
 def sse_event(event: str, data: Any) -> str:
+    """Format one Server-Sent Events frame. Two newlines terminate a frame."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 def _chunk_text(chunk: Any) -> str:
+    """Extract text from a langchain stream chunk.
+
+    Some providers return list-of-blocks (`[{"type": "text", "text": "..."}]`) instead of a
+    plain string; normalise to a single str.
+    """
     raw = chunk.content if hasattr(chunk, "content") else str(chunk)
     if isinstance(raw, str):
         return raw
@@ -71,7 +94,7 @@ async def _persist_turn(
     body_message: str,
     result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Commit narration, adjudication side effects, combat. Returns payload for `done` event."""
+    """Apply combat + world writes + narration row in one transaction; return the `done` payload."""
     new_combat = result.get("combat_state")
     if new_combat:
         await persist_combat(db, session_id, new_combat)
@@ -101,7 +124,7 @@ async def _persist_turn(
 
 
 def _yield_narration_tokens(narration: str) -> list[str]:
-    """Split narration into SSE token chunks (words + trailing whitespace)."""
+    """Split a complete narration into word-sized chunks (combat path's pseudo-stream)."""
     if not narration:
         return []
     parts = re.findall(r"\S+\s*", narration)
@@ -129,6 +152,8 @@ async def stream_session_turn(
     is_combat = bool(parsed and parsed.intent == "combat")
 
     if is_combat:
+        # The combat subgraph drives multiple internal nodes; we cannot easily stream from it.
+        # Run the whole graph, then fake a token stream from the completed narration.
         yield sse_event("status", {"stage": "retrieving"})
         yield sse_event("status", {"stage": "adjudicating"})
         result = await app.ainvoke(dict(initial_state))
@@ -139,30 +164,26 @@ async def stream_session_turn(
         if adj is not None:
             yield sse_event("adjudication", adj.model_dump())
         yield sse_event("status", {"stage": "narrating"})
-        narration = result.get("narration") or ""
-        for piece in _yield_narration_tokens(narration):
+        for piece in _yield_narration_tokens(result.get("narration") or ""):
             yield sse_event("token", {"text": piece})
         yield sse_event("status", {"stage": "saving"})
-        done_payload = await _persist_turn(db, session_id, game_session, body_message, result)
-        yield sse_event("done", done_payload)
+        yield sse_event("done", await _persist_turn(db, session_id, game_session, body_message, result))
         return
 
+    # Non-combat path: drive nodes in order so we can stream the narrator alone.
     yield sse_event("status", {"stage": "retrieving"})
-    retrieved = await world_retriever_node(state)
-    state.update(retrieved)
+    state.update(await world_retriever_node(state))
     if state.get("error"):
         yield sse_event("error", {"detail": state["error"]})
         return
 
     yield sse_event("status", {"stage": "adjudicating"})
-    adj_updates = await rules_adjudicator_node(state)
-    state.update(adj_updates)
+    state.update(await rules_adjudicator_node(state))
     if state.get("error"):
         yield sse_event("error", {"detail": state["error"]})
         return
 
-    ws_updates = await world_state_updater_node(state)
-    state.update(ws_updates)
+    state.update(await world_state_updater_node(state))
     if state.get("error"):
         yield sse_event("error", {"detail": state["error"]})
         return
@@ -173,7 +194,7 @@ async def stream_session_turn(
 
     yield sse_event("status", {"stage": "narrating"})
     prompt = build_narrator_prompt(state)
-    llm = make_chat_model(temperature=0.7)
+    llm = make_chat_model(temperature=_NARRATOR_TEMPERATURE)
     narration_parts: list[str] = []
     try:
         async for chunk in llm.astream(prompt):
@@ -187,23 +208,26 @@ async def stream_session_turn(
         return
 
     narration = "".join(narration_parts)
+    # Mirror what the graph's narrator_node would have written so memory_summarizer sees the
+    # same `messages` shape it sees in the non-streamed path.
     messages = list(state.get("messages", []))
     messages.append(AIMessage(content=narration))
     state["narration"] = narration
     state["messages"] = messages
-    sum_updates = await memory_summarizer_node(state)
-    state.update(sum_updates)
+    state.update(await memory_summarizer_node(state))
 
     yield sse_event("status", {"stage": "saving"})
-    done_payload = await _persist_turn(
-        db,
-        session_id,
-        game_session,
-        body_message,
-        {
-            "narration": narration,
-            "adjudication_result": adjudication,
-            "combat_state": state.get("combat_state"),
-        },
+    yield sse_event(
+        "done",
+        await _persist_turn(
+            db,
+            session_id,
+            game_session,
+            body_message,
+            {
+                "narration": narration,
+                "adjudication_result": adjudication,
+                "combat_state": state.get("combat_state"),
+            },
+        ),
     )
-    yield sse_event("done", done_payload)

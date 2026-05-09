@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+
+jobs:
+  edgar-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.6.6"
+
+      - name: Sync workspace and dev tools
+        run: uv sync --group dev
+
+      - name: Run pytest
+        run: uv run pytest tests/ -x --tb=short

@@ -5,7 +5,7 @@
 *.swo
 *.bak            # Backup files
 *.tmp            # Temporary files
-*.DS_Store       # macOS specific
+*.DS_Store
 Thumbs.db        # Windows specific
 
 # Lock files (NOT uv.lock — those must be committed for reproducible builds)
@@ -72,6 +72,12 @@ docker-compose.override.yml  # Local Docker Compose overrides
 !.env.example
 .env.local       # Local environment variables (Do not commit)
 
+# Edgar data (PDFs and extracted markdown live in data/; bind-mounted into Docker)
+data/
+
+# Local design notes and work-in-progress plans
+plans/
+
 # JetBrains IDEs
 .idea/           # IntelliJ, WebStorm, PhpStorm, PyCharm project files
 *.iml            # IntelliJ IDEA module files
@@ -87,11 +93,11 @@ docker-compose.override.yml  # Local Docker Compose overrides
 *.sublime-workspace
 *.sublime-project
 
-# macOS
-.DS_Store        # macOS Finder specific
-.AppleDouble     # macOS specific
-.LSOverride      # macOS specific
-Icon?            # macOS specific
+# macOS (avoid trailing spaces before # — git treats them as part of the pattern)
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
 
 # Windows
 Thumbs.db        # Windows image cache

@@ -1,28 +1,42 @@
-"""Combat subgraph: initiative, turn loop, exit condition."""
+"""Combat subgraph: initiative on first entry, then one round-robin turn per main-graph invocation.
 
-from langchain_core.messages import SystemMessage, HumanMessage
+The subgraph is invoked once per `app.ainvoke` from the main graph; the multi-turn loop is
+driven by repeated player turns through the API. `combat_state.id` is preserved across turns
+by spreading the existing dict, so `services.combat.persist_combat` updates the same row.
+"""
+
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from tools import roll
 
 from agent.llm import make_chat_model
-from agent.state import AgentState
 from agent.nodes import (
     input_parser_node,
-    world_retriever_node,
-    rules_adjudicator_node,
-    world_state_updater_node,
     narrator_node,
+    rules_adjudicator_node,
+    world_retriever_node,
+    world_state_updater_node,
 )
+from agent.state import AgentState
 
+# Hard cap so a runaway encounter does not loop forever; the LLM can also end combat earlier
+# by writing "combat ends" into mechanical_summary (see below).
 MAX_COMBAT_ROUNDS = 10
-ENEMY_ACTION_PROMPT = """Generate a single short D&D combat action for {actor} (e.g. "The goblin attacks with its scimitar"). One sentence only."""
+ENEMY_ACTION_PROMPT = (
+    'Generate a single short D&D combat action for {actor} '
+    '(e.g. "The goblin attacks with its scimitar"). One sentence only.'
+)
 
 
 async def combat_initiative_node(state: AgentState) -> dict:
-    """Roll initiative and set turn order. Runs when combat_state is empty."""
+    """Seed initiative on the first turn of an encounter; no-op once initiative exists.
+
+    Targets come from ParsedInput.entities; we accept either `targets` (list) or a single `target`.
+    Each participant gets a 1d20 (no DEX modifier yet; see plan 13 for replay-seeded RNG).
+    """
     combat_state = state.get("combat_state") or {}
     if combat_state.get("initiative_order"):
-        return {}  # Already have initiative
+        return {}
 
     parsed_input = state.get("parsed_input")
     entities = parsed_input.entities if parsed_input else {}
@@ -30,7 +44,6 @@ async def combat_initiative_node(state: AgentState) -> dict:
     if isinstance(targets, str):
         targets = [targets]
 
-    # Roll initiative: player + each enemy
     participants = [{"name": "player", "initiative": roll("1d20").total}]
     for t in targets:
         participants.append({"name": str(t), "initiative": roll("1d20").total})
@@ -50,7 +63,7 @@ async def combat_initiative_node(state: AgentState) -> dict:
 
 
 async def _get_turn_input(state: AgentState) -> str:
-    """Get input for current turn: player_input for player, LLM-generated for enemies."""
+    """Player's turn uses their typed message; enemy turns get a one-line LLM-generated action."""
     combat_state = state.get("combat_state") or {}
     initiative_order = combat_state.get("initiative_order", [])
     current = combat_state.get("current_turn_index", 0)
@@ -59,17 +72,21 @@ async def _get_turn_input(state: AgentState) -> str:
     if actor == "player":
         return state.get("player_input", "I wait.")
 
-    # Generate enemy action
     llm = make_chat_model(temperature=0.7)
-    response = await llm.ainvoke([
-        SystemMessage(content=ENEMY_ACTION_PROMPT.format(actor=actor)),
-        HumanMessage(content="Generate the action."),
-    ])
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=ENEMY_ACTION_PROMPT.format(actor=actor)),
+            HumanMessage(content="Generate the action."),
+        ]
+    )
     return response.content if hasattr(response, "content") else str(response)
 
 
 async def combat_turn_node(state: AgentState) -> dict:
-    """Process one combat turn: parser -> retriever -> adjudicator -> updater -> narrator."""
+    """Run one combat actor's turn through the same node sequence as the linear path.
+
+    Stops early on the first node that returns `{"error": ...}` so the caller can surface it.
+    """
     turn_input = await _get_turn_input(state)
     merged = dict(state)
     merged["player_input"] = turn_input
@@ -86,7 +103,6 @@ async def combat_turn_node(state: AgentState) -> dict:
             return updates
         merged.update(updates)
 
-    # Advance turn
     combat_state = merged.get("combat_state") or {}
     initiative_order = combat_state.get("initiative_order", [])
     current = combat_state.get("current_turn_index", 0)
@@ -96,6 +112,7 @@ async def combat_turn_node(state: AgentState) -> dict:
     next_round = round_num + 1 if next_index == 0 else round_num
     ended = next_round > MAX_COMBAT_ROUNDS
 
+    # Allow the adjudicator to end combat narratively (e.g. all enemies down).
     adjudication = merged.get("adjudication_result")
     if adjudication and "combat ends" in (adjudication.mechanical_summary or "").lower():
         ended = True
@@ -114,8 +131,8 @@ async def combat_turn_node(state: AgentState) -> dict:
 
 
 def build_combat_subgraph():
-    """Build and compile the combat subgraph. One turn per invocation; loop is via main app."""
-    from langgraph.graph import StateGraph, START, END
+    """Compile the two-node subgraph (initiative -> turn -> END). One actor per invocation."""
+    from langgraph.graph import END, START, StateGraph
 
     combat_graph = StateGraph(AgentState)
     combat_graph.add_node("initiative", combat_initiative_node)

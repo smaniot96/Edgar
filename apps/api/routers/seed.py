@@ -1,22 +1,25 @@
-"""Seed endpoint: create default user, campaign, session for quick start."""
+"""Idempotent bootstrap for solo play: ensures a user, campaign, session, and character exist.
+
+Safe to call repeatedly; existing rows are reused. The chat UI calls this on first load so a
+fresh database is playable immediately without any manual setup.
+"""
 
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+
+from db.postgres.models import Campaign, Character, Session, User
+from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 from ..dependencies import get_session
-from db.postgres.models import User, Campaign, Session, Character
-from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 router = APIRouter(tags=["seed"])
 
 
 class SeedResponse(BaseModel):
-    """Response from seed endpoint."""
-
     user_id: int
     campaign_id: int
     session_id: int
@@ -25,7 +28,6 @@ class SeedResponse(BaseModel):
 
 @router.post("/seed", response_model=SeedResponse)
 async def seed(db: AsyncSession = Depends(get_session)):
-    """Create default user, campaign, and session. Idempotent: reuses existing if found."""
     result = await db.execute(select(User).where(User.email == "dm@edgar.local"))
     user = result.scalar_one_or_none()
     if user is None:
