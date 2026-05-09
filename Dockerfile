@@ -19,6 +19,3 @@ CMD ["--help"]
 
 FROM base AS rules_engine
 CMD ["uv", "run", "python", "-m", "rules_engine.main"]
-
-FROM base AS agent
-CMD ["uv", "run", "--directory", "apps/agent", "python", "-m", "main"]

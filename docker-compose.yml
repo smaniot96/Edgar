@@ -50,8 +50,8 @@ services:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
     volumes:
-      - ../data/pdfs:/data
-      - ../data/markdown:/output/markdown
+      - ./data/pdfs:/data
+      - ./data/markdown:/output/markdown
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -116,9 +116,9 @@ services:
     volumes:
       # Persist collections/vectors across container recreates (no rebuild needed for qdrant)
       - qdrant_data:/qdrant/storage
+    # qdrant/qdrant image has bash but not curl/wget; TCP probe matches readiness.
     healthcheck:
-      test:
-        ["CMD-SHELL", "curl -sf http://127.0.0.1:6333/healthz >/dev/null"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
       interval: 5s
       timeout: 5s
       retries: 5

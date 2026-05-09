@@ -17,7 +17,7 @@ If both `--campaign-id` and `--collection` are passed, `--campaign-id` wins (a w
 - **Rules:** canonical names above; example:
 
 ```bash
-uv run --project apps/ingestion ingest ../data/pdfs/player_handbook.pdf --collection rules_player_handbook
+uv run --project apps/ingestion ingest data/pdfs/player_handbook.pdf --collection rules_player_handbook
 ```
 
 - **Legacy:** If you already ingested into `player_handbook`, `dm_guide`, `monster_manual`, the retriever still searches those collections until you re-ingest into `rules_*` names.
@@ -30,17 +30,17 @@ uv run --project apps/ingestion ingest ../data/pdfs/player_handbook.pdf --collec
 
 ### Local (from Edgar root)
 
-Paths are relative to Edgar; PDFs live in `dnd/data/pdfs/`:
+Paths are relative to Edgar; PDFs live in `Edgar/data/pdfs/` (the directory is gitignored):
 
 ```bash
-# Full ingestion (extract, chunk, embed, upsert) + save markdown to data/markdown
-uv run --project apps/ingestion ingest ../data/pdfs/player_handbook.pdf --collection rules_player_handbook
+# Full ingestion (extract, chunk, embed, upsert) + save markdown to Edgar/data/markdown
+uv run --project apps/ingestion ingest data/pdfs/player_handbook.pdf --collection rules_player_handbook
 
 # Campaign-bound notes → campaign_lore_<id> (matches plan / verification recipe)
-uv run --project apps/ingestion ingest ../data/pdfs/my_dm_notes.pdf --campaign-id 1
+uv run --project apps/ingestion ingest data/pdfs/my_dm_notes.pdf --campaign-id 1
 
 # Extract markdown only (no embedding)
-uv run --project apps/ingestion ingest ../data/pdfs/player_handbook.pdf --extract-only
+uv run --project apps/ingestion ingest data/pdfs/player_handbook.pdf --extract-only
 
 # Inspect Qdrant collections
 uv run --project apps/ingestion ingest-inspect --sample
@@ -49,7 +49,7 @@ uv run --project apps/ingestion ingest-inspect --search "ability check"
 
 ### Docker
 
-PDFs live in `dnd/data/pdfs/`. Markdown is written to `dnd/data/markdown/`. From Edgar:
+PDFs live in `Edgar/data/pdfs/` (bind-mounted into the container at `/data`). Markdown is written to `Edgar/data/markdown/` via `/output/markdown`. From Edgar:
 
 ```bash
 # Full ingestion (map collection to rules_player_handbook)

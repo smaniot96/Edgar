@@ -1,11 +1,9 @@
-"""ParsedInput: output of InputParser node."""
+"""InputParser output. The intent value drives the conditional edge after input_parser."""
 
 from pydantic import BaseModel
 
 
 class ParsedInput(BaseModel):
-    """Structured output from InputParser."""
-
-    intent: str  # combat | rp | exploration
-    entities: dict = {}
-    dice_expression: str | None = None
+    intent: str  # "combat" | "rp" | "exploration"
+    entities: dict = {}  # free-form, e.g. {"target": "goblin", "skill": "perception"}
+    dice_expression: str | None = None  # e.g. "1d20+3" when a roll is needed

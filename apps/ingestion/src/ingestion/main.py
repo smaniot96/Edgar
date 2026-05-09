@@ -6,6 +6,7 @@ from pathlib import Path
 from loguru import logger
 
 from db.vector.collections import campaign_lore_collection
+from edgar_core.config import EDGAR_ROOT
 from ingestion.embed import run_pipeline
 from ingestion.extract import extract_and_save_markdown
 
@@ -14,10 +15,10 @@ logger.add(sys.stderr, format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <leve
 
 
 def _default_markdown_dir() -> Path:
-    """Default markdown output dir: /output/markdown (Docker) or ../data/markdown (local)."""
+    """Default markdown output dir: /output/markdown (Docker bind mount) or Edgar/data/markdown (local)."""
     if Path("/output/markdown").exists():
         return Path("/output/markdown")
-    return Path("../data/markdown").resolve()
+    return EDGAR_ROOT / "data" / "markdown"
 
 
 def main() -> None:

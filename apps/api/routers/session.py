@@ -1,6 +1,14 @@
-import structlog
+"""Session router: CRUD plus the two turn endpoints (sync JSON and SSE stream).
+
+Both turn endpoints share `_load_turn_initial_state` so they hand the agent the same shape:
+campaign, character, prior narration messages, world flags, current scene, and any active
+combat row. The SSE endpoint is in `services.turn_runner.stream_session_turn`; the sync
+endpoint runs the compiled graph then commits writes inline.
+"""
+
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
@@ -8,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres.models import Campaign, Character, EventLog, Session as SessionModel
+
 from ..dependencies import acquire_turn_lock, get_redis, get_session, release_turn_lock
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse
@@ -25,7 +34,11 @@ async def _load_turn_initial_state(
     message: str,
     db: AsyncSession,
 ) -> tuple[SessionModel, dict[str, Any]]:
-    """Load session, campaign, and agent initial state for a turn (shared by sync and SSE endpoints)."""
+    """Build the agent's initial state from DB rows. Raises 404 if the session is gone.
+
+    Returns the session ORM row alongside the dict so the caller can mutate session fields
+    (current_scene_id, refresh after writes) without a second query.
+    """
     result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
     session = result.scalar_one_or_none()
     if session is None:
@@ -166,7 +179,12 @@ async def session_turn(
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
-    """Process a player turn: acquire lock, invoke agent, return narration."""
+    """Run one player turn synchronously and return the full result.
+
+    Lifecycle: load state -> acquire Redis lock (409 on contention) -> run agent ->
+    persist combat -> apply adjudication writes -> append narration to event_log -> commit
+    -> reload character so the response reflects post-write HP -> release lock in `finally`.
+    """
     session, initial_state = await _load_turn_initial_state(session_id, body.message, db)
     structlog.contextvars.bind_contextvars(
         session_id=session_id,
@@ -251,7 +269,12 @@ async def session_turn_stream(
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
-    """Process a turn with Server-Sent Events (status, token stream, adjudication, done)."""
+    """Stream the turn as Server-Sent Events; the lock is held for the lifetime of the stream.
+
+    A 409 (lock contention) is returned as a regular JSON error before the stream opens.
+    Errors after the stream begins are emitted as `error` SSE frames; the connection then
+    closes and the lock is released in the generator's `finally`.
+    """
     session, initial_state = await _load_turn_initial_state(session_id, body.message, db)
     structlog.contextvars.bind_contextvars(
         session_id=session_id,

@@ -1,21 +1,29 @@
-"""Main LangGraph state machine for the DM agent."""
+"""LangGraph topology for the DM agent.
 
-from langgraph.graph import StateGraph, START, END
+Linear path: input_parser -> world_retriever -> rules_adjudicator -> world_state_updater
+            -> narrator -> memory_summarizer -> END.
 
-from agent.state import AgentState
+Combat path: input_parser -> combat (subgraph) -> memory_summarizer -> END.
+
+The conditional edge after `input_parser` chooses between the two based on intent. Errors
+short-circuit through the linear path so the API can surface them.
+"""
+
+from langgraph.graph import END, START, StateGraph
+
+from agent.graph_combat import build_combat_subgraph
 from agent.nodes import (
     input_parser_node,
-    world_retriever_node,
-    rules_adjudicator_node,
-    world_state_updater_node,
-    narrator_node,
     memory_summarizer_node,
+    narrator_node,
+    rules_adjudicator_node,
+    world_retriever_node,
+    world_state_updater_node,
 )
-from agent.graph_combat import build_combat_subgraph
+from agent.state import AgentState
 
 
 def _route_after_input_parser(state: AgentState) -> str:
-    """Route to combat subgraph when intent is combat, else normal flow."""
     if state.get("error"):
         return "normal"
     parsed = state.get("parsed_input")

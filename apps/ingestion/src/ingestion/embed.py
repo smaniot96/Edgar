@@ -1,13 +1,23 @@
-"""Embed chunks and upsert to Qdrant."""
+"""Extract -> chunk -> embed -> upsert a PDF into a Qdrant collection.
+
+Idempotency: each chunk's Qdrant point id is a stable hash of (source, page, index, prefix).
+Re-running the same PDF into the same collection upserts the same ids, so we never duplicate
+points; you can re-ingest after fixing a bug or updating a PDF without cleanup.
+
+Batching: embeddings are computed `BATCH_SIZE` chunks at a time with a small `BATCH_DELAY_SEC`
+between batches as a courtesy to OpenAI rate limits. The retry policy lives in
+`db.vector.embeddings`; here we just propagate failures after logging which batch died.
+"""
+
 import hashlib
 import time
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from qdrant_client.models import PointStruct
 
 from db.vector import VECTOR_SIZE, get_embeddings, get_qdrant_client
+from edgar_core.config import EDGAR_ROOT
 from ingestion.chunk import chunk_pages
 from ingestion.extract import extract_and_save_markdown, extract_text_by_page
 
@@ -16,18 +26,16 @@ BATCH_DELAY_SEC = 0.5
 
 
 def _stable_chunk_id(source: str, page: int, index: int, text: str) -> int:
-    """Derive a stable integer id for idempotent upserts."""
-    h = hashlib.sha256(
-        f"{source}:{page}:{index}:{text[:100]}".encode()
-    ).hexdigest()
+    """64-bit int derived from sha256 of identity fields. Collisions are astronomically rare."""
+    h = hashlib.sha256(f"{source}:{page}:{index}:{text[:100]}".encode()).hexdigest()
     return int(h[:16], 16)
 
 
 def _default_markdown_dir() -> Path:
-    """Default markdown output dir: /output/markdown (Docker) or ../data/markdown (local)."""
+    """`/output/markdown` when the Docker bind mount exists, otherwise `Edgar/data/markdown`."""
     if Path("/output/markdown").exists():
         return Path("/output/markdown")
-    return Path("../data/markdown").resolve()
+    return EDGAR_ROOT / "data" / "markdown"
 
 
 def run_pipeline(
@@ -38,54 +46,35 @@ def run_pipeline(
     save_markdown: bool = True,
     markdown_dir: Path | None = None,
 ) -> int:
-    """
-    Extract, chunk, embed, and upsert a PDF into Qdrant.
-
-    Args:
-        pdf_path: Path to the PDF file.
-        collection_name: Qdrant collection name.
-        chunk_size: Characters per chunk.
-        overlap: Overlap between chunks.
-        save_markdown: If True, save full markdown to markdown_dir.
-        markdown_dir: Directory for markdown output. Default: /output/markdown or ../data/markdown.
-
-    Returns:
-        Number of chunks ingested.
-    """
+    """Returns the number of chunks ingested. Returns 0 on empty PDFs (no error)."""
     pdf_path = Path(pdf_path)
     source = pdf_path.stem
 
-    # Extract
     pages = extract_text_by_page(pdf_path)
     if not pages:
         logger.warning("No text extracted from {}", pdf_path)
         return 0
 
-    # Save full markdown
     if save_markdown:
         out_dir = markdown_dir or _default_markdown_dir()
         out_path = extract_and_save_markdown(pdf_path, out_dir)
         logger.info("Saved markdown to {}", out_path)
 
-    # Chunk
     chunks = chunk_pages(pages, source=source, chunk_size=chunk_size, overlap=overlap)
     if not chunks:
         logger.warning("No chunks produced from {}", pdf_path)
         return 0
 
-    # Get clients
     client = get_qdrant_client()
 
-    # Ensure collection exists
-    collections = client.get_collections().collections
-    if not any(c.name == collection_name for c in collections):
+    # Idempotent collection create. Cosine matches our embedding model normalisation.
+    if not any(c.name == collection_name for c in client.get_collections().collections):
         client.create_collection(
             collection_name=collection_name,
             vectors_config={"size": VECTOR_SIZE, "distance": "Cosine"},
         )
         logger.info("Created collection {}", collection_name)
 
-    # Batch embed and upsert
     total_ingested = 0
     for i in range(0, len(chunks), BATCH_SIZE):
         batch = chunks[i : i + BATCH_SIZE]
@@ -101,11 +90,7 @@ def run_pipeline(
             PointStruct(
                 id=_stable_chunk_id(c["source"], c["page"], c["index"], c["text"]),
                 vector=embeddings[j],
-                payload={
-                    "text": c["text"],
-                    "page": c["page"],
-                    "source": c["source"],
-                },
+                payload={"text": c["text"], "page": c["page"], "source": c["source"]},
             )
             for j, c in enumerate(batch)
         ]
@@ -117,8 +102,9 @@ def run_pipeline(
             raise
 
         total_ingested += len(batch)
-        logger.info("Upserted batch {}–{} ({} chunks)", i, i + len(batch), total_ingested)
+        logger.info("Upserted batch {}-{} ({} chunks)", i, i + len(batch), total_ingested)
 
+        # Skip the delay after the final batch.
         if i + BATCH_SIZE < len(chunks):
             time.sleep(BATCH_DELAY_SEC)
 

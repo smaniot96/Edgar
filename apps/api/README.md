@@ -1,25 +1,35 @@
-# Edgar API
+# API
+
+FastAPI application: routers (`campaigns`, `sessions`, `characters`, `seed`, `health`), schemas, services, and the static chat UI mounted at `/ui`. The agent is imported in-process from `apps/agent`; there is no separate agent service.
+
+## Chat UI
+
+`apps/api/static/index.html` is a single-file vanilla JS page. Open `http://localhost:8000/ui` after `make up`. It calls `POST /api/seed` (idempotent) for a default user, campaign, character, and session, then streams turns via SSE.
 
 ## Turn endpoints
 
-Two ways to run a player turn for a session:
+Two endpoints share the same lock and persistence path; they differ in transport.
 
-### `POST /api/sessions/{session_id}/turn`
+`POST /api/sessions/{session_id}/turn`. One JSON response after the agent finishes. Use this for `curl`, scripts, and tests. Errors are standard HTTP: `404` if the session is missing, `409` if another turn holds the Redis lock, `503` if the agent returns an `error` field, `500` on uncaught exceptions.
 
-- **Use case:** scripts, `curl`, automated tests, clients that want a single JSON response.
-- **Errors:** Standard HTTP status codes (e.g. `409` if another turn holds the lock, `503` if the agent returns an error field, `500` on unexpected failure). The body is JSON or plain text depending on the handler.
+`POST /api/sessions/{session_id}/turn/stream`. Server-Sent Events. Used by the UI. Frame types are `status` (stages: `parsing`, `retrieving`, `adjudicating`, `narrating`, `saving`), `token` (narration chunks; concatenated they form the full narration), `adjudication` (the structured `AdjudicationResult` once), `done` (`{narration, character, current_scene_id}`), and `error` (`{detail}`). Lock contention (409) is returned as a normal JSON error before the stream opens; failures after streaming begins arrive as an `error` event and the connection then closes.
 
-### `POST /api/sessions/{session_id}/turn/stream`
-
-- **Use case:** the web UI and any client that wants progressive updates.
-- **Response:** `text/event-stream` (Server-Sent Events). Each message is a frame with `event:` and `data:` (JSON).
-- **Event types:** `status` (stages: `parsing`, `retrieving`, `adjudicating`, `narrating`, `saving`), `token` (narration chunks), `adjudication` (structured result once), `done` (final `{ narration, character, current_scene_id }`), `error` (`{ detail }`).
-- **Errors:** `409` for lock contention is returned **before** the stream starts (normal JSON error response). Failures that occur **after** the stream has begun are sent as an `error` event inside the SSE stream; the client should still read until the connection closes.
-
-Example:
-
-```bash
+```
 curl -N -X POST "http://localhost:8000/api/sessions/1/turn/stream" \
   -H 'content-type: application/json' \
   -d '{"message":"I look around"}'
 ```
+
+## Turn lifecycle
+
+`session.py::_load_turn_initial_state` reads the session, campaign, character, prior narration messages (last 10 turns), world flags, and any active combat state into the agent's `initial_state`. `acquire_turn_lock` then sets a Redis key `turn:{session_id}` with `NX EX 60`. The agent runs (`app.ainvoke`); `apply_adjudication` writes HP, conditions, inventory, world flags, and scene transitions in the same DB transaction; an `event_log` row of `event_type="narration"` is appended; the lock is released in `finally`.
+
+`current_user_id()` looks up the seeded `dm@edgar.local` user; this is the single-user seam for solo play and is replaced by real auth when there is more than one user.
+
+## Health
+
+`/health` returns 200 without touching the DB (cheap; for compose healthchecks). `/ready` returns 200 only when `SELECT 1` succeeds, 503 otherwise (for orchestrators that need a real readiness signal).
+
+## Schemas
+
+`schemas/` mirrors the SQLAlchemy ORM. `Create`/`Update` are request bodies; `Read` is the response body with `from_attributes=True` so ORM rows serialize directly.

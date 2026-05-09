@@ -1,4 +1,10 @@
-"""Load and persist combat_state rows for a session."""
+"""Load the active combat row for a session and persist updates after a turn.
+
+Convention: agent-state `combat_state` carries the DB row id when it has been persisted.
+`persist_combat` uses that id to UPDATE the existing row; missing id means a new encounter
+and we INSERT. The agent's combat subgraph spreads the existing dict on every update so the
+id flows through unchanged.
+"""
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +13,7 @@ from db.postgres.models import CombatState
 
 
 async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
-    """Return the latest non-ended combat row as an agent-state dict, or None."""
+    """Latest non-ended row for this session, returned as the dict the agent expects."""
     result = await db.execute(
         select(CombatState)
         .where(CombatState.session_id == session_id, CombatState.ended.is_(False))
@@ -29,7 +35,6 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
 async def persist_combat(
     db: AsyncSession, session_id: int, combat_state: dict | None
 ) -> None:
-    """Insert or update combat_state from agent graph output."""
     if not combat_state:
         return
     if combat_state.get("id"):
@@ -42,9 +47,7 @@ async def persist_combat(
         cs = result.scalar_one()
         cs.initiative_order = combat_state.get("initiative_order", cs.initiative_order)
         cs.round = combat_state.get("round", cs.round)
-        cs.current_turn_index = combat_state.get(
-            "current_turn_index", cs.current_turn_index
-        )
+        cs.current_turn_index = combat_state.get("current_turn_index", cs.current_turn_index)
         cs.ended = combat_state.get("ended", cs.ended)
         return
     db.add(

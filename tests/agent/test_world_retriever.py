@@ -1,4 +1,43 @@
-def test_world_retriever_node_is_callable() -> None:
-    from agent.nodes.world_retriever import world_retriever_node
+import pytest
 
-    assert callable(world_retriever_node)
+
+@pytest.mark.asyncio
+async def test_world_retriever_accepts_fake_client(monkeypatch) -> None:
+    from agent.nodes import world_retriever as wr
+
+    def _rules(q, **_kw):
+        assert "hello" in q
+        return [{"text": "r", "source": "PHB", "kind": "rules"}]
+
+    def _adv(q, cols, **_kw):
+        return [{"text": "a", "source": "mod", "kind": "adventure"}]
+
+    monkeypatch.setattr(wr, "search_rules_context", _rules)
+    monkeypatch.setattr(wr, "search_adventure_context", _adv)
+
+    fake_client = object()
+    out = await wr.world_retriever_node(
+        {
+            "player_input": "hello",
+            "parsed_input": None,
+            "campaign_id": 1,
+            "adventure_collections": [],
+            "qdrant_client": fake_client,
+        }
+    )
+    assert len(out["rules_context"]) == 1
+    assert out["rules_context"][0]["kind"] == "rules"
+    assert len(out["adventure_context"]) == 1
+    assert out["adventure_context"][0]["kind"] == "adventure"
+
+
+@pytest.mark.asyncio
+async def test_world_retriever_returns_empty_without_input() -> None:
+    from agent.nodes import world_retriever as wr
+
+    out = await wr.world_retriever_node({"player_input": "", "parsed_input": None})
+    assert out == {
+        "rules_context": [],
+        "adventure_context": [],
+        "retrieved_context": [],
+    }

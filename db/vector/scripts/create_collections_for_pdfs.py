@@ -1,5 +1,5 @@
 """
-Create Qdrant collections for all PDFs in data/pdfs. Collection name = PDF filename (without .pdf).
+Create Qdrant collections for all PDFs in Edgar/data/pdfs. Collection name = PDF filename (without .pdf).
 Uses the same logic as new_collection.py.
 
 Run from Edgar:
@@ -10,7 +10,7 @@ from pathlib import Path
 
 from edgar_core.config import EDGAR_ROOT
 
-PDFS_DIR = (EDGAR_ROOT.parent / "data" / "pdfs").resolve()
+PDFS_DIR = (EDGAR_ROOT / "data" / "pdfs").resolve()
 
 
 def main() -> None:

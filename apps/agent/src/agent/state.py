@@ -1,29 +1,40 @@
-"""Agent state schema for the LangGraph flow."""
+"""Shared TypedDict for the agent graph.
+
+Every key is optional (`total=False`); each node only writes the keys it owns and reads the
+keys it needs. The API populates the inputs (player_input, session_id, campaign_id, messages,
+character, world_flags, etc.) before invoking the graph; the API also persists side effects
+after the graph returns (see services.world_writes and services.combat).
+"""
 
 from typing import Any, TypedDict
 
-from agent.models.parsed_input import ParsedInput
 from agent.models.adjudication import AdjudicationResult
+from agent.models.parsed_input import ParsedInput
 
 
 class AgentState(TypedDict, total=False):
-    """State passed through the graph. Keys are add-only."""
-
-    messages: list
+    # Inputs from the API
     player_input: str
-    parsed_input: ParsedInput
-    retrieved_context: list
-    rules_context: list
-    adventure_context: list
-    adjudication_result: AdjudicationResult
     session_id: int
     campaign_id: int
-    adventure_collections: list[str]
+    messages: list  # langchain BaseMessage list, oldest first; rebuilt per turn from event_log
+    character: dict | None  # {id, name, class, level, hp_current, hp_max, stats, inventory}
+    adventure_collections: list[str]  # campaigns.adventure_collections
     world_flags: dict[str, str]
     current_scene_id: str | None
-    character: dict | None
-    combat_state: dict
-    narration: str
+    combat_state: dict  # loaded from DB if an encounter is in progress
+
+    # Produced by nodes
+    parsed_input: ParsedInput  # InputParser
+    rules_context: list  # WorldRetriever (rules bucket)
+    adventure_context: list  # WorldRetriever (adventure bucket)
+    retrieved_context: list  # WorldRetriever (legacy merged view; nodes prefer the split)
+    adjudication_result: AdjudicationResult  # RulesAdjudicator
+    narration: str  # Narrator
+
+    # Reserved / advisory
+    state_updates_applied: bool  # written by API after apply_adjudication
+    qdrant_client: Any  # tests inject a fake; production uses get_qdrant_client()
+
+    # Set by any node on failure; the API turns this into a 503.
     error: str
-    state_updates_applied: bool  # reserved; API applies writes outside the graph
-    qdrant_client: Any  # optional QdrantClient; tests inject a fake client

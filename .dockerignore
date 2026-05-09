@@ -5,3 +5,6 @@
 .pytest_cache
 .mypy_cache
 **/static/.DS_Store
+
+# Bulk PDF/markdown corpus is bind-mounted at runtime, never baked into the image.
+data/

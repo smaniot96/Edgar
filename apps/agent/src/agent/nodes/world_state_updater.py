@@ -1,4 +1,11 @@
-"""WorldStateUpdater node: persist changes to PostgreSQL."""
+"""Append a telemetry row to event_log for the adjudication result.
+
+Source-of-truth writes (HP delta, world flags, scene changes, inventory) live in
+`apps.api.services.world_writes.apply_adjudication`, which uses the API's transaction. This
+node opens its own short-lived session because LangGraph nodes do not have a transaction
+handle, and writing telemetry alongside the API write keeps both observable in event_log even
+if the request is cancelled mid-flight.
+"""
 
 from db.postgres import async_session_factory
 from db.postgres.models import EventLog
@@ -7,7 +14,6 @@ from agent.state import AgentState
 
 
 async def world_state_updater_node(state: AgentState) -> dict:
-    """Telemetry-only EventLog row for adjudication (see services.world_writes in API)."""
     session_id = state.get("session_id")
     adjudication = state.get("adjudication_result")
     if not session_id or not adjudication:
@@ -15,12 +21,13 @@ async def world_state_updater_node(state: AgentState) -> dict:
 
     try:
         async with async_session_factory() as session:
-            event = EventLog(
-                session_id=session_id,
-                event_type="adjudication",
-                payload=adjudication.model_dump(),
+            session.add(
+                EventLog(
+                    session_id=session_id,
+                    event_type="adjudication",
+                    payload=adjudication.model_dump(),
+                )
             )
-            session.add(event)
             await session.commit()
     except Exception as e:
         return {"error": str(e)}
