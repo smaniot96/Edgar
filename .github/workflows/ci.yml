@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master, dev]
+    branches: [production]
   pull_request:
+    branches: [production]
 
 jobs:
   edgar-tests:
