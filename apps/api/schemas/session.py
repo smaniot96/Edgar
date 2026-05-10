@@ -9,6 +9,7 @@ class SessionCreate(BaseModel):
     campaign_id: int = Field(..., ge=1)
     started_at: datetime | None = None  # DB has server_default if omitted
     ended_at: datetime | None = None
+    active_character_id: int | None = Field(None, ge=1)
 
 
 class SessionRead(BaseModel):

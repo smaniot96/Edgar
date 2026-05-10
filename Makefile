@@ -1,5 +1,5 @@
 # Run from the Edgar directory: `make up`, `make ingest PDF=phb.pdf`, etc.
-.PHONY: up down logs migrate seed ingest test wait-api
+.PHONY: up down logs migrate seed ingest test wait-api frontend-install frontend-dev frontend-build
 
 COMPOSE ?= docker compose
 PDF ?=
@@ -39,3 +39,12 @@ ingest:
 
 test:
 	uv run pytest tests/
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build

@@ -18,10 +18,18 @@ class Campaign(Base):
         nullable=False,
         server_default=text("'{}'::text[]"),
     )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'active'")
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
     creator: Mapped["User"] = relationship(back_populates="campaigns")  # noqa: F821
     sessions: Mapped[list["Session"]] = relationship(back_populates="campaign")  # noqa: F821
-    characters: Mapped[list["Character"]] = relationship(back_populates="campaign")  # noqa: F821
+    character_assignments: Mapped[list["CharacterAssignment"]] = relationship(  # noqa: F821
+        back_populates="campaign"
+    )
     npcs: Mapped[list["NPC"]] = relationship(back_populates="campaign")  # noqa: F821
     world_flags: Mapped[list["WorldFlag"]] = relationship(back_populates="campaign")  # noqa: F821

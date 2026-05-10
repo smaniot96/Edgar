@@ -22,7 +22,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from langchain_core.messages import AIMessage
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.graph import app
@@ -33,10 +32,11 @@ from agent.nodes.narrator import build_narrator_prompt
 from agent.nodes.rules_adjudicator import rules_adjudicator_node
 from agent.nodes.world_retriever import world_retriever_node
 from agent.nodes.world_state_updater import world_state_updater_node
-from db.postgres.models import Character, EventLog, Session as SessionModel
+from db.postgres.models import EventLog, Session as SessionModel
 
+from .character_assignments import character_play_state
 from .combat import persist_combat
-from .world_writes import apply_adjudication
+from .world_writes import MissingCharacterAssignmentError, apply_adjudication
 
 _NARRATOR_TEMPERATURE = 0.7
 
@@ -68,23 +68,10 @@ def _chunk_text(chunk: Any) -> str:
     return str(raw)
 
 
-async def _character_dict(db: AsyncSession, character_id: int | None) -> dict[str, Any] | None:
-    if not character_id:
-        return None
-    crefresh = await db.execute(select(Character).where(Character.id == character_id))
-    char_row = crefresh.scalar_one_or_none()
-    if char_row is None:
-        return None
-    return {
-        "id": char_row.id,
-        "name": char_row.name,
-        "class": char_row.character_class,
-        "level": char_row.level,
-        "hp_current": char_row.hp_current,
-        "hp_max": char_row.hp_max,
-        "stats": char_row.stats,
-        "inventory": char_row.inventory,
-    }
+async def _character_dict(
+    db: AsyncSession, character_id: int | None, campaign_id: int
+) -> dict[str, Any] | None:
+    return await character_play_state(db, character_id, campaign_id)
 
 
 async def _persist_turn(
@@ -96,26 +83,30 @@ async def _persist_turn(
 ) -> dict[str, Any]:
     """Apply combat + world writes + narration row in one transaction; return the `done` payload."""
     new_combat = result.get("combat_state")
-    if new_combat:
-        await persist_combat(db, session_id, new_combat)
-
     adjudication = result.get("adjudication_result")
-    if adjudication:
-        await apply_adjudication(db, game_session, adjudication)
+    try:
+        if new_combat:
+            await persist_combat(db, session_id, new_combat)
 
-    db.add(
-        EventLog(
-            session_id=session_id,
-            event_type="narration",
-            payload={
-                "player_input": body_message,
-                "narration": result.get("narration", ""),
-            },
+        if adjudication:
+            await apply_adjudication(db, game_session, adjudication)
+
+        db.add(
+            EventLog(
+                session_id=session_id,
+                event_type="narration",
+                payload={
+                    "player_input": body_message,
+                    "narration": result.get("narration", ""),
+                },
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
+    except MissingCharacterAssignmentError:
+        await db.rollback()
+        raise
     await db.refresh(game_session)
-    character_out = await _character_dict(db, game_session.active_character_id)
+    character_out = await _character_dict(db, game_session.active_character_id, game_session.campaign_id)
     return {
         "narration": result.get("narration", ""),
         "character": character_out,
@@ -167,7 +158,12 @@ async def stream_session_turn(
         for piece in _yield_narration_tokens(result.get("narration") or ""):
             yield sse_event("token", {"text": piece})
         yield sse_event("status", {"stage": "saving"})
-        yield sse_event("done", await _persist_turn(db, session_id, game_session, body_message, result))
+        try:
+            done_payload = await _persist_turn(db, session_id, game_session, body_message, result)
+        except MissingCharacterAssignmentError as e:
+            yield sse_event("error", {"detail": str(e)})
+            return
+        yield sse_event("done", done_payload)
         return
 
     # Non-combat path: drive nodes in order so we can stream the narrator alone.
@@ -217,9 +213,8 @@ async def stream_session_turn(
     state.update(await memory_summarizer_node(state))
 
     yield sse_event("status", {"stage": "saving"})
-    yield sse_event(
-        "done",
-        await _persist_turn(
+    try:
+        done_payload = await _persist_turn(
             db,
             session_id,
             game_session,
@@ -229,5 +224,8 @@ async def stream_session_turn(
                 "adjudication_result": adjudication,
                 "combat_state": state.get("combat_state"),
             },
-        ),
-    )
+        )
+    except MissingCharacterAssignmentError as e:
+        yield sse_event("error", {"detail": str(e)})
+        return
+    yield sse_event("done", done_payload)

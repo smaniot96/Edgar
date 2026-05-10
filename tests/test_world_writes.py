@@ -1,11 +1,20 @@
 """apply_adjudication (plan 03)."""
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import select
 
 from apps.api.services.world_writes import apply_adjudication
-from db.postgres.models import Campaign, Character, Session as SessionModel, User, WorldFlag
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagUpdate
+from db.postgres.models import (
+    Campaign,
+    Character,
+    CharacterAssignment,
+    Session as SessionModel,
+    User,
+    WorldFlag,
+)
 
 
 @pytest.mark.asyncio
@@ -17,18 +26,32 @@ async def test_apply_adjudication_updates_hp_flags_scene(db_session) -> None:
     db_session.add(camp)
     await db_session.flush()
     char = Character(
-        campaign_id=camp.id,
+        owner_user_id=u.id,
         name="Hero",
         character_class="Fighter",
         level=1,
+        hp_max=20,
+        base_stats={"conditions": []},
+        base_inventory={"items": []},
+    )
+    db_session.add(char)
+    await db_session.flush()
+    ass = CharacterAssignment(
+        character_id=char.id,
+        campaign_id=camp.id,
         hp_current=20,
         hp_max=20,
         stats={"conditions": []},
         inventory={"items": []},
     )
-    db_session.add(char)
+    db_session.add(ass)
     await db_session.flush()
-    sess = SessionModel(campaign_id=camp.id, active_character_id=char.id, current_scene_id="a")
+    sess = SessionModel(
+        campaign_id=camp.id,
+        active_character_id=char.id,
+        current_scene_id="a",
+        started_at=datetime.now(timezone.utc),
+    )
     db_session.add(sess)
     await db_session.flush()
 
@@ -41,9 +64,9 @@ async def test_apply_adjudication_updates_hp_flags_scene(db_session) -> None:
     await apply_adjudication(db_session, sess, adj)
     await db_session.commit()
 
-    await db_session.refresh(char)
+    await db_session.refresh(ass)
     await db_session.refresh(sess)
-    assert char.hp_current == 13
+    assert ass.hp_current == 13
     assert sess.current_scene_id == "cave_entrance"
 
     r = await db_session.execute(
@@ -51,3 +74,6 @@ async def test_apply_adjudication_updates_hp_flags_scene(db_session) -> None:
     )
     flag = r.scalar_one()
     assert flag.value == "lit"
+
+    await db_session.refresh(char)
+    assert char.hp_max == 20

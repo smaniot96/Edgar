@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,6 +22,8 @@ class CampaignRead(BaseModel):
     created_by: int
     created_at: datetime
     adventure_collections: list[str]
+    status: Literal["active", "ended"]
+    ended_at: datetime | None = None
 
 
 class CampaignUpdate(BaseModel):

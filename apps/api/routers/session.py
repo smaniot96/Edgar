@@ -6,6 +6,7 @@ combat row. The SSE endpoint is in `services.turn_runner.stream_session_turn`; t
 endpoint runs the compiled graph then commits writes inline.
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -15,16 +16,18 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import Campaign, Character, EventLog, Session as SessionModel
+from db.postgres.models import Campaign, EventLog, Session as SessionModel
 
 from ..dependencies import acquire_turn_lock, get_redis, get_session, release_turn_lock
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse
+from ..services.character_assignments import character_play_state, load_active_assignment
 from ..services.combat import load_active_combat, persist_combat
+from ..services.npcs import load_npcs
 from ..services.session_messages import load_session_messages
 from ..services.turn_runner import stream_session_turn
 from ..services.world_flags import load_world_flags
-from ..services.world_writes import apply_adjudication
+from ..services.world_writes import MissingCharacterAssignmentError, apply_adjudication
 
 router = APIRouter(tags=["sessions"])
 
@@ -48,26 +51,22 @@ async def _load_turn_initial_state(
     campaign = camp_result.scalar_one_or_none()
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found for session")
+    if campaign.status == "ended":
+        raise HTTPException(
+            status_code=409,
+            detail="Campaign has ended; reopen it to continue.",
+        )
     world_flags = await load_world_flags(db, session.campaign_id)
 
     prior_messages = await load_session_messages(db, session_id)
     character = None
     if session.active_character_id:
-        cresult = await db.execute(
-            select(Character).where(Character.id == session.active_character_id)
+        character = await character_play_state(
+            db, session.active_character_id, session.campaign_id
         )
-        char = cresult.scalar_one_or_none()
-        if char is not None:
-            character = {
-                "id": char.id,
-                "name": char.name,
-                "class": char.character_class,
-                "level": char.level,
-                "hp_current": char.hp_current,
-                "hp_max": char.hp_max,
-                "stats": char.stats,
-                "inventory": char.inventory,
-            }
+    npcs = await load_npcs(db, session.campaign_id)
+    npc_summaries = [{"name": n.name, "disposition": n.disposition} for n in npcs]
+
     initial_state: dict[str, Any] = {
         "player_input": message,
         "session_id": session_id,
@@ -77,6 +76,7 @@ async def _load_turn_initial_state(
         "world_flags": world_flags,
         "current_scene_id": session.current_scene_id,
         "character": character,
+        "npcs": npc_summaries,
     }
     combat = await load_active_combat(db, session_id)
     if combat:
@@ -85,8 +85,15 @@ async def _load_turn_initial_state(
 
 
 @router.get("/sessions", response_model=list[SessionRead])
-async def list_sessions(db: AsyncSession = Depends(get_session)):
-    result = await db.execute(select(SessionModel))
+async def list_sessions(
+    campaign_id: int | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """List sessions. Optional ?campaign_id= filter."""
+    q = select(SessionModel)
+    if campaign_id is not None:
+        q = q.where(SessionModel.campaign_id == campaign_id)
+    result = await db.execute(q)
     sessions = result.scalars().all()
     return [SessionRead.model_validate(s) for s in sessions]
 
@@ -137,9 +144,20 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
 
 @router.post("/sessions", response_model=SessionRead)
 async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_session)):
-    session = SessionModel(campaign_id=body.campaign_id, ended_at=body.ended_at)
-    if body.started_at is not None:
-        session.started_at = body.started_at
+    if body.active_character_id is not None:
+        ass = await load_active_assignment(db, body.active_character_id, body.campaign_id)
+        if ass is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Character has no active assignment in this campaign",
+            )
+    started_at = body.started_at if body.started_at is not None else datetime.now(timezone.utc)
+    session = SessionModel(
+        campaign_id=body.campaign_id,
+        started_at=started_at,
+        ended_at=body.ended_at,
+        active_character_id=body.active_character_id,
+    )
     db.add(session)
     await db.commit()
     await db.refresh(session)
@@ -213,7 +231,10 @@ async def session_turn(
 
         adjudication = result.get("adjudication_result")
         if adjudication:
-            await apply_adjudication(db, session, adjudication)
+            try:
+                await apply_adjudication(db, session, adjudication)
+            except MissingCharacterAssignmentError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
 
         db.add(
             EventLog(
@@ -228,23 +249,9 @@ async def session_turn(
         await db.commit()
 
         await db.refresh(session)
-        character_out = None
-        if session.active_character_id:
-            crefresh = await db.execute(
-                select(Character).where(Character.id == session.active_character_id)
-            )
-            char_row = crefresh.scalar_one_or_none()
-            if char_row is not None:
-                character_out = {
-                    "id": char_row.id,
-                    "name": char_row.name,
-                    "class": char_row.character_class,
-                    "level": char_row.level,
-                    "hp_current": char_row.hp_current,
-                    "hp_max": char_row.hp_max,
-                    "stats": char_row.stats,
-                    "inventory": char_row.inventory,
-                }
+        character_out = await character_play_state(
+            db, session.active_character_id, session.campaign_id
+        )
 
         return TurnResponse(
             narration=result.get("narration", ""),

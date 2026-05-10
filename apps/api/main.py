@@ -1,7 +1,8 @@
 """FastAPI application entrypoint.
 
-Wires the routers, serves the chat UI at /ui, attaches a request-id middleware so structured
-logs and 500 responses share a correlation id, and configures structlog at startup.
+Wires the routers, serves the React UI at /ui when ``frontend/dist`` is present, attaches a
+request-id middleware so structured logs and 500 responses share a correlation id, and configures
+structlog at startup.
 """
 
 import uuid
@@ -12,15 +13,22 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from edgar_core.config import API_TITLE, API_VERSION
 
 from .logging_config import configure_logging
+from .routers.adventures import router as adventures_router
 from .routers.campaign import router as campaign_router
+from .routers.campaign_characters import router as campaign_characters_router
 from .routers.character import router as character_router
+from .routers.character_presets import router as character_presets_router
 from .routers.health import router as health_router
+from .routers.npc import router as npc_router
 from .routers.seed import router as seed_router
 from .routers.session import router as session_router
+from .routers.user import router as user_router
+from .routers.world_flag import router as world_flag_router
 
 log = structlog.get_logger()
 
@@ -86,36 +94,67 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(health_router)
+app.include_router(adventures_router, prefix="/api")
 app.include_router(campaign_router, prefix="/api")
-app.include_router(session_router, prefix="/api")
+app.include_router(campaign_characters_router, prefix="/api")
 app.include_router(character_router, prefix="/api")
+app.include_router(character_presets_router, prefix="/api")
+app.include_router(npc_router, prefix="/api")
 app.include_router(seed_router, prefix="/api")
+app.include_router(session_router, prefix="/api")
+app.include_router(user_router, prefix="/api")
+app.include_router(world_flag_router, prefix="/api")
 
-# Do not use `edgar_core.config.EDGAR_ROOT` here: when `edgar_core` is imported from
-# `.venv`/site-packages, that path points at the wrong tree. Walk upward from this file until we
-# find `static/index.html` (repo layout) or `apps/api/static/index.html` (monorepo root).
-def _chat_static_dir() -> Path:
+
+def _frontend_dist_dir() -> Path | None:
+    """Locate ``frontend/dist/index.html`` by walking upward from this module (monorepo / installs)."""
     start = Path(__file__).resolve()
     for anchor in (start.parent, *start.parents):
-        for rel in ("static", Path("apps") / "api" / "static"):
-            candidate = anchor / rel
-            if (candidate / "index.html").is_file():
-                return candidate
-    raise RuntimeError(
-        "Chat UI missing: could not find static/index.html near "
-        f"{start} (checked parent directories)"
+        candidate = anchor / "frontend" / "dist"
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+_frontend_dist = _frontend_dist_dir()
+
+if _frontend_dist is not None:
+    app.mount(
+        "/ui/assets",
+        StaticFiles(directory=str(_frontend_dist / "assets")),
+        name="ui-assets",
     )
 
+    @app.get("/ui", include_in_schema=False)
+    @app.get("/ui/", include_in_schema=False)
+    async def ui_shell() -> FileResponse:
+        return FileResponse(_frontend_dist / "index.html")
 
-# Explicit routes (not only StaticFiles): some deployments resolve `main.py` under `.venv`, and a
-# mount-based `/ui` can yield FastAPI's JSON 404 for `GET /ui` in browsers.
-_chat_static = _chat_static_dir()
+    @app.get("/ui/{path:path}", include_in_schema=False)
+    async def ui_spa(path: str) -> FileResponse:
+        requested = _frontend_dist / path
+        if requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(_frontend_dist / "index.html")
+else:
+    log.warning(
+        "frontend_dist_missing",
+        hint="Run `cd frontend && npm ci && npm run build` to serve the UI at /ui",
+    )
 
-
-@app.get("/ui", include_in_schema=False)
-@app.get("/ui/", include_in_schema=False)
-async def chat_ui() -> FileResponse:
-    return FileResponse(_chat_static / "index.html")
+    @app.get("/ui", include_in_schema=False)
+    @app.get("/ui/", include_in_schema=False)
+    @app.get("/ui/{path:path}", include_in_schema=False)
+    async def ui_unavailable() -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    "Frontend bundle not found. Run `make frontend-build` from the repo root "
+                    "or `npm run build` in `frontend/`."
+                )
+            },
+        )
 
 
 @app.get("/")

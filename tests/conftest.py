@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 import sys
@@ -18,6 +17,7 @@ from docker.errors import DockerException
 from fakeredis import FakeAsyncRedis
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 from testcontainers.postgres import PostgresContainer
 
 EDGAR_ROOT = Path(__file__).resolve().parents[1]
@@ -71,28 +71,26 @@ def postgres_env(postgres_container: PostgresContainer) -> dict[str, str]:
     return env
 
 
-@pytest.fixture(scope="session")
-def _patch_db_engine(postgres_env: dict[str, str]) -> None:
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _test_async_engine(postgres_env: dict[str, str]) -> AsyncIterator[None]:
     import db.postgres.session as sm
 
     async_url = _asyncpg_url(postgres_env)
-
-    async def _swap() -> None:
-        await sm.engine.dispose()
-        sm.engine = create_async_engine(async_url, echo=False, pool_pre_ping=True)
-        sm.async_session_factory = async_sessionmaker(
-            sm.engine, class_=AsyncSession, expire_on_commit=False
-        )
-
-    asyncio.run(_swap())
-    try:
-        yield
-    finally:
-        asyncio.run(sm.engine.dispose())
+    await sm.engine.dispose()
+    sm.engine = create_async_engine(
+        async_url,
+        echo=False,
+        poolclass=NullPool,
+    )
+    sm.async_session_factory = async_sessionmaker(
+        sm.engine, class_=AsyncSession, expire_on_commit=False
+    )
+    yield
+    await sm.engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def db_session(_patch_db_engine: None) -> AsyncIterator[AsyncSession]:
+async def db_session(_test_async_engine: None) -> AsyncIterator[AsyncSession]:
     from sqlalchemy import text
 
     import db.postgres.session as sm
@@ -102,8 +100,8 @@ async def db_session(_patch_db_engine: None) -> AsyncIterator[AsyncSession]:
     async with sm.engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE TABLE event_log, combat_state, sessions, characters, npcs, "
-                "world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                "TRUNCATE TABLE event_log, combat_state, sessions, character_assignments, "
+                "characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
             )
         )
 
