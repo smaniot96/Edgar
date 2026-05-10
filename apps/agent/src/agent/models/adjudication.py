@@ -10,7 +10,7 @@ Field semantics:
 Keep field names stable: changing them silently breaks the LLM's structured output schema.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CharacterUpdate(BaseModel):
@@ -38,3 +38,9 @@ class AdjudicationResult(BaseModel):
     flags_set: list[FlagUpdate] = Field(default_factory=list)
     flags_cleared: list[str] = Field(default_factory=list)
     scene_id: str | None = None  # becomes sessions.current_scene_id when set
+
+    @field_validator("flags_set", "flags_cleared", mode="before")
+    @classmethod
+    def _null_lists_to_empty(cls, value: object) -> list:
+        # Structured LLM output often sends explicit null instead of omitting keys.
+        return value if value is not None else []

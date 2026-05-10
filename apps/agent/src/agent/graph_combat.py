@@ -5,6 +5,8 @@ driven by repeated player turns through the API. `combat_state.id` is preserved 
 by spreading the existing dict, so `services.combat.persist_combat` updates the same row.
 """
 
+from typing import Any
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from tools import roll
@@ -124,10 +126,18 @@ async def combat_turn_node(state: AgentState) -> dict:
         "ended": ended,
     }
 
-    return {
+    # Narrator and adjudicator run inside this node (not as graph nodes), so their outputs
+    # exist only on `merged` unless we copy them here. Without this, combat turns produce
+    # empty narration in SSE/`done` and skip `apply_adjudication` in the API.
+    out: dict[str, Any] = {
         "combat_state": combat_state,
         "messages": list(merged.get("messages", [])),
+        "narration": merged.get("narration", ""),
     }
+    adj = merged.get("adjudication_result")
+    if adj is not None:
+        out["adjudication_result"] = adj
+    return out
 
 
 def build_combat_subgraph():
