@@ -10,13 +10,20 @@ Invariants:
   - Conditions and inventory are stored inside the JSONB columns; we treat them as sets/lists
     and replace the whole field rather than mutate in place, so SQLAlchemy notices the change.
   - Flag writes are upserts; clears are bulk DELETEs scoped to the campaign.
+  - Per-campaign character state lives on `CharacterAssignment` (plan 03), not `Character`.
 """
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.models.adjudication import AdjudicationResult
-from db.postgres.models import Character, Session as SessionModel, WorldFlag
+from db.postgres.models import Session as SessionModel, WorldFlag
+
+from .character_assignments import load_active_assignment
+
+
+class MissingCharacterAssignmentError(RuntimeError):
+    """No active assignment for (active_character_id, session.campaign_id)."""
 
 
 async def apply_adjudication(
@@ -28,7 +35,12 @@ async def apply_adjudication(
         game_session.current_scene_id = adj.scene_id
 
     if adj.character_update is not None and game_session.active_character_id:
-        await _apply_character_update(db, game_session.active_character_id, adj.character_update)
+        await _apply_character_update(
+            db,
+            game_session.active_character_id,
+            game_session.campaign_id,
+            adj.character_update,
+        )
 
     for fu in adj.flags_set:
         existing = await db.execute(
@@ -52,18 +64,17 @@ async def apply_adjudication(
         )
 
 
-async def _apply_character_update(db, character_id, cu) -> None:
-    cresult = await db.execute(select(Character).where(Character.id == character_id))
-    char = cresult.scalar_one_or_none()
-    if char is None:
-        return
+async def _apply_character_update(db, character_id: int, campaign_id: int, cu) -> None:
+    ass = await load_active_assignment(db, character_id, campaign_id)
+    if ass is None:
+        raise MissingCharacterAssignmentError(
+            f"No active assignment for character_id={character_id} campaign_id={campaign_id}"
+        )
 
     if cu.hp_delta is not None:
-        char.hp_current = max(0, min(char.hp_max, char.hp_current + cu.hp_delta))
+        ass.hp_current = max(0, min(ass.hp_max, ass.hp_current + cu.hp_delta))
 
-    # JSONB columns: build a new dict so SQLAlchemy detects the change. In-place mutation of
-    # `char.stats` would not mark the row dirty.
-    stats = dict(char.stats or {})
+    stats = dict(ass.stats or {})
     conditions = list(stats.get("conditions", []))
     for name in cu.add_conditions:
         if name not in conditions:
@@ -72,13 +83,13 @@ async def _apply_character_update(db, character_id, cu) -> None:
         if name in conditions:
             conditions.remove(name)
     stats["conditions"] = conditions
-    char.stats = stats
+    ass.stats = stats
 
-    inv = dict(char.inventory or {})
+    inv = dict(ass.inventory or {})
     items = list(inv.get("items", []))
     items.extend(cu.inventory_add)
     for it in cu.inventory_remove:
         if it in items:
             items.remove(it)
     inv["items"] = items
-    char.inventory = inv
+    ass.inventory = inv

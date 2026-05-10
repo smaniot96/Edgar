@@ -11,10 +11,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import Campaign, Character, Session, User
+from db.postgres.models import Campaign, Character, CharacterAssignment, Session, User
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 from ..dependencies import get_session
+from ..services.character_assignments import seed_assignment_row_payload
 
 router = APIRouter(tags=["seed"])
 
@@ -59,18 +60,25 @@ async def seed(db: AsyncSession = Depends(get_session)):
 
     if session.active_character_id is None:
         char = Character(
-            campaign_id=campaign.id,
+            owner_user_id=user.id,
             name="Eda",
             character_class="Fighter",
             level=1,
-            hp_current=12,
             hp_max=12,
-            stats={"STR": 16, "DEX": 12, "CON": 14, "INT": 10, "WIS": 12, "CHA": 8},
-            inventory={"weapons": ["longsword"], "armor": "chain shirt"},
+            base_stats={"STR": 16, "DEX": 12, "CON": 14, "INT": 10, "WIS": 12, "CHA": 8},
+            base_inventory={"weapons": ["longsword"], "armor": "chain shirt"},
         )
         db.add(char)
         await db.commit()
         await db.refresh(char)
+
+        payload = seed_assignment_row_payload(char)
+        assignment = CharacterAssignment(
+            character_id=char.id,
+            campaign_id=campaign.id,
+            **payload,
+        )
+        db.add(assignment)
         session.active_character_id = char.id
         await db.commit()
         await db.refresh(session)

@@ -6,7 +6,6 @@ Run from Edgar:
   uv run python db/vector/scripts/create_collections_for_pdfs.py
 """
 import sys
-from pathlib import Path
 
 from edgar_core.config import EDGAR_ROOT
 

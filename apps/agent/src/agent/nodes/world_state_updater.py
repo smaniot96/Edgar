@@ -7,20 +7,21 @@ handle, and writing telemetry alongside the API write keeps both observable in e
 if the request is cancelled mid-flight.
 """
 
-from db.postgres import async_session_factory
 from db.postgres.models import EventLog
 
 from agent.state import AgentState
 
 
 async def world_state_updater_node(state: AgentState) -> dict:
+    from db.postgres import session as db_session_module
+
     session_id = state.get("session_id")
     adjudication = state.get("adjudication_result")
     if not session_id or not adjudication:
         return {}
 
     try:
-        async with async_session_factory() as session:
+        async with db_session_module.async_session_factory() as session:
             session.add(
                 EventLog(
                     session_id=session_id,

@@ -10,6 +10,7 @@ Thumbs.db        # Windows specific
 
 # Lock files (NOT uv.lock — those must be committed for reproducible builds)
 package-lock.json
+!frontend/package-lock.json
 yarn.lock
 Pipfile.lock
 composer.lock

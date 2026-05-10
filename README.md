@@ -6,7 +6,7 @@ A solo Dungeon Master AI that runs a D&D 5e campaign and lets you play it from a
 
 Python 3.12 with `uv` workspaces. FastAPI for the HTTP layer; Pydantic v2 schemas mirror SQLAlchemy 2.0 async ORM models. Postgres 16 stores users, campaigns, sessions, characters, NPCs, world flags, combat state, and an append-only event log; Alembic owns migrations. Qdrant stores embedded chunks of the rulebooks (PHB, DMG, MM) and the adventure module (Chalice of the Mountain God by default), with `text-embedding-3-small`. The agent is a LangGraph state machine (input parser, world retriever, rules adjudicator, world state updater, narrator, memory summarizer) with a combat subgraph that is invoked when intent classifies as combat. Redis carries a per-session turn lock so two requests cannot race a turn.
 
-The chat UI is a single static `index.html` mounted at `/ui` by the API. It calls `POST /api/seed` once for a default campaign + character + session, then streams turns via SSE.
+The chat UI is a React SPA under [`frontend/`](frontend/README.md), served by the API at `/ui` after `npm run build` (included in the Docker API image).
 
 ## Quick start
 
@@ -14,6 +14,16 @@ The chat UI is a single static `index.html` mounted at `/ui` by the API. It call
 cp .env.example .env          # set OPENAI_API_KEY
 make up                        # docker compose up + migrate + seed
 open http://localhost:8000/ui
+```
+
+For local UI development with hot reload, run the API and Vite in two terminals (`make frontend-dev` uses port **5173** and proxies `/api` to the API):
+
+```
+make frontend-install          # once
+# Terminal A: start API (e.g. docker compose up api, or uvicorn from repo root)
+# Terminal B:
+make frontend-dev
+open http://localhost:5173/ui/
 ```
 
 `make up` brings the stack up, runs Alembic, polls `/health` until the API answers (default 60s; override with `WAIT_TIMEOUT_SEC`), then hits `/api/seed`. Use `make logs` to tail the API container, `make down` to stop.
@@ -45,8 +55,9 @@ The `/turn/stream` endpoint emits Server-Sent Events (`status`, `token`, `adjudi
 
 ```
 Edgar/
+  frontend/          React + Vite + Tailwind SPA (npm); served at /ui by the API
   apps/
-    api/             FastAPI: routers, schemas, services, static UI
+    api/             FastAPI: routers, schemas, services; bundles frontend/dist in Docker
     agent/           LangGraph DM agent (graph, nodes, models, prompts)
     ingestion/       PDF -> chunks -> embeddings -> Qdrant
     rules_engine/    Rules-only RAG demo (CLI)
@@ -61,7 +72,7 @@ Edgar/
   Dockerfile         Multi-stage: base / migrate / api / ingestion / rules_engine
   docker-compose.yml api + db + redis + qdrant + migrate + ingestion + rules_engine
   pyproject.toml     uv workspace root
-  Makefile           up / down / logs / migrate / seed / ingest / test
+  Makefile           up / down / logs / migrate / seed / ingest / test / frontend-* 
 ```
 
 `db/`, `tools/`, `core/`, and the four apps are independent uv workspace members; the workspace root lockfile is the only `uv.lock` you should regenerate.

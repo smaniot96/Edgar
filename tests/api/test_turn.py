@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import select
 
-from db.postgres.models import Character, EventLog, Session as SessionModel, WorldFlag
+from db.postgres.models import CharacterAssignment, EventLog, Session as SessionModel, WorldFlag
 
 
 @pytest.mark.asyncio
@@ -56,8 +56,16 @@ async def test_session_turn_persists_narration_hp_flags(
 
         char_id = sess.active_character_id
         assert char_id is not None
-        char = (await s.execute(select(Character).where(Character.id == char_id))).scalar_one()
-        assert char.hp_current == 7
+        ass = (
+            await s.execute(
+                select(CharacterAssignment).where(
+                    CharacterAssignment.character_id == char_id,
+                    CharacterAssignment.campaign_id == sess.campaign_id,
+                    CharacterAssignment.ended_at.is_(None),
+                )
+            )
+        ).scalar_one()
+        assert ass.hp_current == 7
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ dependencies = [
     "agent",
     "db",
     "edgar_core",
+    "email-validator>=2.2.0",
     "fastapi>=0.128.0",
     "langchain-core>=1.2.19",
     "langchain-openai>=1.1.11",

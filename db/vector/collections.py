@@ -31,6 +31,16 @@ def campaign_lore_collection(campaign_id: int) -> str:
     return f"campaign_lore_{campaign_id}"
 
 
+def is_rules_collection(name: str) -> bool:
+    """True if the Qdrant collection name is a rules book (not an adventure module)."""
+    return name in set(RULES_COLLECTION_NAMES) or name in set(LEGACY_RULES_COLLECTION_ALIASES)
+
+
+def is_campaign_lore_collection(name: str) -> bool:
+    """True if the Qdrant collection name is campaign-specific lore."""
+    return name.startswith("campaign_lore_")
+
+
 def effective_rules_collection_names(include_legacy: bool = True) -> list[str]:
     """Return Qdrant collection names to search for rules RAG."""
     names = list(RULES_COLLECTION_NAMES)

@@ -1,10 +1,10 @@
 # API
 
-FastAPI application: routers (`campaigns`, `sessions`, `characters`, `seed`, `health`), schemas, services, and the static chat UI mounted at `/ui`. The agent is imported in-process from `apps/agent`; there is no separate agent service.
+FastAPI application: routers (`campaigns`, `sessions`, `characters`, `seed`, `health`), schemas, services, and the React chat UI served under `/ui` when `frontend/dist` is built. The agent is imported in-process from `apps/agent`; there is no separate agent service.
 
 ## Chat UI
 
-`apps/api/static/index.html` is a single-file vanilla JS page. Open `http://localhost:8000/ui` after `make up`. It calls `POST /api/seed` (idempotent) for a default user, campaign, character, and session, then streams turns via SSE.
+See [`frontend/README.md`](../../frontend/README.md). Build with `make frontend-build` (or `cd frontend && npm run build`); the Docker API image runs `npm run build` and copies `frontend/dist` into the container. Open `http://localhost:8000/ui/` after `make up`. The UI calls `POST /api/seed` from the home screen for a default user, campaign, character, and session, then streams turns via SSE on `/play/:sessionId`.
 
 ## Turn endpoints
 

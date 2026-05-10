@@ -23,15 +23,18 @@ TURN_LOCK_TTL = 60
 
 
 async def current_user_id(db: AsyncSession = Depends(get_session)) -> int:
-    """Single-user seam: returns the seeded `dm@edgar.local` id.
+    """Single-user seam: returns the first user's id.
 
     Replace this with a real auth dependency when more than one user exists. Routers should
     depend on this instead of hard-coding `1` so the swap is local.
     """
-    result = await db.execute(select(User).where(User.email == "dm@edgar.local").limit(1))
+    result = await db.execute(select(User).limit(1))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=400, detail="No user found. Call POST /api/seed first.")
+        raise HTTPException(
+            status_code=400,
+            detail="No user found. Open /ui to complete first-run setup.",
+        )
     return user.id
 
 
