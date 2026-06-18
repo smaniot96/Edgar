@@ -10,11 +10,20 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type {
   CampaignCharacterRead,
   CampaignRead,
+  CharacterListItem,
   NPCRead,
   SessionRead,
   WorldFlagRead,
 } from "../api/types";
-import { ApiError, apiFetch } from "../api/client";
+import {
+  ApiError,
+  apiFetch,
+  assignCharacterToCampaign,
+  createSession,
+  errorMessage,
+  listCharacters,
+  listSessions,
+} from "../api/client";
 
 type TabId = "sessions" | "characters" | "npcs" | "flags";
 
@@ -27,32 +36,62 @@ function ErrorMsg({ msg }: { msg: string }) {
 function SessionsTab({ campaignId }: { campaignId: number }) {
   const navigate = useNavigate();
   const [sessions, setSessions] = useState<SessionRead[] | null>(null);
+  const [characters, setCharacters] = useState<CharacterListItem[] | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const loadCharacters = useCallback(() => {
+    listCharacters()
+      .then(setCharacters)
+      .catch((e) => setError(errorMessage(e)));
+  }, []);
+
   const load = useCallback(() => {
-    apiFetch(`/api/sessions?campaign_id=${campaignId}`)
-      .then((r) => r.json() as Promise<SessionRead[]>)
-      .then((rows) => setSessions([...rows].sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())))
-      .catch((e) => setError(e instanceof ApiError ? e.body : String(e)));
+    listSessions(campaignId)
+      .then((rows) => {
+        const sorted = [...rows].sort(
+          (a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
+        );
+        setSessions(sorted);
+        // First time here with no sessions? Open the picker so the path to Play is obvious.
+        if (sorted.length === 0) {
+          setPickerOpen(true);
+          if (characters === null) loadCharacters();
+        }
+      })
+      .catch((e) => setError(errorMessage(e)));
+  }, [campaignId, characters, loadCharacters]);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId]);
 
-  useEffect(() => { load(); }, [load]);
+  function openPicker() {
+    setError(null);
+    setPickerOpen(true);
+    if (characters === null) loadCharacters();
+  }
 
-  async function newSession() {
+  async function startSession(characterId?: number) {
     setBusy(true);
     setError(null);
     try {
-      const res = await apiFetch("/api/sessions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ campaign_id: campaignId }),
-      });
-      const s = (await res.json()) as SessionRead;
+      // If a PG is chosen and not yet engaged in this campaign, assign it first.
+      if (characterId != null) {
+        const c = characters?.find((x) => x.id === characterId);
+        const alreadyHere = c?.current_assignment?.campaign_id === campaignId;
+        if (!alreadyHere) {
+          await assignCharacterToCampaign(campaignId, characterId);
+        }
+      }
+      const s = await createSession(campaignId, characterId);
       localStorage.setItem("lastSessionId", String(s.id));
       navigate(`/play/${s.id}`);
     } catch (e) {
-      setError(e instanceof ApiError ? e.body : String(e));
+      // 409 → PG active in another campaign; surface the message.
+      setError(errorMessage(e));
       setBusy(false);
     }
   }
@@ -63,62 +102,141 @@ function SessionsTab({ campaignId }: { campaignId: number }) {
       await apiFetch(`/api/sessions/${id}`, { method: "DELETE" });
       load();
     } catch (e) {
-      setError(e instanceof ApiError ? e.body : String(e));
+      setError(errorMessage(e));
     }
   }
 
   return (
     <div className="space-y-4">
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => void newSession()}
-        className="rounded-md bg-[#3b82f6] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-      >
-        {busy ? "Starting…" : "+ New session"}
-      </button>
-      {error ? <ErrorMsg msg={error} /> : null}
-      {sessions === null ? (
-        <p className="text-sm text-[#9ca3af]">Loading…</p>
-      ) : sessions.length === 0 ? (
-        <p className="text-sm italic text-[#555]">No sessions yet.</p>
-      ) : (
-        <ul className="space-y-2">
-          {sessions.map((s) => (
-            <li
-              key={s.id}
-              className="flex items-center justify-between rounded-lg border border-[#2a2c30] bg-[#1a1c20] px-4 py-3"
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="max-w-xl text-xs text-[#9ca3af]">
+          A session is one saved playthrough. A campaign can have several — pick up where you left
+          off by hitting <strong>Continue</strong>, or start a fresh one.
+        </p>
+        {!pickerOpen ? (
+          <button
+            type="button"
+            onClick={openPicker}
+            className="rounded-md bg-[#3b82f6] px-3 py-1.5 text-sm font-semibold text-white"
+          >
+            + Start a new session
+          </button>
+        ) : null}
+      </div>
+
+      {pickerOpen ? (
+        <div className="space-y-3 rounded-lg border border-[#2a2c30] bg-[#1a1c20] p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Start a new session</h3>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(false)}
+              className="text-xs text-[#9ca3af] hover:text-[#e6e6e6]"
             >
-              <div>
-                <p className="text-sm font-medium">Session #{s.id}</p>
-                <p className="text-xs text-[#9ca3af]">
-                  {new Date(s.started_at).toLocaleString()}
-                  {s.active_character_id ? ` · char #${s.active_character_id}` : ""}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.setItem("lastSessionId", String(s.id));
-                    navigate(`/play/${s.id}`);
-                  }}
-                  className="rounded bg-[#3b82f6] px-2 py-1 text-xs font-semibold text-white"
-                >
-                  Play
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void deleteSession(s.id)}
-                  className="rounded bg-red-800 px-2 py-1 text-xs text-white hover:bg-red-700"
-                >
-                  Delete
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+              Cancel
+            </button>
+          </div>
+          <p className="text-xs text-[#9ca3af]">
+            Pick the character you'll play (they'll be assigned to this campaign), or jump in without
+            one and the DM will improvise.
+          </p>
+          {characters === null ? (
+            <p className="text-sm text-[#9ca3af]">Loading characters…</p>
+          ) : characters.length === 0 ? (
+            <p className="text-sm italic text-[#555]">
+              No characters yet —{" "}
+              <Link to="/characters" className="text-[#60a5fa] hover:underline">
+                create one
+              </Link>
+              .
+            </p>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {characters.map((c) => {
+                const elsewhere =
+                  c.current_assignment != null && c.current_assignment.campaign_id !== campaignId;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    disabled={busy || elsewhere}
+                    onClick={() => void startSession(c.id)}
+                    className="rounded-lg border border-[#2a2c30] bg-[#101216] p-3 text-left transition-colors hover:border-[#3b82f6] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <p className="text-sm font-medium">{c.name}</p>
+                    <p className="text-xs text-[#9ca3af]">
+                      L{c.level} {c.character_class} · HP {c.hp_max}
+                    </p>
+                    {elsewhere ? (
+                      <p className="mt-1 text-xs text-yellow-400">
+                        Engaged in {c.current_assignment?.campaign_title}
+                      </p>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void startSession()}
+            className="rounded-md border border-[#333] px-3 py-1.5 text-xs text-[#9ca3af] hover:text-[#e6e6e6] disabled:opacity-50"
+          >
+            {busy ? "Starting…" : "Start without a character"}
+          </button>
+        </div>
+      ) : null}
+
+      {error ? <ErrorMsg msg={error} /> : null}
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold">Existing sessions</h3>
+        {sessions === null ? (
+          <p className="text-sm text-[#9ca3af]">Loading…</p>
+        ) : sessions.length === 0 ? (
+          <p className="text-sm italic text-[#555]">
+            No sessions yet — choose a character above and hit start to begin playing.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {sessions.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center justify-between rounded-lg border border-[#2a2c30] bg-[#1a1c20] px-4 py-3"
+              >
+                <div>
+                  <p className="text-sm font-medium">Session #{s.id}</p>
+                  <p className="text-xs text-[#9ca3af]">
+                    {new Date(s.started_at).toLocaleString()}
+                    {s.active_character_id ? ` · char #${s.active_character_id}` : ""}
+                    {s.ended_at ? " · ended" : ""}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      localStorage.setItem("lastSessionId", String(s.id));
+                      navigate(`/play/${s.id}`);
+                    }}
+                    className="rounded bg-[#3b82f6] px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    ▶ Continue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteSession(s.id)}
+                    className="rounded bg-red-800 px-2 py-1 text-xs text-white hover:bg-red-700"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -139,8 +257,12 @@ function CharactersTab({ campaignId }: { campaignId: number }) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-[#9ca3af]">
-        Characters currently assigned to this campaign. Add new ones via the wizard when starting a
-        session, or from the character library.
+        Characters currently engaged in this campaign. Assign a character when starting a session, or
+        manage your roster in{" "}
+        <Link to="/characters" className="text-[#60a5fa] hover:underline">
+          Characters
+        </Link>
+        .
       </p>
       {error ? <ErrorMsg msg={error} /> : null}
       {chars === null ? (
@@ -486,7 +608,7 @@ export default function CampaignView() {
     if (!window.confirm(`Delete campaign "${campaign?.title}"? This cannot be undone.`)) return;
     try {
       await apiFetch(`/api/campaigns/${campaignId}`, { method: "DELETE" });
-      navigate("/");
+      navigate("/campaigns");
     } catch (e) {
       setLoadError(e instanceof ApiError ? e.body : String(e));
     }
@@ -495,7 +617,7 @@ export default function CampaignView() {
   if (loadError) {
     return (
       <div className="p-6">
-        <Link to="/" className="text-sm text-[#60a5fa] hover:underline">← Home</Link>
+        <Link to="/campaigns" className="text-sm text-[#60a5fa] hover:underline">← Campaigns</Link>
         <ErrorMsg msg={loadError} />
       </div>
     );
@@ -512,7 +634,7 @@ export default function CampaignView() {
       <div className="border-b border-[#222] px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <Link to="/" className="text-xs text-[#60a5fa] hover:underline">← Home</Link>
+            <Link to="/campaigns" className="text-xs text-[#60a5fa] hover:underline">← Campaigns</Link>
             <h1 className="mt-0.5 text-lg font-semibold">{campaign.title}</h1>
             <p className="text-xs text-[#9ca3af]">
               {campaign.adventure_collections.join(", ") || "no adventure"} · {campaign.system}

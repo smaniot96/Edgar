@@ -41,21 +41,40 @@ def search_collections(
     out: list[dict[str, Any]] = []
     for collection_name in collection_names:
         try:
-            results = q.search(
-                collection_name=collection_name,
-                query_vector=vector,
-                limit=limit_per_collection,
-                with_payload=True,
-            )
+            results = _query_collection(q, collection_name, vector, limit_per_collection)
         except Exception:
             # Most likely "collection not found"; treat as empty result.
             continue
         for r in results:
-            payload = r.payload or {}
+            payload = getattr(r, "payload", None) or {}
             chunk = _chunk_from_payload(payload, kind=kind)
             chunk["collection"] = collection_name
+            chunk["score"] = getattr(r, "score", None)
             out.append(chunk)
     return out
+
+
+def _query_collection(q: QdrantClient, collection_name: str, vector, limit: int):
+    """Run a vector search, preferring the modern `query_points` API.
+
+    qdrant-client >= 1.12 removed the legacy `Client.search` method in favour of
+    `query_points`, which returns a response object with a `.points` list. We fall back to
+    the old `search` for older clients so the helper works across versions.
+    """
+    if hasattr(q, "query_points"):
+        response = q.query_points(
+            collection_name=collection_name,
+            query=vector,
+            limit=limit,
+            with_payload=True,
+        )
+        return response.points
+    return q.search(
+        collection_name=collection_name,
+        query_vector=vector,
+        limit=limit,
+        with_payload=True,
+    )
 
 
 def search_rules_context(

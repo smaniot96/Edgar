@@ -1,10 +1,14 @@
 import { useCallback } from "react";
 
 import { readSse } from "../api/sse";
+import type { AdjudicationResult, DebugPayload } from "../api/types";
 
 export interface TurnStreamHandlers {
   onStatus: (stage: string) => void;
   onToken: (text: string) => void;
+  onAdjudication: (result: AdjudicationResult) => void;
+  /** Fires once per turn (only when debug=true was requested), just before done. */
+  onDebug?: (payload: DebugPayload) => void;
   onDone: (data: Record<string, unknown>) => void;
   onError: (detail: string) => void;
 }
@@ -20,7 +24,9 @@ export function useSseTurnStream() {
         const text = typeof data.text === "string" ? data.text : "";
         handlers.onToken(text);
       } else if (event === "adjudication") {
-        /* structured result; play UI ignores until a dedicated panel exists */
+        handlers.onAdjudication(data as unknown as AdjudicationResult);
+      } else if (event === "debug") {
+        handlers.onDebug?.(data as unknown as DebugPayload);
       } else if (event === "done") {
         handlers.onDone(data);
         return;

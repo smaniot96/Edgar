@@ -28,7 +28,8 @@ function Step1({
   useEffect(() => {
     apiFetch("/api/adventures")
       .then((r) => r.json() as Promise<AdventureRead[]>)
-      .then(setAdventures)
+      // Only ready (fully embedded) modules are playable; hide still-embedding/failed ones.
+      .then((advs) => setAdventures(advs.filter((a) => a.status === "ready")))
       .catch((e) => setError(e instanceof ApiError ? e.body : String(e)));
   }, []);
 

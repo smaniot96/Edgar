@@ -43,6 +43,49 @@ async def get_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)
     return CampaignRead.model_validate(campaign)
 
 
+@router.post("/adventures/{slug}/campaign", response_model=CampaignRead)
+async def open_campaign_for_adventure(
+    slug: str,
+    db: AsyncSession = Depends(get_session),
+    owner_id: int = Depends(current_user_id),
+):
+    """Get-or-create the playable campaign for an uploaded adventure module.
+
+    The 'campaigns' the player browses are the uploaded modules; opening one lands on the
+    campaign that owns its sessions. We reuse an existing active campaign for this
+    (user, adventure) pair so a module maps to one ongoing campaign rather than spawning a new
+    one on every click; a fresh one is created on first open (or after the previous ended).
+    """
+    from .adventures import load_adventure_metadata
+
+    result = await db.execute(
+        select(Campaign)
+        .where(
+            Campaign.created_by == owner_id,
+            Campaign.adventure_collections.any(slug),
+            Campaign.status == "active",
+        )
+        .order_by(Campaign.created_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing is not None:
+        return CampaignRead.model_validate(existing)
+
+    meta = load_adventure_metadata(slug)
+    title = meta.get("title") or slug.replace("_", " ").title()
+    campaign = Campaign(
+        title=title,
+        system="D&D 5e",
+        created_by=owner_id,
+        adventure_collections=[slug],
+    )
+    db.add(campaign)
+    await db.commit()
+    await db.refresh(campaign)
+    return CampaignRead.model_validate(campaign)
+
+
 @router.post("/campaigns", response_model=CampaignRead)
 async def create_campaign(
     body: CampaignCreate,

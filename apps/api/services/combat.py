@@ -29,6 +29,8 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
         "round": cs.round,
         "current_turn_index": cs.current_turn_index,
         "ended": cs.ended,
+        "combatants": cs.combatants or [],
+        "outcome": cs.outcome,
     }
 
 
@@ -49,6 +51,8 @@ async def persist_combat(
         cs.round = combat_state.get("round", cs.round)
         cs.current_turn_index = combat_state.get("current_turn_index", cs.current_turn_index)
         cs.ended = combat_state.get("ended", cs.ended)
+        cs.combatants = combat_state.get("combatants", cs.combatants)
+        cs.outcome = combat_state.get("outcome", cs.outcome)
         return
     db.add(
         CombatState(
@@ -57,5 +61,7 @@ async def persist_combat(
             round=combat_state["round"],
             current_turn_index=combat_state.get("current_turn_index", 0),
             ended=combat_state.get("ended", False),
+            combatants=combat_state.get("combatants", []),
+            outcome=combat_state.get("outcome"),
         )
     )

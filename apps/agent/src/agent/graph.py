@@ -26,6 +26,12 @@ from agent.state import AgentState
 def _route_after_input_parser(state: AgentState) -> str:
     if state.get("error"):
         return "normal"
+    # Stay in combat until the encounter is resolved, regardless of how this turn's intent was
+    # classified — otherwise a non-"combat" line mid-fight would stall the encounter (enemies
+    # never act, HP never updates).
+    active_combat = state.get("combat_state")
+    if active_combat and not active_combat.get("ended"):
+        return "combat"
     parsed = state.get("parsed_input")
     if parsed and parsed.intent == "combat":
         return "combat"

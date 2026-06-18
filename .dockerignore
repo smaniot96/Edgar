@@ -10,3 +10,8 @@ frontend/dist
 
 # Bulk PDF/markdown corpus is bind-mounted at runtime, never baked into the image.
 data/
+
+# Secrets must never be baked into image layers (Dockerfile does `COPY . .`).
+.env
+.env.*
+!.env.example
