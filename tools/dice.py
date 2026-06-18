@@ -16,7 +16,9 @@ MAX_DICE = 100
 MAX_SIDES = 100
 MIN_SIDES = 2
 
-_DICE_PATTERN = re.compile(r"^(\d+)d(\d+)([+-]\d+)?$")
+# Leading count is optional (`d20` == `1d20`); whitespace around the modifier is tolerated
+# (`2d6 + 3`); case-insensitive on the `d`. Normalisation happens in `parse_dice`.
+_DICE_PATTERN = re.compile(r"^(\d*)d(\d+)\s*([+-]\s*\d+)?$", re.IGNORECASE)
 
 
 class ParsedDice(NamedTuple):
@@ -43,9 +45,9 @@ def parse_dice(expression: str) -> ParsedDice:
             f"Invalid dice expression: {expression!r}. Use format NdM or NdM+K (e.g. 2d6+3)."
         )
 
-    count = int(match.group(1))
+    count = int(match.group(1)) if match.group(1) else 1
     sides = int(match.group(2))
-    modifier = int(match.group(3)) if match.group(3) else 0
+    modifier = int(match.group(3).replace(" ", "")) if match.group(3) else 0
 
     if not 1 <= count <= MAX_DICE:
         raise ValueError(f"Dice count must be 1-{MAX_DICE}, got {count}")

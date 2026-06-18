@@ -79,6 +79,9 @@ data/
 # Local design notes and work-in-progress plans
 plans/
 
+# Local audit / findings notes (not part of the product)
+audit/
+
 # JetBrains IDEs
 .idea/           # IntelliJ, WebStorm, PhpStorm, PyCharm project files
 *.iml            # IntelliJ IDEA module files
@@ -156,3 +159,6 @@ DerivedData/     # Xcode derived data
 *.bak            # Backup files
 *.orig           # Original files from merging or patching
 *.tmp            # Temporary files created by apps or IDEs
+
+# Local dev-only Docker override (source bind-mount + uvicorn --reload). Not for prod.
+docker-compose.override.yml

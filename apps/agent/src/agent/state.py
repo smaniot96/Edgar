@@ -22,6 +22,7 @@ class AgentState(TypedDict, total=False):
     adventure_collections: list[str]  # campaigns.adventure_collections
     world_flags: dict[str, str]
     current_scene_id: str | None
+    npcs: list  # [{name, disposition}] loaded from DB; used to keep allies out of enemy rosters
     combat_state: dict  # loaded from DB if an encounter is in progress
 
     # Produced by nodes

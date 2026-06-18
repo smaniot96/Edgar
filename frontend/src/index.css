@@ -1,3 +1,88 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ---- EdgarLogo + landing ambience ---------------------------------------
+ * Tasteful, GPU-friendly motion (transform/opacity only). All disabled under
+ * prefers-reduced-motion so the logo and page degrade to a clean static state.
+ */
+
+@keyframes edgar-smoke-drift {
+  0% {
+    transform: translateY(0) translateX(0);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(-4px) translateX(2px);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(0) translateX(0);
+    opacity: 0.55;
+  }
+}
+
+@keyframes edgar-ember-flicker {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  70% {
+    opacity: 0.7;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes edgar-ember-rise {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.9;
+  }
+  90% {
+    opacity: 0.4;
+  }
+  100% {
+    transform: translateY(-60vh) scale(0.4);
+    opacity: 0;
+  }
+}
+
+.edgar-smoke {
+  transform-origin: center bottom;
+  animation: edgar-smoke-drift 7s ease-in-out infinite;
+}
+
+.edgar-ember {
+  transform-origin: center;
+  animation: edgar-ember-flicker 3.2s ease-in-out infinite;
+}
+
+.edgar-ember-dot {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #ffd166 0%, #ff6b2b 70%, transparent 100%);
+  animation-name: edgar-ember-rise;
+  animation-timing-function: ease-in;
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edgar-smoke,
+  .edgar-ember {
+    animation: none;
+  }
+  .edgar-ember-dot {
+    display: none;
+  }
+}

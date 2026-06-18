@@ -65,6 +65,29 @@ def run_pipeline(
         logger.warning("No chunks produced from {}", pdf_path)
         return 0
 
+    return _embed_and_upsert(chunks, collection_name)
+
+
+def ingest_pages(
+    pages: list[tuple[int, str]],
+    source: str,
+    collection_name: str,
+    chunk_size: int = 1000,
+    overlap: int = 100,
+) -> int:
+    """Chunk + embed + upsert already-extracted `(page, text)` pages (e.g. AI-generated text).
+
+    Mirrors `run_pipeline` but skips the PDF extraction step, so callers that already have text
+    (a generated campaign, a markdown doc) can reuse the same chunking/embedding/idempotency.
+    """
+    chunks = chunk_pages(pages, source=source, chunk_size=chunk_size, overlap=overlap)
+    if not chunks:
+        return 0
+    return _embed_and_upsert(chunks, collection_name)
+
+
+def _embed_and_upsert(chunks: list[dict], collection_name: str) -> int:
+    """Embed chunks in batches and upsert into Qdrant; create the collection if missing."""
     client = get_qdrant_client()
 
     # Idempotent collection create. Cosine matches our embedding model normalisation.

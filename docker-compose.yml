@@ -31,6 +31,10 @@ services:
       - QDRANT_HOST=qdrant
     ports:
       - "8000:8000"
+    # Uploaded campaign PDFs + adventure metadata persist here (shared with the ingestion
+    # service's /data). Without this, UI uploads would be lost on container recreate.
+    volumes:
+      - ./data:/data
     depends_on:
       migrate:
         condition: service_completed_successfully

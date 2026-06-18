@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from db.postgres.base import Base
-from sqlalchemy import Boolean, ForeignKey, Integer, DateTime, func, text
+from sqlalchemy import Boolean, ForeignKey, Integer, DateTime, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -21,6 +21,13 @@ class CombatState(Base):
     ended: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    # Full combatant roster with per-entity HP/stats (player + enemies). One round of combat
+    # is resolved per HTTP turn; enemy deaths and end conditions are derived from this list.
+    combatants: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    # 'victory' | 'defeat' | 'fled' | None (still in progress).
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

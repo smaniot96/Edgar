@@ -57,3 +57,32 @@ def test_roll_modifier_only_applied_once() -> None:
     rng = random.Random(0)
     out = roll("1d4+10", rng=rng)
     assert out.total == out.rolls[0] + 10
+
+
+# --- Lenient parsing: the adjudicator must not 503 a turn over cosmetic formatting. ---
+
+def test_parse_implicit_single_die() -> None:
+    p = parse_dice("d20")
+    assert p.count == 1
+    assert p.sides == 20
+    assert p.modifier == 0
+
+
+def test_parse_uppercase_d() -> None:
+    p = parse_dice("1D8")
+    assert p.count == 1
+    assert p.sides == 8
+
+
+def test_parse_whitespace_around_modifier() -> None:
+    p = parse_dice("2d6 + 3")
+    assert p.count == 2
+    assert p.sides == 6
+    assert p.modifier == 3
+
+
+def test_parse_implicit_die_with_spaced_negative() -> None:
+    p = parse_dice("d20 - 1")
+    assert p.count == 1
+    assert p.sides == 20
+    assert p.modifier == -1
