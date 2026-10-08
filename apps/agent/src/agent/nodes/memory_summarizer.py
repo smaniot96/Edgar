@@ -1,48 +1,61 @@
-"""Compress long sessions so the narrator's prompt stays small.
+"""Rolling "story so far" summary so early-game context survives long sessions.
 
-Once `messages` reaches MEMORY_THRESHOLD turns, the middle is summarised into one AIMessage
-("Story so far: ...") and the head + tail are kept verbatim. The narrator only ever sees the
-last few messages anyway; this is here to preserve early-game context across many turns.
+The narrator sees the last few turns verbatim (see `services.session_messages`). Turns that
+fall out of that window are folded into one persisted summary by the API *after* a turn
+commits (`services.session_messages.maybe_update_memory_summary`), so this LLM call is never
+on the critical path of a turn. The summary is fed back to the agent as `state["memory_summary"]`.
 """
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+import logging
+
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.llm import make_chat_model
 from agent.state import AgentState
 
-MEMORY_THRESHOLD = 10
-KEEP_FIRST = 2
-KEEP_LAST = 4
+log = logging.getLogger(__name__)
+
 MEMORY_SUMMARY_PROMPT = (
-    'Summarize the following conversation turns into a short "story so far" (2-3 sentences). '
-    "Preserve key events, NPCs, and player decisions."
+    'Update the "story so far" for a solo D&D adventure. You get the previous summary (may be '
+    "empty) and the turns that happened after it. Return a single updated summary of at most "
+    "6 sentences. Preserve key events, NPCs, places, items, and the player's decisions; drop "
+    "moment-to-moment detail."
 )
 
 
-async def memory_summarizer_node(state: AgentState) -> dict:
-    messages = state.get("messages", [])
-    if len(messages) < MEMORY_THRESHOLD:
-        return {}
-
-    to_summarize = messages[KEEP_FIRST:-KEEP_LAST]
-    if len(to_summarize) < 2:
-        return {}
-
-    llm = make_chat_model(temperature=0)
-    summary_input = "\n".join(
-        f"{m.type}: {m.content}" if hasattr(m, "content") else str(m) for m in to_summarize
+def _render_turns(messages: list) -> str:
+    return "\n".join(
+        f"{m.type}: {m.content}" if hasattr(m, "content") else str(m) for m in messages
     )
+
+
+async def summarize_story(previous_summary: str | None, messages: list) -> str:
+    """Fold `messages` into `previous_summary`. Raises on LLM failure; callers decide policy."""
+    llm = make_chat_model(temperature=0)
     summary = await llm.ainvoke(
         [
             SystemMessage(content=MEMORY_SUMMARY_PROMPT),
-            HumanMessage(content=summary_input),
+            HumanMessage(
+                content=(
+                    f"Previous summary:\n{previous_summary or '(none)'}\n\n"
+                    f"New turns:\n{_render_turns(messages)}"
+                )
+            ),
         ]
     )
-    summary_content = summary.content if hasattr(summary, "content") else str(summary)
+    content = summary.content if hasattr(summary, "content") else str(summary)
+    return str(content).strip()
 
-    new_messages = (
-        list(messages[:KEEP_FIRST])
-        + [AIMessage(content=f"[Story so far: {summary_content}]")]
-        + list(messages[-KEEP_LAST:])
-    )
-    return {"messages": new_messages}
+
+async def memory_summarizer_node(state: AgentState) -> dict:
+    """Graph-node wrapper (not wired into the turn graph): fold `messages` into
+    `memory_summary`. Failures are logged and leave the existing summary untouched."""
+    messages = state.get("messages") or []
+    if not messages:
+        return {}
+    try:
+        summary = await summarize_story(state.get("memory_summary"), messages)
+    except Exception:
+        log.warning("memory_summary_failed", exc_info=True)
+        return {}
+    return {"memory_summary": summary}

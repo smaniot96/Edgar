@@ -1,12 +1,21 @@
 """Deterministic dice tool used by the agent.
 
-The LLM never picks the number; the adjudicator emits a `dice_expression` and the agent
-calls `roll(expression)` to get the authoritative outcome. Tests inject `random.Random(seed)`
-for reproducibility; production uses `random.SystemRandom()`.
+The LLM never picks the number; the engine builds the expression (e.g. "1d20+3" from the
+character sheet) and calls `roll(expression)` to get the authoritative outcome. Every outcome
+carries the individual dice (`rolls`) so a turn can be logged and replayed.
+
+RNG selection, in priority order:
+  1. an explicit `rng=` argument;
+  2. a turn-scoped RNG installed with `use_rng(random.Random(seed))` (a context manager backed
+     by a ContextVar, so concurrent turns never share one);
+  3. `random.SystemRandom()` (production default: rolls are not predictable).
 """
 
+import contextlib
+import contextvars
 import random
 import re
+from collections.abc import Iterator
 from typing import NamedTuple
 
 from pydantic import BaseModel
@@ -34,6 +43,43 @@ class DiceOutcome(BaseModel):
     total: int
     rolls: list[int]
     modifier: int
+    count: int = 1
+    sides: int = 20
+
+    def to_log(self, purpose: str = "") -> dict:
+        """Compact, JSON-safe record for event logs / replay."""
+        out = {
+            "expression": self.expression,
+            "rolls": list(self.rolls),
+            "modifier": self.modifier,
+            "total": self.total,
+        }
+        if purpose:
+            out["purpose"] = purpose
+        return out
+
+
+_TURN_RNG: contextvars.ContextVar[random.Random | None] = contextvars.ContextVar(
+    "edgar_turn_rng", default=None
+)
+
+
+@contextlib.contextmanager
+def use_rng(rng: random.Random) -> Iterator[random.Random]:
+    """Route every `roll()` in this context (that has no explicit `rng=`) through `rng`.
+
+    Use `with use_rng(random.Random(seed)):` to make a whole turn reproducible.
+    """
+    token = _TURN_RNG.set(rng)
+    try:
+        yield rng
+    finally:
+        _TURN_RNG.reset(token)
+
+
+def current_rng() -> random.Random | None:
+    """The turn-scoped RNG installed by `use_rng`, if any."""
+    return _TURN_RNG.get()
 
 
 def parse_dice(expression: str) -> ParsedDice:
@@ -60,7 +106,7 @@ def parse_dice(expression: str) -> ParsedDice:
 def _roll_dice(count: int, sides: int, rng: random.Random | None = None) -> list[int]:
     """Default RNG is SystemRandom (cryptographic) so production rolls are not predictable."""
     if rng is None:
-        rng = random.SystemRandom()
+        rng = _TURN_RNG.get() or random.SystemRandom()
     return [rng.randint(1, sides) for _ in range(count)]
 
 
@@ -72,4 +118,20 @@ def roll(expression: str, rng: random.Random | None = None) -> DiceOutcome:
         total=sum(rolls) + parsed.modifier,
         rolls=rolls,
         modifier=parsed.modifier,
+        count=parsed.count,
+        sides=parsed.sides,
     )
+
+
+def try_roll(expression: str | None, rng: random.Random | None = None) -> DiceOutcome | None:
+    """Like `roll`, but returns None for a missing/invalid expression instead of raising.
+
+    Used wherever an LLM-proposed expression is rolled: a bad expression drops the roll rather
+    than failing the turn.
+    """
+    if not expression or not isinstance(expression, str):
+        return None
+    try:
+        return roll(expression, rng)
+    except ValueError:
+        return None
