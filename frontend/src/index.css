@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+  }
+
+  ::selection {
+    @apply bg-ember-500/40 text-ink;
+  }
+}
+
 /* ---- EdgarLogo + landing ambience ---------------------------------------
  * Tasteful, GPU-friendly motion (transform/opacity only). All disabled under
  * prefers-reduced-motion so the logo and page degrade to a clean static state.

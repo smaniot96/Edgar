@@ -1,15 +1,25 @@
-from datetime import datetime
+from __future__ import annotations
 
-from db.postgres.base import Base
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from db.postgres.base import Base
+
+if TYPE_CHECKING:
+    from db.postgres.models.character_assignments import CharacterAssignment
+    from db.postgres.models.users import User
 
 
 class Character(Base):
     __tablename__ = "characters"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     character_class: Mapped[str] = mapped_column("class", String(255), nullable=False)
     level: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -20,8 +30,9 @@ class Character(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    owner: Mapped["User"] = relationship(back_populates="characters")  # noqa: F821
-    assignments: Mapped[list["CharacterAssignment"]] = relationship(  # noqa: F821
+    owner: Mapped[User] = relationship(back_populates="characters")
+    assignments: Mapped[list[CharacterAssignment]] = relationship(
         back_populates="character",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )

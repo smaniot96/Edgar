@@ -42,3 +42,24 @@ def metadata_slugs() -> set[str]:
     if not ADVENTURES_DIR.is_dir():
         return set()
     return {p.stem for p in ADVENTURES_DIR.glob("*.json")}
+
+
+STALE_PROCESSING_ERROR = (
+    "Processing was interrupted by a server restart. Use retry to process it again."
+)
+
+
+def fail_stale_processing() -> list[str]:
+    """Mark every adventure still in "processing" as failed; return the affected slugs.
+
+    Call once at startup: ingestion/generation run as in-process background tasks, so anything
+    still "processing" when the process starts belongs to a run that no longer exists.
+    """
+    stale: list[str] = []
+    for slug in sorted(metadata_slugs()):
+        meta = load_meta(slug)
+        if meta.get("status") == "processing":
+            meta.update({"status": "failed", "error": STALE_PROCESSING_ERROR})
+            save_meta(slug, meta)
+            stale.append(slug)
+    return stale

@@ -6,11 +6,10 @@ from edgar_core.config import DATABASE_URL, EDGAR_ROOT
 
 load_dotenv(EDGAR_ROOT / ".env")
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
-
-from alembic import context
 
 alembic_cfg = context.config
 
@@ -20,8 +19,8 @@ if alembic_cfg.config_file_name is not None:
 # Use URL from config (single source of truth)
 alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
 
-from db.postgres.base import Base
 import db.postgres.models  # noqa: F401 - register all models on Base.metadata
+from db.postgres.base import Base
 
 target_metadata = Base.metadata
 

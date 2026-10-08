@@ -22,16 +22,16 @@ function Section({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="border-t border-[#2a2d33] first:border-t-0">
+    <div className="border-t border-line first:border-t-0">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={cn(
           "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide",
-          warn ? "text-amber-300" : "text-[#9a9a9a]",
+          warn ? "text-ember-300" : "text-ink-muted",
         )}
       >
-        <span className="text-[#6a6a6a]">{open ? "▾" : "▸"}</span>
+        <span className="text-ink-subtle">{open ? "▾" : "▸"}</span>
         <span>{title}</span>
       </button>
       {open ? <div className="px-3 pb-3 pt-0">{children}</div> : null}
@@ -42,21 +42,21 @@ function Section({
 function KV({ k, v }: { k: string; v: ReactNode }) {
   return (
     <div className="flex gap-2 py-0.5">
-      <span className="min-w-[140px] shrink-0 text-[#8a8a8a]">{k}</span>
-      <span className="break-words font-mono text-[#d7d7d7]">{v}</span>
+      <span className="min-w-[140px] shrink-0 text-ink-subtle">{k}</span>
+      <span className="break-words font-mono text-ink">{v}</span>
     </div>
   );
 }
 
 function mono(v: unknown): ReactNode {
-  if (v === null || v === undefined) return <span className="text-[#6a6a6a]">—</span>;
+  if (v === null || v === undefined) return <span className="text-ink-subtle">—</span>;
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }
 
 function list(arr: unknown): ReactNode {
-  if (!Array.isArray(arr) || arr.length === 0) return <span className="text-[#6a6a6a]">—</span>;
+  if (!Array.isArray(arr) || arr.length === 0) return <span className="text-ink-subtle">—</span>;
   return arr.map((x) => String(x)).join(", ");
 }
 
@@ -69,7 +69,7 @@ function ChunkList({ chunks, label }: { chunks: RetrievedChunk[]; label: string 
           "mb-1 inline-block rounded px-1.5 py-0.5 text-xs font-semibold",
           empty
             ? "bg-red-900/50 text-red-200"
-            : "bg-[#1a1c20] text-[#9a9a9a]",
+            : "bg-surface text-ink-muted",
         )}
       >
         {label}: {empty ? "0 retrieved ⚠" : `${chunks.length} retrieved`}
@@ -77,15 +77,15 @@ function ChunkList({ chunks, label }: { chunks: RetrievedChunk[]; label: string 
       {empty ? null : (
         <ol className="flex flex-col gap-1.5">
           {chunks.map((c, i) => (
-            <li key={i} className="rounded border border-[#2a2d33] bg-[#15161a] p-2 text-xs">
-              <div className="mb-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[#8a8a8a]">
+            <li key={i} className="rounded border border-line bg-surface-sunken p-2 text-xs">
+              <div className="mb-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-ink-subtle">
                 <span>#{i + 1}</span>
                 <span>{c.collection}</span>
                 <span>score {typeof c.score === "number" ? c.score.toFixed(3) : "—"}</span>
                 <span>{c.source}</span>
                 {c.page != null ? <span>p.{c.page}</span> : null}
               </div>
-              <div className="whitespace-pre-wrap break-words font-mono text-[#c7c7c7]">{c.text}</div>
+              <div className="whitespace-pre-wrap break-words font-mono text-ink/85">{c.text}</div>
             </li>
           ))}
         </ol>
@@ -108,18 +108,18 @@ function CombatBlock({ combat }: { combat: CombatState }) {
       ) : null}
       <div className="mt-2 overflow-x-auto">
         <table className="w-full border-collapse text-left font-mono text-[11px]">
-          <thead className="text-[#8a8a8a]">
+          <thead className="text-ink-subtle">
             <tr>
               {["name", "player", "hp", "ac", "atk", "dmg", "alive"].map((h) => (
-                <th key={h} className="border-b border-[#2a2d33] px-1.5 py-1 font-semibold">
+                <th key={h} className="border-b border-line px-1.5 py-1 font-semibold">
                   {h}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="text-[#d7d7d7]">
+          <tbody className="text-ink">
             {combat.combatants.map((c, i) => (
-              <tr key={i} className={cn(!c.alive && "text-[#6a6a6a] line-through")}>
+              <tr key={i} className={cn(!c.alive && "text-ink-subtle line-through")}>
                 <td className="px-1.5 py-1">{c.display_name || c.name}</td>
                 <td className="px-1.5 py-1">{c.is_player ? "yes" : "no"}</td>
                 <td className="px-1.5 py-1">
@@ -151,7 +151,7 @@ export function DevPanel({
 }) {
   if (!debug && !adjudication) {
     return (
-      <div className="mr-auto mt-1 max-w-[820px] rounded-md border border-amber-900/60 bg-[#15161a] px-3 py-2 text-xs italic text-[#8a8a8a]">
+      <div className="mr-auto mt-1 max-w-[820px] rounded-md border border-ember-900/60 bg-surface-sunken px-3 py-2 text-xs italic text-ink-subtle">
         🔧 No debug captured for this turn (sent in User mode).
       </div>
     );
@@ -161,11 +161,11 @@ export function DevPanel({
   const timings = debug?.timings_ms ?? {};
 
   return (
-    <div className="mr-auto mt-1 w-full max-w-[820px] overflow-hidden rounded-md border border-amber-900/60 bg-[#101216] text-xs">
-      <div className="flex items-center gap-2 border-b border-amber-900/60 bg-amber-950/30 px-3 py-1.5 font-semibold text-amber-200">
+    <div className="mr-auto mt-1 w-full max-w-[820px] overflow-hidden rounded-md border border-ember-900/60 bg-canvas text-xs">
+      <div className="flex items-center gap-2 border-b border-ember-900/60 bg-ember-950/30 px-3 py-1.5 font-semibold text-ember-200">
         <span>🔧 Dev panel</span>
         {debug?.model ? (
-          <span className="ml-auto font-mono text-[#9a9a9a]">{debug.model}</span>
+          <span className="ml-auto font-mono text-ink-muted">{debug.model}</span>
         ) : null}
       </div>
 
@@ -178,7 +178,7 @@ export function DevPanel({
               <KV k="entities" v={mono(debug.parsed_input.entities)} />
             </>
           ) : (
-            <span className="text-[#6a6a6a]">no parsed_input</span>
+            <span className="text-ink-subtle">no parsed_input</span>
           )}
         </Section>
       ) : null}
@@ -190,13 +190,13 @@ export function DevPanel({
           <KV k="damage" v={mono(adjudication.damage)} />
           <KV k="scene_id" v={mono(adjudication.scene_id)} />
           <div className="mt-1">
-            <div className="text-[#8a8a8a]">mechanical_summary</div>
-            <pre className="mt-0.5 whitespace-pre-wrap break-words rounded bg-[#15161a] p-2 font-mono text-[#c7c7c7]">
+            <div className="text-ink-subtle">mechanical_summary</div>
+            <pre className="mt-0.5 whitespace-pre-wrap break-words rounded bg-surface-sunken p-2 font-mono text-ink/85">
               {adjudication.mechanical_summary || "—"}
             </pre>
           </div>
-          <div className="mt-1 border-t border-[#2a2d33] pt-1">
-            <div className="mb-0.5 text-[#8a8a8a]">character_update</div>
+          <div className="mt-1 border-t border-line pt-1">
+            <div className="mb-0.5 text-ink-subtle">character_update</div>
             <KV k="hp_delta" v={mono(cu?.hp_delta)} />
             <KV k="add_conditions" v={list(cu?.add_conditions)} />
             <KV k="remove_conditions" v={list(cu?.remove_conditions)} />
@@ -233,7 +233,7 @@ export function DevPanel({
               ))}
             </div>
           ) : (
-            <span className="text-[#6a6a6a]">none</span>
+            <span className="text-ink-subtle">none</span>
           )}
         </Section>
       ) : null}
@@ -243,7 +243,7 @@ export function DevPanel({
           {debug.combat_state ? (
             <CombatBlock combat={debug.combat_state} />
           ) : (
-            <span className="text-[#6a6a6a]">no active combat</span>
+            <span className="text-ink-subtle">no active combat</span>
           )}
         </Section>
       ) : null}
@@ -261,8 +261,8 @@ export function DevPanel({
 
       <Section title="Raw debug JSON" defaultOpen={false}>
         <details>
-          <summary className="cursor-pointer text-[#8a8a8a]">Show raw JSON</summary>
-          <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-[#15161a] p-2 font-mono text-[11px] text-[#c7c7c7]">
+          <summary className="cursor-pointer text-ink-subtle">Show raw JSON</summary>
+          <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-sunken p-2 font-mono text-[11px] text-ink/85">
             {JSON.stringify({ debug: debug ?? null, adjudication: adjudication ?? null }, null, 2)}
           </pre>
         </details>
@@ -270,3 +270,4 @@ export function DevPanel({
     </div>
   );
 }
+export default DevPanel;

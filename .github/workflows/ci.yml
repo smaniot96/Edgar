@@ -2,9 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [production]
+    branches: [main]
   pull_request:
-    branches: [production]
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same uv as the one that writes uv.lock, so `--locked` / `--frozen` agree on the format.
+  UV_VERSION: "0.9.9"
 
 jobs:
   edgar-ruff:
@@ -12,42 +20,128 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          version: "0.6.6"
+          version: ${{ env.UV_VERSION }}
 
       - name: Sync workspace and dev tools
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
 
+      # Lint only; formatting is applied in a separate pass and not enforced here yet.
       - name: Ruff check (monorepo)
         run: uv run ruff check .
 
   edgar-tests:
     runs-on: ubuntu-latest
+    env:
+      # conftest turns "Docker unavailable" into a failure (instead of a skip) when CI is set.
+      CI: "true"
+      OPENAI_API_KEY: test-key-for-ci
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          version: "0.6.6"
+          version: ${{ env.UV_VERSION }}
 
       - name: Sync workspace and dev tools
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
 
       - name: Run pytest
-        run: uv run pytest tests/ -x --tb=short
+        run: uv run pytest tests/ --tb=short
 
-  frontend-build:
+  edgar-migrations:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: edgar
+          POSTGRES_PASSWORD: edgar
+          POSTGRES_DB: edgar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U edgar -d edgar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      POSTGRES_USER: edgar
+      POSTGRES_PASSWORD: edgar
+      POSTGRES_DB: edgar
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Sync workspace and dev tools
+        run: uv sync --locked --group dev
+
+      - name: Apply all migrations
+        working-directory: db
+        run: uv run --project .. python -m alembic upgrade head
+
+      - name: Models match migrations (alembic check)
+        working-directory: db
+        run: uv run --project .. python -m alembic check
+
+      - name: Latest migration downgrades and re-applies
+        working-directory: db
+        run: |
+          uv run --project .. python -m alembic downgrade -1
+          uv run --project .. python -m alembic upgrade head
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: api
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build migrate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrate
+          push: false
+          cache-from: type=gha
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install and build frontend
-        working-directory: frontend
-        run: npm ci && npm run build
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build

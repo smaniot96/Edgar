@@ -154,17 +154,46 @@ export interface CharacterUpdate {
   remove_conditions?: string[] | null;
   inventory_add?: string[] | null;
   inventory_remove?: string[] | null;
+  /** Dice expression the damage came from (e.g. "1d8+3"). */
+  damage_dice?: string | null;
   [key: string]: unknown;
+}
+
+export interface FlagUpdate {
+  key: string;
+  value: string;
+}
+
+export interface DiceLogEntry {
+  expression: string;
+  rolls: number[];
+  modifier: number;
+  total: number;
+  purpose?: string | null;
 }
 
 export interface AdjudicationResult {
   success: boolean;
   damage: number | null;
+  conditions?: string[] | null;
   mechanical_summary: string;
+  /** Total of the rolled expression; null when no dice were rolled. */
   dice_result: number | null;
+  /** Roll context: check name, target number (DC, or the AC for attacks), modifier, expression. */
+  check?: string | null;
+  dc?: number | null;
+  against?: "DC" | "AC" | null;
+  modifier?: number | null;
+  /** e.g. "1d20+5". */
+  roll_expression?: string | null;
+  /** The raw d20 face (for nat 20 / nat 1). */
+  natural_roll?: number | null;
+  dice_log?: DiceLogEntry[] | null;
+  /** "pending" = the DM thinks the adventure may be over and awaits the player's confirmation. */
+  completion_status?: "none" | "pending" | "accepted" | "rejected" | null;
   character_update?: CharacterUpdate | null;
-  flags_set?: Record<string, unknown> | null;
-  flags_cleared?: Record<string, unknown> | null;
+  flags_set?: FlagUpdate[] | null;
+  flags_cleared?: string[] | null;
   scene_id?: string | null;
 }
 
@@ -182,12 +211,29 @@ export interface Combatant {
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | null;
 
+/** Initiative entry (newer backends); `init` is the rolled initiative. */
+export interface InitiativeEntry {
+  name: string;
+  init?: number | null;
+  is_player?: boolean;
+  hp?: number | null;
+  hp_max?: number | null;
+  ac?: number | null;
+  alive?: boolean;
+}
+
 export interface CombatState {
   round: number;
   ended: boolean;
   outcome: CombatOutcome;
   second_wind_used?: boolean;
   initiative_order?: string[];
+  initiative?: InitiativeEntry[] | null;
+  /** Index into the initiative order of whose turn it is (if provided). */
+  current_turn_index?: number | null;
+  /** Name of the combatant whose turn it is (if provided). */
+  current_turn?: string | null;
+  player_ac?: number | null;
   combatants: Combatant[];
 }
 
@@ -228,13 +274,20 @@ export interface DebugPayload {
   model: string;
 }
 
-/** Subset of character carried by the `done`/sync turn payload. */
+/**
+ * Character carried by the `done`/sync turn payload. The backend sends `class`; older
+ * builds/types used `character_class` — accept both.
+ */
 export interface TurnCharacter {
+  id?: number;
   name?: string;
   hp_current?: number;
   hp_max?: number;
   level?: number;
+  class?: string;
   character_class?: string;
+  stats?: Record<string, unknown> | null;
+  inventory?: Record<string, unknown> | null;
 }
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */
@@ -244,4 +297,11 @@ export interface TurnResult {
   current_scene_id?: string | null;
   combat_state?: CombatState | null;
   campaign_complete?: boolean;
+}
+
+/** Error payload of a failed turn (SSE `error` frame or HTTP error body). */
+export interface TurnErrorPayload {
+  code?: string;
+  message?: string;
+  detail?: string | { code?: string; message?: string } | unknown;
 }

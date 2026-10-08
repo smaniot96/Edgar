@@ -1,5 +1,5 @@
 # Build static assets only (optional standalone artifact)
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /frontend
 COPY package.json package-lock.json ./
 RUN npm ci

@@ -24,14 +24,19 @@ class AgentState(TypedDict, total=False):
     current_scene_id: str | None
     npcs: list  # [{name, disposition}] loaded from DB; used to keep allies out of enemy rosters
     combat_state: dict  # loaded from DB if an encounter is in progress
+    memory_summary: str | None  # rolling "story so far" for turns older than `messages`
 
     # Produced by nodes
     parsed_input: ParsedInput  # InputParser
     rules_context: list  # WorldRetriever (rules bucket)
     adventure_context: list  # WorldRetriever (adventure bucket)
     retrieved_context: list  # WorldRetriever (legacy merged view; nodes prefer the split)
+    retrieval_degraded: bool  # WorldRetriever: a bucket failed and came back empty
     adjudication_result: AdjudicationResult  # RulesAdjudicator
     narration: str  # Narrator
+    # WorldStateUpdater: event_log rows ({event_type, payload}) the API writes in the turn's
+    # single transaction (nodes never commit on their own).
+    telemetry_events: list[dict]
 
     # Reserved / advisory
     state_updates_applied: bool  # written by API after apply_adjudication

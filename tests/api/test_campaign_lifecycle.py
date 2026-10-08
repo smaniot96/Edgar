@@ -148,7 +148,7 @@ async def test_assign_character_to_ended_campaign_returns_409(api_client) -> Non
             "base_inventory": {},
         },
     )
-    assert created.status_code == 200
+    assert created.status_code == 201
     new_id = created.json()["id"]
 
     assign = await api_client.post(
@@ -158,3 +158,37 @@ async def test_assign_character_to_ended_campaign_returns_409(api_client) -> Non
     assert assign.status_code == 409
     assert "ended" in assign.json()["detail"].lower()
 
+
+
+async def _create_character(api_client, name: str) -> int:
+    created = await api_client.post(
+        "/api/characters",
+        json={"name": name, "character_class": "Rogue", "level": 1, "hp_max": 10},
+    )
+    assert created.status_code == 201
+    return created.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_reopen_restores_only_assignments_closed_by_the_end(api_client) -> None:
+    """Reopen restores exactly the assignments `end` closed, not ones released before it."""
+    seed = await api_client.post("/api/seed")
+    cid = seed.json()["campaign_id"]
+
+    released_id = await _create_character(api_client, "Released")
+    assert (
+        await api_client.post(f"/api/campaigns/{cid}/characters", json={"character_id": released_id})
+    ).status_code == 201
+    assert (
+        await api_client.delete(f"/api/campaigns/{cid}/characters/{released_id}")
+    ).status_code == 204
+
+    roster_before = {r["character_id"] for r in (await api_client.get(f"/api/campaigns/{cid}/characters")).json()}
+    assert released_id not in roster_before and roster_before
+
+    await api_client.post(f"/api/campaigns/{cid}/end")
+    reopened = await api_client.post(f"/api/campaigns/{cid}/reopen")
+    assert reopened.status_code == 200
+
+    roster_after = {r["character_id"] for r in (await api_client.get(f"/api/campaigns/{cid}/characters")).json()}
+    assert roster_after == roster_before

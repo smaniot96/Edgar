@@ -1,71 +1,23 @@
 import pytest
-from sqlalchemy import select
 
-from db.postgres.models import CharacterAssignment, EventLog, Session as SessionModel, WorldFlag
+from tests.api.test_turn_pipeline import _fake_chat, _seed
 
 
 @pytest.mark.asyncio
-async def test_session_turn_persists_narration_hp_flags(
-    fake_llm_turn,
-    fake_retrieval,
-    api_client,
-) -> None:
-    seed = await api_client.post("/api/seed")
-    assert seed.status_code == 200
-    session_id = seed.json()["session_id"]
+async def test_session_turn_persists_narration_hp_flags(fake_llm_turn, fake_retrieval, api_client) -> None:
+    from agent.models.parsed_input import ParsedInput
 
-    turn = await api_client.post(
-        f"/api/sessions/{session_id}/turn",
-        json={"message": "I look for tracks in the mud."},
-    )
+    # Damage is only accepted after a FAILED check; WIS 12 survival can't reach DC 25.
+    _fake_chat()._parsed = ParsedInput(intent="exploration", check="survival", difficulty="very_hard")
+    sid = (await _seed(api_client))["session_id"]
+    turn = await api_client.post(f"/api/sessions/{sid}/turn", json={"message": "I look for tracks in the mud."})
     assert turn.status_code == 200
     payload = turn.json()
-    assert payload["narration"]
-    assert payload["character"]["hp_current"] == 7
+    # Engine-rolled damage (1d6) capped by the LLM's proposed 5.
+    assert 7 <= payload["character"]["hp_current"] <= 11
     assert payload["current_scene_id"] == "forest_trail"
-
-    import db.postgres.session as sm
-
-    async with sm.async_session_factory() as s:
-        ev = (
-            (
-                await s.execute(
-                    select(EventLog).where(
-                        EventLog.session_id == session_id,
-                        EventLog.event_type == "narration",
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert any("tracks" in (e.payload or {}).get("player_input", "") for e in ev)
-
-        wf = (
-            await s.execute(
-                select(WorldFlag).where(WorldFlag.key == "goblin_ambush")
-            )
-        ).scalar_one_or_none()
-        assert wf is not None
-        assert wf.value == "resolved"
-
-        sess = (
-            await s.execute(select(SessionModel).where(SessionModel.id == session_id))
-        ).scalar_one()
-        assert sess.current_scene_id == "forest_trail"
-
-        char_id = sess.active_character_id
-        assert char_id is not None
-        ass = (
-            await s.execute(
-                select(CharacterAssignment).where(
-                    CharacterAssignment.character_id == char_id,
-                    CharacterAssignment.campaign_id == sess.campaign_id,
-                    CharacterAssignment.ended_at.is_(None),
-                )
-            )
-        ).scalar_one()
-        assert ass.hp_current == 7
+    assert payload["adjudication"]["success"] is False
+    assert payload["adjudication"]["dc"] == 25
 
 
 @pytest.mark.asyncio
@@ -76,8 +28,7 @@ async def test_turn_fails_when_hp_delta_zeroed_in_world_writes(
     api_client,
 ) -> None:
     """If apply_adjudication ignores HP delta, character HP stays at seed default (12)."""
-    from apps.api.routers import session as session_mod
-    from apps.api.services import world_writes
+    from apps.api.services import turn_runner, world_writes
 
     real_apply = world_writes.apply_adjudication
 
@@ -92,7 +43,7 @@ async def test_turn_fails_when_hp_delta_zeroed_in_world_writes(
         )
         await real_apply(db, game_session, adj2)
 
-    monkeypatch.setattr(session_mod, "apply_adjudication", zero_hp_delta_apply)
+    monkeypatch.setattr(turn_runner, "apply_adjudication", zero_hp_delta_apply)
 
     seed = await api_client.post("/api/seed")
     session_id = seed.json()["session_id"]

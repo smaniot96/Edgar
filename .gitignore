@@ -1,12 +1,18 @@
 # General
-*.log            # Log files
-*.pid            # Process ID files
-*.swp            # Swap files (created by editors like Vim)
+# Log files
+*.log
+# Process ID files
+*.pid
+# Swap files (created by editors like Vim)
+*.swp
 *.swo
-*.bak            # Backup files
-*.tmp            # Temporary files
+# Backup files
+*.bak
+# Temporary files
+*.tmp
 *.DS_Store
-Thumbs.db        # Windows specific
+# Windows specific
+Thumbs.db
 
 # Lock files (NOT uv.lock — those must be committed for reproducible builds)
 package-lock.json
@@ -16,8 +22,10 @@ Pipfile.lock
 composer.lock
 
 # Node.js
-node_modules/    # Node.js dependencies
-npm-debug.log    # NPM debug log
+# Node.js dependencies
+node_modules/
+# NPM debug log
+npm-debug.log
 yarn-debug.log
 yarn-error.log
 
@@ -26,52 +34,82 @@ __pycache__/
 *.pyc
 *.egg-info/
 build/
-*.pyo            # Optimized Python bytecode files
-*.pyd            # Python dynamic libraries
-env/             # Virtual environments
-venv/            # Python virtual environments
-.venv/           # uv / pip virtual environments
-.idea/           # PyCharm IDE files
+# Optimized Python bytecode files
+*.pyo
+# Python dynamic libraries
+*.pyd
+# Virtual environments
+env/
+# Python virtual environments
+venv/
+# uv / pip virtual environments
+.venv/
+# PyCharm IDE files
+.idea/
 
 # Java
-*.class          # Compiled Java classes
-*.jar            # Java archive files
-*.war            # Web archive files
-*.ear            # Enterprise archive files
-target/          # Build output
+# Compiled Java classes
+*.class
+# Java archive files
+*.jar
+# Web archive files
+*.war
+# Enterprise archive files
+*.ear
+# Build output
+target/
 
 # JavaScript / TypeScript
-dist/            # Distribution directory (compiled code)
-build/           # Build directory
-coverage/        # Coverage reports
-*.tsbuildinfo    # TypeScript build information
+# Distribution directory (compiled code)
+dist/
+# Build directory
+build/
+# Coverage reports
+coverage/
+# TypeScript build information
+*.tsbuildinfo
 
 # Ruby
-*.gem            # Ruby gem files
-*.rbc            # Ruby compiled files
-.bundle/         # Bundler directory
-log/             # Log files
-tmp/             # Temporary files
-vendor/          # Vendor files (including dependencies)
+# Ruby gem files
+*.gem
+# Ruby compiled files
+*.rbc
+# Bundler directory
+.bundle/
+# Log files
+log/
+# Temporary files
+tmp/
+# Vendor files (including dependencies)
+vendor/
 
 # Go
-bin/             # Go binary output
-*.exe            # Executable files
-*.test           # Test binaries
-vendor/          # Go vendor dependencies
+# Go binary output
+bin/
+# Executable files
+*.exe
+# Test binaries
+*.test
+# Go vendor dependencies
+vendor/
 
 # Docker
-*.tar            # Docker image tarballs
-.docker/         # Docker build temporary files and output
-docker-compose.override.yml  # Local Docker Compose overrides
-*.dockerignore   # Docker ignore file
+# Docker image tarballs
+*.tar
+# Docker build temporary files and output
+.docker/
+# Local Docker Compose overrides
+docker-compose.override.yml
+# Docker ignore file
+*.dockerignore
 
 # .env files
 /.env
 .env
 .env.*
 !.env.example
-.env.local       # Local environment variables (Do not commit)
+# Local environment variables (Do not commit)
+.env.local
 
 # Edgar data (PDFs and extracted markdown live in data/; bind-mounted into Docker)
 data/
@@ -83,17 +121,24 @@ plans/
 audit/
 
 # JetBrains IDEs
-.idea/           # IntelliJ, WebStorm, PhpStorm, PyCharm project files
-*.iml            # IntelliJ IDEA module files
+# IntelliJ, WebStorm, PhpStorm, PyCharm project files
+.idea/
+# IntelliJ IDEA module files
+*.iml
 
 # VS Code
-.vscode/         # Visual Studio Code project settings
-.settings/       # Eclipse settings
+# Visual Studio Code project settings
+.vscode/
+# Eclipse settings
+.settings/
 
 # Eclipse
-.project         # Eclipse project file
-.classpath       # Eclipse classpath file
-.idea/           # JetBrains IDE files
+# Eclipse project file
+.project
+# Eclipse classpath file
+.classpath
+# JetBrains IDE files
+.idea/
 *.sublime-workspace
 *.sublime-project
 
@@ -104,61 +149,95 @@ audit/
 Icon?
 
 # Windows
-Thumbs.db        # Windows image cache
-Desktop.ini      # Windows desktop configuration file
+# Windows image cache
+Thumbs.db
+# Windows desktop configuration file
+Desktop.ini
 
 # .NET
-bin/             # Compiled binary files
-obj/             # Temporary object files
-.vs/             # Visual Studio files
-.vscode/         # Visual Studio Code configuration files
+# Compiled binary files
+bin/
+# Temporary object files
+obj/
+# Visual Studio files
+.vs/
+# Visual Studio Code configuration files
+.vscode/
 
 # PHP
-/vendor/         # Composer dependencies
-phpunit.xml      # PHPUnit configuration files
+# Composer dependencies
+/vendor/
+# PHPUnit configuration files
+phpunit.xml
 
 # Terraform
-*.tfstate        # Terraform state files
-*.tfstate.backup # Backup state files
-.terraform/      # Terraform working directory
+# Terraform state files
+*.tfstate
+# Backup state files
+*.tfstate.backup
+# Terraform working directory
+.terraform/
 
 # Kubernetes
-*.kube/config    # Kubernetes configuration files
+# Kubernetes configuration files
+*.kube/config
 
 # Ansible
-*.retry          # Ansible retry files
-*.yml~           # Backup YAML files
-*.swp            # Swap files
+# Ansible retry files
+*.retry
+# Backup YAML files
+*.yml~
+# Swap files
+*.swp
 
 # Bash
-*.bash_history   # Bash history file
-*.bash_profile   # Bash profile file
+# Bash history file
+*.bash_history
+# Bash profile file
+*.bash_profile
 
 # Flutter/Dart
-.dart_tool/      # Dart tools and packages
-.pub/            # Pub packages
-build/           # Flutter build output
+# Dart tools and packages
+.dart_tool/
+# Pub packages
+.pub/
+# Flutter build output
+build/
 
 # Elixir
-_build/          # Elixir build output
-deps/            # Elixir dependencies
+# Elixir build output
+_build/
+# Elixir dependencies
+deps/
 
 # Rust
-target/          # Rust build output
+# Rust build output
+target/
 
 # Swift
-.xcodeproj/      # Xcode project files
-*.xcodeproj      # Xcode project files
-*.xcworkspace    # Xcode workspace files
-DerivedData/     # Xcode derived data
+# Xcode project files
+.xcodeproj/
+# Xcode project files
+*.xcodeproj
+# Xcode workspace files
+*.xcworkspace
+# Xcode derived data
+DerivedData/
 
 # Cloud IDE (e.g., Gitpod)
-.gitpod/         # Gitpod workspace config files
+# Gitpod workspace config files
+.gitpod/
 
 # Miscellaneous
-*.bak            # Backup files
-*.orig           # Original files from merging or patching
-*.tmp            # Temporary files created by apps or IDEs
+# Backup files
+*.bak
+# Original files from merging or patching
+*.orig
+# Temporary files created by apps or IDEs
+*.tmp
 
 # Local dev-only Docker override (source bind-mount + uvicorn --reload). Not for prod.
 docker-compose.override.yml
+
+# Local database backups
+backups/

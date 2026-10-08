@@ -1,44 +1,32 @@
+import { WrenchIcon } from "../components/ui/icons";
 import { cn } from "../lib/cn";
 import { useMode } from "./ModeContext";
 
 /**
- * Compact User/Developer switch. Active mode is highlighted; when in Developer
- * mode the control wears an amber tint and a 🔧 icon so the mode is obvious.
+ * Compact Developer-mode switch (wrench icon). Subtle in User mode; amber with a "Dev" label
+ * when Developer mode is on. Lives in the app nav only.
  */
 export function ModeToggle({ className }: { className?: string }) {
-  const { mode, isDev, toggleMode } = useMode();
+  const { isDev, toggleMode } = useMode();
   return (
     <button
       type="button"
       onClick={toggleMode}
       role="switch"
       aria-checked={isDev}
-      aria-label={`Switch to ${isDev ? "User" : "Developer"} mode`}
-      title={`Currently in ${isDev ? "Developer" : "User"} mode — click to switch`}
+      aria-label="Developer mode"
+      title={isDev ? "Developer mode on — click to turn off" : "Turn on Developer mode"}
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-1 py-0.5 text-xs font-medium transition-colors",
+        "inline-flex h-8 items-center gap-1.5 rounded-control border px-2 text-xs font-semibold transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400",
         isDev
-          ? "border-amber-600 bg-amber-950/60 text-amber-200"
-          : "border-[#333] bg-[#1a1c20] text-[#9a9a9a]",
+          ? "border-ember-600 bg-ember-950/60 text-ember-200"
+          : "border-transparent text-ink-subtle hover:bg-surface-raised hover:text-ink",
         className,
       )}
     >
-      <span
-        className={cn(
-          "rounded-full px-2 py-0.5",
-          mode === "user" ? "bg-[#2a2d33] text-[#e6e6e6]" : "text-[#9a9a9a]",
-        )}
-      >
-        User
-      </span>
-      <span
-        className={cn(
-          "rounded-full px-2 py-0.5",
-          isDev ? "bg-amber-700/70 text-amber-50" : "text-[#9a9a9a]",
-        )}
-      >
-        🔧 Developer
-      </span>
+      <WrenchIcon className="h-4 w-4" />
+      {isDev ? <span>Dev</span> : null}
     </button>
   );
 }
@@ -50,7 +38,7 @@ export function DevBadge({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "rounded-md border border-amber-600 bg-amber-900/50 px-1.5 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-amber-200",
+        "rounded-md border border-ember-600 bg-ember-900/50 px-1.5 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-ember-200",
         className,
       )}
     >

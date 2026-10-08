@@ -1,24 +1,23 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from db.postgres.models import Campaign, CharacterAssignment
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
+
 from ..dependencies import current_user_id, get_session
 from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
+from ._common import Page, get_or_404
 
 router = APIRouter(tags=["campaigns"])
 
 
 async def _load_campaign_or_404(db: AsyncSession, campaign_id: int) -> Campaign:
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    campaign = result.scalar_one_or_none()
-    if campaign is None:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    return campaign
+    return await get_or_404(db, Campaign, campaign_id, "Campaign")
 
 
 @router.get("/campaigns", response_model=list[CampaignRead])
@@ -28,8 +27,9 @@ async def list_campaigns(
         default=None,
         description="Filter by lifecycle status (omit for all campaigns)",
     ),
+    page: Page = Depends(),
 ):
-    stmt = select(Campaign)
+    stmt = select(Campaign).order_by(Campaign.id).limit(page.limit).offset(page.offset)
     if status is not None:
         stmt = stmt.where(Campaign.status == status)
     result = await db.execute(stmt)
@@ -72,7 +72,7 @@ async def open_campaign_for_adventure(
     if existing is not None:
         return CampaignRead.model_validate(existing)
 
-    meta = load_adventure_metadata(slug)
+    meta = await run_in_threadpool(load_adventure_metadata, slug)
     title = meta.get("title") or slug.replace("_", " ").title()
     campaign = Campaign(
         title=title,
@@ -86,7 +86,7 @@ async def open_campaign_for_adventure(
     return CampaignRead.model_validate(campaign)
 
 
-@router.post("/campaigns", response_model=CampaignRead)
+@router.post("/campaigns", response_model=CampaignRead, status_code=201)
 async def create_campaign(
     body: CampaignCreate,
     db: AsyncSession = Depends(get_session),
@@ -97,11 +97,10 @@ async def create_campaign(
         if body.adventure_collections is not None
         else list(DEFAULT_ADVENTURE_COLLECTIONS)
     )
-    created_by = body.created_by if body.created_by is not None else owner_id
     campaign = Campaign(
         title=body.title,
         system=body.system,
-        created_by=created_by,
+        created_by=owner_id,
         adventure_collections=adv,
     )
     db.add(campaign)
@@ -132,11 +131,15 @@ async def delete_campaign(campaign_id: int, db: AsyncSession = Depends(get_sessi
 
 @router.post("/campaigns/{campaign_id}/end", response_model=CampaignRead)
 async def end_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
-    """Mark the campaign as ended and close active character assignments (plan 03)."""
+    """Mark the campaign as ended and close active character assignments (plan 03).
+
+    The closed assignments get exactly `campaign.ended_at` as their `ended_at`; that shared
+    timestamp is what `reopen` uses to find (only) the assignments this end closed.
+    """
     campaign = await _load_campaign_or_404(db, campaign_id)
     if campaign.status == "ended":
         return CampaignRead.model_validate(campaign)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     campaign.status = "ended"
     campaign.ended_at = now
     await db.execute(
@@ -154,20 +157,28 @@ async def end_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)
 
 @router.post("/campaigns/{campaign_id}/reopen", response_model=CampaignRead)
 async def reopen_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
-    """Undo a premature end; restores assignments ended together with this campaign end."""
+    """Undo a premature end; restores the assignments closed by that end.
+
+    Deterministic rule: `end` stamps the campaign and every assignment it closes with the same
+    timestamp, so exactly the assignments whose `ended_at` equals `campaign.ended_at` are
+    reopened. Assignments released manually earlier keep their own (different) `ended_at`.
+    A character that has since become active in another campaign is left ended (a character
+    can only be active in one campaign at a time).
+    """
     campaign = await _load_campaign_or_404(db, campaign_id)
     ended_snapshot = campaign.ended_at
     campaign.status = "active"
     campaign.ended_at = None
     if ended_snapshot is not None:
-        low = ended_snapshot - timedelta(seconds=2)
-        high = ended_snapshot + timedelta(seconds=2)
+        active_elsewhere = select(CharacterAssignment.character_id).where(
+            CharacterAssignment.ended_at.is_(None)
+        )
         await db.execute(
             update(CharacterAssignment)
             .where(
                 CharacterAssignment.campaign_id == campaign_id,
-                CharacterAssignment.ended_at >= low,
-                CharacterAssignment.ended_at <= high,
+                CharacterAssignment.ended_at == ended_snapshot,
+                CharacterAssignment.character_id.not_in(active_elsewhere),
             )
             .values(ended_at=None)
         )

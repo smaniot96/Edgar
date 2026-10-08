@@ -18,7 +18,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from agent.llm import make_chat_model
+from agent.llm import make_chat_model, message_text
 
 log = structlog.get_logger()
 
@@ -120,8 +120,7 @@ async def _expand_chapter(
         resp = await llm.ainvoke(
             [SystemMessage(content=_chapter_system()), HumanMessage(content=context)]
         )
-    raw = resp.content if hasattr(resp, "content") else str(resp)
-    body = raw if isinstance(raw, str) else str(raw)
+    body = message_text(resp)
     return f"## Chapter {index + 1}: {chapter.name}\n\n{body.strip()}"
 
 
@@ -187,7 +186,10 @@ async def build_generated_campaign(slug: str, title_hint: str, theme: str, size:
     except Exception as exc:
         log.exception("campaign_generation_failed", slug=slug)
         meta = load_meta(slug)
-        meta.update({"status": "failed", "error": str(exc)[:500]})
+        # Raw exception text can carry provider internals; the full trace is in the logs.
+        meta.update(
+            {"status": "failed", "error": f"Generation failed ({type(exc).__name__}); see server logs."}
+        )
         save_meta(slug, meta)
     finally:
         structlog.contextvars.unbind_contextvars("adventure_slug")

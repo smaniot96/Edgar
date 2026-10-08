@@ -6,7 +6,7 @@ Run from Edgar: uv run python -m db.vector.scripts.inspect_collections [--sample
 import argparse
 import sys
 
-from db.vector import get_qdrant_client, get_embeddings
+from db.vector import get_embeddings, get_qdrant_client
 
 
 def main() -> None:
@@ -64,24 +64,29 @@ def main() -> None:
                 text = p.payload.get("text", "")[:120] + "..." if len(p.payload.get("text", "")) > 120 else p.payload.get("text", "")
                 source = p.payload.get("source", "?")
                 page = p.payload.get("page", "?")
-                print(f"  {i}. [source={source}, page={page}] {text}")
+                heading = p.payload.get("heading_path")
+                where = f", {heading}" if heading else ""
+                print(f"  {i}. [source={source}, page={page}{where}] {text}")
 
     if args.search:
         print(f"\n--- Search: \"{args.search}\" ---")
         query_vector = get_embeddings([args.search])[0]
         for c in collections:
-            results = client.search(
+            # qdrant-client >= 1.15 removed `search`; `query_points` is the replacement.
+            results = client.query_points(
                 collection_name=c.name,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=args.limit,
                 with_payload=True,
-            )
+            ).points
             print(f"\n{c.name}:")
             for i, r in enumerate(results, 1):
                 text = (r.payload.get("text", "")[:100] + "...") if len(r.payload.get("text", "")) > 100 else r.payload.get("text", "")
                 source = r.payload.get("source", "?")
                 page = r.payload.get("page", "?")
-                print(f"  {i}. [source={source}, page={page}] score={r.score:.4f}")
+                heading = r.payload.get("heading_path")
+                where = f", {heading}" if heading else ""
+                print(f"  {i}. [source={source}, page={page}{where}] score={r.score:.4f}")
                 print(f"      {text}")
 
     print()

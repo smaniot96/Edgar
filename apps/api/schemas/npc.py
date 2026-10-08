@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._validators import forbid_null
+
 
 class NPCCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -21,3 +23,5 @@ class NPCUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     disposition: str | None = Field(None, min_length=1, max_length=255)
     stat_block: dict | None = None
+
+    reject_nulls = forbid_null("name", "disposition", "stat_block")

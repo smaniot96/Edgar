@@ -10,17 +10,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres.models import User
+
 from ..dependencies import get_session
 from ..schemas.user import UserCreate, UserRead, UserUpdate
 
 router = APIRouter(tags=["users"])
 
-_SEAM_EMAIL = "dm@edgar.local"
-
 
 async def _get_primary_user(db: AsyncSession) -> User | None:
-    """Return the first user in the DB (single-user seam)."""
-    result = await db.execute(select(User).limit(1))
+    """Return the first user in the DB (single-user seam; lowest id, as in `/api/seed`)."""
+    result = await db.execute(select(User).order_by(User.id).limit(1))
     return result.scalar_one_or_none()
 
 
