@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from db.postgres.models import Character, CharacterAssignment, Session as SessionModel
+from db.postgres.models import Campaign, Character, CharacterAssignment
+
 from ..dependencies import current_user_id, get_session
 from ..schemas.character import (
     CharacterAssignmentHistoryRead,
@@ -12,6 +13,7 @@ from ..schemas.character import (
     CharacterUpdate,
     CurrentAssignmentSummary,
 )
+from ._common import Page
 
 router = APIRouter(tags=["characters"])
 
@@ -61,14 +63,32 @@ def _read_with_assignment(char: Character, summary: CurrentAssignmentSummary | N
 async def list_characters(
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
+    page: Page = Depends(),
 ):
-    r = await db.execute(select(Character).where(Character.owner_user_id == owner_id))
-    chars = r.scalars().all()
-    out: list[CharacterRead] = []
-    for ch in chars:
-        summary = await _current_assignment_summary(db, ch.id)
-        out.append(_read_with_assignment(ch, summary))
-    return out
+    # One query: each character LEFT JOINed to its (at most one) active assignment's campaign.
+    active = (
+        select(CharacterAssignment.character_id, Campaign.id, Campaign.title)
+        .join(Campaign, Campaign.id == CharacterAssignment.campaign_id)
+        .where(CharacterAssignment.ended_at.is_(None))
+        .subquery()
+    )
+    r = await db.execute(
+        select(Character, active.c.id, active.c.title)
+        .outerjoin(active, active.c.character_id == Character.id)
+        .where(Character.owner_user_id == owner_id)
+        .order_by(Character.id)
+        .limit(page.limit)
+        .offset(page.offset)
+    )
+    return [
+        _read_with_assignment(
+            ch,
+            CurrentAssignmentSummary(campaign_id=camp_id, campaign_title=title)
+            if camp_id is not None
+            else None,
+        )
+        for ch, camp_id, title in r.all()
+    ]
 
 
 @router.get("/characters/{character_id}", response_model=CharacterRead)
@@ -82,7 +102,7 @@ async def get_character(
     return _read_with_assignment(char, summary)
 
 
-@router.post("/characters", response_model=CharacterRead)
+@router.post("/characters", response_model=CharacterRead, status_code=201)
 async def create_character(
     body: CharacterCreate,
     db: AsyncSession = Depends(get_session),
@@ -126,13 +146,9 @@ async def delete_character(
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
+    # The database clears sessions.active_character_id / combat_state.active_character
+    # (ON DELETE SET NULL) and removes the character's assignments (ON DELETE CASCADE).
     character = await _character_owned_or_404(db, character_id, owner_id)
-    await db.execute(
-        update(SessionModel)
-        .where(SessionModel.active_character_id == character_id)
-        .values(active_character_id=None)
-    )
-    await db.execute(delete(CharacterAssignment).where(CharacterAssignment.character_id == character_id))
     await db.delete(character)
     await db.commit()
 
@@ -142,13 +158,16 @@ async def list_character_assignments(
     character_id: int,
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
+    page: Page = Depends(),
 ):
     await _character_owned_or_404(db, character_id, owner_id)
     r = await db.execute(
         select(CharacterAssignment)
         .where(CharacterAssignment.character_id == character_id)
         .options(selectinload(CharacterAssignment.campaign))
-        .order_by(desc(CharacterAssignment.assigned_at))
+        .order_by(desc(CharacterAssignment.assigned_at), desc(CharacterAssignment.id))
+        .limit(page.limit)
+        .offset(page.offset)
     )
     rows = r.scalars().all()
     out: list[CharacterAssignmentHistoryRead] = []

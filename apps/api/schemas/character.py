@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ._validators import forbid_null
 
 
 class CurrentAssignmentSummary(BaseModel):
@@ -45,6 +47,10 @@ class CharacterUpdate(BaseModel):
     base_stats: dict | None = None
     base_inventory: dict | None = None
 
+    reject_nulls = forbid_null(
+        "name", "character_class", "level", "hp_max", "base_stats", "base_inventory"
+    )
+
 
 class CampaignCharacterAssignBody(BaseModel):
     character_id: int = Field(..., ge=1)
@@ -69,6 +75,15 @@ class CampaignCharacterPatch(BaseModel):
     hp_max: int | None = Field(None, ge=1)
     stats: dict | None = None
     inventory: dict | None = None
+
+    reject_nulls = forbid_null("hp_current", "hp_max", "stats", "inventory")
+
+    @model_validator(mode="after")
+    def _hp_within_max(self) -> "CampaignCharacterPatch":
+        # When only one side is sent the router checks against the stored value.
+        if self.hp_current is not None and self.hp_max is not None and self.hp_current > self.hp_max:
+            raise ValueError("hp_current cannot exceed hp_max")
+        return self
 
 
 class CharacterAssignmentHistoryRead(BaseModel):

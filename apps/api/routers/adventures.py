@@ -8,12 +8,14 @@ the PDF store tracks the lifecycle (processing -> ready | failed) so it survives
 
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import BinaryIO
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile
 from qdrant_client.http.exceptions import UnexpectedResponse
+from starlette.concurrency import run_in_threadpool
 
 from db.vector.client import get_qdrant_client
 from db.vector.collections import (
@@ -31,8 +33,8 @@ from ..services.adventures_meta import (
     ADVENTURES_DIR as _ADVENTURES_DIR,
     PDF_DIR as _PDF_DIR,
     load_meta as load_adventure_metadata,
-    metadata_slugs,
     meta_path as _metadata_path,
+    metadata_slugs,
     save_meta as _save_adventure_metadata,
 )
 
@@ -40,6 +42,7 @@ log = structlog.get_logger()
 router = APIRouter(tags=["adventures"])
 
 _MAX_UPLOAD_BYTES = 64 * 1024 * 1024  # 64 MB
+_COPY_CHUNK_BYTES = 1024 * 1024
 
 
 def _slugify(name: str) -> str:
@@ -136,10 +139,46 @@ def _ingest_adventure(slug: str, pdf_path: str, title: str) -> None:
     except Exception as exc:
         log.exception("adventure_ingest_failed", slug=slug)
         meta = load_adventure_metadata(slug)
-        meta.update({"status": "failed", "error": str(exc)[:500]})
+        # Raw exception text can carry internals; the full trace is in the logs.
+        meta.update(
+            {"status": "failed", "error": f"Ingestion failed ({type(exc).__name__}); see server logs."}
+        )
         _save_adventure_metadata(slug, meta)
     finally:
         structlog.contextvars.unbind_contextvars("adventure_slug")
+
+
+def _copy_capped(src: BinaryIO, dest: Path, max_bytes: int) -> int:
+    """Stream `src` to `dest` in chunks; return bytes written or -1 if over `max_bytes`.
+
+    Runs in a worker thread. Writes to a temp file and renames, so a rejected or failed upload
+    never leaves a partial PDF behind.
+    """
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    written = 0
+    try:
+        with tmp.open("wb") as out:
+            while chunk := src.read(_COPY_CHUNK_BYTES):
+                written += len(chunk)
+                if written > max_bytes:
+                    break
+                out.write(chunk)
+        if written > max_bytes:
+            tmp.unlink(missing_ok=True)
+            return -1
+        tmp.replace(dest)
+        return written
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _reserve_slug(desired: str, meta: dict) -> str:
+    """Pick a free slug (no collection, no metadata file) and write its metadata. Blocking."""
+    taken = set(_all_collection_names()) | metadata_slugs()
+    slug = _unique_slug(desired, taken)
+    _save_adventure_metadata(slug, meta)
+    return slug
 
 
 @router.post("/adventures/upload", response_model=AdventureUploadResponse, status_code=202)
@@ -157,38 +196,44 @@ async def upload_adventure(
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-    contents = await file.read()
-    if not contents:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    if len(contents) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"PDF too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
-        )
-
     desired_title = (title or Path(filename).stem.replace("_", " ").strip()) or "Untitled Adventure"
-    all_names = _all_collection_names()
-    taken = set(all_names) | metadata_slugs()
-    slug = _unique_slug(_slugify(desired_title), taken)
-
-    _PDF_DIR.mkdir(parents=True, exist_ok=True)
-    pdf_path = _PDF_DIR / f"{slug}.pdf"
-    pdf_path.write_bytes(contents)
-
-    _save_adventure_metadata(
-        slug,
+    # All blocking work (Qdrant HTTP call, metadata + PDF file IO) runs in the threadpool so
+    # the event loop keeps serving other requests while a large upload is copied.
+    slug = await run_in_threadpool(
+        _reserve_slug,
+        _slugify(desired_title),
         {
             "title": desired_title,
             "status": "processing",
             "chunks": None,
             "error": None,
             "source_filename": filename,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         },
     )
 
+    def _discard_reservation() -> None:
+        _metadata_path(slug).unlink(missing_ok=True)
+
+    await run_in_threadpool(_PDF_DIR.mkdir, parents=True, exist_ok=True)
+    pdf_path = _PDF_DIR / f"{slug}.pdf"
+    try:
+        size = await run_in_threadpool(_copy_capped, file.file, pdf_path, _MAX_UPLOAD_BYTES)
+    except Exception:
+        await run_in_threadpool(_discard_reservation)
+        raise
+    if size <= 0:
+        await run_in_threadpool(_discard_reservation)
+        if size == 0:
+            await run_in_threadpool(pdf_path.unlink, missing_ok=True)
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        raise HTTPException(
+            status_code=413,
+            detail=f"PDF too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+        )
+
     background.add_task(_ingest_adventure, slug, str(pdf_path), desired_title)
-    log.info("adventure_upload_accepted", slug=slug, filename=filename, bytes=len(contents))
+    log.info("adventure_upload_accepted", slug=slug, filename=filename, bytes=size)
     return AdventureUploadResponse(slug=slug, title=desired_title, status="processing")
 
 
@@ -204,19 +249,22 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
 
     title_hint = (body.title or "").strip()
     base = _slugify(title_hint or body.theme or "ai campaign")
-    taken = set(_all_collection_names()) | metadata_slugs()
-    slug = _unique_slug(base, taken)
-
-    _save_adventure_metadata(
-        slug,
+    slug = await run_in_threadpool(
+        _reserve_slug,
+        base,
         {
             "title": title_hint or "AI campaign (generating…)",
             "status": "processing",
             "chunks": None,
             "error": None,
             "source_filename": None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "generation": {"kind": "ai", "size": body.size, "theme": body.theme},
+            "created_at": datetime.now(UTC).isoformat(),
+            "generation": {
+                "kind": "ai",
+                "size": body.size,
+                "theme": body.theme,
+                "title_hint": title_hint,
+            },
         },
     )
     background.add_task(
@@ -226,6 +274,45 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
     return AdventureUploadResponse(
         slug=slug, title=title_hint or "AI campaign", status="processing"
     )
+
+
+@router.post("/adventures/{slug}/retry", response_model=AdventureUploadResponse, status_code=202)
+def retry_adventure(slug: str, background: BackgroundTasks):
+    """Re-run ingestion (uploads) or generation (AI campaigns) for a failed adventure.
+
+    Typical use: an adventure left "failed" because a restart interrupted its processing.
+    409 if it is not in the failed state; 410 if there is nothing to retry from (the uploaded
+    PDF is gone and it was not AI-generated).
+    """
+    meta = load_adventure_metadata(slug)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Adventure not found")
+    if meta.get("status") != "failed":
+        raise HTTPException(status_code=409, detail="Only failed adventures can be retried.")
+
+    title = meta.get("title") or slug.replace("_", " ").title()
+    generation = meta.get("generation") or {}
+    pdf_path = _PDF_DIR / f"{slug}.pdf"
+    if generation.get("kind") == "ai":
+        from ..services.campaign_generator import build_generated_campaign
+
+        task_args: tuple = (
+            build_generated_campaign,
+            slug,
+            generation.get("title_hint") or "",
+            generation.get("theme") or "",
+            generation.get("size") or "medium",
+        )
+    elif pdf_path.is_file():
+        task_args = (_ingest_adventure, slug, str(pdf_path), title)
+    else:
+        raise HTTPException(status_code=410, detail="The source PDF is gone; upload it again.")
+
+    meta.update({"status": "processing", "error": None, "chunks": None})
+    _save_adventure_metadata(slug, meta)
+    background.add_task(*task_args)
+    log.info("adventure_retry_accepted", slug=slug)
+    return AdventureUploadResponse(slug=slug, title=title, status="processing")
 
 
 @router.patch("/adventures/{slug}", response_model=AdventureRead)
@@ -262,7 +349,10 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
         try:
             client.delete_collection(slug)
         except UnexpectedResponse as exc:
-            raise HTTPException(status_code=502, detail=f"Qdrant error: {exc}") from exc
+            log.error("adventure_delete_qdrant_failed", slug=slug, error=str(exc))
+            raise HTTPException(
+                status_code=502, detail="Vector store error while deleting the adventure."
+            ) from exc
 
     meta_path = _metadata_path(slug)
     if meta_path.is_file():

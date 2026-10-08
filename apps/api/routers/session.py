@@ -1,35 +1,49 @@
 """Session router: CRUD plus the two turn endpoints (sync JSON and SSE stream).
 
-Both turn endpoints share `_load_turn_initial_state` so they hand the agent the same shape:
-campaign, character, prior narration messages, world flags, current scene, and any active
-combat row. The SSE endpoint is in `services.turn_runner.stream_session_turn`; the sync
-endpoint runs the compiled graph then commits writes inline.
+Both turn endpoints take the per-session turn lock FIRST, then build the agent's initial state
+with `_load_turn_initial_state` (so the state they act on cannot be stale), run the same agent
+topology, and persist through `services.turn_runner.persist_turn` (one transaction per turn).
+The rolling memory summary is updated as a background task after the response.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from db.postgres.models import Campaign, EventLog, Session as SessionModel
 
-from ..dependencies import acquire_turn_lock, get_redis, get_session, release_turn_lock
+from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse
 from ..services.character_assignments import character_play_state, load_active_assignment
-from ..services.campaign_completion import maybe_complete_campaign
-from ..services.combat import load_active_combat, persist_combat
-from ..services.session_intro import generate_session_intro
+from ..services.combat import load_active_combat
 from ..services.npcs import load_npcs
-from ..services.session_messages import load_session_messages
-from ..services.turn_runner import stream_session_turn
+from ..services.session_intro import generate_session_intro
+from ..services.session_messages import (
+    load_memory_summary,
+    load_session_messages,
+    maybe_update_memory_summary,
+)
+from ..services.turn_runner import (
+    TurnError,
+    combat_state_public,
+    error_body,
+    persist_turn,
+    run_turn,
+    stream_session_turn,
+)
 from ..services.world_flags import load_world_flags
-from ..services.world_writes import MissingCharacterAssignmentError, apply_adjudication
+
+log = structlog.get_logger()
+
+_BUSY_DETAIL = "A turn is already in progress for this session. Please retry."
 
 router = APIRouter(tags=["sessions"])
 
@@ -38,11 +52,12 @@ async def _load_turn_initial_state(
     session_id: int,
     message: str,
     db: AsyncSession,
-) -> tuple[SessionModel, dict[str, Any]]:
+) -> dict[str, Any]:
     """Build the agent's initial state from DB rows. Raises 404 if the session is gone.
 
-    Returns the session ORM row alongside the dict so the caller can mutate session fields
-    (current_scene_id, refresh after writes) without a second query.
+    Call only while holding the turn lock. Ends the read-only transaction before returning so
+    the request's pooled connection is not held across the turn's LLM calls (the turn's writes
+    use their own short-lived session in `persist_turn`).
     """
     result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
     session = result.scalar_one_or_none()
@@ -79,11 +94,13 @@ async def _load_turn_initial_state(
         "current_scene_id": session.current_scene_id,
         "character": character,
         "npcs": npc_summaries,
+        "memory_summary": await load_memory_summary(db, session_id),
     }
     combat = await load_active_combat(db, session_id)
     if combat:
         initial_state["combat_state"] = combat
-    return session, initial_state
+    await db.commit()
+    return initial_state
 
 
 @router.get("/sessions", response_model=list[SessionRead])
@@ -107,6 +124,18 @@ async def get_session_by_id(session_id: int, db: AsyncSession = Depends(get_sess
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return SessionRead.model_validate(session)
+
+
+@router.get("/sessions/{session_id}/combat")
+async def get_session_combat(session_id: int, db: AsyncSession = Depends(get_session)):
+    """Active encounter in the same public shape as the stream's `done.combat_state`, or null.
+
+    Lets the client restore the combat HUD after a reload.
+    """
+    exists = await db.execute(select(SessionModel.id).where(SessionModel.id == session_id))
+    if exists.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return combat_state_public(await load_active_combat(db, session_id))
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageRead])
@@ -156,24 +185,27 @@ async def session_intro(
     instead of a blank chat. Returns `{started: true, narration, character, current_scene_id}`
     when it created the opening, or `{started: false}` if the session already has narration.
     """
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    camp_res = await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
-    campaign = camp_res.scalar_one_or_none()
-    if campaign is not None and campaign.status == "ended":
-        raise HTTPException(status_code=409, detail="Campaign has ended; reopen it to continue.")
-
     # Reuse the per-session turn lock so an intro can't race a first turn (or another intro).
-    acquired = await acquire_turn_lock(session_id, redis)
-    if not acquired:
+    # Taken before reading the session so the intro acts on current state.
+    lock = await acquire_turn_lock(session_id, redis)
+    if lock is None:
         raise HTTPException(status_code=409, detail="Session is busy; please retry.")
     try:
+        result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+        session = result.scalar_one_or_none()
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        camp_res = await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
+        campaign = camp_res.scalar_one_or_none()
+        if campaign is not None and campaign.status == "ended":
+            raise HTTPException(
+                status_code=409, detail="Campaign has ended; reopen it to continue."
+            )
+
         payload = await generate_session_intro(db, session)
     finally:
-        await release_turn_lock(session_id, redis)
+        await lock.release()
 
     if payload is None:
         return {"started": False}
@@ -182,6 +214,9 @@ async def session_intro(
 
 @router.post("/sessions", response_model=SessionRead)
 async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_session)):
+    campaign = await db.get(Campaign, body.campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     if body.active_character_id is not None:
         ass = await load_active_assignment(db, body.active_character_id, body.campaign_id)
         if ass is None:
@@ -189,7 +224,7 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
                 status_code=422,
                 detail="Character has no active assignment in this campaign",
             )
-    started_at = body.started_at if body.started_at is not None else datetime.now(timezone.utc)
+    started_at = body.started_at if body.started_at is not None else datetime.now(UTC)
     session = SessionModel(
         campaign_id=body.campaign_id,
         started_at=started_at,
@@ -211,6 +246,15 @@ async def update_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     update_data = body.model_dump(exclude_unset=True)
+    # Same invariant create enforces: the active character must be playing in this campaign.
+    new_character_id = update_data.get("active_character_id")
+    if new_character_id is not None:
+        ass = await load_active_assignment(db, new_character_id, session.campaign_id)
+        if ass is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Character has no active assignment in this campaign",
+            )
     for key, value in update_data.items():
         setattr(session, key, value)
     await db.commit()
@@ -228,89 +272,57 @@ async def delete_session(session_id: int, db: AsyncSession = Depends(get_session
     await db.commit()
 
 
+def _turn_error_response(err: TurnError) -> JSONResponse:
+    return JSONResponse(status_code=err.status_code, content=error_body(err.code))
+
+
 @router.post("/sessions/{session_id}/turn", response_model=TurnResponse)
 async def session_turn(
     session_id: int,
     body: TurnRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
     """Run one player turn synchronously and return the full result.
 
-    Lifecycle: load state -> acquire Redis lock (409 on contention) -> run agent ->
-    persist combat -> apply adjudication writes -> append narration to event_log -> commit
-    -> reload character so the response reflects post-write HP -> release lock in `finally`.
+    Lifecycle: acquire Redis lock (409 on contention) -> load state -> run agent -> persist
+    the whole turn in one transaction -> release lock in `finally` -> update the rolling memory
+    summary in the background. Failures return `{"code", "message", "detail"}` with a generic
+    message (409 missing assignment, 503 agent/LLM failure, 500 otherwise); details are logged.
     """
-    session, initial_state = await _load_turn_initial_state(session_id, body.message, db)
-    structlog.contextvars.bind_contextvars(
-        session_id=session_id,
-        campaign_id=session.campaign_id,
-    )
+    lock = await acquire_turn_lock(session_id, redis)
+    if lock is None:
+        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
 
-    acquired = await acquire_turn_lock(session_id, redis)
-    if not acquired:
-        structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
-        raise HTTPException(
-            status_code=409,
-            detail="A turn is already in progress for this session. Please retry.",
-        )
-
+    structlog.contextvars.bind_contextvars(session_id=session_id)
     try:
-        from agent.graph import app
+        initial_state = await _load_turn_initial_state(session_id, body.message, db)
+        structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
 
-        result = await app.ainvoke(initial_state)
-
-        if result.get("error"):
-            raise HTTPException(status_code=503, detail=result["error"])
-
-        new_combat = result.get("combat_state")
-        if new_combat:
-            await persist_combat(db, session_id, new_combat)
+        result = await run_turn(initial_state)
+        done = await persist_turn(session_id, body.message, result)
+        background_tasks.add_task(maybe_update_memory_summary, session_id)
 
         adjudication = result.get("adjudication_result")
-        if adjudication:
-            try:
-                await apply_adjudication(db, session, adjudication)
-            except MissingCharacterAssignmentError as e:
-                raise HTTPException(status_code=503, detail=str(e)) from e
-
-        db.add(
-            EventLog(
-                session_id=session_id,
-                event_type="narration",
-                payload={
-                    "player_input": body.message,
-                    "narration": result.get("narration", ""),
-                },
-            )
-        )
-        await db.commit()
-
-        campaign_complete = await maybe_complete_campaign(
-            db, session.campaign_id, adjudication
-        )
-
-        await db.refresh(session)
-        character_out = await character_play_state(
-            db, session.active_character_id, session.campaign_id
-        )
-
         return TurnResponse(
-            narration=result.get("narration", ""),
+            narration=done["narration"],
             adjudication=adjudication.model_dump() if adjudication else None,
             combat_state=result.get("combat_state"),
-            current_scene_id=session.current_scene_id,
-            character=character_out,
-            campaign_complete=campaign_complete,
+            current_scene_id=done["current_scene_id"],
+            character=done["character"],
+            campaign_complete=done["campaign_complete"],
         )
     except HTTPException:
         raise
-    except Exception as e:
-        structlog.get_logger().exception("turn_failed", session_id=session_id)
-        raise HTTPException(status_code=500, detail="Turn failed due to an internal error.") from e
+    except TurnError as e:
+        return _turn_error_response(e)
+    except Exception:
+        log.exception("turn_failed", session_id=session_id)
+        return _turn_error_response(TurnError("turn_failed"))
     finally:
         structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
-        await release_turn_lock(session_id, redis)
+        await lock.release()
 
 
 @router.post("/sessions/{session_id}/turn/stream")
@@ -322,38 +334,35 @@ async def session_turn_stream(
 ):
     """Stream the turn as Server-Sent Events; the lock is held for the lifetime of the stream.
 
-    A 409 (lock contention) is returned as a regular JSON error before the stream opens.
+    A 409 (lock contention) or 404 is returned as a regular JSON error before the stream opens.
     Errors after the stream begins are emitted as `error` SSE frames; the connection then
     closes and the lock is released in the generator's `finally`.
     """
-    session, initial_state = await _load_turn_initial_state(session_id, body.message, db)
-    structlog.contextvars.bind_contextvars(
-        session_id=session_id,
-        campaign_id=session.campaign_id,
-    )
-
-    acquired = await acquire_turn_lock(session_id, redis)
-    if not acquired:
-        structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
-        raise HTTPException(
-            status_code=409,
-            detail="A turn is already in progress for this session. Please retry.",
-        )
+    lock = await acquire_turn_lock(session_id, redis)
+    if lock is None:
+        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+    try:
+        initial_state = await _load_turn_initial_state(session_id, body.message, db)
+    except BaseException:
+        await lock.release()
+        raise
 
     async def event_gen():
+        structlog.contextvars.bind_contextvars(
+            session_id=session_id,
+            campaign_id=initial_state["campaign_id"],
+        )
         try:
             async for chunk in stream_session_turn(
                 session_id=session_id,
-                game_session=session,
                 body_message=body.message,
                 initial_state=initial_state,
-                db=db,
                 debug=body.debug,
             ):
                 yield chunk
         finally:
             structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
-            await release_turn_lock(session_id, redis)
+            await lock.release()
 
     return StreamingResponse(
         event_gen(),
@@ -363,4 +372,6 @@ async def session_turn_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+        # Runs after the stream closes (and the lock is released); never fails the turn.
+        background=BackgroundTask(maybe_update_memory_summary, session_id),
     )

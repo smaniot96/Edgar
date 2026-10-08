@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._validators import forbid_null
+
 
 class SessionCreate(BaseModel):
     """Request body for POST /sessions."""
@@ -33,7 +35,10 @@ class ChatMessageRead(BaseModel):
 
 
 class SessionUpdate(BaseModel):
-    """Request body for PATCH /sessions/{id} — all optional."""
+    """Request body for PATCH /sessions/{id} — all optional; only `started_at` is non-nullable."""
+
     started_at: datetime | None = None
     ended_at: datetime | None = None
     active_character_id: int | None = None
+
+    reject_nulls = forbid_null("started_at")

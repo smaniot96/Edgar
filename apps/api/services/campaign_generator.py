@@ -187,7 +187,10 @@ async def build_generated_campaign(slug: str, title_hint: str, theme: str, size:
     except Exception as exc:
         log.exception("campaign_generation_failed", slug=slug)
         meta = load_meta(slug)
-        meta.update({"status": "failed", "error": str(exc)[:500]})
+        # Raw exception text can carry provider internals; the full trace is in the logs.
+        meta.update(
+            {"status": "failed", "error": f"Generation failed ({type(exc).__name__}); see server logs."}
+        )
         save_meta(slug, meta)
     finally:
         structlog.contextvars.unbind_contextvars("adventure_slug")

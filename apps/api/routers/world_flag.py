@@ -9,25 +9,29 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres.models import Campaign, WorldFlag
+
 from ..dependencies import get_session
 from ..schemas.world_flag import WorldFlagCreate, WorldFlagRead, WorldFlagUpdate
+from ._common import Page, get_or_404
 
 router = APIRouter(tags=["world-flags"])
 
 
 async def _require_campaign(campaign_id: int, db: AsyncSession) -> Campaign:
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    campaign = result.scalar_one_or_none()
-    if campaign is None:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    return campaign
+    return await get_or_404(db, Campaign, campaign_id, "Campaign")
 
 
 @router.get("/campaigns/{campaign_id}/world-flags", response_model=list[WorldFlagRead])
-async def list_world_flags(campaign_id: int, db: AsyncSession = Depends(get_session)):
+async def list_world_flags(
+    campaign_id: int, db: AsyncSession = Depends(get_session), page: Page = Depends()
+):
     await _require_campaign(campaign_id, db)
     result = await db.execute(
-        select(WorldFlag).where(WorldFlag.campaign_id == campaign_id)
+        select(WorldFlag)
+        .where(WorldFlag.campaign_id == campaign_id)
+        .order_by(WorldFlag.id)
+        .limit(page.limit)
+        .offset(page.offset)
     )
     return [WorldFlagRead.model_validate(f) for f in result.scalars().all()]
 

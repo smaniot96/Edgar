@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,22 +19,34 @@ from ..services.character_assignments import (
     load_active_assignment_any_campaign,
     seed_assignment_row_payload,
 )
+from ._common import HTTPErrorWithContext, Page, get_or_404
 
 router = APIRouter(tags=["campaigns"])
 
+_ALREADY_ACTIVE = "Character already has an active assignment in another campaign"
+
 
 async def _campaign_or_404(db: AsyncSession, campaign_id: int) -> Campaign:
-    r = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
-    c = r.scalar_one_or_none()
-    if c is None:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    return c
+    return await get_or_404(db, Campaign, campaign_id, "Campaign")
+
+
+def _roster_row(assignment: CharacterAssignment, ch: Character) -> CampaignCharacterRead:
+    return CampaignCharacterRead(
+        assignment_id=assignment.id,
+        character_id=ch.id,
+        name=ch.name,
+        character_class=ch.character_class,
+        level=ch.level,
+        hp_current=assignment.hp_current,
+        hp_max=assignment.hp_max,
+    )
 
 
 @router.get("/campaigns/{campaign_id}/characters", response_model=list[CampaignCharacterRead])
 async def list_campaign_characters(
     campaign_id: int,
     db: AsyncSession = Depends(get_session),
+    page: Page = Depends(),
 ):
     await _campaign_or_404(db, campaign_id)
     r = await db.execute(
@@ -43,23 +56,11 @@ async def list_campaign_characters(
             CharacterAssignment.ended_at.is_(None),
         )
         .options(selectinload(CharacterAssignment.character))
+        .order_by(CharacterAssignment.id)
+        .limit(page.limit)
+        .offset(page.offset)
     )
-    rows = r.scalars().all()
-    out: list[CampaignCharacterRead] = []
-    for a in rows:
-        ch = a.character
-        out.append(
-            CampaignCharacterRead(
-                assignment_id=a.id,
-                character_id=ch.id,
-                name=ch.name,
-                character_class=ch.character_class,
-                level=ch.level,
-                hp_current=a.hp_current,
-                hp_max=a.hp_max,
-            )
-        )
-    return out
+    return [_roster_row(a, a.character) for a in r.scalars().all()]
 
 
 @router.post("/campaigns/{campaign_id}/characters", response_model=CampaignCharacterRead, status_code=201)
@@ -85,25 +86,12 @@ async def assign_character_to_campaign(
 
     existing_here = await load_active_assignment(db, body.character_id, campaign_id)
     if existing_here is not None:
-        ch = character
-        return CampaignCharacterRead(
-            assignment_id=existing_here.id,
-            character_id=ch.id,
-            name=ch.name,
-            character_class=ch.character_class,
-            level=ch.level,
-            hp_current=existing_here.hp_current,
-            hp_max=existing_here.hp_max,
-        )
+        return _roster_row(existing_here, character)
 
     other_active = await load_active_assignment_any_campaign(db, body.character_id)
     if other_active is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Character already has an active assignment in another campaign",
-                "active_campaign_id": other_active.campaign_id,
-            },
+        raise HTTPErrorWithContext(
+            409, _ALREADY_ACTIVE, active_campaign_id=other_active.campaign_id
         )
 
     payload = seed_assignment_row_payload(character)
@@ -113,18 +101,17 @@ async def assign_character_to_campaign(
         **payload,
     )
     db.add(assignment)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Lost a race with a concurrent assign: the partial unique index
+        # `character_assignments_one_active` allows one active assignment per character.
+        await db.rollback()
+        if "character_assignments_one_active" not in str(exc.orig):
+            raise
+        raise HTTPException(status_code=409, detail=_ALREADY_ACTIVE) from exc
     await db.refresh(assignment)
-
-    return CampaignCharacterRead(
-        assignment_id=assignment.id,
-        character_id=character.id,
-        name=character.name,
-        character_class=character.character_class,
-        level=character.level,
-        hp_current=assignment.hp_current,
-        hp_max=assignment.hp_max,
-    )
+    return _roster_row(assignment, character)
 
 
 @router.patch(
@@ -150,27 +137,19 @@ async def patch_campaign_character(
         raise HTTPException(status_code=404, detail="No active assignment for this character in this campaign")
 
     data = body.model_dump(exclude_unset=True)
-    if "hp_current" in data:
-        assignment.hp_current = data["hp_current"]
-    if "hp_max" in data:
-        assignment.hp_max = data["hp_max"]
-    if "stats" in data and data["stats"] is not None:
-        assignment.stats = data["stats"]
-    if "inventory" in data and data["inventory"] is not None:
-        assignment.inventory = data["inventory"]
+    new_hp_current = data.get("hp_current", assignment.hp_current)
+    new_hp_max = data.get("hp_max", assignment.hp_max)
+    if new_hp_current > new_hp_max:
+        raise HTTPException(
+            status_code=422,
+            detail=f"hp_current ({new_hp_current}) cannot exceed hp_max ({new_hp_max})",
+        )
+    for key, value in data.items():
+        setattr(assignment, key, value)
 
     await db.commit()
     await db.refresh(assignment)
-
-    return CampaignCharacterRead(
-        assignment_id=assignment.id,
-        character_id=character.id,
-        name=character.name,
-        character_class=character.character_class,
-        level=character.level,
-        hp_current=assignment.hp_current,
-        hp_max=assignment.hp_max,
-    )
+    return _roster_row(assignment, character)
 
 
 @router.delete("/campaigns/{campaign_id}/characters/{character_id}", status_code=204)
@@ -191,6 +170,6 @@ async def release_character_from_campaign(
     if assignment is None:
         raise HTTPException(status_code=404, detail="No active assignment for this character in this campaign")
 
-    assignment.ended_at = datetime.now(timezone.utc)
+    assignment.ended_at = datetime.now(UTC)
     await db.commit()
     return None
