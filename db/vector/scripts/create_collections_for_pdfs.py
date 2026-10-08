@@ -23,10 +23,10 @@ def main() -> None:
         print(f"No PDFs found in {pdfs_path}")
         sys.exit(0)
 
-    from qdrant_client.models import Distance, VectorParams
     from qdrant_client.http.exceptions import UnexpectedResponse
+    from qdrant_client.models import Distance, VectorParams
 
-    from db.vector import get_qdrant_client, VECTOR_SIZE
+    from db.vector import VECTOR_SIZE, get_qdrant_client
 
     client = get_qdrant_client()
 

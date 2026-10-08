@@ -4,10 +4,10 @@ Run from Edgar: uv run python db/vector/scripts/new_collection.py "dnd_rules_phb
 """
 import sys
 
-from qdrant_client.models import Distance, VectorParams
 from qdrant_client.http.exceptions import UnexpectedResponse
+from qdrant_client.models import Distance, VectorParams
 
-from db.vector import get_qdrant_client, VECTOR_SIZE
+from db.vector import VECTOR_SIZE, get_qdrant_client
 
 
 def main() -> None:

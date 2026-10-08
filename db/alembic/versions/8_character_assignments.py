@@ -6,16 +6,17 @@ Create Date: 2026-05-10
 
 Downgrading past this revision loses assignment history (lossy).
 """
-from typing import Any, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "8_character_assignments"
-down_revision: Union[str, Sequence[str], None] = "7_campaign_status"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "7_campaign_status"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _drop_characters_campaign_fk(bind: Any) -> None:
