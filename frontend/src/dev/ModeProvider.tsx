@@ -1,27 +1,16 @@
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
-export type Mode = "user" | "dev";
-
-const STORAGE_KEY = "edgar_mode";
+import { MODE_STORAGE_KEY, ModeContext } from "./ModeContext";
+import type { Mode, ModeContextValue } from "./ModeContext";
 
 function readInitialMode(): Mode {
   try {
-    const v = localStorage.getItem(STORAGE_KEY);
-    return v === "dev" ? "dev" : "user";
+    return localStorage.getItem(MODE_STORAGE_KEY) === "dev" ? "dev" : "user";
   } catch {
     return "user";
   }
 }
-
-interface ModeContextValue {
-  mode: Mode;
-  isDev: boolean;
-  setMode: (mode: Mode) => void;
-  toggleMode: () => void;
-}
-
-const ModeContext = createContext<ModeContextValue | null>(null);
 
 export function ModeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<Mode>(readInitialMode);
@@ -29,7 +18,7 @@ export function ModeProvider({ children }: { children: ReactNode }) {
   const setMode = useCallback((next: Mode) => {
     setModeState(next);
     try {
-      localStorage.setItem(STORAGE_KEY, next);
+      localStorage.setItem(MODE_STORAGE_KEY, next);
     } catch {
       /* persistence is best-effort */
     }
@@ -45,10 +34,4 @@ export function ModeProvider({ children }: { children: ReactNode }) {
   );
 
   return <ModeContext.Provider value={value}>{children}</ModeContext.Provider>;
-}
-
-export function useMode(): ModeContextValue {
-  const ctx = useContext(ModeContext);
-  if (!ctx) throw new Error("useMode must be used within a ModeProvider");
-  return ctx;
 }

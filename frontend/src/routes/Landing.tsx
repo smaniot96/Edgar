@@ -26,7 +26,7 @@ const CTAS: Cta[] = [
     primary: true,
   },
   { to: "/characters", label: "Your Characters", blurb: "Forge and manage your heroes." },
-  { to: "/settings", label: "Settings", blurb: "Identity, models, and preferences." },
+  { to: "/settings", label: "Settings", blurb: "Your profile and display name." },
 ];
 
 function CtaCard({ cta }: { cta: Cta }) {
@@ -35,25 +35,25 @@ function CtaCard({ cta }: { cta: Cta }) {
       to={cta.to}
       className={cn(
         "group relative flex flex-col rounded-xl border p-5 text-left transition-all duration-200",
-        "hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400",
+        "hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-ember-400",
         cta.primary
-          ? "border-amber-700/60 bg-gradient-to-br from-[#2a1810] to-[#1a1c20] hover:border-amber-500 hover:shadow-[0_0_28px_-6px_rgba(255,107,43,0.55)]"
-          : "border-[#2a2c30] bg-[#15161a]/80 hover:border-amber-700/60 hover:shadow-[0_0_22px_-10px_rgba(255,107,43,0.4)]",
+          ? "border-ember-700/60 bg-gradient-to-br from-ember-950/50 to-surface hover:border-ember-500 hover:shadow-ember"
+          : "border-line bg-surface-sunken/80 hover:border-ember-700/60 hover:shadow-[0_0_22px_-10px_rgba(255,107,43,0.4)]",
       )}
     >
       <span
         className={cn(
-          "text-base font-semibold",
-          cta.primary ? "text-amber-200" : "text-[#e6e6e6]",
+          "font-display text-xl font-semibold",
+          cta.primary ? "text-ember-200" : "text-ink",
         )}
       >
         {cta.label}
       </span>
-      <span className="mt-1 text-sm text-[#9ca3af]">{cta.blurb}</span>
+      <span className="mt-1 text-sm text-ink-muted">{cta.blurb}</span>
       <span
         className={cn(
           "mt-3 text-sm transition-transform duration-200 group-hover:translate-x-1",
-          cta.primary ? "text-amber-400" : "text-[#60a5fa]",
+          cta.primary ? "text-ember-400" : "text-ember-300",
         )}
         aria-hidden
       >
@@ -65,7 +65,7 @@ function CtaCard({ cta }: { cta: Cta }) {
 
 export default function Landing() {
   return (
-    <main className="edgar-landing relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#101216] px-4 py-12 text-[#e6e6e6]">
+    <main className="edgar-landing relative flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-canvas px-4 py-12 text-ink">
       {/* Dark vignette + molten radial glow behind the logo. */}
       <div
         aria-hidden
@@ -94,7 +94,7 @@ export default function Landing() {
       <div className="relative z-10 flex w-full max-w-3xl flex-col items-center text-center">
         <EdgarLogo variant="hero" className="w-full max-w-[560px]" />
 
-        <p className="mt-6 max-w-2xl text-balance text-base text-[#b9bdc4] sm:text-lg">
+        <p className="mt-6 max-w-2xl text-balance text-base text-ink/80 sm:text-lg">
           Edgar is your AI Dungeon Master — upload or generate a D&amp;D 5e campaign, create a hero,
           and play a living adventure right in your browser.
         </p>
