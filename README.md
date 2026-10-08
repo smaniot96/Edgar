@@ -107,7 +107,7 @@ After changing a model, add an Alembic migration in `db/alembic/versions/` and c
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes and PRs to `production`:
+`.github/workflows/ci.yml` runs on pushes and PRs to `main`:
 
 * **edgar-ruff**: `uv sync --locked --group dev`, then `ruff check .` (rules `E,F,I,B,UP`; `claude-report/`, `audit/`, `plans/` are excluded). Formatting is not enforced yet.
 * **edgar-tests**: the pytest suite with `CI=true` (missing Docker fails the job).
