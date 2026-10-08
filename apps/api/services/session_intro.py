@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,8 @@ from db.vector.client import get_qdrant_client
 from db.vector.retrieval import search_adventure_context
 
 from .character_assignments import character_play_state
+
+log = structlog.get_logger()
 
 _INTRO_TEMPERATURE = 0.7
 
@@ -43,35 +46,107 @@ _INTRO_QUERY = (
 )
 
 
+_PAGE_WINDOWS = (2, 5, 12, 30, 80)
+_page_index_attempted: set[str] = set()
+
+
+def _payload(p: object) -> dict:
+    return getattr(p, "payload", None) or {}
+
+
+def _sort_key(p: object) -> tuple[int, int]:
+    payload = _payload(p)
+    page = payload.get("page")
+    idx = payload.get("chunk_index")
+    return (
+        page if isinstance(page, int) else 10_000,
+        idx if isinstance(idx, int) else 0,
+    )
+
+
+def _scroll_ordered_by_page(client, collection: str, limit: int) -> list:
+    """First `limit` points by ascending page via `order_by` (needs a `page` payload index).
+
+    The index is created lazily, once per collection and process; it only adds an index and
+    never touches points. Any failure returns [] so the caller can use the range-filter path.
+    """
+    from qdrant_client.models import OrderBy, PayloadSchemaType
+
+    def _scroll():
+        points, _ = client.scroll(
+            collection_name=collection,
+            limit=limit,
+            order_by=OrderBy(key="page", direction="asc"),
+            with_payload=True,
+            with_vectors=False,
+        )
+        return points
+
+    try:
+        return _scroll()
+    except Exception as e:
+        if collection in _page_index_attempted:
+            log.warning("intro_order_by_failed", collection=collection, error=type(e).__name__)
+            return []
+    _page_index_attempted.add(collection)
+    try:
+        client.create_payload_index(
+            collection_name=collection,
+            field_name="page",
+            field_schema=PayloadSchemaType.INTEGER,
+            wait=True,
+        )
+        return _scroll()
+    except Exception as e:
+        log.warning("intro_page_index_unavailable", collection=collection, error=type(e).__name__)
+        return []
+
+
+def _scroll_page_window(client, collection: str, max_chunks: int) -> list:
+    """Fallback without an index: widen a `page <= N` range filter until enough points appear."""
+    from qdrant_client.models import FieldCondition, Filter, Range
+
+    points: list = []
+    for last_page in _PAGE_WINDOWS:
+        try:
+            points, _ = client.scroll(
+                collection_name=collection,
+                scroll_filter=Filter(must=[FieldCondition(key="page", range=Range(lte=last_page))]),
+                limit=256,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception as e:
+            log.warning("intro_scroll_failed", collection=collection, error=type(e).__name__)
+            return []
+        if len(points) >= max_chunks:
+            break
+    return points
+
+
 def _fetch_opening_text(adventure_collections: list[str], max_chunks: int = 7) -> str:
     """The literal start of the module: earliest-page chunks of the primary collection.
 
     Semantic search returns the most *similar* text, which for an "opening" query is often a
     dramatic mid-adventure scene. The actual opening (premise + read-aloud arrival) lives on the
-    first pages, so we read those directly and let the DM narrate from them.
+    first pages, so we read those directly and let the DM narrate from them. Point ids are
+    hashes, so an unfiltered scroll returns arbitrary pages; we order by the `page` payload
+    (payload index + `order_by`), or fall back to a widening `page <= N` range filter.
     """
     if not adventure_collections:
         return ""
     client = get_qdrant_client()
     collection = adventure_collections[0]
-    try:
-        points, _ = client.scroll(
-            collection_name=collection,
-            limit=256,
-            with_payload=True,
-            with_vectors=False,
-        )
-    except Exception:
-        return ""
 
-    def _page(p: object) -> int:
-        page = (getattr(p, "payload", None) or {}).get("page")
-        return page if isinstance(page, int) else 10_000
+    # Over-fetch so chunks sharing the first page can be put back in reading order.
+    points = _scroll_ordered_by_page(client, collection, limit=max_chunks * 4)
+    if not points:
+        points = _scroll_page_window(client, collection, max_chunks)
 
-    points.sort(key=_page)
+    points = sorted(points, key=_sort_key)
     texts: list[str] = []
     for p in points[:max_chunks]:
-        t = (getattr(p, "payload", None) or {}).get("text", "")
+        t = _payload(p).get("text", "")
         if t:
             texts.append(t[:700])
     return "\n".join(texts)

@@ -68,6 +68,12 @@ def main() -> None:
         help="Directory for markdown output (default: data/markdown)",
     )
     parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="After a successful ingest, delete this PDF's points that the run did not write "
+        "(stale chunks from an older chunker). Other sources in the collection are kept.",
+    )
+    parser.add_argument(
         "--no-save-markdown",
         action="store_true",
         help="Skip saving markdown when running full ingestion",
@@ -118,6 +124,7 @@ def main() -> None:
             overlap=args.overlap,
             save_markdown=not args.no_save_markdown,
             markdown_dir=args.markdown_dir,
+            replace=args.replace,
         )
         logger.info("Ingested {} chunks from {} into {}", n, args.path.name, collection_name)
     except Exception:
