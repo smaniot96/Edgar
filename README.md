@@ -26,7 +26,21 @@ make frontend-dev
 open http://localhost:5173/ui/
 ```
 
-`make up` brings the stack up, runs Alembic, polls `/health` until the API answers (default 60s; override with `WAIT_TIMEOUT_SEC`), then hits `/api/seed`. Use `make logs` to tail the API container, `make down` to stop.
+`make up` runs Alembic (`make migrate`), brings the stack up, polls `/health` until the API answers (default 60s; override with `WAIT_TIMEOUT_SEC`), then hits `/api/seed`. Use `make logs` to tail the API container, `make down` to stop. `/health` is liveness only; `/ready` also checks Postgres, Redis and Qdrant (503 with a per-component breakdown if one is down).
+
+### Compose services and profiles
+
+`docker compose up -d` starts only the runtime stack: `api`, `db`, `redis`, `qdrant`. One-off jobs sit behind profiles and are run on demand (`docker compose run` enables a service's profile automatically):
+
+| Service | Profile | How to run |
+| --- | --- | --- |
+| `migrate` | `tools` | `make migrate` (also part of `make up`) |
+| `ingestion` | `tools` | `make ingest PDF=... COLLECTION=...` |
+| `rules_engine` | `rules` | `make rules` (rules-only RAG demo) |
+
+Postgres (5432), Redis (6379) and Qdrant (6333) are published on `127.0.0.1` only; the API listens on port 8000. Redis and Qdrant images are pinned (`redis:8.6.3`, `qdrant/qdrant:v1.16.3`); bump them deliberately. Images run as a non-root user and each Dockerfile target installs only its own workspace package (`uv sync --package ...`); the `api` image includes `ingestion` because uploads and AI-authored campaigns are embedded in-process. `docker-compose.override.yml` (gitignored, dev only) bind-mounts the source and runs uvicorn with `--reload`.
+
+Uploads and AI generation run as in-process background tasks. If the API restarts mid-way, the adventure is marked `failed` on the next startup; `POST /api/adventures/{slug}/retry` re-runs it.
 
 ## Playing
 
@@ -69,10 +83,10 @@ Edgar/
   tools/             Dice tool (deterministic, used by the agent)
   data/              PDFs and extracted markdown (gitignored, bind-mounted)
   tests/             Pytest suite (testcontainers Postgres, fakeredis, fake LLM)
-  Dockerfile         Multi-stage: base / migrate / api / ingestion / rules_engine
-  docker-compose.yml api + db + redis + qdrant + migrate + ingestion + rules_engine
+  Dockerfile         Multi-stage: python-base / migrate / api / ingestion / rules_engine
+  docker-compose.yml api + db + redis + qdrant; migrate/ingestion/rules_engine behind profiles
   pyproject.toml     uv workspace root
-  Makefile           up / down / logs / migrate / seed / ingest / test / frontend-* 
+  Makefile           up / down / logs / migrate / seed / ingest / rules / test / lint / check-migrations / frontend-*
 ```
 
 `db/`, `tools/`, `core/`, and the four apps are independent uv workspace members; the workspace root lockfile is the only `uv.lock` you should regenerate.
@@ -87,4 +101,18 @@ Edgar/
 make test
 ```
 
-The suite spins up Postgres 16 via testcontainers, fakes Redis with `fakeredis`, fakes the OpenAI LLM with a deterministic stub, and runs the full turn flow end to end. Docker must be reachable. CI runs the same suite on GitHub Actions; the workflow is in `.github/workflows/ci.yml`.
+The suite spins up Postgres 16 via testcontainers (running `alembic upgrade head`), fakes Redis with `fakeredis`, fakes the OpenAI LLM with a deterministic stub, and runs the full turn flow end to end. Docker must be reachable: locally the DB-backed tests are skipped without it, but with `CI` set they fail instead. Tests never use a real OpenAI key (`OPENAI_API_KEY` defaults to a dummy value).
+
+After changing a model, add an Alembic migration in `db/alembic/versions/` and confirm `make check-migrations` (`alembic check` against your migrated database) reports no drift.
+
+## CI
+
+`.github/workflows/ci.yml` runs on pushes and PRs to `production`:
+
+* **edgar-ruff**: `uv sync --locked --group dev`, then `ruff check .` (rules `E,F,I,B,UP`; `claude-report/`, `audit/`, `plans/` are excluded). Formatting is not enforced yet.
+* **edgar-tests**: the pytest suite with `CI=true` (missing Docker fails the job).
+* **edgar-migrations**: against a Postgres service container, `alembic upgrade head`, `alembic check` (models vs migrations drift), and a downgrade/upgrade of the latest revision.
+* **docker-build**: builds the `api` and `migrate` Docker targets.
+* **frontend**: `npm ci`, `npm run lint`, `npm test --if-present`, `npm run build`.
+
+CI pins uv to the version that writes `uv.lock`; regenerate the lock with that version (`uv lock`).

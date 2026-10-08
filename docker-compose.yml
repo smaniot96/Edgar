@@ -1,11 +1,19 @@
 # Uses .env via env_file. Only overrides host names so containers use the Docker network.
 # No URL construction or credential duplication here.
 #
-# Start without rebuilding images: docker compose up -d --no-build
-# (Qdrant/Postgres/Redis use images from Docker Hub; app services use pre-built edgar-* images.)
+# `docker compose up -d` starts the runtime stack only: api + db + redis + qdrant.
+# One-off jobs live behind profiles and are run explicitly (the Makefile wraps them):
+#   docker compose run --rm migrate                      (profile: tools; `make migrate`)
+#   docker compose run --rm ingestion /data/x.pdf ...    (profile: tools; `make ingest`)
+#   docker compose --profile rules run --rm rules_engine (rules-only RAG demo)
+# `make up` = up -d, run migrate, wait for /health, seed.
+#
+# Database / Redis / Qdrant ports are published on 127.0.0.1 only (host tools, tests);
+# the API is published on all interfaces so the UI is reachable.
 
 services:
   migrate:
+    profiles: ["tools"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -29,21 +37,36 @@ services:
       - DB_HOST=db
       - REDIS_HOST=redis
       - QDRANT_HOST=qdrant
+    # Localhost only: the API has no authentication yet, so don't expose it to the network.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     # Uploaded campaign PDFs + adventure metadata persist here (shared with the ingestion
     # service's /data). Without this, UI uploads would be lost on container recreate.
     volumes:
       - ./data:/data
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)",
+        ]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
 
   ingestion:
+    profiles: ["tools"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -57,14 +80,14 @@ services:
       - ./data/pdfs:/data
       - ./data/markdown:/output/markdown
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       db:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+    restart: "no"
 
   rules_engine:
+    profiles: ["rules"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -73,11 +96,13 @@ services:
     env_file: .env
     environment:
       - DB_HOST=db
+      - QDRANT_HOST=qdrant
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       db:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: "no"
 
   db:
     image: postgres:16
@@ -90,7 +115,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
     healthcheck:
       test:
         [
@@ -102,10 +128,12 @@ services:
       retries: 5
 
   redis:
-    image: redis:latest
+    # Pinned to the version the dev stack has been running (was `redis:latest` = 8.6.3).
+    image: redis:8.6.3
     container_name: dnd-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -113,13 +141,15 @@ services:
       retries: 5
 
   qdrant:
-    image: qdrant/qdrant
+    # Pinned to the version the dev stack has been running (was untagged = v1.16.3).
+    image: qdrant/qdrant:v1.16.3
     container_name: dnd-qdrant
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       # Persist collections/vectors across container recreates (no rebuild needed for qdrant)
       - qdrant_data:/qdrant/storage
+    restart: unless-stopped
     # qdrant/qdrant image has bash but not curl/wget; TCP probe matches readiness.
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]

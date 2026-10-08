@@ -1,15 +1,43 @@
 .git
-frontend/node_modules
-frontend/dist
+.github
+.cursor
+.claude
+.uv-tools
+.DS_Store
+**/.DS_Store
+
+# Python build / cache artefacts
 **/.venv
 **/__pycache__
 *.py[cod]
+*.egg-info
+**/*.egg-info
+**/dist
 .pytest_cache
+.ruff_cache
 .mypy_cache
-**/static/.DS_Store
+
+# Frontend deps/build are produced inside the frontend-build stage
+frontend/node_modules
+frontend/dist
+
+# Not part of the runtime image
+tests/
+claude-report/
+audit/
+plans/
+docker-compose*.yml
+Makefile
 
 # Bulk PDF/markdown corpus is bind-mounted at runtime, never baked into the image.
 data/
+
+# Docs: only the READMEs the package metadata references (`readme = "README.md"`) are kept.
+*.md
+**/*.md
+!apps/*/README.md
+!db/README.md
+!tools/README.md
 
 # Secrets must never be baked into image layers (Dockerfile does `COPY . .`).
 .env
