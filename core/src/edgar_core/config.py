@@ -45,6 +45,11 @@ VECTOR_DB_API_KEY = os.getenv("VECTOR_DB_API_KEY")
 API_TITLE = "Edgar API"
 API_VERSION = "0.1.0"
 
-# Override via env. Default to a verified, cheap model so a fresh clone runs without surprises.
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# Override via env. gpt-6-luna is a reasoning model: it only accepts the default temperature,
+# so agent.llm omits `temperature` for reasoning families, sends `reasoning_effort` instead and
+# uses the Responses API (Chat Completions rejects function tools + reasoning_effort on it).
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-6-luna")
+# none | low | medium | high | xhigh. "low" keeps turn latency close to a non-reasoning model
+# (narration measured ~2s with zero reasoning tokens); ignored for non-reasoning models.
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "low")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")

@@ -10,7 +10,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agent.llm import make_chat_model
+from agent.llm import make_chat_model, message_text
 from agent.state import AgentState
 
 log = logging.getLogger(__name__)
@@ -43,8 +43,7 @@ async def summarize_story(previous_summary: str | None, messages: list) -> str:
             ),
         ]
     )
-    content = summary.content if hasattr(summary, "content") else str(summary)
-    return str(content).strip()
+    return message_text(summary).strip()
 
 
 async def memory_summarizer_node(state: AgentState) -> dict:

@@ -18,7 +18,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from agent.llm import make_chat_model
+from agent.llm import make_chat_model, message_text
 
 log = structlog.get_logger()
 
@@ -120,8 +120,7 @@ async def _expand_chapter(
         resp = await llm.ainvoke(
             [SystemMessage(content=_chapter_system()), HumanMessage(content=context)]
         )
-    raw = resp.content if hasattr(resp, "content") else str(resp)
-    body = raw if isinstance(raw, str) else str(raw)
+    body = message_text(resp)
     return f"## Chapter {index + 1}: {chapter.name}\n\n{body.strip()}"
 
 

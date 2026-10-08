@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.llm import make_chat_model
+from agent.llm import make_chat_model, message_text
 from db.postgres.models import Campaign, EventLog, Session as SessionModel
 from db.vector.client import get_qdrant_client
 from db.vector.retrieval import search_adventure_context
@@ -214,8 +214,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         # Never block play on a flaky opening; the player can still type a first action.
         return None
 
-    raw = response.content if hasattr(response, "content") else str(response)
-    narration = raw if isinstance(raw, str) else str(raw)
+    narration = message_text(response)
     if not narration.strip():
         return None
 

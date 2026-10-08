@@ -93,7 +93,7 @@ Edgar/
 
 ## Configuration
 
-`config.py` lives in `core/src/edgar_core/config.py`. It reads component env vars (`DB_HOST`, `POSTGRES_USER`, etc.) and builds the URLs the rest of the code consumes (`DATABASE_URL`, `REDIS_URL`, `VECTOR_DB_URL`). Docker overrides only host names so the same `.env` works on the host (via `localhost`) and inside Compose (via `db`, `redis`, `qdrant`). `LLM_MODEL` and `EMBEDDING_MODEL` are env-overridable; defaults are `gpt-4o-mini` and `text-embedding-3-small`.
+`config.py` lives in `core/src/edgar_core/config.py`. It reads component env vars (`DB_HOST`, `POSTGRES_USER`, etc.) and builds the URLs the rest of the code consumes (`DATABASE_URL`, `REDIS_URL`, `VECTOR_DB_URL`). Docker overrides only host names so the same `.env` works on the host (via `localhost`) and inside Compose (via `db`, `redis`, `qdrant`). `LLM_MODEL` and `EMBEDDING_MODEL` are env-overridable; defaults are `gpt-6-luna` and `text-embedding-3-small`. Reasoning models (`gpt-5*`, `gpt-6*`, `o*`) only accept the default temperature, so the agent sends `LLM_REASONING_EFFORT` (default `low`) instead and calls them through the OpenAI Responses API (Chat Completions rejects function-calling structured output combined with a reasoning effort on these models); classic models such as `gpt-4o-mini` still get per-node temperatures.
 
 ## Tests
 

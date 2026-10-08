@@ -36,6 +36,7 @@ from sqlalchemy import select
 
 import db.postgres.session as db_session_module
 from agent.graph import app, prepare_app, route_after_input_parser
+from agent.llm import message_text
 from agent.nodes.narrator import build_narrator_prompt, make_narrator_model
 from db.postgres.models import EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
@@ -84,25 +85,8 @@ def sse_event(event: str, data: Any) -> str:
 
 
 def _chunk_text(chunk: Any) -> str:
-    """Extract text from a langchain stream chunk.
-
-    Some providers return list-of-blocks (`[{"type": "text", "text": "..."}]`) instead of a
-    plain string; normalise to a single str.
-    """
-    raw = chunk.content if hasattr(chunk, "content") else str(chunk)
-    if isinstance(raw, str):
-        return raw
-    if isinstance(raw, list):
-        parts: list[str] = []
-        for block in raw:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict):
-                t = block.get("text")
-                if isinstance(t, str):
-                    parts.append(t)
-        return "".join(parts)
-    return str(raw)
+    """Text of a langchain stream chunk (str or Responses-API list-of-blocks content)."""
+    return message_text(chunk)
 
 
 async def persist_turn(session_id: int, body_message: str, result: dict[str, Any]) -> dict[str, Any]:

@@ -17,7 +17,7 @@ by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI rende
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
-from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model
+from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
 
@@ -123,8 +123,7 @@ async def narrator_node(state: AgentState) -> dict:
     except Exception as e:
         return {"narration": "", "error": str(e)}
 
-    raw = response.content if hasattr(response, "content") else str(response)
-    narration = raw if isinstance(raw, str) else str(raw)
+    narration = message_text(response)
     updated_messages = list(messages)
     updated_messages.append(AIMessage(content=narration))
     return {"narration": narration, "messages": updated_messages}
