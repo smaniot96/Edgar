@@ -10,14 +10,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from edgar_core.config import API_TITLE, API_VERSION
 
 from .logging_config import configure_logging
+from .routers._common import HTTPErrorWithContext
 from .routers.adventures import router as adventures_router
 from .routers.campaign import router as campaign_router
 from .routers.campaign_characters import router as campaign_characters_router
@@ -36,6 +37,16 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    # Background ingest/generation tasks die with the process; flag the ones a previous run
+    # left in "processing" as failed so the UI can offer a retry instead of spinning forever.
+    from .services.adventures_meta import fail_stale_processing
+
+    try:
+        stale = await run_in_threadpool(fail_stale_processing)
+        if stale:
+            log.warning("adventures_marked_failed_after_restart", slugs=stale)
+    except OSError:
+        log.exception("adventures_stale_scan_failed")
     yield
     # Lazy import: avoids importing Redis at module load (helps tests that don't need it).
     from .dependencies import close_redis
@@ -65,18 +76,23 @@ async def request_id_middleware(request: Request, call_next):
         structlog.contextvars.clear_contextvars()
 
 
+@app.exception_handler(HTTPErrorWithContext)
+async def http_error_with_context_handler(request: Request, exc: HTTPErrorWithContext):
+    """`{"detail": "<message>", **context}` — detail stays a string on every error body."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, **exc.context},
+        headers=exc.headers,
+    )
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Last-resort handler so 500s carry a request_id and never leak internals.
 
-    We re-raise HTTPException and RequestValidationError so FastAPI's built-in handlers can
-    return their proper status codes (404, 422, etc.).
+    Only reached for exceptions nobody else handled: HTTPException and RequestValidationError
+    are converted by FastAPI's own handlers (ExceptionMiddleware) before they get here.
     """
-    if isinstance(exc, HTTPException):
-        raise exc
-    if isinstance(exc, RequestValidationError):
-        raise exc
-
     request_id = (
         getattr(request.state, "request_id", None)
         or request.headers.get("x-request-id")
@@ -130,12 +146,16 @@ if _frontend_dist is not None:
     async def ui_shell() -> FileResponse:
         return FileResponse(_frontend_dist / "index.html")
 
+    _frontend_root = _frontend_dist.resolve()
+
     @app.get("/ui/{path:path}", include_in_schema=False)
     async def ui_spa(path: str) -> FileResponse:
-        requested = _frontend_dist / path
-        if requested.is_file():
+        # Resolve before checking so `..` segments (raw or %2f-encoded) cannot
+        # escape the dist folder and serve arbitrary files from the host.
+        requested = (_frontend_root / path).resolve()
+        if requested.is_relative_to(_frontend_root) and requested.is_file():
             return FileResponse(requested)
-        return FileResponse(_frontend_dist / "index.html")
+        return FileResponse(_frontend_root / "index.html")
 else:
     log.warning(
         "frontend_dist_missing",
@@ -157,9 +177,10 @@ else:
         )
 
 
-@app.get("/")
-def read_root():
-    return {"message": "Hello from api!"}
+@app.get("/", include_in_schema=False)
+def read_root() -> RedirectResponse:
+    """The UI lives at /ui/ (API docs at /docs)."""
+    return RedirectResponse(url="/ui/")
 
 
 if __name__ == "__main__":
