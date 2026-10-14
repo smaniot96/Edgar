@@ -4,6 +4,7 @@ import { getCampaign, recoverCampaignSource, retryAdventure, setCampaignSourceMo
 import type { CampaignRead } from "../../api/types";
 import { Button } from "../ui/Button";
 import { ErrorNotice } from "../ui/ErrorNotice";
+import { ExtractionPreview } from "./ExtractionPreview";
 
 /** Always visible in player mode when grounding needs recovery or homebrew was chosen. */
 export function SourceRecovery({ campaign, onUpdated }: {
@@ -50,6 +51,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
         <div key={source.slug} className="space-y-2 border-t border-line pt-2">
           <p className="font-medium">{source.title} — {source.status}</p>
           <p className="text-ink-muted">{source.message ?? "The source is ready for module play."}</p>
+          {source.extraction_preview_available ? <ExtractionPreview slug={source.slug} onUsePreview={["failed", "partial"].includes(source.status) && source.ingestion?.source_kind === "pdf" ? (sourceHash, extractionHash) => run(() => retryAdventure(source.slug, { reviewed_source_sha256: sourceHash, reviewed_extraction_sha256: extractionHash })) : undefined} /> : null}
           {source.status !== "ready" ? (
             <p className="text-xs text-ink-muted">
               {source.source_pdf_available ? "A retained source PDF is available." : "The original source PDF is not available here. Recovery requires a PDF you provide."}

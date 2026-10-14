@@ -42,7 +42,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 USER edgar
 CMD ["alembic", "-c", "db/alembic.ini", "upgrade", "head"]
 
-FROM python-base AS api
+# PDF extraction uses targeted Tesseract TSV crops for raster-only stat headings.
+# Share this runtime only between PDF consumers; migrate/rules_engine stay small.
+FROM python-base AS pdf-base
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM pdf-base AS api
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-workspace --package api
 COPY . .
@@ -57,7 +64,7 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
     CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
 CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-FROM python-base AS ingestion
+FROM pdf-base AS ingestion
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-workspace --package ingestion
 COPY . .

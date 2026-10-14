@@ -1,0 +1,239 @@
+{
+  "provenance": {
+    "book": "player_handbook",
+    "physical_page": 73,
+    "source_sha256": "3c707344a803f264dd08e1ba0b2c3f8f6b577b167f6758c33d2799f02ec81fcf",
+    "capture": "Native row rectangles and font sizes from read-only local PDF; all prose, names and stat values anonymized or generated. Raster header rectangles derived from inspected page geometry. No original page text or image is included.",
+    "parser": "PyMuPDF 1.27.2.3"
+  },
+  "width": 577.0,
+  "height": 780.0,
+  "lines": [
+    {
+      "text": "Choose two prepared skills.",
+      "bbox": [
+        46.20000076293945,
+        39.08103561401367,
+        245.10899353027344,
+        49.044036865234375
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "EQUIPMENT",
+      "bbox": [
+        46.80000305175781,
+        83.1629638671875,
+        92.49607849121094,
+        90.9119644165039
+      ],
+      "size": 7.441102027893066,
+      "heading": false
+    },
+    {
+      "text": "Use these prepared supplies.",
+      "bbox": [
+        46.20000457763672,
+        93.08097839355469,
+        258.7080078125,
+        103.04397583007812
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "COMBAT PRACTICE",
+      "bbox": [
+        46.500038146972656,
+        185.18984985351562,
+        145.8339385986328,
+        196.25985717773438
+      ],
+      "size": 10.535654067993164,
+      "heading": false
+    },
+    {
+      "text": "Choose a practice once.",
+      "bbox": [
+        46.20003890991211,
+        201.6808319091797,
+        267.0330810546875,
+        211.64382934570312
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "AIMING",
+      "bbox": [
+        45.3000373840332,
+        256.562744140625,
+        83.0940170288086,
+        264.3117370605469
+      ],
+      "size": 7.441102027893066,
+      "heading": false
+    },
+    {
+      "text": "Gain +2 on a prepared test.",
+      "bbox": [
+        45.9000358581543,
+        266.7807312011719,
+        242.2080535888672,
+        276.7437438964844
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "RESERVE RECOVERY",
+      "bbox": [
+        45.600040435791016,
+        579.6898193359375,
+        127.40703582763672,
+        590.759765625
+      ],
+      "size": 10.535654067993164,
+      "heading": false
+    },
+    {
+      "text": "Restore ld10 + class level.",
+      "bbox": [
+        45.00004196166992,
+        618.6808471679688,
+        262.5030517578125,
+        628.643798828125
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "EXTRA EFFORT",
+      "bbox": [
+        44.700042724609375,
+        672.08984375,
+        133.58883666992188,
+        683.1597900390625
+      ],
+      "size": 10.535654067993164,
+      "heading": false
+    },
+    {
+      "text": "Use one additional action.",
+      "bbox": [
+        45.30004119873047,
+        688.2808227539062,
+        268.4190979003906,
+        698.2437744140625
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "left_end",
+      "bbox": [
+        45.30004119873047,
+        720.9808349609375,
+        131.6460418701172,
+        730.9437866210938
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "right_continuation",
+      "bbox": [
+        305.4000549316406,
+        39.08085250854492,
+        512.697265625,
+        49.043853759765625
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "Recover after a rest.",
+      "bbox": [
+        297.6000671386719,
+        50.48087692260742,
+        508.6143493652344,
+        60.443878173828125
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "Use twice at a later level.",
+      "bbox": [
+        297.3000793457031,
+        61.58085250854492,
+        520.2033081054688,
+        71.54385375976562
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "Only once each turn.",
+      "bbox": [
+        297.3000793457031,
+        72.68083190917969,
+        355.296142578125,
+        82.64382934570312
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "PATH CHOICE",
+      "bbox": [
+        297.6000671386719,
+        93.38980102539062,
+        422.3639831542969,
+        104.45980834960938
+      ],
+      "size": 10.535654067993164,
+      "heading": false
+    },
+    {
+      "text": "Choose a prepared path.",
+      "bbox": [
+        297.00006103515625,
+        109.88078308105469,
+        514.9082641601562,
+        119.84378051757812
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "Follow its techniques.",
+      "bbox": [
+        297.00006103515625,
+        120.98075866699219,
+        511.49725341796875,
+        130.94375610351562
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "Options begin here.",
+      "bbox": [
+        297.00006103515625,
+        132.0807342529297,
+        520.1912841796875,
+        142.04373168945312
+      ],
+      "size": 9.0,
+      "heading": false
+    }
+  ],
+  "raster_headers": [],
+  "expected_order": [
+    "left_end",
+    "right_continuation",
+    "## Path Choice"
+  ]
+}

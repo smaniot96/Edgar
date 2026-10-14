@@ -13,6 +13,7 @@ Generation runs as a background task; status is tracked in the adventure metadat
 from __future__ import annotations
 
 import asyncio
+import re
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -27,6 +28,11 @@ log = structlog.get_logger()
 SIZE_CHAPTERS: dict[str, int] = {"small": 3, "medium": 6, "large": 12, "gigantic": 24}
 _MAX_CONCURRENT = 6
 
+
+class IncompleteGeneration(ValueError):
+    """The requested manuscript is incomplete; retry without indexing partial text."""
+
+
 _SIZE_GUIDANCE: dict[str, str] = {
     "small": "a tight one-shot: a single arc and location, one clear antagonist, 1-2 hours of play.",
     "medium": "a short adventure: a few connected scenes, a subplot or two, several NPCs, one boss.",
@@ -39,12 +45,16 @@ _SIZE_GUIDANCE: dict[str, str] = {
 
 class ChapterOutline(BaseModel):
     name: str
-    summary: str = Field(description="2-3 sentences: what happens, the location, and the goal of this chapter.")
+    summary: str = Field(
+        description="2-3 sentences: what happens, the location, and the goal of this chapter."
+    )
 
 
 class CampaignOutline(BaseModel):
     title: str
-    premise: str = Field(description="2-4 sentences setting up the whole adventure and its central conflict.")
+    premise: str = Field(
+        description="2-4 sentences setting up the whole adventure and its central conflict."
+    )
     setting: str = Field(description="Where it takes place; tone and atmosphere.")
     hook: str = Field(description="How the player characters get drawn in at the very start.")
     factions: list[str] = Field(default_factory=list)
@@ -75,7 +85,9 @@ def _chapter_system() -> str:
     )
 
 
-async def _generate_outline(title_hint: str, theme: str, size: str, n_chapters: int) -> CampaignOutline:
+async def _generate_outline(
+    title_hint: str, theme: str, size: str, n_chapters: int
+) -> CampaignOutline:
     llm = make_chat_model(temperature=0.8)
     structured = llm.with_structured_output(CampaignOutline, method="function_calling")
     asks = []
@@ -85,7 +97,10 @@ async def _generate_outline(title_hint: str, theme: str, size: str, n_chapters: 
         asks.append(f"Theme / premise the player asked for: {theme}.")
     asks.append("Design the adventure now.")
     outline = await structured.ainvoke(
-        [SystemMessage(content=_outline_system(size, n_chapters)), HumanMessage(content=" ".join(asks))]
+        [
+            SystemMessage(content=_outline_system(size, n_chapters)),
+            HumanMessage(content=" ".join(asks)),
+        ]
     )
     return outline
 
@@ -112,7 +127,7 @@ async def _expand_chapter(
         f"Factions: {', '.join(outline.factions) or 'n/a'}\n"
         f"Key NPCs: {'; '.join(outline.key_npcs) or 'n/a'}\n"
         f"Full chapter list: {', '.join(c.name for c in outline.chapters)}\n\n"
-        f"Write Chapter {index + 1} of {total}: \"{chapter.name}\".\n"
+        f'Write Chapter {index + 1} of {total}: "{chapter.name}".\n'
         f"Chapter summary: {chapter.summary}\n{role}"
     )
     async with sem:
@@ -121,6 +136,10 @@ async def _expand_chapter(
             [SystemMessage(content=_chapter_system()), HumanMessage(content=context)]
         )
     body = message_text(resp)
+    if len(re.findall(r"\b\w+\b", body)) < 20:
+        raise IncompleteGeneration(
+            f"Chapter {index + 1} produced too little manuscript text. Retry generation."
+        )
     return f"## Chapter {index + 1}: {chapter.name}\n\n{body.strip()}"
 
 
@@ -134,6 +153,10 @@ async def generate_campaign(
     """
     n_chapters = SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"])
     outline = await _generate_outline(title_hint, theme, size, n_chapters)
+    if len(outline.chapters) != n_chapters:
+        raise IncompleteGeneration(
+            f"The generated outline contains {len(outline.chapters)} of {n_chapters} required chapters. Retry generation."
+        )
     total = len(outline.chapters) or 1
 
     sem = asyncio.Semaphore(_MAX_CONCURRENT)
@@ -164,31 +187,83 @@ async def generate_campaign(
 async def build_generated_campaign(slug: str, title_hint: str, theme: str, size: str) -> None:
     """Background worker: generate the campaign, embed it, flip metadata to ready/failed."""
     from ingestion.embed import ingest_pages
+    from ingestion.readiness import IngestionRejected, report_summary
 
-    from .adventures_meta import load_meta, save_meta
+    from .adventures_meta import ADVENTURES_DIR, load_meta, save_meta
+
+    def prepared(report: dict) -> None:
+        meta = load_meta(slug)
+        meta.update({"ingestion": report_summary(report), "failure_code": None})
+        save_meta(slug, meta)
 
     structlog.contextvars.bind_contextvars(adventure_slug=slug)
     try:
         title, description, pages = await generate_campaign(title_hint, theme, size)
-        n = await asyncio.to_thread(ingest_pages, pages, slug, slug)
+        n = await asyncio.to_thread(
+            ingest_pages,
+            pages,
+            slug,
+            slug,
+            expected_pages=SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"]),
+            preview_dir=ADVENTURES_DIR / slug,
+            on_prepared=prepared,
+            replace=True,
+        )
         meta = load_meta(slug)
+        from .campaign_sources import inspect_ingestion_source
+
+        report = meta.get("ingestion") or {}
+        coverage = await asyncio.to_thread(inspect_ingestion_source, slug, {**meta, "chunks": n})
+        ready = n > 0 and report.get("quality_passed") and coverage["status"] == "ready"
         meta.update(
             {
                 "title": title or meta.get("title"),
                 "description": description,
-                "status": "ready" if n > 0 else "failed",
+                "status": "ready" if ready else "failed",
                 "chunks": n,
-                "error": None if n > 0 else "Generation produced no content.",
+                "failure_code": None if ready else "index_coverage",
+                "error": None
+                if ready
+                else "The generated index does not match its validated text. Inspect the preview and retry generation.",
             }
         )
         save_meta(slug, meta)
         log.info("campaign_generated", slug=slug, chunks=n, size=size)
+    except IngestionRejected as exc:
+        meta = load_meta(slug)
+        meta.update(
+            {
+                "status": "failed",
+                "chunks": 0,
+                "failure_code": exc.code,
+                "error": str(exc),
+                "ingestion": report_summary(exc.report),
+            }
+        )
+        save_meta(slug, meta)
+        log.warning("campaign_quality_rejected", slug=slug, code=exc.code)
+    except IncompleteGeneration as exc:
+        meta = load_meta(slug)
+        meta.update(
+            {
+                "status": "failed",
+                "chunks": 0,
+                "failure_code": "generation_incomplete",
+                "error": str(exc),
+            }
+        )
+        save_meta(slug, meta)
+        log.warning("campaign_generation_incomplete", slug=slug)
     except Exception as exc:
         log.exception("campaign_generation_failed", slug=slug)
         meta = load_meta(slug)
         # Raw exception text can carry provider internals; the full trace is in the logs.
         meta.update(
-            {"status": "failed", "error": f"Generation failed ({type(exc).__name__}); see server logs."}
+            {
+                "status": "failed",
+                "failure_code": "generation_error",
+                "error": f"Generation failed ({type(exc).__name__}); retry generation or see server logs.",
+            }
         )
         save_meta(slug, meta)
     finally:

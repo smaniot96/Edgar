@@ -1,0 +1,239 @@
+{
+  "provenance": {
+    "book": "monster_manual",
+    "physical_page": 167,
+    "source_sha256": "51cde09adade4186028088798c9d5bc4bf2b63e1b274080d9a975943b79069f5",
+    "capture": "Native row rectangles and font sizes from read-only local PDF; all prose, names and stat values anonymized or generated. Raster header rectangles derived from inspected page geometry. No original page text or image is included.",
+    "parser": "PyMuPDF 1.27.2.3"
+  },
+  "width": 569.0170288085938,
+  "height": 784.2940063476562,
+  "lines": [
+    {
+      "text": "Small construct, unaligned",
+      "bbox": [
+        55.36759948730469,
+        476.5730895996094,
+        188.93978881835938,
+        487.19580078125
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "Armor Class 14 (prepared armor)",
+      "bbox": [
+        55.127601623535156,
+        497.4779968261719,
+        193.14736938476562,
+        508.0167541503906
+      ],
+      "size": 8.01008415222168,
+      "heading": false
+    },
+    {
+      "text": "Hit Points 9 (2d8)",
+      "bbox": [
+        55.827598571777344,
+        507.5979919433594,
+        120.72750854492188,
+        518.13671875
+      ],
+      "size": 7.919775485992432,
+      "heading": false
+    },
+    {
+      "text": "Speed 20 ft.",
+      "bbox": [
+        55.23759841918945,
+        517.7080078125,
+        100.40328979492188,
+        528.2467041015625
+      ],
+      "size": 8.341707229614258,
+      "heading": false
+    },
+    {
+      "text": "STR DEX CON INT WIS CHA",
+      "bbox": [
+        66.07759857177734,
+        538.611572265625,
+        269.6651306152344,
+        549.8171997070312
+      ],
+      "size": 8.111650466918945,
+      "heading": false
+    },
+    {
+      "text": "8 (-1) 12 (+1) 10 (+0) 10 (+0) 8 (-1) 8 (-1)",
+      "bbox": [
+        63.23759841918945,
+        548.4915771484375,
+        270.9276123046875,
+        559.9688110351562
+      ],
+      "size": 8.399999618530273,
+      "heading": false
+    },
+    {
+      "text": "Prepared Escape. Use a bonus action.",
+      "bbox": [
+        55.70759963989258,
+        627.2780151367188,
+        266.33514404296875,
+        637.94580078125
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "ACTIONS",
+      "bbox": [
+        55.39759826660156,
+        657.5516967773438,
+        101.00437927246094,
+        668.26904296875
+      ],
+      "size": 8.373988151550293,
+      "heading": false
+    },
+    {
+      "text": "left_record_end",
+      "bbox": [
+        55.36759948730469,
+        699.0380249023438,
+        273.92620849609375,
+        709.705810546875
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "SENTINEL LEADER",
+      "bbox": [
+        306.10760498046875,
+        367.5008239746094,
+        401.2309875488281,
+        386.50341796875
+      ],
+      "size": 13.800000190734863,
+      "heading": false
+    },
+    {
+      "text": "Small construct, unaligned",
+      "bbox": [
+        305.5675964355469,
+        383.62310791015625,
+        438.606689453125,
+        394.2458190917969
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "Armor Class 16 (prepared armor)",
+      "bbox": [
+        305.3276062011719,
+        405.0179748535156,
+        432.2689208984375,
+        415.5567321777344
+      ],
+      "size": 7.961858749389648,
+      "heading": false
+    },
+    {
+      "text": "Hit Points 23 (6d8)",
+      "bbox": [
+        306.0284118652344,
+        415.12799072265625,
+        374.7647399902344,
+        425.6688537597656
+      ],
+      "size": 7.914037704467773,
+      "heading": false
+    },
+    {
+      "text": "Speed 20 ft.",
+      "bbox": [
+        305.4276123046875,
+        424.99798583984375,
+        350.5523376464844,
+        435.5367431640625
+      ],
+      "size": 8.285165786743164,
+      "heading": false
+    },
+    {
+      "text": "STR DEX CON INT WIS CHA",
+      "bbox": [
+        316.2676086425781,
+        445.66162109375,
+        519.2548828125,
+        456.8672180175781
+      ],
+      "size": 8.048026084899902,
+      "heading": false
+    },
+    {
+      "text": "Prepared Multiattack. Make two attacks.",
+      "bbox": [
+        305.9075927734375,
+        578.6279907226562,
+        521.0276489257812,
+        589.2957763671875
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "REACTIONS",
+      "bbox": [
+        306.34759521484375,
+        663.3316650390625,
+        362.669921875,
+        674.0490112304688
+      ],
+      "size": 8.182239532470703,
+      "heading": false
+    },
+    {
+      "text": "right_record_end",
+      "bbox": [
+        306.1275939941406,
+        677.5980224609375,
+        518.0857543945312,
+        688.2658081054688
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    }
+  ],
+  "raster_headers": [
+    {
+      "text": "SENTINEL",
+      "bbox": [
+        55,
+        463,
+        110,
+        475
+      ],
+      "size": 0
+    },
+    {
+      "text": "Small construct, unaligned",
+      "bbox": [
+        55,
+        477,
+        190,
+        487
+      ],
+      "size": 0
+    }
+  ],
+  "expected_order": [
+    "## Sentinel",
+    "left_record_end",
+    "## Sentinel Leader",
+    "right_record_end"
+  ]
+}

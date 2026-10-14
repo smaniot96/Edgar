@@ -1,4 +1,5 @@
 """CLI entrypoint for the ingestion pipeline."""
+
 import argparse
 import sys
 from pathlib import Path
@@ -7,7 +8,7 @@ from loguru import logger
 
 from db.vector.collections import campaign_lore_collection
 from ingestion.embed import run_pipeline
-from ingestion.extract import extract_and_save_markdown
+from ingestion.extract import extract_document, save_extraction
 from ingestion.paths import default_markdown_dir
 
 
@@ -60,6 +61,17 @@ def main() -> None:
         help="Only extract markdown to file; skip chunking and embedding",
     )
     parser.add_argument(
+        "--pages",
+        type=int,
+        nargs="+",
+        help="Physical, one-based PDF pages for --extract-only sample review (full indexing requires every page)",
+    )
+    parser.add_argument(
+        "--reviewed-extraction",
+        type=Path,
+        help="JSON extraction bundle whose selected Markdown text you have visually reviewed; required for rulebooks and --replace",
+    )
+    parser.add_argument(
         "--markdown-dir",
         type=Path,
         default=None,
@@ -77,6 +89,8 @@ def main() -> None:
         help="Skip saving markdown when running full ingestion",
     )
     args = parser.parse_args()
+    if args.pages and not args.extract_only:
+        parser.error("--pages is supported only with --extract-only")
 
     def resolved_collection_name() -> str:
         if args.campaign_id is not None:
@@ -102,8 +116,10 @@ def main() -> None:
     if args.extract_only:
         try:
             out_dir = args.markdown_dir or default_markdown_dir()
-            out_path = extract_and_save_markdown(args.path, out_dir)
-            logger.info("Saved markdown to {}", out_path)
+            extraction = extract_document(args.path, pages=args.pages)
+            out_path, report_path = save_extraction(extraction, out_dir)
+            logger.info("Saved markdown to {} and diagnostics to {}", out_path, report_path)
+            extraction.require_valid()
         except Exception:
             logger.exception("Extract failed")
             sys.exit(1)
@@ -119,6 +135,7 @@ def main() -> None:
             save_markdown=not args.no_save_markdown,
             markdown_dir=args.markdown_dir,
             replace=args.replace,
+            reviewed_extraction=args.reviewed_extraction,
         )
         logger.info("Ingested {} chunks from {} into {}", n, args.path.name, collection_name)
     except Exception:

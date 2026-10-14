@@ -23,6 +23,39 @@ def validate_binding(slug: str) -> None:
         raise HTTPException(status_code=422, detail="Invalid adventure source binding.")
 
 
+def inspect_ingestion_source(slug: str, meta: dict) -> dict:
+    """The single live quality/version/coverage assessment used by workers and read APIs."""
+    expected = meta.get("chunks")
+    expected = expected if isinstance(expected, int) and expected > 0 else None
+    ingestion = meta.get("ingestion")
+    checks = {}
+    if isinstance(ingestion, dict):
+        checks = {
+            "expected_source_hash": ingestion.get("source_sha256"),
+            "expected_extraction_hash": ingestion.get("extraction_sha256"),
+            "expected_pages": ingestion.get("required_pages"),
+        }
+    live = inspect_source(slug, expected_chunks=expected, **checks)
+    source_file_matches = True
+    if isinstance(ingestion, dict) and live["status"] == "ready":
+        if not ingestion.get("quality_passed"):
+            live["status"] = "failed"
+    if isinstance(ingestion, dict) and ingestion.get("source_kind") == "pdf":
+        # The retained file must still be the validated source, not a replacement under
+        # the same slug. Legacy sources without a report keep EDG-001's live checks.
+        pdf = PDF_DIR / f"{slug}.pdf"
+        try:
+            from ingestion.artifacts import source_digest
+
+            source_file_matches = source_digest(pdf) == ingestion.get("source_sha256")
+        except OSError:
+            source_file_matches = False
+        if not source_file_matches and live["status"] == "ready":
+            live["status"] = "partial"
+    live["source_file_matches"] = source_file_matches
+    return live
+
+
 def source_read(slug: str) -> SourceRead:
     try:
         validate_binding(slug)
@@ -34,24 +67,34 @@ def source_read(slug: str) -> SourceRead:
             message="This legacy source binding is invalid. Bind a valid adventure source or choose homebrew play.",
         )
     meta = load_meta(slug)
-    expected = meta.get("chunks")
-    expected = expected if isinstance(expected, int) and expected > 0 else None
-    live = inspect_source(slug, expected_chunks=expected)
+    ingestion = meta.get("ingestion")
+    live = inspect_ingestion_source(slug, meta)
     if meta.get("status") in ("processing", "failed") and live["status"] != "unavailable":
         live["status"] = meta["status"]
     messages = {
         "missing": "The bound adventure collection is missing. Provide its source PDF to recover it.",
         "empty": "The adventure index has no usable text and vectors. Provide its source PDF again.",
-        "partial": "The adventure index has fewer usable chunks than its recorded ingestion.",
+        "partial": "The adventure index or retained PDF does not match its validated source coverage. Inspect the extraction preview and recover the source.",
         "unavailable": "The adventure index cannot be checked right now. Try again when the store is available.",
         "processing": "The adventure source is being prepared.",
         "failed": "The adventure source could not be prepared. Provide its source PDF again.",
     }
+    from .adventures_meta import ADVENTURES_DIR
+
+    preview_available = (ADVENTURES_DIR / slug / f"{slug}.extraction.json").is_file() and (
+        ADVENTURES_DIR / slug / f"{slug}.md"
+    ).is_file()
     return SourceRead(
         **live,
         title=meta.get("title") or slug.replace("_", " ").title(),
         source_pdf_available=(PDF_DIR / f"{slug}.pdf").is_file(),
-        message=messages.get(live["status"]),
+        message=meta.get("error")
+        if live["status"] == "failed" and meta.get("error")
+        else messages.get(live["status"]),
+        failure_code=meta.get("failure_code"),
+        extraction_preview_available=preview_available,
+        extraction_preview_current=preview_available and live["source_file_matches"],
+        ingestion=ingestion if isinstance(ingestion, dict) else None,
     )
 
 

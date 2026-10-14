@@ -52,16 +52,22 @@ Uploads and AI generation run as in-process background tasks. If the API restart
 
 ## Playing
 
-Drop your PDFs into `data/pdfs/` (gitignored) and ingest them, then send turns from the UI:
+Drop your PDFs into `data/pdfs/` (gitignored). Extract and inspect each complete rulebook
+before indexing it, then send turns from the UI:
 
 ```
-make ingest PDF=player_handbook.pdf COLLECTION=rules_player_handbook
-make ingest PDF=dm_guide.pdf        COLLECTION=rules_dm_guide
-make ingest PDF=monster_manual.pdf  COLLECTION=rules_monster_manual
+make ingest PDF=player_handbook.pdf INGEST_ARGS='--extract-only'
+# Inspect data/markdown/player_handbook.md and its extraction JSON against the PDF.
+make ingest PDF=player_handbook.pdf COLLECTION=rules_player_handbook INGEST_ARGS='--reviewed-extraction /output/markdown/player_handbook.extraction.json'
 make ingest PDF=chalice_of_the_mountain_god.pdf COLLECTION=chalice_of_the_mountain_god
 ```
 
-`make ingest` runs the ingestion container against the bind-mounted `data/pdfs/`. See `apps/ingestion/README.md` for collection naming, campaign-bound notes (`--campaign-id`), and the underlying CLI flags.
+Repeat the extract/review steps for `dm_guide.pdf` and `monster_manual.pdf`, using their
+matching `rules_*` collections and extraction bundles. `make ingest` runs the ingestion
+container against the bind-mounted `data/pdfs/`; `INGEST_ARGS` passes CLI options through.
+Rulebook indexing and PDF replacement (`--replace`) require a reviewed full-document
+bundle. See `apps/ingestion/README.md` for diagnostics, recovery, collection naming and
+campaign-bound notes (`--campaign-id`).
 
 You can also play without a UI:
 

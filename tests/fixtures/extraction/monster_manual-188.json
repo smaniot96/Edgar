@@ -1,0 +1,208 @@
+{
+  "provenance": {
+    "book": "monster_manual",
+    "physical_page": 188,
+    "source_sha256": "51cde09adade4186028088798c9d5bc4bf2b63e1b274080d9a975943b79069f5",
+    "capture": "Native row rectangles and font sizes from read-only local PDF; all prose, names and stat values anonymized or generated. Raster header rectangles derived from inspected page geometry. No original page text or image is included.",
+    "parser": "PyMuPDF 1.27.2.3"
+  },
+  "width": 568.2940063476562,
+  "height": 787.4249877929688,
+  "lines": [
+    {
+      "text": "Medium construct, unaligned",
+      "bbox": [
+        36.20759963989258,
+        479.9532775878906,
+        173.48663330078125,
+        490.57598876953125
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "Armor Class 18 (prepared armor)",
+      "bbox": [
+        35.38759994506836,
+        500.22650146484375,
+        142.70008850097656,
+        511.56549072265625
+      ],
+      "size": 8.5,
+      "heading": false
+    },
+    {
+      "text": "Hit Points 85 (13d8 + 26)",
+      "bbox": [
+        36.07610321044922,
+        510.3330078125,
+        125.55945587158203,
+        521.6754760742188
+      ],
+      "size": 8.5,
+      "heading": false
+    },
+    {
+      "text": "Speed 20 ft.",
+      "bbox": [
+        35.48759841918945,
+        520.4464721679688,
+        80.33136749267578,
+        531.7854614257812
+      ],
+      "size": 8.534928321838379,
+      "heading": false
+    },
+    {
+      "text": "STR DEX CON INT WIS CHA",
+      "bbox": [
+        46.327598571777344,
+        541.636474609375,
+        248.18984985351562,
+        553.4654541015625
+      ],
+      "size": 8.5,
+      "heading": false
+    },
+    {
+      "text": "ACTIONS",
+      "bbox": [
+        34.9276008605957,
+        681.5494384765625,
+        80.53437805175781,
+        692.6788330078125
+      ],
+      "size": 8.533452033996582,
+      "heading": false
+    },
+    {
+      "text": "Prepared Multiattack. Make three attacks.",
+      "bbox": [
+        35.48759841918945,
+        695.2764892578125,
+        233.5084228515625,
+        706.615478515625
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "left_action",
+      "bbox": [
+        34.89910125732422,
+        705.8665161132812,
+        253.73861694335938,
+        717.2064819335938
+      ],
+      "size": 8.5,
+      "heading": false
+    },
+    {
+      "text": "right_action",
+      "bbox": [
+        284.61761474609375,
+        502.8664855957031,
+        499.9259338378906,
+        514.2055053710938
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "Leadership. Add a d4 to a prepared roll.",
+      "bbox": [
+        284.71759033203125,
+        578.4865112304688,
+        484.5531005859375,
+        589.8255004882812
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "Leadership continuation.",
+      "bbox": [
+        284.8541259765625,
+        589.0764770507812,
+        510.324462890625,
+        600.4164428710938
+      ],
+      "size": 8.5,
+      "heading": false
+    },
+    {
+      "text": "Prepared recipients within 30 feet.",
+      "bbox": [
+        284.13861083984375,
+        599.6759643554688,
+        499.5541076660156,
+        611.0154418945312
+      ],
+      "size": 8.5,
+      "heading": false
+    },
+    {
+      "text": "REACTIONS",
+      "bbox": [
+        285.1575927734375,
+        661.7994384765625,
+        340.969970703125,
+        672.9288330078125
+      ],
+      "size": 8.300225257873535,
+      "heading": false
+    },
+    {
+      "text": "Parry. Add 3 to AC.",
+      "bbox": [
+        284.297607421875,
+        676.0064697265625,
+        509.4581298828125,
+        687.345458984375
+      ],
+      "size": 8.5,
+      "heading": false
+    },
+    {
+      "text": "right_record_end",
+      "bbox": [
+        284.12310791015625,
+        686.6060180664062,
+        509.66461181640625,
+        697.9454956054688
+      ],
+      "size": 8.533334732055664,
+      "heading": false
+    }
+  ],
+  "raster_headers": [
+    {
+      "text": "SENTINEL COMMANDER",
+      "bbox": [
+        35,
+        467,
+        186,
+        479
+      ],
+      "size": 0
+    },
+    {
+      "text": "Medium construct, unaligned",
+      "bbox": [
+        35,
+        480,
+        174,
+        491
+      ],
+      "size": 0
+    }
+  ],
+  "expected_order": [
+    "## Sentinel Commander",
+    "left_action",
+    "right_action",
+    "Leadership.",
+    "Parry.",
+    "right_record_end"
+  ]
+}

@@ -75,5 +75,37 @@ Ready sources cannot be overwritten through this recovery endpoint. Poll campaig
 for processing/ready/failed status. `POST /adventures/{slug}/retry` can reuse a retained source
 PDF for a missing, empty, partial or failed index (or retry an explicitly AI-generated source);
 a missing uploaded PDF returns 410. Historical logs and metadata cannot recreate a lost PDF.
-Recovery uses the existing ingestion pipeline; atomic index replacement and extraction
-quality improvements are separate work.
+Recovery uses the existing ingestion pipeline and extraction readiness checks described below.
+
+# Extraction readiness and local previews
+
+PDF upload and generated manuscripts keep a local extraction bundle beside their adventure
+metadata. The canonical Markdown and JSON come from the same selected text used for chunks.
+The JSON includes page extraction methods, quality diagnostics, warnings, source identity,
+explicit contributing page coverage and representative text/stat/scene candidates.
+
+`GET /api/adventures/{slug}/extraction` exposes bounded examples and diagnostics;
+`GET /api/adventures/{slug}/extraction/markdown` downloads the full literal Markdown.
+The library and source recovery panel expose these previews. Scene candidates are unreviewed;
+extraction checks do not establish a canonical opening or resolve OCR glyph/semantic ambiguity.
+The inspected PDF preview action sends both `reviewed_source_sha256` and
+`reviewed_extraction_sha256` to `POST /api/adventures/{slug}/retry`. It requires a current,
+quality-passed bundle and indexes that exact selected text; stale or changed bundles are rejected
+before vector writes. The ordinary retained-source retry remains available without those hashes.
+
+PDF OCR requires the operating-system Tesseract executable in addition to Python dependencies.
+The API and ingestion Docker images include it; local development must install it separately.
+
+Poor extraction and missing source/chunk coverage fail before embeddings or vector writes.
+New ready sources must also match the validated source/extraction hashes, expected chunk count
+and exact contributing pages in the live index. Specific `failure_code` and readable errors
+remain in existing adventure metadata; the source PDF/manuscript preview is retained for recovery.
+Generated-source retries prune the previous source chunks only after the complete replacement
+has embedded and upserted successfully. A failed embedding attempt retains the previous index
+and marks the source failed with its manuscript available for inspection and retry.
+Legacy sources without extraction evidence retain the live coverage checks introduced by EDG-001.
+Atomic index promotion and concurrent retry isolation remain EDG-015 work.
+
+This contract uses the existing adventure JSON directories for metadata and extraction bundles,
+and optional `source_pages`, `source_sha256` and `extraction_sha256` fields in Qdrant chunk
+payloads. It introduces no relational database migration or separate extraction store.

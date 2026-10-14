@@ -2,6 +2,7 @@ import type {
   AdventureGenerateRequest,
   AdventureGenerateResponse,
   AdventureRead,
+  ExtractionPreview,
   CampaignCharacterRead,
   CampaignRead,
   CharacterAssignmentHistoryRead,
@@ -19,6 +20,10 @@ import type {
 
 /** Relative to site origin; empty uses same origin (Vite proxy in dev, API container in prod). */
 export const apiBase = import.meta.env.VITE_API_BASE_URL ?? "";
+
+export function getExtractionPreview(slug: string): Promise<ExtractionPreview> {
+  return getJson(`/api/adventures/${encodeURIComponent(slug)}/extraction`);
+}
 
 /** Shown whenever the browser cannot talk to the API (server down, proxy 502, offline). */
 export const OFFLINE_MESSAGE = "Can't reach the Edgar server. Is it running?";
@@ -225,8 +230,8 @@ export async function recoverCampaignSource(id: number, slug: string, file: File
   return json(await apiFetch(`/api/campaigns/${id}/sources/${encodeURIComponent(slug)}/upload`, { method: "POST", body: form }));
 }
 
-export function retryAdventure(slug: string): Promise<AdventureRead> {
-  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/retry`);
+export function retryAdventure(slug: string, reviewed?: { reviewed_source_sha256: string; reviewed_extraction_sha256: string }): Promise<AdventureRead> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/retry`, reviewed);
 }
 
 export function endCampaign(id: number): Promise<CampaignRead> {

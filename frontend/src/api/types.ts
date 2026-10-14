@@ -18,6 +18,29 @@ export interface SourceRead {
   collection_exists: boolean;
   source_pdf_available: boolean;
   message: string | null;
+  failure_code?: string | null;
+  extraction_preview_available?: boolean;
+  extraction_preview_current?: boolean;
+  ingestion?: IngestionSummary | null;
+}
+
+export interface IngestionSummary {
+  source_kind?: "pdf" | "generated" | "text";
+  source_sha256: string;
+  extraction_sha256: string;
+  page_count: number;
+  required_pages: number[];
+  chunk_count: number;
+  quality_passed: boolean;
+  warning_count: number;
+  review_note: string;
+  issues: { code: string; page?: number; message: string }[];
+}
+
+export interface ExtractionPreview extends IngestionSummary {
+  source_current?: boolean;
+  pages: { page: number; method: string; warnings: string[]; warning_messages?: string[]; quality: { errors: string[] } }[];
+  previews: { kind: "text" | "stat" | "scene_candidate"; page: number; page_end: number; section: string | null; text: string }[];
 }
 
 export type AdventureSize = "small" | "medium" | "large" | "gigantic";
@@ -45,6 +68,12 @@ export interface AdventureRead {
   source_filename?: string | null;
   error?: string | null;
   created_at?: string | null;
+  source_pdf_available?: boolean;
+  can_retry?: boolean;
+  failure_code?: string | null;
+  extraction_preview_available?: boolean;
+  extraction_preview_current?: boolean;
+  ingestion?: IngestionSummary | null;
 }
 
 export interface CharacterAssignmentRef {

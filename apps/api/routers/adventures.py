@@ -7,6 +7,7 @@ the PDF store tracks the lifecycle (processing -> ready | failed) so it survives
 """
 
 import fcntl
+import json
 import re
 import shutil
 import tempfile
@@ -17,6 +18,7 @@ from typing import BinaryIO
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from qdrant_client.http.exceptions import UnexpectedResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -29,6 +31,7 @@ from db.vector.collections import (
 from ..schemas.adventure import (
     AdventureGenerateRequest,
     AdventureRead,
+    AdventureRetryRequest,
     AdventureUpdate,
     AdventureUploadResponse,
 )
@@ -102,6 +105,11 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
         source_filename=meta.get("source_filename"),
         error=source.message or meta.get("error"),
         created_at=meta.get("created_at"),
+        failure_code=source.failure_code,
+        extraction_preview_available=source.extraction_preview_available,
+        extraction_preview_current=source.extraction_preview_current,
+        ingestion=source.ingestion,
+        can_retry=source.source_pdf_available or (meta.get("generation") or {}).get("kind") == "ai",
     )
 
 
@@ -130,24 +138,174 @@ def get_adventure(slug: str):
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
 
 
-def _ingest_adventure(slug: str, pdf_path: str) -> None:
+def _extraction_path(slug: str, name: str) -> Path:
+    from ..services.campaign_sources import validate_binding
+
+    validate_binding(slug)
+    path = _ADVENTURES_DIR / slug / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No extraction preview is available yet.")
+    return path
+
+
+@router.get("/adventures/{slug}/extraction")
+def get_extraction_preview(slug: str):
+    """Local diagnostics and bounded representative text/stat/scene candidates."""
+    try:
+        data = _load_extraction(slug)
+        from ingestion.quality import diagnostic_message
+
+        readiness = data.get("readiness") or {
+            "source_kind": "pdf",
+            "extraction_sha256": data.get("markdown_sha256", ""),
+            "required_pages": [p["page"] for p in data["pages"] if p.get("text", "").strip()],
+            "chunk_count": 0,
+            "quality_passed": False,
+            "warning_count": sum(len(p.get("warnings", [])) for p in data["pages"]),
+            "review_note": "This extraction preview has not been assessed for index readiness. Scene previews are unreviewed.",
+            "issues": [
+                {
+                    "code": "readiness_not_assessed",
+                    "message": "Inspect the extraction before indexing it.",
+                }
+            ],
+            "previews": [
+                {
+                    "kind": "text",
+                    "page": p["page"],
+                    "page_end": p["page"],
+                    "section": None,
+                    "text": p["text"][:2000],
+                }
+                for p in data["pages"]
+                if p.get("text", "").strip()
+            ][:1],
+        }
+        return {
+            **readiness,
+            "source_sha256": data["source_sha256"],
+            "page_count": data["page_count"],
+            "source_current": _preview_source_current(slug, data),
+            "pages": [
+                {
+                    **{key: value for key, value in page.items() if key != "text"},
+                    "warning_messages": [diagnostic_message(w) for w in page.get("warnings", [])],
+                }
+                for page in data["pages"]
+            ],
+        }
+    except (ValueError, OSError) as exc:
+        raise HTTPException(
+            status_code=409, detail="Extraction preview is unreadable. Retry extraction."
+        ) from exc
+
+
+@router.get("/adventures/{slug}/extraction/markdown")
+def get_extraction_markdown(slug: str):
+    current = _preview_source_current(slug, _load_extraction(slug))
+    return FileResponse(
+        _extraction_path(slug, f"{slug}.md"),
+        media_type="text/plain; charset=utf-8",
+        filename=f"{slug}-{'extraction' if current else 'previous-extraction'}.md",
+        headers={"X-Extraction-Source-Current": str(current).lower()},
+    )
+
+
+def _load_extraction(slug: str) -> dict:
+    path = _extraction_path(slug, f"{slug}.extraction.json")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("source_sha256"), str)
+            or not isinstance(data.get("pages"), list)
+            or not isinstance(data.get("page_count"), int)
+        ):
+            raise ValueError("Invalid extraction bundle")
+        if not all(isinstance(page, dict) for page in data["pages"]):
+            raise ValueError("Invalid extraction pages")
+        return data
+    except (ValueError, OSError) as exc:
+        raise HTTPException(
+            status_code=409, detail="Extraction preview is unreadable. Retry extraction."
+        ) from exc
+
+
+def _preview_source_current(slug: str, data: dict) -> bool:
+    from ingestion.artifacts import source_digest
+
+    readiness = data.get("readiness") or {}
+    meta = load_adventure_metadata(slug)
+    expected = (meta.get("ingestion") or {}).get("source_sha256")
+    if expected and expected != data.get("source_sha256"):
+        return False
+    if readiness.get("source_kind", "pdf") == "pdf":
+        try:
+            return source_digest(_PDF_DIR / f"{slug}.pdf") == data.get("source_sha256")
+        except OSError:
+            return False
+    return readiness.get("source_kind") == "generated"
+
+
+def _ingest_adventure(
+    slug: str,
+    pdf_path: str,
+    reviewed_extraction: str | None = None,
+    reviewed_identity: tuple[str, str] | None = None,
+) -> None:
     """Background worker: embed the PDF and flip the adventure's status to ready/failed."""
     # Imported here so the API process only pays the ingestion import cost on first upload.
     from ingestion.embed import run_pipeline
+    from ingestion.readiness import IngestionRejected, report_summary
+
+    def prepared(report: dict) -> None:
+        meta = load_adventure_metadata(slug)
+        meta.update({"ingestion": report_summary(report), "failure_code": None})
+        _save_adventure_metadata(slug, meta)
 
     structlog.contextvars.bind_contextvars(adventure_slug=slug)
     try:
-        n = run_pipeline(pdf_path=pdf_path, collection_name=slug, save_markdown=False)
+        n = run_pipeline(
+            pdf_path=pdf_path,
+            collection_name=slug,
+            save_markdown=False,
+            preview_dir=_ADVENTURES_DIR / slug,
+            on_prepared=prepared,
+            replace=reviewed_extraction is not None,
+            reviewed_extraction=reviewed_extraction,
+            reviewed_identity=reviewed_identity,
+        )
         meta = load_adventure_metadata(slug)
+        from ..services.campaign_sources import inspect_ingestion_source
+
+        report = meta.get("ingestion") or {}
+        coverage = inspect_ingestion_source(slug, {**meta, "chunks": n})
+        ready = n > 0 and report.get("quality_passed") and coverage["status"] == "ready"
         meta.update(
             {
-                "status": "ready" if n > 0 else "failed",
+                "status": "ready" if ready else "failed",
                 "chunks": n,
-                "error": None if n > 0 else "No text could be extracted from the PDF.",
+                "failure_code": None if ready else "index_coverage",
+                "error": None
+                if ready
+                else "The index does not match the validated extraction. Inspect the preview and retry source recovery.",
             }
         )
         _save_adventure_metadata(slug, meta)
         log.info("adventure_ingested", slug=slug, chunks=n)
+    except IngestionRejected as exc:
+        meta = load_adventure_metadata(slug)
+        meta.update(
+            {
+                "status": "failed",
+                "chunks": 0,
+                "failure_code": exc.code,
+                "error": str(exc),
+                "ingestion": report_summary(exc.report),
+            }
+        )
+        _save_adventure_metadata(slug, meta)
+        log.warning("adventure_quality_rejected", slug=slug, code=exc.code)
     except Exception as exc:
         log.exception("adventure_ingest_failed", slug=slug)
         meta = load_adventure_metadata(slug)
@@ -155,6 +313,7 @@ def _ingest_adventure(slug: str, pdf_path: str) -> None:
         meta.update(
             {
                 "status": "failed",
+                "failure_code": "ingestion_error",
                 "error": f"Ingestion failed ({type(exc).__name__}); see server logs.",
             }
         )
@@ -309,15 +468,19 @@ def _source_lock(slug: str):
 
 
 @router.post("/adventures/{slug}/retry", response_model=AdventureUploadResponse, status_code=202)
-def retry_adventure(slug: str, background: BackgroundTasks):
+def retry_adventure(
+    slug: str, background: BackgroundTasks, body: AdventureRetryRequest | None = None
+):
     from ..services.campaign_sources import validate_binding
 
     validate_binding(slug)
     with _source_lock(slug):
-        return _retry_adventure(slug, background)
+        return _retry_adventure(slug, background, body)
 
 
-def _retry_adventure(slug: str, background: BackgroundTasks):
+def _retry_adventure(
+    slug: str, background: BackgroundTasks, body: AdventureRetryRequest | None = None
+):
     """Re-run ingestion (uploads) or generation (AI campaigns) for a failed adventure.
 
     Typical use: an adventure left "failed" because a restart interrupted its processing.
@@ -337,6 +500,29 @@ def _retry_adventure(slug: str, background: BackgroundTasks):
     title = meta.get("title") or slug.replace("_", " ").title()
     generation = meta.get("generation") or {}
     pdf_path = _PDF_DIR / f"{slug}.pdf"
+    reviewed_identity = None
+    if body is not None and (body.reviewed_source_sha256 or body.reviewed_extraction_sha256):
+        if not body.reviewed_source_sha256 or not body.reviewed_extraction_sha256:
+            raise HTTPException(
+                status_code=422,
+                detail="Both inspected source and extraction identities are required.",
+            )
+        if generation.get("kind") == "ai" or not pdf_path.is_file():
+            raise HTTPException(
+                status_code=409,
+                detail="An inspected PDF preview is required for this recovery action.",
+            )
+        bundle = _load_extraction(slug)
+        reviewed_identity = (body.reviewed_source_sha256, body.reviewed_extraction_sha256)
+        if (
+            not _preview_source_current(slug, bundle)
+            or not (bundle.get("readiness") or {}).get("quality_passed")
+            or (bundle.get("source_sha256"), bundle.get("markdown_sha256")) != reviewed_identity
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="The inspected extraction changed or failed quality checks. Inspect the current preview again.",
+            )
     if generation.get("kind") == "ai":
         from ..services.campaign_generator import build_generated_campaign
 
@@ -348,11 +534,21 @@ def _retry_adventure(slug: str, background: BackgroundTasks):
             generation.get("size") or "medium",
         )
     elif pdf_path.is_file():
-        task_args = (_ingest_adventure, slug, str(pdf_path))
+        task_args = (
+            (
+                _ingest_adventure,
+                slug,
+                str(pdf_path),
+                str(_extraction_path(slug, f"{slug}.extraction.json")),
+                reviewed_identity,
+            )
+            if reviewed_identity is not None
+            else (_ingest_adventure, slug, str(pdf_path))
+        )
     else:
         raise HTTPException(status_code=410, detail="The source PDF is gone; upload it again.")
 
-    meta.update({"status": "processing", "error": None, "chunks": None})
+    meta.update({"status": "processing", "error": None, "chunks": None, "failure_code": None})
     _save_adventure_metadata(slug, meta)
     background.add_task(*task_args)
     log.info("adventure_retry_accepted", slug=slug)
@@ -452,6 +648,7 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
                     "status": "processing",
                     "chunks": None,
                     "error": None,
+                    "failure_code": None,
                     "source_filename": filename,
                 }
             )
