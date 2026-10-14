@@ -31,6 +31,9 @@ class AgentState(TypedDict, total=False):
     rules_context: list  # WorldRetriever (rules bucket)
     adventure_context: list  # WorldRetriever (adventure bucket)
     retrieved_context: list  # WorldRetriever (legacy merged view; nodes prefer the split)
+    error_code: str
+    source_mode: str
+    source_status: list[dict[str, Any]]
     retrieval_degraded: bool  # WorldRetriever: a bucket failed and came back empty
     adjudication_result: AdjudicationResult  # RulesAdjudicator
     narration: str  # Narrator

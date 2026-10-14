@@ -28,6 +28,9 @@ class TurnRequest(BaseModel):
 class TurnResponse(BaseModel):
     """Response body for turn endpoint."""
 
+    retrieval_degraded: bool = False
+    source_status: list[dict] = Field(default_factory=list)
+    source_mode: str = "module"
     narration: str
     adjudication: dict | None = None
     combat_state: dict | None = None

@@ -53,6 +53,8 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
     messages = state.get("messages", [])
 
     context_parts = [f"Player's attempted action: {wrap_player_action(player_input)}"]
+    if state.get("source_mode") == "homebrew":
+        context_parts.append("The player explicitly chose homebrew play. Continue creatively from saved story state; do not claim to follow an unavailable adventure module.")
     summary = state.get("memory_summary")
     if summary:
         context_parts.append(f"Story so far: {summary}")

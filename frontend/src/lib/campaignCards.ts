@@ -6,7 +6,7 @@ export interface CardModel {
   name: string;
   /** Latest campaign row for this module (active preferred). */
   campaign: CampaignRead | null;
-  state: "processing" | "failed" | "ready" | "ended";
+  state: "processing" | "failed" | "ready" | "ended" | "recovery";
   lastPlayed: string | null;
 }
 
@@ -21,9 +21,24 @@ export function buildCards(
     const prev = lastByCampaign.get(s.campaign_id);
     if (!prev || s.started_at > prev) lastByCampaign.set(s.campaign_id, s.started_at);
   }
-  const cards = adventures.map((adventure): CardModel => {
+  const modules = new Map(adventures.map((a) => [a.slug, a]));
+  for (const campaign of campaigns ?? []) {
+    if (campaign.created_by !== userId) continue;
+    for (const slug of campaign.adventure_collections) {
+      if (!modules.has(slug)) {
+        const source = campaign.sources?.find((s) => s.slug === slug);
+        modules.set(slug, { slug, title: source?.title ?? campaign.title, description: null,
+          level_range: null, cover_image: null, status: source?.status ?? "missing", error: source?.message });
+      }
+    }
+    if (campaign.source_mode === "homebrew" && campaign.adventure_collections.length === 0) {
+      modules.set(`homebrew_${campaign.id}`, { slug: `homebrew_${campaign.id}`, title: campaign.title,
+        description: null, level_range: null, cover_image: null, status: "ready" });
+    }
+  }
+  const cards = [...modules.values()].map((adventure): CardModel => {
     const mine = (campaigns ?? [])
-      .filter((c) => c.created_by === userId && c.adventure_collections.includes(adventure.slug))
+      .filter((c) => c.created_by === userId && (c.adventure_collections.includes(adventure.slug) || (c.source_mode === "homebrew" && adventure.slug === `homebrew_${c.id}`)))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
     const campaign = mine.find((c) => c.status === "active") ?? mine[0] ?? null;
     const lastPlayed =
@@ -33,7 +48,10 @@ export function buildCards(
         .sort()
         .at(-1) ?? null;
     const state =
-      adventure.status === "processing"
+      campaign?.source_mode === "homebrew" ? (campaign.status === "ended" ? "ended" : "ready")
+      : campaign?.play_allowed === false ? "recovery"
+      : adventure.status && !["processing", "failed", "ready"].includes(adventure.status) ? "recovery"
+      : adventure.status === "processing"
         ? "processing"
         : adventure.status === "failed"
           ? "failed"

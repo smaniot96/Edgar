@@ -2,7 +2,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-AdventureStatus = Literal["processing", "ready", "failed"]
+AdventureStatus = Literal[
+    "processing", "ready", "failed", "missing", "empty", "partial", "unavailable"
+]
 
 
 class AdventureRead(BaseModel):
@@ -13,6 +15,9 @@ class AdventureRead(BaseModel):
     cover_image: str | None = None
     # Ingestion lifecycle: "processing" while embedding, "ready" when searchable, "failed" on error.
     status: AdventureStatus = "ready"
+    usable_chunks: int = 0
+    source_pdf_available: bool = False
+    retrieval_degraded: bool = False
     chunks: int | None = None
     source_filename: str | None = None
     error: str | None = None

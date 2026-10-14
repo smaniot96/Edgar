@@ -23,6 +23,7 @@ from db.postgres.models import Campaign, EventLog, Session as SessionModel
 from db.vector.client import get_qdrant_client
 from db.vector.retrieval import search_adventure_context
 
+from .campaign_sources import require_campaign_sources, source_error
 from .character_assignments import character_play_state
 
 log = structlog.get_logger()
@@ -32,7 +33,8 @@ _INTRO_TEMPERATURE = 0.7
 INTRO_SYSTEM = (
     "You are the Dungeon Master opening a brand-new session of a Dungeons & Dragons 5e "
     "adventure. Write a vivid, welcoming opening of 2-4 short paragraphs that pulls the player "
-    "in. Ground it strictly in the provided adventure-module context: establish where the "
+    "in. When adventure-module text is provided, ground it strictly in that context; when the "
+    "player explicitly chose homebrew, improvise an opening. Establish where the "
     "player's character is, the situation and hook that begins the story, and the atmosphere. "
     "Address the character by name. End with a short, open invitation to act (for example, "
     "'What do you do?'). Do NOT roll dice, resolve actions, introduce the player's decisions, "
@@ -169,23 +171,40 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
 
     camp_res = await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
     campaign = camp_res.scalar_one_or_none()
-    adventure_collections = list(campaign.adventure_collections or []) if campaign else []
+    if campaign is None:
+        return None
+    sources = await require_campaign_sources(campaign)
+    homebrew = campaign.source_mode == "homebrew"
+    adventure_collections = [] if homebrew else list(campaign.adventure_collections or [])
 
     character = None
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
 
     # Prefer the literal start of the module; fall back to semantic search if scroll is empty.
-    opening_text = await asyncio.to_thread(_fetch_opening_text, adventure_collections)
-    if not opening_text:
-        hits = await asyncio.to_thread(
-            search_adventure_context,
-            _INTRO_QUERY,
-            adventure_collections,
-            campaign_id=session.campaign_id,
-            limit_per_collection=6,
-        )
-        opening_text = "\n".join(c.get("text", "") for c in hits[:6])
+    try:
+        opening_text = await asyncio.to_thread(_fetch_opening_text, adventure_collections)
+        if not opening_text and not homebrew:
+            hits = await asyncio.to_thread(
+                search_adventure_context,
+                _INTRO_QUERY,
+                adventure_collections,
+                campaign_id=session.campaign_id,
+                require_bound_sources=True,
+                limit_per_collection=6,
+            )
+            opening_text = "\n".join(c.get("text", "") for c in hits[:6])
+    except Exception as exc:
+        for source in sources:
+            source.status = "unavailable"
+            source.message = "Adventure text could not be retrieved for the opening. Try again or choose homebrew play."
+        raise source_error(sources) from exc
+
+    if not opening_text and not homebrew:
+        for source in sources:
+            source.status = "unavailable"
+            source.message = "Adventure text could not be retrieved for the opening. Try again or choose homebrew play."
+        raise source_error(sources)
 
     context_parts: list[str] = []
     if character:
@@ -200,7 +219,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         )
     else:
         context_parts.append(
-            "No adventure text was found; write a brief, generic but inviting opening for a "
+            "The player explicitly chose homebrew play. Write a brief, inviting opening for a "
             "fresh D&D adventure and prompt the player to set out."
         )
     context_parts.append("Write the opening narration now.")

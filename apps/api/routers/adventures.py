@@ -6,8 +6,11 @@ adventure (see routers/campaign.py). Uploads embed in the background; the metada
 the PDF store tracks the lifecycle (processing -> ready | failed) so it survives DB resets.
 """
 
+import fcntl
 import re
 import shutil
+import tempfile
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
@@ -65,7 +68,9 @@ def _all_collection_names() -> list[str]:
 
 
 def _adventure_collection_names(all_names: list[str]) -> set[str]:
-    return {n for n in all_names if not is_rules_collection(n) and not is_campaign_lore_collection(n)}
+    return {
+        n for n in all_names if not is_rules_collection(n) and not is_campaign_lore_collection(n)
+    }
 
 
 def _unique_slug(desired: str, taken: set[str]) -> str:
@@ -79,7 +84,10 @@ def _unique_slug(desired: str, taken: set[str]) -> str:
 
 def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     meta = load_adventure_metadata(slug)
-    status = meta.get("status") or ("ready" if has_collection else "processing")
+    from ..services.campaign_sources import source_read
+
+    source = source_read(slug)
+    status = source.status
     return AdventureRead(
         slug=slug,
         title=meta.get("title") or slug.replace("_", " ").title(),
@@ -87,9 +95,12 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
         level_range=meta.get("level_range"),
         cover_image=meta.get("cover_image"),
         status=status,
+        usable_chunks=source.usable_chunks,
+        source_pdf_available=source.source_pdf_available,
+        retrieval_degraded=status != "ready",
         chunks=meta.get("chunks"),
         source_filename=meta.get("source_filename"),
-        error=meta.get("error"),
+        error=source.message or meta.get("error"),
         created_at=meta.get("created_at"),
     )
 
@@ -142,7 +153,10 @@ def _ingest_adventure(slug: str, pdf_path: str) -> None:
         meta = load_adventure_metadata(slug)
         # Raw exception text can carry internals; the full trace is in the logs.
         meta.update(
-            {"status": "failed", "error": f"Ingestion failed ({type(exc).__name__}); see server logs."}
+            {
+                "status": "failed",
+                "error": f"Ingestion failed ({type(exc).__name__}); see server logs.",
+            }
         )
         _save_adventure_metadata(slug, meta)
     finally:
@@ -270,28 +284,55 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
             },
         },
     )
-    background.add_task(
-        build_generated_campaign, slug, title_hint, body.theme or "", body.size
-    )
+    background.add_task(build_generated_campaign, slug, title_hint, body.theme or "", body.size)
     log.info("adventure_generate_accepted", slug=slug, size=body.size)
     return AdventureUploadResponse(
         slug=slug, title=title_hint or "AI campaign", status="processing"
     )
 
 
+@contextmanager
+def _source_lock(slug: str):
+    """Serialize source recovery reservations across API processes."""
+    _ADVENTURES_DIR.mkdir(parents=True, exist_ok=True)
+    with (_ADVENTURES_DIR / f"{slug}.recovery.lock").open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise HTTPException(
+                status_code=409, detail="Source recovery is already in progress."
+            ) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 @router.post("/adventures/{slug}/retry", response_model=AdventureUploadResponse, status_code=202)
 def retry_adventure(slug: str, background: BackgroundTasks):
+    from ..services.campaign_sources import validate_binding
+
+    validate_binding(slug)
+    with _source_lock(slug):
+        return _retry_adventure(slug, background)
+
+
+def _retry_adventure(slug: str, background: BackgroundTasks):
     """Re-run ingestion (uploads) or generation (AI campaigns) for a failed adventure.
 
     Typical use: an adventure left "failed" because a restart interrupted its processing.
-    409 if it is not in the failed state; 410 if there is nothing to retry from (the uploaded
+    409 if it is not missing/empty/partial/failed; 410 if there is nothing to retry from (the uploaded
     PDF is gone and it was not AI-generated).
     """
     meta = load_adventure_metadata(slug)
     if not meta:
         raise HTTPException(status_code=404, detail="Adventure not found")
-    if meta.get("status") != "failed":
-        raise HTTPException(status_code=409, detail="Only failed adventures can be retried.")
+    from ..services.campaign_sources import source_read
+
+    if source_read(slug).status not in ("failed", "missing", "empty", "partial"):
+        raise HTTPException(
+            status_code=409, detail="Only unusable adventure sources can be retried."
+        )
 
     title = meta.get("title") or slug.replace("_", " ").title()
     generation = meta.get("generation") or {}
@@ -368,3 +409,57 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
     cover_dir = _ADVENTURES_DIR / slug
     if cover_dir.is_dir():
         shutil.rmtree(cover_dir, ignore_errors=True)
+
+
+async def recover_source_upload(slug: str, file: UploadFile, background: BackgroundTasks):
+    """Serialize recovery reservations and restore the intended slug, never a suffixed copy."""
+    from ..services.campaign_sources import source_read, validate_binding
+
+    validate_binding(slug)
+    filename = file.filename or "adventure.pdf"
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    def accept():
+        _ADVENTURES_DIR.mkdir(parents=True, exist_ok=True)
+        # An OS lock prevents simultaneous uploads from copying to the same slug. The
+        # processing metadata prevents a later request from starting a second ingest.
+        with _source_lock(slug):
+            source = source_read(slug)
+            if source.status in ("ready", "processing", "unavailable"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="This source cannot be re-uploaded in its current state.",
+                )
+            _PDF_DIR.mkdir(parents=True, exist_ok=True)
+            pdf_path = _PDF_DIR / f"{slug}.pdf"
+            with tempfile.NamedTemporaryFile(dir=_PDF_DIR, suffix=".pdf", delete=False) as staged:
+                staged_path = Path(staged.name)
+            try:
+                size = _copy_capped(file.file, staged_path, _MAX_UPLOAD_BYTES)
+                if size <= 0:
+                    raise HTTPException(
+                        status_code=400 if size == 0 else 413,
+                        detail="Uploaded PDF is empty or exceeds 64 MB.",
+                    )
+                staged_path.replace(pdf_path)
+            finally:
+                staged_path.unlink(missing_ok=True)
+            meta = load_adventure_metadata(slug)
+            meta.update(
+                {
+                    "title": source.title,
+                    "status": "processing",
+                    "chunks": None,
+                    "error": None,
+                    "source_filename": filename,
+                }
+            )
+            # A supplied PDF changes recovery provenance to upload, not AI generation.
+            meta.pop("generation", None)
+            _save_adventure_metadata(slug, meta)
+            return pdf_path, source.title
+
+    pdf_path, title = await run_in_threadpool(accept)
+    background.add_task(_ingest_adventure, slug, str(pdf_path))
+    return AdventureUploadResponse(slug=slug, title=title, status="processing")

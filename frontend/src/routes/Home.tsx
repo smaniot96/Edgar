@@ -87,7 +87,7 @@ export default function Home() {
 
   async function handlePlay(card: CardModel) {
     setActionError(null);
-    if (card.state === "ended" && card.campaign) {
+    if (card.campaign) {
       navigate(`/campaigns/${card.campaign.id}`);
       return;
     }
@@ -150,8 +150,10 @@ export default function Home() {
     );
   }
 
-  const listError = adventures.error && adventures.data === undefined ? adventures.error : null;
-  const isEmpty = adventures.data !== undefined && adventures.data.length === 0;
+  const listError = (campaigns.error && campaigns.data === undefined ? campaigns.error : null)
+    ?? (adventures.error && adventures.data === undefined ? adventures.error : null);
+  const listsLoaded = adventures.data !== undefined && campaigns.data !== undefined;
+  const isEmpty = listsLoaded && cards.length === 0;
   const showCreate = createOpen ?? isEmpty;
 
   return (
@@ -206,8 +208,8 @@ export default function Home() {
           <span id="your-campaigns">Your campaigns</span>
         </SectionTitle>
         {listError ? (
-          <ErrorNotice error={listError} onRetry={adventures.refetch} />
-        ) : adventures.data === undefined ? (
+          <ErrorNotice error={listError} onRetry={() => { adventures.refetch(); campaigns.refetch(); }} />
+        ) : !listsLoaded ? (
           <LoadingText>Loading campaigns…</LoadingText>
         ) : isEmpty ? (
           <EmptyState title="No campaigns yet">

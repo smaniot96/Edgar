@@ -21,6 +21,9 @@ class Campaign(Base):
     __tablename__ = "campaigns"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'ended')", name="campaigns_status_valid"),
+        CheckConstraint(
+            "source_mode IN ('module', 'homebrew')", name="campaigns_source_mode_valid"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -35,9 +38,10 @@ class Campaign(Base):
         nullable=False,
         server_default=text("'{}'::text[]"),
     )
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default=text("'active'")
+    source_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'module'")
     )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships. Child rows are removed by the database (ON DELETE CASCADE); passive_deletes

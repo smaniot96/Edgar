@@ -25,6 +25,7 @@ export interface PlaySessionState {
   error: unknown;
   title: string;
   campaignId: number | null;
+  campaign: CampaignRead | null;
   campaignComplete: boolean;
   character: SheetCharacter | null;
   sceneId: string | null;
@@ -38,6 +39,7 @@ const initial: PlaySessionState = {
   error: null,
   title: "Edgar",
   campaignId: null,
+  campaign: null,
   campaignComplete: false,
   character: null,
   sceneId: null,
@@ -88,7 +90,7 @@ export function usePlaySession(sessionId: number) {
       try {
         const session = await getSession(sessionId, ctrl.signal);
         const [campaign, character, combat, history] = await Promise.all([
-          getCampaign(session.campaign_id, ctrl.signal).catch(() => null),
+          getCampaign(session.campaign_id, ctrl.signal),
           session.active_character_id
             ? loadCharacter(session.active_character_id, session.campaign_id, ctrl.signal).catch(() => null)
             : Promise.resolve(null),
@@ -103,6 +105,7 @@ export function usePlaySession(sessionId: number) {
           error: null,
           title,
           campaignId: session.campaign_id,
+          campaign,
           campaignComplete: campaign?.status === "ended",
           character,
           sceneId: session.current_scene_id,
@@ -143,5 +146,9 @@ export function usePlaySession(sessionId: number) {
     setState((s) => ({ ...s, sceneId }));
   }, []);
 
-  return { ...state, applyTurnResult, setCampaignComplete, setSceneId, reload };
+  const updateCampaign = useCallback((campaign: CampaignRead) => {
+    setState((s) => ({ ...s, campaign }));
+  }, []);
+
+  return { ...state, applyTurnResult, setCampaignComplete, setSceneId, reload, updateCampaign };
 }

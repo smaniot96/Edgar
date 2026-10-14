@@ -79,8 +79,8 @@ def effective_rules_collection_names(include_legacy: bool = True) -> list[str]:
 
 
 def effective_adventure_collection_names(adventure_collections: list[str] | None) -> list[str]:
-    """Return adventure module collection names; default to Chalice if none configured."""
-    if adventure_collections:
+    """None keeps the legacy default; an explicit empty list means no bound module."""
+    if adventure_collections is not None:
         return list(adventure_collections)
     return list(DEFAULT_ADVENTURE_COLLECTIONS)
 

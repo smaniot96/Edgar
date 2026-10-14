@@ -37,3 +37,43 @@ The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session
 ## Schemas
 
 `schemas/` mirrors the SQLAlchemy ORM. `Create`/`Update` are request bodies; `Read` is the response body with `from_attributes=True` so ORM rows serialize directly.
+
+### Campaign source availability and recovery
+
+Apply Alembic revision `12_campaign_source_mode` before serving this version. It adds
+`campaigns.source_mode` with default `module`; existing bindings, campaigns and saved play
+remain intact. Generic narration now requires an explicit `homebrew` choice.
+
+Campaign list/detail/selection responses include `source_mode`, `sources`,
+`retrieval_degraded` and `play_allowed`. Each bound source reports its slug/title, availability
+(`ready`, `missing`, `empty`, `partial`, `unavailable`, `processing` or `failed`), usable and
+expected chunk counts, collection presence and `source_pdf_available`. Adventure responses
+also report live availability, usable chunks and degradation. A metadata `ready` flag alone
+is insufficient: readiness checks the live unnamed vector schema, vector presence and
+nonblank text coverage, including the recorded chunk count when available. These checks do
+not certify extraction quality or identify the original PDF's contents.
+
+Creation and binding changes require usable sources in module mode. Opening an existing
+campaign returns its recovery state even if its binding is orphaned. New sessions, intro,
+sync turns and SSE turns check sources before play. A blocked request returns HTTP 409 with
+`detail: {code: "campaign_sources_unavailable", message, retrieval_degraded: true, sources}`.
+Source loss during a turn returns the same stable code and degradation (an SSE `error` frame
+if the stream has opened), without saving that turn or inventing module narration. Successful
+turns expose `source_mode`, `source_status` and `retrieval_degraded` without requiring debug.
+
+`PATCH /campaigns/{id}` with `{"source_mode":"homebrew"}` records the player's explicit choice
+and preserves the original bindings. Homebrew uses saved world/story state and campaign lore;
+it does not query the unavailable bound modules. Switch back with `source_mode: "module"`
+only after all bound sources are ready. An explicit empty `adventure_collections: []` means
+no bound module; creation then requires `source_mode: "homebrew"`. Omitted bindings in module
+creation retain the legacy default, which is subject to the same readiness check.
+
+Recover an unusable source with multipart `file` at
+`POST /campaigns/{id}/sources/{slug}/upload` (202). The slug must already be bound to that
+campaign; recovery ingests the supplied PDF into that exact slug, never a suffixed duplicate.
+Ready sources cannot be overwritten through this recovery endpoint. Poll campaign detail
+for processing/ready/failed status. `POST /adventures/{slug}/retry` can reuse a retained source
+PDF for a missing, empty, partial or failed index (or retry an explicitly AI-generated source);
+a missing uploaded PDF returns 410. Historical logs and metadata cannot recreate a lost PDF.
+Recovery uses the existing ingestion pipeline; atomic index replacement and extraction
+quality improvements are separate work.

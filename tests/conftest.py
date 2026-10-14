@@ -129,9 +129,31 @@ async def redis_client() -> AsyncIterator[FakeAsyncRedis]:
 async def api_client(
     db_session: AsyncSession,
     redis_client: FakeAsyncRedis,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> AsyncIterator[AsyncClient]:
     from apps.api.dependencies import get_redis, get_session
     from apps.api.main import app
+    from apps.api.routers import adventures
+    from apps.api.services import adventures_meta, campaign_sources
+
+    # Existing API tests exercise relational behavior against an available corpus. New source
+    # regressions override this stub with disposable Qdrant data. Never inspect live storage.
+    def available_source(slug, *, expected_chunks=None, **_kwargs):
+        return {
+            "slug": slug,
+            "status": "ready",
+            "usable_chunks": expected_chunks or 1,
+            "expected_chunks": expected_chunks,
+            "collection_exists": True,
+        }
+
+    monkeypatch.setattr(campaign_sources, "inspect_source", available_source)
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(adventures_meta, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(campaign_sources, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(adventures, "_ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(adventures, "_PDF_DIR", tmp_path / "pdfs")
 
     async def override_get_session() -> AsyncIterator[AsyncSession]:
         yield db_session
@@ -158,6 +180,10 @@ def fake_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
     def _adv(*_a: Any, **_kw: Any) -> list[dict[str, Any]]:
         return []
 
+    monkeypatch.setattr(
+        "agent.nodes.world_retriever.inspect_source",
+        lambda slug, **_kw: {"slug": slug, "status": "ready", "usable_chunks": 1},
+    )
     monkeypatch.setattr("agent.nodes.world_retriever.search_rules_context", _rules)
     monkeypatch.setattr("agent.nodes.world_retriever.search_adventure_context", _adv)
 
