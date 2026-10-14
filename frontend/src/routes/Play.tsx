@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { isNotFound, startSessionIntro } from "../api/client";
+import { ApiError, getCampaign, isNotFound, startSessionIntro } from "../api/client";
+import { SourceRecovery } from "../components/campaign/SourceRecovery";
 import { ComposerBar } from "../components/ComposerBar";
 import { MessageList } from "../components/MessageList";
 import { CampaignEndPanel } from "../components/play/CampaignEndPanel";
@@ -62,7 +63,7 @@ function PlayNotFound() {
 function PlayScreen({ sessionId }: { sessionId: number }) {
   const { isDev } = useMode();
   const game = usePlaySession(sessionId);
-  const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete } = game;
+  const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign } = game;
 
   const [draft, setDraft] = useState("");
   const [sheetOpen, setSheetOpen] = useState(initialSheetOpen);
@@ -82,18 +83,24 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     debug: isDev,
     onResult: applyTurnResult,
     onCampaignEnded: () => setCampaignComplete(true),
+    onSourcesUnavailable: () => {
+      if (game.campaignId) void getCampaign(game.campaignId).then(updateCampaign).catch(() => {});
+    },
     onFailed: (input) => setDraft((d) => (d.trim() ? d : input)),
     onSettled: focusInput,
   });
   const { dispatch, send, stop, retry, busy } = turn;
   const { lines, pending, announcement } = turn.state;
 
-  // Seed the transcript from history once loaded; open with a DM scene on an empty session.
+  // History seeding depends only on boot, so changing source readiness preserves live chat.
+  useEffect(() => {
+    if (boot) dispatch({ type: "reset", lines: linesFromHistory(boot.history) });
+  }, [boot, dispatch]);
+
   const introRequested = useRef(false);
   useEffect(() => {
-    if (!boot) return;
-    dispatch({ type: "reset", lines: linesFromHistory(boot.history) });
-    if (boot.history.length > 0 || boot.campaignEnded || introRequested.current) return;
+    if (!boot || !campaign) return;
+    if (boot.history.length > 0 || boot.campaignEnded || campaign.play_allowed === false || introRequested.current) return;
     introRequested.current = true;
     setIntroPending(true);
     (async () => {
@@ -103,13 +110,20 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           dispatch({ type: "append", line: { id: "intro", role: "dm", content: data.narration } });
           if (data.current_scene_id !== undefined) setSceneId(data.current_scene_id);
         }
-      } catch {
-        /* non-fatal: the player can still type a first action */
+      } catch (error) {
+        if (error instanceof ApiError) {
+          let detail;
+          try { detail = JSON.parse(error.body)?.detail; } catch { /* non-JSON failure */ }
+          if (detail?.code === "campaign_sources_unavailable") {
+            updateCampaign({ ...campaign, sources: detail.sources, retrieval_degraded: true, play_allowed: false });
+            introRequested.current = false;
+          }
+        }
       } finally {
         setIntroPending(false);
       }
     })();
-  }, [boot, sessionId, dispatch, setSceneId]);
+  }, [boot, sessionId, dispatch, setSceneId, campaign, updateCampaign]);
 
   const toggleSheet = useCallback(() => {
     setSheetOpen((o) => {
@@ -132,17 +146,17 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
 
   const handleSend = useCallback(() => {
     const msg = draft.trim();
-    if (!msg || busy || campaignComplete) return;
+    if (!msg || busy || campaignComplete || game.campaign?.play_allowed === false) return;
     setDraft("");
     void send(msg);
-  }, [draft, busy, campaignComplete, send]);
+  }, [draft, busy, campaignComplete, send, game.campaign?.play_allowed]);
 
   const handleQuickReply = useCallback(
     (text: string) => {
-      if (busy || campaignComplete) return;
+      if (busy || campaignComplete || game.campaign?.play_allowed === false) return;
       void send(text);
     },
-    [busy, campaignComplete, send],
+    [busy, campaignComplete, send, game.campaign?.play_allowed],
   );
 
   const handleRetry = useCallback(
@@ -191,6 +205,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
         sessionId={sessionId}
         sceneId={game.sceneId}
       />
+      {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={game.updateCampaign} /> : null}
       {isDev ? <DevPipeline stage={pending?.stage ?? null} /> : null}
 
       <div className="flex min-h-0 flex-1">
@@ -213,9 +228,9 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                   : null)
               }
               onRetry={handleRetry}
-              canRetry={!busy && !campaignComplete}
+              canRetry={!busy && !campaignComplete && game.campaign?.play_allowed !== false}
               forceScrollKey={pending?.turnId ?? null}
-              onQuickReply={campaignComplete ? undefined : handleQuickReply}
+              onQuickReply={campaignComplete || game.campaign?.play_allowed === false ? undefined : handleQuickReply}
             />
           )}
 
@@ -231,7 +246,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                 onStop={stop}
                 busy={busy}
                 canStop={pending?.stage !== "saving"}
-                disabled={game.loading || introPending}
+                disabled={game.loading || introPending || game.campaign?.play_allowed === false}
               />
             )}
           </div>

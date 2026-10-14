@@ -28,6 +28,7 @@ function parseDetail(body: string): string | null {
   try {
     const parsed = JSON.parse(body) as { detail?: unknown };
     if (parsed && typeof parsed.detail === "string" && parsed.detail.trim()) return parsed.detail;
+    if (parsed?.detail && typeof parsed.detail === "object" && "message" in parsed.detail && typeof parsed.detail.message === "string") return parsed.detail.message;
   } catch {
     // body wasn't JSON
   }
@@ -212,6 +213,20 @@ export function listCampaigns(signal?: AbortSignal): Promise<CampaignRead[]> {
 
 export function getCampaign(id: number, signal?: AbortSignal): Promise<CampaignRead> {
   return getJson(`/api/campaigns/${id}`, signal);
+}
+
+export function setCampaignSourceMode(id: number, source_mode: "module" | "homebrew"): Promise<CampaignRead> {
+  return sendJson("PATCH", `/api/campaigns/${id}`, { source_mode });
+}
+
+export async function recoverCampaignSource(id: number, slug: string, file: File): Promise<AdventureRead> {
+  const form = new FormData();
+  form.append("file", file);
+  return json(await apiFetch(`/api/campaigns/${id}/sources/${encodeURIComponent(slug)}/upload`, { method: "POST", body: form }));
+}
+
+export function retryAdventure(slug: string): Promise<AdventureRead> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/retry`);
 }
 
 export function endCampaign(id: number): Promise<CampaignRead> {

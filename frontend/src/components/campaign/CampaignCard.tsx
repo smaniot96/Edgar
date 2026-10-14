@@ -14,6 +14,8 @@ function StatusBadge({ state }: { state: CardModel["state"] }) {
       return <Pill tone="success">Ready</Pill>;
     case "ended":
       return <Pill tone="neutral">Ended</Pill>;
+    case "recovery":
+      return <Pill tone="danger">Source unavailable</Pill>;
     case "failed":
       return <Pill tone="danger">Failed</Pill>;
     default:
@@ -69,7 +71,7 @@ export function CampaignCard({
 }) {
   const { isDev } = useMode();
   const { adventure, name, state, lastPlayed } = card;
-  const playable = state === "ready" || state === "ended";
+  const playable = state === "ready" || state === "ended" || (state === "recovery" && !!card.campaign);
   const showAdventureTitle = name !== adventure.title;
 
   return (
@@ -95,6 +97,7 @@ export function CampaignCard({
           {isDev && adventure.chunks != null ? <Pill>{adventure.chunks} chunks</Pill> : null}
           {isDev && card.campaign ? <Pill className="font-mono">campaign #{card.campaign.id}</Pill> : null}
         </div>
+        {state === "recovery" ? <p className="mb-3 text-sm text-warning">The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play.</p> : null}
         {state === "failed" ? (
           <p className="mb-3 rounded-control bg-danger-soft px-2 py-1.5 text-xs text-danger">
             Edgar couldn't prepare this campaign. Delete it and try again.
@@ -130,6 +133,8 @@ export function CampaignCard({
               </>
             ) : state === "ended" ? (
               "Open"
+            ) : state === "recovery" ? (
+              "Recover source"
             ) : state === "failed" ? (
               "Unavailable"
             ) : (

@@ -51,6 +51,10 @@ log = structlog.get_logger()
 
 # code -> (HTTP status for the sync endpoint, message shown to the player)
 PUBLIC_ERRORS: dict[str, tuple[int, str]] = {
+    "campaign_sources_unavailable": (
+        409,
+        "The campaign adventure source is unavailable. Recover it or choose homebrew play.",
+    ),
     "llm_unavailable": (503, "The Dungeon Master is unavailable right now. Try again."),
     "character_not_assigned": (
         409,
@@ -69,14 +73,17 @@ class TurnError(Exception):
         self.code = code
         self.status_code, self.message = PUBLIC_ERRORS[code]
 
-    def body(self) -> dict[str, str]:
+    def body(self) -> dict[str, Any]:
         return error_body(self.code)
 
 
-def error_body(code: str) -> dict[str, str]:
+def error_body(code: str) -> dict[str, Any]:
     """Public error payload. `detail` mirrors `message` (the frontend and FastAPI clients read it)."""
     _, message = PUBLIC_ERRORS[code]
-    return {"code": code, "message": message, "detail": message}
+    body: dict[str, Any] = {"code": code, "message": message, "detail": message}
+    if code == "campaign_sources_unavailable":
+        body["retrieval_degraded"] = True
+    return body
 
 
 def sse_event(event: str, data: Any) -> str:
@@ -84,7 +91,9 @@ def sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-async def persist_turn(session_id: int, body_message: str, result: dict[str, Any]) -> dict[str, Any]:
+async def persist_turn(
+    session_id: int, body_message: str, result: dict[str, Any]
+) -> dict[str, Any]:
     """Write the whole turn in one transaction and return the `done` payload.
 
     Opens its own short-lived session so the caller never holds a pooled connection across LLM
@@ -145,6 +154,9 @@ async def persist_turn(session_id: int, body_message: str, result: dict[str, Any
         "current_scene_id": current_scene_id,
         "combat_state": combat_state_public(new_combat),
         "campaign_complete": campaign_complete,
+        "retrieval_degraded": bool(result.get("retrieval_degraded")),
+        "source_status": result.get("source_status", []),
+        "source_mode": result.get("source_mode", "module"),
     }
 
 
@@ -153,7 +165,7 @@ async def run_turn(initial_state: dict[str, Any]) -> dict[str, Any]:
     result = await app.ainvoke(dict(initial_state))
     if result.get("error"):
         log.error("turn_agent_error", error=result["error"])
-        raise TurnError("llm_unavailable")
+        raise TurnError(result.get("error_code") or "llm_unavailable")
     return result
 
 
@@ -294,7 +306,7 @@ async def stream_session_turn(
 
     if state.get("error"):
         log.error("turn_agent_error", session_id=session_id, error=state["error"])
-        yield sse_event("error", error_body("llm_unavailable"))
+        yield sse_event("error", error_body(state.get("error_code") or "llm_unavailable"))
         return
 
     adjudication = state.get("adjudication_result")

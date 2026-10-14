@@ -14,7 +14,8 @@ therefore get the best chunks first regardless of which book they came from.
 Errors: collections that do not exist are skipped *before* querying (cached collection list).
 A collection that fails to query is logged as a warning with the collection name and exception
 type; if every queried collection fails, `RetrievalError` is raised so an outage surfaces
-instead of silently producing an empty context.
+instead of silently producing an empty context. Module play additionally requires every bound
+collection to exist and query successfully; optional rules aliases and campaign lore are tolerant.
 """
 
 from __future__ import annotations
@@ -63,21 +64,27 @@ def search_collections(
     limit: int | None = DEFAULT_SEARCH_LIMIT,
     min_score: float | None = DEFAULT_MIN_SCORE,
     dedupe: bool = True,
+    required_collections: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Embed once, search each existing collection, return hits ranked globally by score.
 
     `limit=None` disables the total cap, `min_score=None` disables the threshold.
+    Required collections use a fresh inventory and fail explicitly if missing or unqueryable.
     """
     if not query_text.strip() or not collection_names:
         return []
 
     q = _client(client)
-    names = _existing_only(q, collection_names)
+    names = _existing_only(q, collection_names, refresh=bool(required_collections))
+    missing_required = set(required_collections or []) - set(names)
+    if missing_required:
+        raise RetrievalError(f"required adventure collections are missing: {sorted(missing_required)}")
     if not names:
         return []
 
     vector = embed_query(query_text)
-    hits = _gather_hits(q, names, vector, limit_per_collection, kind=kind)
+    hits = _gather_hits(q, names, vector, limit_per_collection, kind=kind,
+                        required_collections=required_collections)
     return _rank(hits, limit=limit, min_score=min_score, dedupe=dedupe)
 
 
@@ -112,9 +119,15 @@ def search_adventure_context(
     client: QdrantClient | None = None,
     limit: int | None = DEFAULT_ADVENTURE_LIMIT,
     min_score: float | None = DEFAULT_MIN_SCORE,
+    require_bound_sources: bool = False,
 ) -> list[dict[str, Any]]:
-    """Bound adventure modules plus the per-campaign lore collection (if it exists), best first."""
-    names = list(effective_adventure_collection_names(adventure_collections))
+    """Bound modules plus optional campaign lore, best first.
+
+    Module play uses `require_bound_sources` so another module or lore cannot hide a failed
+    binding. Rules retrieval and optional lore keep the existing tolerant behavior.
+    """
+    bound = list(effective_adventure_collection_names(adventure_collections))
+    names = list(bound)
     if campaign_id is not None:
         lore = campaign_lore_collection(campaign_id)
         if lore not in names:
@@ -127,6 +140,7 @@ def search_adventure_context(
         client=client,
         limit=limit,
         min_score=min_score,
+        required_collections=bound if require_bound_sources else None,
     )
 
 
@@ -167,10 +181,10 @@ def retrieve_monster(
 # --- internals -------------------------------------------------------------------------------
 
 
-def _existing_only(q: Any, collection_names: list[str]) -> list[str]:
+def _existing_only(q: Any, collection_names: list[str], *, refresh: bool = False) -> list[str]:
     """Drop duplicates and collections that do not exist (when the list can be fetched)."""
     names = list(dict.fromkeys(collection_names))
-    existing = existing_collection_names(q)
+    existing = existing_collection_names(q, max_age=0.0) if refresh else existing_collection_names(q)
     if existing is None:
         return names
     present = [n for n in names if n in existing]
@@ -181,7 +195,8 @@ def _existing_only(q: Any, collection_names: list[str]) -> list[str]:
 
 
 def _gather_hits(
-    q: Any, names: list[str], vector: list[float], limit_per_collection: int, *, kind: str
+    q: Any, names: list[str], vector: list[float], limit_per_collection: int, *, kind: str,
+    required_collections: list[str] | None = None
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     failures = 0
@@ -190,6 +205,8 @@ def _gather_hits(
         try:
             results = _query_collection(q, collection_name, vector, limit_per_collection)
         except Exception as e:
+            if collection_name in (required_collections or []):
+                raise RetrievalError(f"required adventure collection query failed: {collection_name}") from e
             failures += 1
             last_error = e
             logger.warning(

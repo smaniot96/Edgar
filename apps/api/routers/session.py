@@ -22,6 +22,7 @@ from db.postgres.models import Campaign, EventLog, Session as SessionModel
 from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse
+from ..services.campaign_sources import require_campaign_sources
 from ..services.character_assignments import character_play_state, load_active_assignment
 from ..services.combat import load_active_combat
 from ..services.npcs import load_npcs
@@ -71,14 +72,13 @@ async def _load_turn_initial_state(
             status_code=409,
             detail="Campaign has ended; reopen it to continue.",
         )
+    sources = await require_campaign_sources(campaign)
     world_flags = await load_world_flags(db, session.campaign_id)
 
     prior_messages = await load_session_messages(db, session_id)
     character = None
     if session.active_character_id:
-        character = await character_play_state(
-            db, session.active_character_id, session.campaign_id
-        )
+        character = await character_play_state(db, session.active_character_id, session.campaign_id)
     npcs = await load_npcs(db, session.campaign_id)
     npc_summaries = [{"name": n.name, "disposition": n.disposition} for n in npcs]
 
@@ -87,7 +87,12 @@ async def _load_turn_initial_state(
         "session_id": session_id,
         "campaign_id": session.campaign_id,
         "messages": prior_messages,
-        "adventure_collections": list(campaign.adventure_collections or []),
+        "adventure_collections": (
+            [] if campaign.source_mode == "homebrew" else list(campaign.adventure_collections or [])
+        ),
+        "source_mode": campaign.source_mode,
+        "source_status": [s.model_dump() for s in sources],
+        "retrieval_degraded": any(s.status != "ready" for s in sources),
         "world_flags": world_flags,
         "current_scene_id": session.current_scene_id,
         "character": character,
@@ -191,6 +196,8 @@ async def session_intro(
                 status_code=409, detail="Campaign has ended; reopen it to continue."
             )
 
+        if campaign is not None:
+            await require_campaign_sources(campaign)
         payload = await generate_session_intro(db, session)
     finally:
         await lock.release()
@@ -205,6 +212,7 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
     campaign = await db.get(Campaign, body.campaign_id)
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
+    await require_campaign_sources(campaign)
     if body.active_character_id is not None:
         ass = await load_active_assignment(db, body.active_character_id, body.campaign_id)
         if ass is None:
@@ -289,6 +297,9 @@ async def session_turn(
         adjudication = result.get("adjudication_result")
         return TurnResponse(
             narration=done["narration"],
+            retrieval_degraded=done["retrieval_degraded"],
+            source_status=done["source_status"],
+            source_mode=done["source_mode"],
             adjudication=adjudication.model_dump() if adjudication else None,
             combat_state=result.get("combat_state"),
             current_scene_id=done["current_scene_id"],

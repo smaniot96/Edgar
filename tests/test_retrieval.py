@@ -257,3 +257,27 @@ def test_intro_reads_first_pages_in_order(monkeypatch: pytest.MonkeyPatch, has_i
     monkeypatch.setattr(si, "_page_index_attempted", set())
     text = si._fetch_opening_text(["big_module"], max_chunks=3)
     assert text.splitlines() == ["page 1 part 0", "page 1 part 1", "page 2 part 0"]
+
+
+def test_required_missing_module_cannot_be_hidden_by_other_module_or_lore():
+    client = FakeQdrant({"usable": [(0.8, _p("Good module"))], "campaign_lore_7": [(0.9, _p("Lore"))]})
+    with pytest.raises(retrieval.RetrievalError, match="missing"):
+        retrieval.search_adventure_context("Explore", ["lost", "usable"], campaign_id=7,
+                                           client=client, require_bound_sources=True)
+
+
+def test_required_query_failure_is_not_hidden_by_partial_success():
+    client = FakeQdrant({"usable": [(0.8, _p("Good module"))], "lost": [(0.9, _p("Lost module"))]}, fail={"lost"})
+    with pytest.raises(retrieval.RetrievalError, match="lost"):
+        retrieval.search_adventure_context("Explore", ["usable", "lost"], client=client,
+                                           require_bound_sources=True)
+
+
+def test_required_source_inventory_is_fresh_and_campaign_lore_is_optional():
+    client = FakeQdrant({"usable": [(0.8, _p("Good module"))]})
+    assert retrieval.search_adventure_context("Explore", ["usable"], campaign_id=7,
+        client=client, require_bound_sources=True)
+    client.data.clear()
+    with pytest.raises(retrieval.RetrievalError):
+        retrieval.search_adventure_context("Explore", ["usable"], campaign_id=7,
+            client=client, require_bound_sources=True)

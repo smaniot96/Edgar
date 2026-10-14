@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -11,6 +11,7 @@ from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 from ..dependencies import current_user_id, get_session
 from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
 from ..services.campaign_completion import close_campaign
+from ..services.campaign_sources import campaign_read, require_sources, validate_binding
 from ._common import Page, get_or_404
 
 router = APIRouter(tags=["campaigns"])
@@ -30,13 +31,13 @@ async def list_campaigns(
         stmt = stmt.where(Campaign.status == status)
     result = await db.execute(stmt)
     campaigns = result.scalars().all()
-    return [CampaignRead.model_validate(c) for c in campaigns]
+    return [await campaign_read(c) for c in campaigns]
 
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignRead)
 async def get_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
     campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
-    return CampaignRead.model_validate(campaign)
+    return await campaign_read(campaign)
 
 
 @router.post("/adventures/{slug}/campaign", response_model=CampaignRead)
@@ -66,8 +67,9 @@ async def open_campaign_for_adventure(
     )
     existing = result.scalar_one_or_none()
     if existing is not None:
-        return CampaignRead.model_validate(existing)
+        return await campaign_read(existing)
 
+    await require_sources([slug], "module")
     meta = await run_in_threadpool(load_adventure_metadata, slug)
     title = meta.get("title") or slug.replace("_", " ").title()
     campaign = Campaign(
@@ -79,7 +81,7 @@ async def open_campaign_for_adventure(
     db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
-    return CampaignRead.model_validate(campaign)
+    return await campaign_read(campaign)
 
 
 @router.post("/campaigns", response_model=CampaignRead, status_code=201)
@@ -91,9 +93,13 @@ async def create_campaign(
     adv = (
         body.adventure_collections
         if body.adventure_collections is not None
-        else list(DEFAULT_ADVENTURE_COLLECTIONS)
+        else ([] if body.source_mode == "homebrew" else list(DEFAULT_ADVENTURE_COLLECTIONS))
     )
+    for slug in adv:
+        validate_binding(slug)
+    await require_sources(adv, body.source_mode)
     campaign = Campaign(
+        source_mode=body.source_mode,
         title=body.title,
         system=body.system,
         created_by=owner_id,
@@ -102,7 +108,7 @@ async def create_campaign(
     db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
-    return CampaignRead.model_validate(campaign)
+    return await campaign_read(campaign)
 
 
 @router.patch("/campaigns/{campaign_id}", response_model=CampaignRead)
@@ -111,11 +117,18 @@ async def update_campaign(
 ):
     campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     update_data = body.model_dump(exclude_unset=True)
+    for slug in update_data.get("adventure_collections", []):
+        validate_binding(slug)
+    if "adventure_collections" in update_data or "source_mode" in update_data:
+        await require_sources(
+            update_data.get("adventure_collections", campaign.adventure_collections),
+            update_data.get("source_mode", campaign.source_mode),
+        )
     for key, value in update_data.items():
         setattr(campaign, key, value)
     await db.commit()
     await db.refresh(campaign)
-    return CampaignRead.model_validate(campaign)
+    return await campaign_read(campaign)
 
 
 @router.delete("/campaigns/{campaign_id}", status_code=204)
@@ -134,10 +147,10 @@ async def end_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)
     """
     campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     if not await close_campaign(db, campaign):
-        return CampaignRead.model_validate(campaign)
+        return await campaign_read(campaign)
     await db.commit()
     await db.refresh(campaign)
-    return CampaignRead.model_validate(campaign)
+    return await campaign_read(campaign)
 
 
 @router.post("/campaigns/{campaign_id}/reopen", response_model=CampaignRead)
@@ -169,4 +182,25 @@ async def reopen_campaign(campaign_id: int, db: AsyncSession = Depends(get_sessi
         )
     await db.commit()
     await db.refresh(campaign)
-    return CampaignRead.model_validate(campaign)
+    return await campaign_read(campaign)
+
+
+@router.post("/campaigns/{campaign_id}/sources/{slug}/upload", status_code=202)
+async def recover_campaign_source(
+    campaign_id: int,
+    slug: str,
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_session),
+):
+    """Recover an unusable bound source at its original slug using the player's PDF.
+
+    Bindings and session history stay intact. This does not replace a ready source and never
+    synthesizes a lost PDF from old logs or metadata. Ingestion uses the existing pipeline.
+    """
+    from .adventures import recover_source_upload
+
+    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    if slug not in campaign.adventure_collections:
+        raise HTTPException(status_code=422, detail="That source is not bound to this campaign.")
+    return await recover_source_upload(slug, file, background)

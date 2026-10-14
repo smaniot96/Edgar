@@ -91,7 +91,7 @@ async def test_character_bounds_migration_preserves_rows_refuses_invalid_data_an
             )
             before = await _snapshot(connection, char, sid)
 
-        _alembic(postgres_env, "downgrade", "-1")
+        _alembic(postgres_env, "downgrade", "10_integrity")
         async with engine.begin() as connection:
             assert "characters_level_valid" not in await _constraint_names(connection, "characters")
             await connection.execute(
@@ -170,3 +170,114 @@ async def _snapshot(connection, character_id, session_id):
         .one()
     )
     return dict(character), dict(assignment), dict(event)
+
+
+async def test_source_mode_migration_preserves_bindings_and_requires_explicit_choice(postgres_env):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_async_engine(
+        URL.create(
+            "postgresql+asyncpg",
+            username=postgres_env["POSTGRES_USER"],
+            password=postgres_env["POSTGRES_PASSWORD"],
+            host=postgres_env["DB_HOST"],
+            port=int(postgres_env["DB_PORT"]),
+            database=postgres_env["POSTGRES_DB"],
+        ),
+        poolclass=NullPool,
+    )
+    try:
+        _alembic(postgres_env, "downgrade", "11_character_bounds")
+        async with engine.begin() as connection:
+            uid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO users (email) VALUES ('sources-migration@example.test') RETURNING id"
+                    )
+                )
+            ).scalar_one()
+            cid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO campaigns (created_by, title, system, adventure_collections) "
+                        "VALUES (:uid, 'Lost source', '5e', ARRAY['lost_module']) RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            sid = (
+                await connection.execute(
+                    text("INSERT INTO sessions (campaign_id) VALUES (:cid) RETURNING id"),
+                    {"cid": cid},
+                )
+            ).scalar_one()
+            await connection.execute(
+                text(
+                    "INSERT INTO event_log (session_id, event_type, payload) VALUES (:sid, 'narration', '{\"narration\":\"Preserve history\"}')"
+                ),
+                {"sid": sid},
+            )
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            row = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT title, adventure_collections, source_mode FROM campaigns WHERE id=:cid"
+                        ),
+                        {"cid": cid},
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            assert dict(row) == {
+                "title": "Lost source",
+                "adventure_collections": ["lost_module"],
+                "source_mode": "module",
+            }
+            assert (
+                await connection.execute(
+                    text("SELECT payload FROM event_log WHERE session_id=:sid"), {"sid": sid}
+                )
+            ).scalar_one() == {"narration": "Preserve history"}
+            with pytest.raises(IntegrityError):
+                async with connection.begin_nested():
+                    await connection.execute(
+                        text("UPDATE campaigns SET source_mode='automatic' WHERE id=:cid"),
+                        {"cid": cid},
+                    )
+            await connection.execute(
+                text("UPDATE campaigns SET source_mode='homebrew' WHERE id=:cid"), {"cid": cid}
+            )
+        assert "No new upgrade operations detected" in _alembic(postgres_env, "check").stdout
+        _alembic(postgres_env, "downgrade", "11_character_bounds")
+        async with engine.connect() as connection:
+            assert "source_mode" not in [
+                column["name"]
+                for column in await connection.run_sync(
+                    lambda conn: inspect(conn).get_columns("campaigns")
+                )
+            ]
+            assert (
+                await connection.execute(
+                    text("SELECT adventure_collections FROM campaigns WHERE id=:cid"), {"cid": cid}
+                )
+            ).scalar_one() == ["lost_module"]
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.connect() as connection:
+            assert (
+                await connection.execute(
+                    text("SELECT source_mode FROM campaigns WHERE id=:cid"), {"cid": cid}
+                )
+            ).scalar_one() == "module"
+    finally:
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "TRUNCATE event_log, combat_state, sessions, character_assignments, characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                )
+            )
+        await engine.dispose()

@@ -15,6 +15,7 @@ import {
   isNotFound,
   reopenCampaign,
 } from "../api/client";
+import { SourceRecovery } from "../components/campaign/SourceRecovery";
 import { Pill } from "../components/Pill";
 import { Button, ButtonLink } from "../components/ui/Button";
 import { EmptyState, LoadingText } from "../components/ui/EmptyState";
@@ -208,12 +209,13 @@ export default function CampaignView() {
         </div>
         <ErrorNotice error={actionError} />
       </header>
+      <SourceRecovery campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
 
       <div>
         <Tabs idBase="campaign" label="Campaign sections" items={TABS} value={tab} onChange={selectTab} />
         {/* Re-mount on status change so lists refresh after End/Reopen. */}
         <TabPanel idBase="campaign" id={tab} key={`${tab}:${c.status}`} className="pt-5">
-          {tab === "sessions" ? <SessionsTab campaignId={c.id} ended={ended} /> : null}
+          {tab === "sessions" ? <SessionsTab campaignId={c.id} ended={ended} playAllowed={c.play_allowed !== false} /> : null}
           {tab === "characters" ? <CharactersTab campaignId={c.id} /> : null}
           {tab === "npcs" ? <NpcsTab campaignId={c.id} /> : null}
           {tab === "world" ? <WorldTab campaignId={c.id} /> : null}

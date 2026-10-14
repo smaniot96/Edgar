@@ -7,7 +7,18 @@ export interface UserRead {
   created_at: string;
 }
 
-export type AdventureStatus = "processing" | "ready" | "failed";
+export type AdventureStatus = "processing" | "ready" | "failed" | "missing" | "empty" | "partial" | "unavailable";
+
+export interface SourceRead {
+  slug: string;
+  title: string;
+  status: AdventureStatus;
+  usable_chunks: number;
+  expected_chunks: number | null;
+  collection_exists: boolean;
+  source_pdf_available: boolean;
+  message: string | null;
+}
 
 export type AdventureSize = "small" | "medium" | "large" | "gigantic";
 
@@ -117,6 +128,10 @@ export interface CampaignRead {
   created_by: number;
   created_at: string;
   adventure_collections: string[];
+  source_mode?: "module" | "homebrew";
+  sources?: SourceRead[];
+  retrieval_degraded?: boolean;
+  play_allowed?: boolean;
   status: "active" | "ended";
   ended_at: string | null;
 }
@@ -291,6 +306,9 @@ export interface TurnCharacter {
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */
 export interface TurnResult {
+  retrieval_degraded?: boolean;
+  source_status?: SourceRead[];
+  source_mode?: "module" | "homebrew";
   narration?: string;
   character?: TurnCharacter | null;
   current_scene_id?: string | null;

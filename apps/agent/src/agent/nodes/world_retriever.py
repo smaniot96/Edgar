@@ -21,6 +21,8 @@ import logging
 
 from agent.state import AgentState
 from db.vector import search_adventure_context, search_rules_context
+from db.vector.collections import effective_adventure_collection_names
+from db.vector.source_status import inspect_source
 
 log = logging.getLogger(__name__)
 
@@ -43,13 +45,26 @@ def build_retrieval_query(state: AgentState) -> str:
 async def world_retriever_node(state: AgentState) -> dict:
     player_input = state.get("player_input")
     campaign_id = state.get("campaign_id")
-    adventure_collections = state.get("adventure_collections")
+    adventure_collections = [] if state.get("source_mode") == "homebrew" else state.get("adventure_collections")
 
     if not player_input:
         return {"rules_context": [], "adventure_context": [], "retrieved_context": []}
 
     query = build_retrieval_query(state)
     client = state.get("qdrant_client")
+
+    previous_sources = {s["slug"]: s for s in state.get("source_status", [])}
+    expected = {slug: source.get("expected_chunks") for slug, source in previous_sources.items()}
+    names = (
+        []
+        if state.get("source_mode") == "homebrew"
+        else effective_adventure_collection_names(adventure_collections)
+    )
+    statuses = await asyncio.to_thread(
+        lambda: [inspect_source(n, expected_chunks=expected.get(n), client=client) for n in names]
+    )
+    statuses = [{**previous_sources.get(s["slug"], {}), **s} for s in statuses]
+    source_degraded = any(s["status"] != "ready" for s in statuses)
 
     results = await asyncio.gather(
         asyncio.to_thread(
@@ -60,31 +75,46 @@ async def world_retriever_node(state: AgentState) -> dict:
             query,
             adventure_collections,
             campaign_id=campaign_id,
+            require_bound_sources=state.get("source_mode") == "module",
             limit_per_collection=_LIMIT_PER_COLLECTION,
             client=client,
         ),
         return_exceptions=True,
     )
 
-    degraded = False
+    degraded = source_degraded or bool(state.get("retrieval_degraded"))
     buckets: list[list] = []
     for name, res in zip(("rules", "adventure"), results, strict=True):
         if isinstance(res, BaseException):
             # Qdrant blip / embeddings outage: keep the turn playable with empty context.
             log.warning(
-                "retrieval_degraded", extra={"bucket": name, "error": f"{type(res).__name__}: {res}"}
+                "retrieval_degraded",
+                extra={"bucket": name, "error": f"{type(res).__name__}: {res}"},
             )
             degraded = True
+            if name == "adventure" and names:
+                source_degraded = True
+                statuses = [
+                    {
+                        **s,
+                        "status": "unavailable",
+                        "message": "Adventure retrieval failed. Try again or choose homebrew play.",
+                    }
+                    for s in statuses
+                ]
             buckets.append([])
         else:
             buckets.append(list(res or []))
     rules_context, adventure_context = buckets
 
     out: dict = {
+        "source_status": statuses or state.get("source_status", []),
+        "retrieval_degraded": degraded,
         "rules_context": rules_context,
         "adventure_context": adventure_context,
         "retrieved_context": (rules_context + adventure_context)[:_MERGED_TOP_K],
     }
-    if degraded:
-        out["retrieval_degraded"] = True
+    if source_degraded and state.get("source_mode") == "module":
+        out["error"] = "Adventure source availability changed during retrieval."
+        out["error_code"] = "campaign_sources_unavailable"
     return out

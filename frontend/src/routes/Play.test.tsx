@@ -1,0 +1,31 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { CampaignRead } from "../api/types";
+import Play from "./Play";
+const harness = vi.hoisted(() => ({ game: null as unknown, dispatch: vi.fn() }));
+vi.mock("../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
+vi.mock("../components/play/usePlaySession", () => ({ usePlaySession: () => harness.game }));
+vi.mock("../components/play/useTurn", () => ({ useTurn: () => ({ dispatch: harness.dispatch, send: vi.fn(), stop: vi.fn(), retry: vi.fn(), busy: false, state: { lines: [{ id: "live", role: "dm", content: "A recently saved turn" }], pending: null, announcement: "" } }) }));
+vi.mock("../components/MessageList", () => ({ MessageList: () => <p>A recently saved turn</p> }));
+const campaign: CampaignRead = { id: 2, title: "Lost module", system: "5e", created_by: 1, created_at: "2026-10-14", adventure_collections: ["lost_module"], source_mode: "module", status: "active", ended_at: null, retrieval_degraded: false, play_allowed: true, sources: [] };
+let container: HTMLDivElement;
+let root: Root;
+beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+afterEach(async () => { await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+it("preserves live transcript when readiness changes and disables module actions", async () => {
+  const boot = { history: [{ role: "dm" as const, content: "Older boot history", created_at: "2026-10-14" }], campaignEnded: false };
+  const game = { loading: false, error: null, title: "Lost module", campaignId: 2, campaign, campaignComplete: false, character: null, sceneId: null, combat: null, boot, applyTurnResult: vi.fn(), setCampaignComplete: vi.fn(), setSceneId: vi.fn(), reload: vi.fn(), updateCampaign: vi.fn() };
+  const render = () => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>);
+  harness.game = game; await act(render);
+  expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
+  harness.game = { ...game, campaign: { ...campaign, retrieval_degraded: true, play_allowed: false, sources: [{ slug: "lost_module", title: "Lost module", status: "missing", usable_chunks: 0, expected_chunks: null, collection_exists: false, source_pdf_available: false, message: "Missing source" }] } };
+  await act(render);
+  expect(container.textContent).toContain("Adventure sources need recovery"); expect(container.textContent).toContain("A recently saved turn"); expect(container.querySelector("textarea")?.disabled).toBe(true);
+  expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
+  harness.game = { ...game, campaign: { ...campaign, source_mode: "homebrew", retrieval_degraded: true } };
+  await act(render);
+  expect(container.querySelector("textarea")?.disabled).toBe(false); expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
+});

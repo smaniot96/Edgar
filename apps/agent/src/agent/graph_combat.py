@@ -435,7 +435,7 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Retrieve context (degrades to empty context on outage) ---
     retr = await world_retriever_node(state)
     if retr.get("error"):
-        return {"error": retr["error"]}
+        return retr
     state = {**state, **retr}
 
     named = _named_targets(state)
@@ -695,7 +695,7 @@ async def combat_round_node(state: AgentState) -> dict:
     narr_state = {**state, "adjudication_result": adj, "combat_state": combat_state}
     narr_updates = await narrator_node(narr_state)
     if narr_updates.get("error"):
-        return {"error": narr_updates["error"]}
+        return {**retr, "error": narr_updates["error"]}
     narration = narr_updates.get("narration", "")
     if outcome == "victory":
         narration += "\n\n**Victory!** The way forward is clear."
@@ -705,6 +705,7 @@ async def combat_round_node(state: AgentState) -> dict:
         narration += "\n\n*(You have left the fight.)*"
 
     return {
+        **retr,
         "combat_state": combat_state,
         "messages": list(narr_updates.get("messages", state.get("messages", []))),
         "narration": narration,
@@ -720,6 +721,8 @@ def _ask_player(state: AgentState, question: str, *, combat_state: dict | None =
     messages = list(state.get("messages", []))
     messages.append(AIMessage(content=question))
     out: dict[str, Any] = {"narration": question, "adjudication_result": adj, "messages": messages}
+    out["source_status"] = state.get("source_status", [])
+    out["retrieval_degraded"] = bool(state.get("retrieval_degraded"))
     if combat_state:
         combat_state = dict(combat_state)
         combat_state["initiative"] = initiative_view(combat_state.get("combatants") or [])

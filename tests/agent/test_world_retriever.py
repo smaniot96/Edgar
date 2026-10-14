@@ -1,6 +1,14 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def available_corpus(monkeypatch):
+    monkeypatch.setattr(
+        "agent.nodes.world_retriever.inspect_source",
+        lambda slug, **_kw: {"slug": slug, "status": "ready", "usable_chunks": 1},
+    )
+
+
 @pytest.mark.asyncio
 async def test_world_retriever_accepts_fake_client(monkeypatch) -> None:
     from agent.nodes import world_retriever as wr
@@ -74,8 +82,92 @@ async def test_world_retriever_degrades_instead_of_failing(monkeypatch) -> None:
         raise RuntimeError("qdrant down")
 
     monkeypatch.setattr(wr, "search_rules_context", _boom)
-    monkeypatch.setattr(wr, "search_adventure_context", lambda *_a, **_kw: [{"text": "a", "kind": "adventure"}])
+    monkeypatch.setattr(
+        wr, "search_adventure_context", lambda *_a, **_kw: [{"text": "a", "kind": "adventure"}]
+    )
     out = await wr.world_retriever_node({"player_input": "hello", "parsed_input": None})
     assert "error" not in out
     assert out["retrieval_degraded"] is True
     assert out["rules_context"] == [] and len(out["adventure_context"]) == 1
+
+
+@pytest.mark.parametrize("status", ["missing", "empty", "partial", "unavailable"])
+async def test_bound_unusable_source_marks_degraded_with_rule_hits(monkeypatch, status):
+    from agent.nodes import world_retriever as wr
+
+    monkeypatch.setattr(
+        wr,
+        "inspect_source",
+        lambda slug, **kw: {"slug": slug, "status": status, "usable_chunks": 0},
+    )
+    monkeypatch.setattr(wr, "search_rules_context", lambda *a, **kw: [{"text": "Rule evidence"}])
+    monkeypatch.setattr(wr, "search_adventure_context", lambda *a, **kw: [])
+    result = await wr.world_retriever_node(
+        {"player_input": "Explore", "adventure_collections": ["lost"]}
+    )
+    assert result["rules_context"] and result["adventure_context"] == []
+    assert result["retrieval_degraded"]
+    assert result["source_status"][0]["status"] == status
+
+
+async def test_module_source_loss_and_retrieval_failure_block_narration(monkeypatch):
+    from agent.nodes import world_retriever as wr
+
+    monkeypatch.setattr(wr, "search_rules_context", lambda *a, **kw: [{"text": "Rule evidence"}])
+
+    def failed_query(*a, **kw):
+        raise RuntimeError("temporary adventure query failure")
+
+    monkeypatch.setattr(wr, "search_adventure_context", failed_query)
+    result = await wr.world_retriever_node(
+        {"player_input": "Explore", "source_mode": "module", "adventure_collections": ["module"]}
+    )
+    assert result["error_code"] == "campaign_sources_unavailable"
+    assert result["retrieval_degraded"] and result["source_status"][0]["status"] == "unavailable"
+
+
+async def test_explicit_homebrew_has_no_default_module_probe(monkeypatch):
+    from agent.nodes import world_retriever as wr
+
+    def no_probe(*a, **kw):
+        raise AssertionError("homebrew must not inspect a default module")
+
+    monkeypatch.setattr(wr, "inspect_source", no_probe)
+    monkeypatch.setattr(wr, "search_rules_context", lambda *a, **kw: [])
+
+    def adventure(query, bindings, **kw):
+        assert bindings == []
+        return []
+
+    monkeypatch.setattr(wr, "search_adventure_context", adventure)
+    result = await wr.world_retriever_node(
+        {
+            "player_input": "Explore",
+            "source_mode": "homebrew",
+            "adventure_collections": [],
+            "retrieval_degraded": True,
+            "source_status": [{"slug": "lost", "status": "missing"}],
+        }
+    )
+    assert result["retrieval_degraded"] and "error" not in result
+    assert result["source_status"][0]["slug"] == "lost"
+
+
+async def test_combat_propagates_source_error_without_narrating(monkeypatch):
+    from agent import graph_combat
+
+    async def unavailable(state):
+        return {
+            "error": "Missing module",
+            "error_code": "campaign_sources_unavailable",
+            "retrieval_degraded": True,
+            "source_status": [{"slug": "lost", "status": "missing"}],
+        }
+
+    monkeypatch.setattr(graph_combat, "world_retriever_node", unavailable)
+    result = await graph_combat.combat_round_node(
+        {"player_input": "Attack", "source_mode": "module"}
+    )
+    assert result["error_code"] == "campaign_sources_unavailable"
+    assert result["retrieval_degraded"]
+    assert "narration" not in result and "combat_state" not in result

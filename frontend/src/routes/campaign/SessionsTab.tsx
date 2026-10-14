@@ -29,9 +29,11 @@ interface NumberedSession extends SessionRead {
 export default function SessionsTab({
   campaignId,
   ended,
+  playAllowed = true,
 }: {
   campaignId: number;
   ended: boolean;
+  playAllowed?: boolean;
 }) {
   const navigate = useNavigate();
   const { isDev } = useMode();
@@ -56,7 +58,7 @@ export default function SessionsTab({
     [characters.data],
   );
 
-  const showPicker = !ended && (pickerOpen ?? numbered?.length === 0);
+  const showPicker = !ended && playAllowed && (pickerOpen ?? numbered?.length === 0);
 
   function play(id: number) {
     rememberLastSession(id);
@@ -64,6 +66,7 @@ export default function SessionsTab({
   }
 
   async function startSession(character?: Pick<CharacterListItem, "id" | "current_assignment">) {
+    if (!playAllowed) return;
     setBusy(true);
     setError(null);
     try {
@@ -99,7 +102,7 @@ export default function SessionsTab({
           A session is one saved playthrough. Pick up where you left off with{" "}
           <strong className="text-ink">Continue</strong>, or start a fresh one.
         </p>
-        {!showPicker && !ended ? (
+        {!showPicker && !ended && playAllowed ? (
           <Button
             onClick={() => {
               setError(null);

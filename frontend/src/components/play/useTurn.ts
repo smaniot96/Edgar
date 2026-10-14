@@ -22,6 +22,7 @@ export interface UseTurnOptions {
   onResult?: (result: TurnResult) => void;
   /** Server says the campaign is over (409). */
   onCampaignEnded?: () => void;
+  onSourcesUnavailable?: () => void;
   /** Turn failed or was stopped: the caller should restore `input` to the composer. */
   onFailed?: (input: string) => void;
   /** Turn finished in any way (success or failure), e.g. to restore focus. */
@@ -93,6 +94,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
       const fail = (message: string, code?: string, reason: "error" | "stopped" = "error") => {
         dispatch({ type: "fail", turnId, reason, message, code });
         optsRef.current.onFailed?.(input);
+        if (code === "campaign_sources_unavailable") optsRef.current.onSourcesUnavailable?.();
       };
 
       try {
@@ -113,7 +115,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
             return;
           }
           const message =
-            res.status === 409
+            res.status === 409 && err.code !== "campaign_sources_unavailable"
               ? "The DM is still resolving a previous action. Wait a moment, then retry."
               : err.message;
           fail(message, err.code ?? `http_${res.status}`);
