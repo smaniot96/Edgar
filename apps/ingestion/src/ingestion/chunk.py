@@ -10,7 +10,7 @@ Strategy:
   3. Stat blocks are kept together: inside a section that looks like a stat block ("Armor
      Class" + "Hit Points"/"Challenge", or a "Large fiend (devil), lawful evil" line), the
      sub-headings ACTIONS / REACTIONS / LEGENDARY ACTIONS / ... do not open new sections, and
-     the stat block may grow to `stat_block_max` characters before it is split. Lore text that
+     a complete stat block stays together by default; an explicit `stat_block_max` caps it. Lore text that
      precedes the stat block in the same section is chunked separately.
   4. Sections longer than the cap are packed paragraph by paragraph; consecutive chunks of the
      same section share `overlap` characters of carry-over. A single paragraph longer than
@@ -50,7 +50,9 @@ _SIZE_TYPE_RE = re.compile(
 _AC_RE = re.compile(r"Armor Class\W{0,6}\d")
 _HP_RE = re.compile(r"Hit Points\W{0,6}\d")
 # pymupdf4llm image placeholders carry no text worth embedding.
-_NOISE_LINE_RE = re.compile(r"(==> picture \[.*\] intentionally omitted <==|-{3,} (start|end) of picture text -{3,})", re.I)
+_NOISE_LINE_RE = re.compile(
+    r"(==> picture \[.*\] intentionally omitted <==|-{3,} (start|end) of picture text -{3,})", re.I
+)
 _PATH_SEP = " > "
 
 
@@ -79,7 +81,8 @@ def chunk_pages(
 ) -> list[ChunkDict]:
     """Split `(page, markdown)` pages into heading-aware chunks (see module docstring).
 
-    `stat_block_max` defaults to `4 * chunk_size` (a full MM stat block is ~1.5-3.5k chars).
+    Complete stat records are indivisible by default. Set `stat_block_max` explicitly
+    only when the caller intentionally permits splitting a record.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
@@ -107,7 +110,11 @@ def chunk_pages(
             groups.append((section.paras[stat_idx:], True))
 
         for paras, is_stat in groups:
+            # A complete default stat record is indivisible. Explicit callers may still
+            # request a cap; ordinary PDF ingestion must not cut off actions/continuations.
             cap = stat_cap if is_stat else chunk_size
+            if is_stat and stat_block_max is None:
+                cap = max(cap, sum(len(p) + 2 for p, _ in paras) + len(heading_path or "") + 1)
             for body, page, page_end in _pack(paras, heading_path, cap, overlap):
                 chunks.append(
                     {
@@ -147,7 +154,9 @@ def _build_sections(pages: list[tuple[int, str]]) -> list[_Section]:
                 letters in _STAT_SUBHEADINGS or _STAT_FIELD_HEADING_RE.match(title)
             ):
                 # Part of the stat block: keep it in the same section, as plain text.
-                current.paras.append((title.upper() if letters in _STAT_SUBHEADINGS else title, page_num))
+                current.paras.append(
+                    (title.upper() if letters in _STAT_SUBHEADINGS else title, page_num)
+                )
                 continue
 
             is_chapter = bool(_CHAPTER_RE.match(title))
@@ -238,7 +247,11 @@ def _pack(
     """Greedy paragraph packing under `cap` chars (heading prefix included)."""
     prefix = ""
     if heading_path:
-        prefix = heading_path if len(heading_path) <= cap // 3 else heading_path[: max(0, cap // 3 - 1)] + "…"
+        prefix = (
+            heading_path
+            if len(heading_path) <= cap // 3
+            else heading_path[: max(0, cap // 3 - 1)] + "…"
+        )
     budget = cap - (len(prefix) + 1 if prefix else 0)
     if budget < max(20, cap // 3):
         prefix, budget = "", cap

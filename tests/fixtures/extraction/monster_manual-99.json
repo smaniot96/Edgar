@@ -1,0 +1,294 @@
+{
+  "provenance": {
+    "book": "monster_manual",
+    "physical_page": 99,
+    "source_sha256": "51cde09adade4186028088798c9d5bc4bf2b63e1b274080d9a975943b79069f5",
+    "capture": "Native row rectangles and font sizes from read-only local PDF; all prose, names and stat values anonymized or generated. Raster header rectangles derived from inspected page geometry. No original page text or image is included.",
+    "parser": "PyMuPDF 1.27.2.3"
+  },
+  "width": 570.239990234375,
+  "height": 781.6799926757812,
+  "lines": [
+    {
+      "text": "Armor Class 17 (prepared armor)",
+      "bbox": [
+        58.54999923706055,
+        140.69647216796875,
+        170.86407470703125,
+        151.101806640625
+      ],
+      "size": 7.835170745849609,
+      "heading": false
+    },
+    {
+      "text": "Hit Points 224 (16d12 + 120)",
+      "bbox": [
+        59.0099983215332,
+        150.7864990234375,
+        160.6960906982422,
+        161.19183349609375
+      ],
+      "size": 7.806946754455566,
+      "heading": false
+    },
+    {
+      "text": "Speed 40 ft., fly 80 ft.",
+      "bbox": [
+        58.650001525878906,
+        160.86651611328125,
+        181.59808349609375,
+        171.2718505859375
+      ],
+      "size": 8.271268844604492,
+      "heading": false
+    },
+    {
+      "text": "STR DEX CON INT WIS CHA",
+      "bbox": [
+        69.45999908447266,
+        181.73321533203125,
+        272.5446472167969,
+        192.39190673828125
+      ],
+      "size": 7.800099849700928,
+      "heading": false
+    },
+    {
+      "text": "25 (+7) 10 (+0) 23 (+6) 14 (+2) l3 (+1) 19 (+4)",
+      "bbox": [
+        64.03109741210938,
+        191.81646728515625,
+        275.3365478515625,
+        202.70355224609375
+      ],
+      "size": 8.03569221496582,
+      "heading": false
+    },
+    {
+      "text": "Multiattack. Three prepared attacks.",
+      "bbox": [
+        59.130001068115234,
+        333.8462829589844,
+        282.28411865234375,
+        344.468994140625
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "Prepared Breath (Recharge 5-6). 12d6 damage.",
+      "bbox": [
+        59.099998474121094,
+        532.5562744140625,
+        285.8894958496094,
+        543.178955078125
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "LEGENDARY ACT IONS",
+      "bbox": [
+        59.34000015258789,
+        583.4824829101562,
+        163.9545135498047,
+        594.6118774414062
+      ],
+      "size": 8.461580276489258,
+      "heading": false
+    },
+    {
+      "text": "left_record_end",
+      "bbox": [
+        65.5,
+        706.146484375,
+        188.06005859375,
+        716.5518188476562
+      ],
+      "size": 8.059438705444336,
+      "heading": false
+    },
+    {
+      "text": "Armor Class 15 (prepared armor)",
+      "bbox": [
+        308.3900146484375,
+        133.73651123046875,
+        420.2492980957031,
+        144.141845703125
+      ],
+      "size": 7.875436305999756,
+      "heading": false
+    },
+    {
+      "text": "Hit Points 145 (15d10 + 63)",
+      "bbox": [
+        309.0899963378906,
+        143.81646728515625,
+        405.62017822265625,
+        154.2218017578125
+      ],
+      "size": 7.806946754455566,
+      "heading": false
+    },
+    {
+      "text": "Speed 40 ft., fly 60 ft.",
+      "bbox": [
+        308.489990234375,
+        153.906494140625,
+        430.4381103515625,
+        164.31182861328125
+      ],
+      "size": 8.215156555175781,
+      "heading": false
+    },
+    {
+      "text": "STR DEX CON INT WIS CHA",
+      "bbox": [
+        319.29998779296875,
+        174.5465087890625,
+        521.4208984375,
+        185.42181396484375
+      ],
+      "size": 7.800099849700928,
+      "heading": false
+    },
+    {
+      "text": "21 (+5) 10 (+0) 19 (+4) 12 (+1) ll (+0) 17 (+3)",
+      "bbox": [
+        313.8699951171875,
+        184.69491577148438,
+        524.6087646484375,
+        195.5118408203125
+      ],
+      "size": 9.950718879699707,
+      "heading": false
+    },
+    {
+      "text": "upper_right_end",
+      "bbox": [
+        308.94000244140625,
+        380.1662902832031,
+        534.8551025390625,
+        390.78900146484375
+      ],
+      "size": 8.699999809265137,
+      "heading": false
+    },
+    {
+      "text": "HATCHLING SENTINEL",
+      "bbox": [
+        308.5799865722656,
+        446.63958740234375,
+        481.7705383300781,
+        462.7055969238281
+      ],
+      "size": 11.954435348510742,
+      "heading": false
+    },
+    {
+      "text": "Medium construct, unaligned",
+      "bbox": [
+        308.9700012207031,
+        460.3162841796875,
+        401.5853271484375,
+        470.9389953613281
+      ],
+      "size": 8.545171737670898,
+      "heading": false
+    },
+    {
+      "text": "Armor Class 13 (prepared armor)",
+      "bbox": [
+        308.3900146484375,
+        481.5065002441406,
+        419.422607421875,
+        491.9118347167969
+      ],
+      "size": 7.875436305999756,
+      "heading": false
+    },
+    {
+      "text": "Hit Points 53 (8d8 + 17)",
+      "bbox": [
+        308.8484191894531,
+        491.584228515625,
+        398.8468322753906,
+        501.9918212890625
+      ],
+      "size": 7.806946754455566,
+      "heading": false
+    },
+    {
+      "text": "ACTIONS",
+      "bbox": [
+        308.4100036621094,
+        632.4425048828125,
+        353.6079406738281,
+        643.5718994140625
+      ],
+      "size": 8.495113372802734,
+      "heading": false
+    },
+    {
+      "text": "lower_right_end",
+      "bbox": [
+        308.8699951171875,
+        705.906494140625,
+        459.9800109863281,
+        716.3118286132812
+      ],
+      "size": 7.995843887329102,
+      "heading": false
+    }
+  ],
+  "raster_headers": [
+    {
+      "text": "ELDER SENTINEL",
+      "bbox": [
+        59,
+        105,
+        200,
+        119
+      ],
+      "size": 0
+    },
+    {
+      "text": "Huge construct, unaligned",
+      "bbox": [
+        59,
+        121,
+        200,
+        134
+      ],
+      "size": 0
+    },
+    {
+      "text": "JUNIOR SENTINEL",
+      "bbox": [
+        309,
+        98,
+        452,
+        113
+      ],
+      "size": 0
+    },
+    {
+      "text": "Large construct, unaligned",
+      "bbox": [
+        309,
+        111,
+        400,
+        124
+      ],
+      "size": 0
+    }
+  ],
+  "expected_order": [
+    "## Elder Sentinel",
+    "left_record_end",
+    "## Junior Sentinel",
+    "upper_right_end",
+    "## Hatchling Sentinel",
+    "lower_right_end"
+  ]
+}

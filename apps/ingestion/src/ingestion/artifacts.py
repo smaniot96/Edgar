@@ -1,0 +1,16 @@
+"""Lightweight canonical artifact hashes; safe to import without loading PDF/OCR models."""
+
+import hashlib
+from pathlib import Path
+
+
+def source_digest(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def text_digest(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()

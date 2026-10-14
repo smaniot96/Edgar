@@ -35,9 +35,11 @@ from qdrant_client.models import (
 )
 
 from db.vector import ensure_collection, get_embeddings, get_qdrant_client
+from db.vector.collections import is_rules_collection
 from ingestion.chunk import chunk_pages
-from ingestion.extract import extract_and_save_markdown, extract_text_by_page
+from ingestion.extract import extract_document, load_reviewed_extraction, save_extraction
 from ingestion.paths import default_markdown_dir
+from ingestion.quality import require_separate_stat_chunks
 
 BATCH_SIZE = 50
 BATCH_DELAY_SEC = 0.5
@@ -57,22 +59,35 @@ def run_pipeline(
     save_markdown: bool = True,
     markdown_dir: Path | None = None,
     replace: bool = False,
+    reviewed_extraction: str | Path | None = None,
 ) -> int:
     """Returns the number of chunks ingested. Returns 0 on empty PDFs (no error)."""
     pdf_path = Path(pdf_path)
     source = pdf_path.stem
 
-    pages = extract_text_by_page(pdf_path)
+    needs_review = replace or is_rules_collection(collection_name) or collection_name == "dnd_rules"
+    extraction = (
+        load_reviewed_extraction(pdf_path, reviewed_extraction)
+        if reviewed_extraction is not None
+        else extract_document(pdf_path)
+    )
+    if save_markdown or (needs_review and reviewed_extraction is None):
+        out_dir = markdown_dir or default_markdown_dir()
+        out_path, report_path = save_extraction(extraction, out_dir)
+        logger.info("Saved extraction preview to {} and {}", out_path, report_path)
+    if needs_review and reviewed_extraction is None:
+        raise ValueError(
+            "Rulebook indexing and PDF replacement require a reviewed extraction preview. "
+            f"Inspect {out_path} and {report_path}, then pass --reviewed-extraction {report_path}."
+        )
+    extraction.require_valid()
+    pages = extraction.text_pages()
     if not pages:
         logger.warning("No text extracted from {}", pdf_path)
         return 0
 
-    if save_markdown:
-        out_dir = markdown_dir or default_markdown_dir()
-        out_path = extract_and_save_markdown(pdf_path, out_dir)
-        logger.info("Saved markdown to {}", out_path)
-
     chunks = chunk_pages(pages, source=source, chunk_size=chunk_size, overlap=overlap)
+    require_separate_stat_chunks(chunks)
     if not chunks:
         logger.warning("No chunks produced from {}", pdf_path)
         return 0
@@ -124,7 +139,9 @@ def _ensure_collection(client, collection_name: str) -> None:
             field_schema=PayloadSchemaType.INTEGER,
         )
     except Exception as e:  # index is an optimisation only
-        logger.warning("Could not create page index on {}: {}: {}", collection_name, type(e).__name__, e)
+        logger.warning(
+            "Could not create page index on {}: {}: {}", collection_name, type(e).__name__, e
+        )
 
 
 def _prune_stale(client, collection_name: str, source: str, keep_ids: set[int]) -> int:

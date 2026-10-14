@@ -1,0 +1,174 @@
+{
+  "provenance": {
+    "book": "player_handbook",
+    "physical_page": 258,
+    "source_sha256": "3c707344a803f264dd08e1ba0b2c3f8f6b577b167f6758c33d2799f02ec81fcf",
+    "capture": "Native row rectangles and font sizes from read-only local PDF; all prose, names and stat values anonymized or generated. Raster header rectangles derived from inspected page geometry. No original page text or image is included.",
+    "parser": "PyMuPDF 1.27.2.3"
+  },
+  "width": 577.0,
+  "height": 781.0,
+  "lines": [
+    {
+      "text": "Previous entry continuation.",
+      "bbox": [
+        63.29999923706055,
+        37.08097457885742,
+        264.537841796875,
+        47.043975830078125
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "A prepared boundary.",
+      "bbox": [
+        55.5,
+        48.18095016479492,
+        271.79168701171875,
+        58.143951416015625
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "ARCANE VESSEL",
+      "bbox": [
+        56.10000228881836,
+        125.27190399169922,
+        100.25904846191406,
+        134.12789916992188
+      ],
+      "size": 8.313843727111816,
+      "heading": false
+    },
+    {
+      "text": "6th level evocation",
+      "bbox": [
+        55.80000305175781,
+        135.7809295654297,
+        135.4860076904297,
+        145.74392700195312
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "Casting Time: 1 minute",
+      "bbox": [
+        55.500003814697266,
+        150.48094177246094,
+        150.74656677246094,
+        160.44393920898438
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "vessel_body",
+      "bbox": [
+        55.50000762939453,
+        211.38096618652344,
+        272.7745056152344,
+        221.34396362304688
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "vessel_end",
+      "bbox": [
+        62.40000915527344,
+        680.8809204101562,
+        252.4018096923828,
+        690.8438720703125
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "FORCE DART",
+      "bbox": [
+        306.6000061035156,
+        39.17192840576172,
+        376.20379638671875,
+        48.02792739868164
+      ],
+      "size": 8.313843727111816,
+      "heading": false
+    },
+    {
+      "text": "1st level evocation",
+      "bbox": [
+        306.8999938964844,
+        49.98093795776367,
+        375.79510498046875,
+        59.943939208984375
+      ],
+      "size": 9.0,
+      "heading": false
+    },
+    {
+      "text": "Casting Time: 1 action",
+      "bbox": [
+        306.29998779296875,
+        65.28092956542969,
+        398.39031982421875,
+        75.24392700195312
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "Create three prepared darts.",
+      "bbox": [
+        306.0,
+        114.78092956542969,
+        519.28662109375,
+        124.74392700195312
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "A dart deals Id4 + I force damage.",
+      "bbox": [
+        306.0,
+        137.2809295654297,
+        519.8441772460938,
+        147.24392700195312
+      ],
+      "size": 9.22225570678711,
+      "heading": false
+    },
+    {
+      "text": "MESSAGE OBJECT",
+      "bbox": [
+        306.5999755859375,
+        213.77183532714844,
+        373.9746398925781,
+        222.62783813476562
+      ],
+      "size": 8.313843727111816,
+      "heading": false
+    },
+    {
+      "text": "ENCHANTED TOOL",
+      "bbox": [
+        305.6999816894531,
+        589.3718872070312,
+        377.75750732421875,
+        598.2279052734375
+      ],
+      "size": 8.313843727111816,
+      "heading": false
+    }
+  ],
+  "raster_headers": [],
+  "expected_order": [
+    "vessel_end",
+    "## Force Dart",
+    "## Message Object",
+    "## Enchanted Tool"
+  ]
+}
