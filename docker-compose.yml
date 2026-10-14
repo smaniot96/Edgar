@@ -6,13 +6,20 @@
 #   docker compose run --rm migrate                      (profile: tools; `make migrate`)
 #   docker compose run --rm ingestion /data/x.pdf ...    (profile: tools; `make ingest`)
 #   docker compose --profile rules run --rm rules_engine (rules-only RAG demo)
-# `make up` = up -d, run migrate, wait for /health, seed.
+# `make build` builds api + migrate. `make up` migrates, starts, waits for /health, seeds.
+# `make dev-up` explicitly adds docker-compose.dev.yml for source mounts + API hot reload.
 #
-# Database / Redis / Qdrant ports are published on 127.0.0.1 only (host tools, tests);
-# the API is published on all interfaces so the UI is reachable.
+# All published ports, including the API, bind to 127.0.0.1 for local use.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   migrate:
+    logging: *default-logging
     profiles: ["tools"]
     build:
       context: .
@@ -27,6 +34,7 @@ services:
     restart: "no"
 
   api:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
@@ -66,6 +74,7 @@ services:
       retries: 3
 
   ingestion:
+    logging: *default-logging
     profiles: ["tools"]
     build:
       context: .
@@ -87,6 +96,7 @@ services:
     restart: "no"
 
   rules_engine:
+    logging: *default-logging
     profiles: ["rules"]
     build:
       context: .
@@ -105,6 +115,7 @@ services:
     restart: "no"
 
   db:
+    logging: *default-logging
     image: postgres:16
     container_name: dnd-db
     env_file: .env
@@ -128,6 +139,7 @@ services:
       retries: 5
 
   redis:
+    logging: *default-logging
     # Pinned to the version the dev stack has been running (was `redis:latest` = 8.6.3).
     image: redis:8.6.3
     container_name: dnd-redis
@@ -141,6 +153,7 @@ services:
       retries: 5
 
   qdrant:
+    logging: *default-logging
     # Pinned to the version the dev stack has been running (was untagged = v1.16.3).
     image: qdrant/qdrant:v1.16.3
     container_name: dnd-qdrant

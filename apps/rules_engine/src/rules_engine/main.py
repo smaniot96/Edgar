@@ -1,8 +1,12 @@
+import argparse
+
+
 def main() -> None:
     """CLI entry: demo rules-only RAG (optional query from argv)."""
-    import sys
-
-    query = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "ability check proficiency"
+    parser = argparse.ArgumentParser(description="Search installed D&D rules references.")
+    parser.add_argument("query", nargs="*", help="Rules question (default: ability check proficiency)")
+    args = parser.parse_args()
+    query = " ".join(args.query) if args.query else "ability check proficiency"
     from rules_engine.rag import retrieve_rules_snippets
 
     snippets = retrieve_rules_snippets(query, limit_per_collection=3)

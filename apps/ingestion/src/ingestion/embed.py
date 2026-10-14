@@ -34,10 +34,10 @@ from qdrant_client.models import (
     PointStruct,
 )
 
-from db.vector import VECTOR_SIZE, get_embeddings, get_qdrant_client, invalidate_collection_cache
-from edgar_core.config import EDGAR_ROOT
+from db.vector import ensure_collection, get_embeddings, get_qdrant_client
 from ingestion.chunk import chunk_pages
 from ingestion.extract import extract_and_save_markdown, extract_text_by_page
+from ingestion.paths import default_markdown_dir
 
 BATCH_SIZE = 50
 BATCH_DELAY_SEC = 0.5
@@ -47,13 +47,6 @@ def _stable_chunk_id(source: str, page: int, index: int, text: str) -> int:
     """64-bit int derived from sha256 of identity fields. Collisions are astronomically rare."""
     h = hashlib.sha256(f"{source}:{page}:{index}:{text[:100]}".encode()).hexdigest()
     return int(h[:16], 16)
-
-
-def _default_markdown_dir() -> Path:
-    """`/output/markdown` when the Docker bind mount exists, otherwise `Edgar/data/markdown`."""
-    if Path("/output/markdown").exists():
-        return Path("/output/markdown")
-    return EDGAR_ROOT / "data" / "markdown"
 
 
 def run_pipeline(
@@ -75,7 +68,7 @@ def run_pipeline(
         return 0
 
     if save_markdown:
-        out_dir = markdown_dir or _default_markdown_dir()
+        out_dir = markdown_dir or default_markdown_dir()
         out_path = extract_and_save_markdown(pdf_path, out_dir)
         logger.info("Saved markdown to {}", out_path)
 
@@ -121,13 +114,8 @@ def _chunk_payload(c: dict) -> dict:
 
 def _ensure_collection(client, collection_name: str) -> None:
     """Create the collection (Cosine, VECTOR_SIZE) if missing; ensure the `page` payload index."""
-    if not any(c.name == collection_name for c in client.get_collections().collections):
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config={"size": VECTOR_SIZE, "distance": "Cosine"},
-        )
+    if ensure_collection(client, collection_name):
         logger.info("Created collection {}", collection_name)
-        invalidate_collection_cache()
     try:
         # Idempotent; lets the session intro scroll the first pages with order_by=page.
         client.create_payload_index(

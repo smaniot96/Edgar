@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { CharacterRead } from "../../api/types";
-import { mergeTurnCharacter, orderCombatants, parseInventory, sheetFromLibrary } from "./gameState";
+import type { CharacterAssignmentHistoryRead, CharacterRead } from "../../api/types";
+import { mergeTurnCharacter, orderCombatants, parseInventory, sheetForCampaign, sheetFromLibrary } from "./gameState";
 import { rollParts, rollSummary } from "./rollText";
 
 const eda: CharacterRead = {
@@ -41,6 +41,31 @@ describe("character sheet", () => {
 
   it("skips empty inventory groups", () => {
     expect(parseInventory({ items: [], gold: 15 })).toEqual([{ label: "Gold", items: ["15"] }]);
+  });
+
+  it("uses an ended campaign's saved HP and equipment after the hero moves to another campaign", () => {
+    const past: CharacterAssignmentHistoryRead = {
+      id: 1, campaign_id: 3, campaign_title: "Past", hp_current: 4, hp_max: 12,
+      stats: { STR: 16, conditions: ["poisoned"] }, inventory: { items: ["silver key"] },
+      assigned_at: "2026-10-01", ended_at: "2026-10-02", status: "ended",
+    };
+    const current = { ...past, id: 2, campaign_id: 4, status: "active", hp_current: 12,
+      assigned_at: "2026-10-03", ended_at: null, inventory: { items: ["rope"] } };
+    const sheet = sheetForCampaign(eda, [current, past], 3);
+    expect(sheet.hpCurrent).toBe(4);
+    expect(sheet.conditions).toEqual(["poisoned"]);
+    expect(sheet.inventory).toEqual([{ label: "Items", items: ["silver key"] }]);
+    expect(sheetForCampaign(eda, [current], 3)).toEqual(sheetFromLibrary(eda));
+  });
+
+  it("prefers the active assignment when a reopened campaign has older assignment records", () => {
+    const assignment: CharacterAssignmentHistoryRead = {
+      id: 1, campaign_id: 3, campaign_title: "Reopened", hp_current: 8, hp_max: 12,
+      stats: {}, inventory: {}, assigned_at: "2026-10-01", ended_at: null, status: "active",
+    };
+    const ended = { ...assignment, id: 2, hp_current: 2, status: "ended", assigned_at: "2026-10-02" };
+    expect(sheetForCampaign(eda, [ended, assignment], 3).hpCurrent).toBe(8);
+    expect(sheetForCampaign(eda, [ended, { ...ended, id: 3, assigned_at: "2026-10-03", hp_current: 6 }], 3).hpCurrent).toBe(6);
   });
 });
 

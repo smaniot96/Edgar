@@ -1,5 +1,7 @@
 """Campaign lifecycle: active vs ended (plan 02)."""
 
+from datetime import datetime
+
 import pytest
 from sqlalchemy import select
 
@@ -21,6 +23,7 @@ async def test_end_campaign_sets_status_and_ended_at(api_client) -> None:
     again = await api_client.post(f"/api/campaigns/{cid}/end")
     assert again.status_code == 200
     assert again.json()["status"] == "ended"
+    assert again.json()["ended_at"] == body["ended_at"]
 
 
 @pytest.mark.asyncio
@@ -110,7 +113,7 @@ async def test_end_campaign_closes_active_assignments(api_client, db_session) ->
     assert end.status_code == 200
 
     await db_session.refresh(before)
-    assert before.ended_at is not None
+    assert before.ended_at == datetime.fromisoformat(end.json()["ended_at"])
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 import type { CombatState } from "../../api/types";
 import { cn } from "../../lib/cn";
 import { orderCombatants } from "./gameState";
-import { HpBar } from "./HpBar";
+import { HpBar } from "../ui/HpBar";
 
 /** Initiative-ordered combat tracker: every combatant incl. the player, HP, AC, whose turn. */
 export function CombatHud({ combat }: { combat: CombatState }) {

@@ -26,10 +26,6 @@ router = APIRouter(tags=["campaigns"])
 _ALREADY_ACTIVE = "Character already has an active assignment in another campaign"
 
 
-async def _campaign_or_404(db: AsyncSession, campaign_id: int) -> Campaign:
-    return await get_or_404(db, Campaign, campaign_id, "Campaign")
-
-
 def _roster_row(assignment: CharacterAssignment, ch: Character) -> CampaignCharacterRead:
     return CampaignCharacterRead(
         assignment_id=assignment.id,
@@ -48,7 +44,7 @@ async def list_campaign_characters(
     db: AsyncSession = Depends(get_session),
     page: Page = Depends(),
 ):
-    await _campaign_or_404(db, campaign_id)
+    await get_or_404(db, Campaign, campaign_id, "Campaign")
     r = await db.execute(
         select(CharacterAssignment)
         .where(
@@ -70,7 +66,7 @@ async def assign_character_to_campaign(
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
-    campaign = await _campaign_or_404(db, campaign_id)
+    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     if campaign.status == "ended":
         raise HTTPException(
             status_code=409,

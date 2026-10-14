@@ -30,19 +30,3 @@ export function ModeToggle({ className }: { className?: string }) {
     </button>
   );
 }
-
-/** Unmistakable amber DEV badge shown when developer mode is active. */
-export function DevBadge({ className }: { className?: string }) {
-  const { isDev } = useMode();
-  if (!isDev) return null;
-  return (
-    <span
-      className={cn(
-        "rounded-md border border-ember-600 bg-ember-900/50 px-1.5 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-ember-200",
-        className,
-      )}
-    >
-      Dev
-    </span>
-  );
-}

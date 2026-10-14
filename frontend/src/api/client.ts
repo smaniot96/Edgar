@@ -4,11 +4,15 @@ import type {
   AdventureRead,
   CampaignCharacterRead,
   CampaignRead,
+  CharacterAssignmentHistoryRead,
   CharacterListItem,
   CharacterPreset,
   CharacterRead,
+  ChatMessageRead,
+  CombatState,
   NPCRead,
   SessionRead,
+  SessionIntroRead,
   UserRead,
   WorldFlagRead,
 } from "./types";
@@ -75,12 +79,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   const url = path.startsWith("http") ? path : `${apiBase}${path}`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      ...init,
-      headers: {
-        ...(init?.headers as Record<string, string> | undefined),
-      },
-    });
+    res = await fetch(url, init);
   } catch (err) {
     // Let aborts propagate untouched so callers can ignore them.
     if (err instanceof DOMException && err.name === "AbortError") throw err;
@@ -133,20 +132,20 @@ function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   return apiFetch(path, { signal }).then((r) => json<T>(r));
 }
 
-function sendJson<T>(method: string, path: string, body?: unknown): Promise<T> {
+function sendRequest(method: string, path: string, body?: unknown): Promise<Response> {
   return apiFetch(path, {
     method,
     headers: body === undefined ? undefined : JSON_HEADERS,
     body: body === undefined ? undefined : JSON.stringify(body),
-  }).then((r) => json<T>(r));
+  });
+}
+
+function sendJson<T>(method: string, path: string, body?: unknown): Promise<T> {
+  return sendRequest(method, path, body).then((r) => json<T>(r));
 }
 
 async function send(method: string, path: string, body?: unknown): Promise<void> {
-  await apiFetch(path, {
-    method,
-    headers: body === undefined ? undefined : JSON_HEADERS,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  await sendRequest(method, path, body);
 }
 
 // ── Users ───────────────────────────────────────────────────────────────────────
@@ -284,6 +283,17 @@ export function listCharacters(signal?: AbortSignal): Promise<CharacterListItem[
   return getJson("/api/characters", signal);
 }
 
+export function getCharacter(id: number, signal?: AbortSignal): Promise<CharacterRead> {
+  return getJson(`/api/characters/${id}`, signal);
+}
+
+export function listCharacterAssignments(
+  id: number,
+  signal?: AbortSignal,
+): Promise<CharacterAssignmentHistoryRead[]> {
+  return getJson(`/api/characters/${id}/assignments`, signal);
+}
+
 export function listCharacterPresets(signal?: AbortSignal): Promise<CharacterPreset[]> {
   return getJson("/api/character-presets", signal);
 }
@@ -315,6 +325,18 @@ export function listSessions(campaignId?: number, signal?: AbortSignal): Promise
 
 export function getSession(id: number | string, signal?: AbortSignal): Promise<SessionRead> {
   return getJson(`/api/sessions/${id}`, signal);
+}
+
+export function listSessionMessages(id: number, signal?: AbortSignal): Promise<ChatMessageRead[]> {
+  return getJson(`/api/sessions/${id}/messages`, signal);
+}
+
+export function getSessionCombat(id: number, signal?: AbortSignal): Promise<CombatState | null> {
+  return getJson(`/api/sessions/${id}/combat`, signal);
+}
+
+export function startSessionIntro(id: number): Promise<SessionIntroRead> {
+  return sendJson("POST", `/api/sessions/${id}/intro`);
 }
 
 export function createSession(

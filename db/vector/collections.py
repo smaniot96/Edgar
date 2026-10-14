@@ -16,6 +16,11 @@ import time
 import weakref
 from typing import Any
 
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams
+
+from db.vector.embeddings import VECTOR_SIZE
+
 logger = logging.getLogger(__name__)
 
 # Canonical rules collections (ingest into these names).
@@ -78,6 +83,22 @@ def effective_adventure_collection_names(adventure_collections: list[str] | None
     if adventure_collections:
         return list(adventure_collections)
     return list(DEFAULT_ADVENTURE_COLLECTIONS)
+
+
+def ensure_collection(client: QdrantClient, collection_name: str) -> bool:
+    """Create a missing collection with Edgar's vector settings; return whether it was created.
+
+    Existing collections and their points are left intact. Connection and creation errors
+    propagate to the caller; a successful creation invalidates retrieval's collection cache.
+    """
+    if client.collection_exists(collection_name):
+        return False
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+    )
+    invalidate_collection_cache()
+    return True
 
 
 # --- live collection list cache -------------------------------------------------------------

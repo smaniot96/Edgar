@@ -98,10 +98,8 @@ vendor/
 *.tar
 # Docker build temporary files and output
 .docker/
-# Local Docker Compose overrides
+# Optional personal Compose overrides; shared development uses docker-compose.dev.yml.
 docker-compose.override.yml
-# Docker ignore file
-*.dockerignore
 
 # .env files
 /.env
@@ -117,8 +115,10 @@ data/
 # Local design notes and work-in-progress plans
 plans/
 
-# Local audit / findings notes (not part of the product)
-audit/
+# Personal work register, story library and preserved audit evidence.
+/work-register/
+# Keep any future temporary local audit output outside Git as well.
+/audit/
 
 # JetBrains IDEs
 # IntelliJ, WebStorm, PhpStorm, PyCharm project files
@@ -235,9 +235,6 @@ DerivedData/
 *.orig
 # Temporary files created by apps or IDEs
 *.tmp
-
-# Local dev-only Docker override (source bind-mount + uvicorn --reload). Not for prod.
-docker-compose.override.yml
 
 # Local database backups
 backups/

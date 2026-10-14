@@ -23,26 +23,16 @@ def main() -> None:
         print(f"No PDFs found in {pdfs_path}")
         sys.exit(0)
 
-    from qdrant_client.http.exceptions import UnexpectedResponse
-    from qdrant_client.models import Distance, VectorParams
-
-    from db.vector import VECTOR_SIZE, get_qdrant_client
+    from db.vector import VECTOR_SIZE, ensure_collection, get_qdrant_client
 
     client = get_qdrant_client()
 
     for pdf in pdfs:
         name = pdf.stem
-        try:
-            client.get_collection(name)
-            print(f"Collection '{name}' already exists. Skipping.")
-        except UnexpectedResponse as e:
-            if e.status_code != 404:
-                raise
-            client.create_collection(
-                collection_name=name,
-                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-            )
+        if ensure_collection(client, name):
             print(f"Created collection '{name}' (vector_size={VECTOR_SIZE}, distance=COSINE).")
+        else:
+            print(f"Collection '{name}' already exists. Skipping.")
 
     print(f"\nDone. Created/verified {len(pdfs)} collections.")
 

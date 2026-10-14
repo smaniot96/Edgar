@@ -8,6 +8,8 @@ import the other. Metadata persists across DB resets and tracks the ingestion li
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 import structlog
@@ -33,9 +35,39 @@ def load_meta(slug: str) -> dict:
     return {}
 
 
-def save_meta(slug: str, data: dict) -> None:
+def _write_meta(slug: str, data: dict, *, create: bool = False) -> None:
+    """Publish complete JSON atomically; `create` must not replace an existing reservation."""
     ADVENTURES_DIR.mkdir(parents=True, exist_ok=True)
-    meta_path(slug).write_text(json.dumps(data, indent=2))
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=ADVENTURES_DIR, suffix=".tmp", delete=False
+        ) as file:
+            temporary = Path(file.name)
+            json.dump(data, file, indent=2)
+        if create:
+            # Linking a completed temporary file claims the name without overwriting it.
+            # Competing API processes receive FileExistsError and choose another slug.
+            os.link(temporary, meta_path(slug))
+        else:
+            temporary.replace(meta_path(slug))
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def save_meta(slug: str, data: dict) -> None:
+    """Replace metadata without exposing a partially written JSON document to readers."""
+    _write_meta(slug, data)
+
+
+def reserve_meta(slug: str, data: dict) -> bool:
+    """Create a complete reservation only if the slug is still free."""
+    try:
+        _write_meta(slug, data, create=True)
+    except FileExistsError:
+        return False
+    return True
 
 
 def metadata_slugs() -> set[str]:

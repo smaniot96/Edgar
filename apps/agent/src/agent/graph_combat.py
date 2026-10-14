@@ -181,7 +181,12 @@ def _player_ac(character: dict | None) -> int:
     armor = str(inv.get("armor", "")).lower() if isinstance(inv, dict) else ""
     weapons = inv.get("weapons") if isinstance(inv, dict) else None
     shield = 2 if isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons) else 0
-    if "plate" in armor:
+    # Match medium armor before the generic "plate" substring.
+    if "half plate" in armor:
+        base = 15 + min(dex_mod, 2)
+    elif "breastplate" in armor:
+        base = 14 + min(dex_mod, 2)
+    elif "plate" in armor:
         base = 18
     elif "splint" in armor:
         base = 17
@@ -189,10 +194,6 @@ def _player_ac(character: dict | None) -> int:
         base = 16
     elif "ring mail" in armor:
         base = 14
-    elif "half plate" in armor:
-        base = 15 + min(dex_mod, 2)
-    elif "breastplate" in armor:
-        base = 14 + min(dex_mod, 2)
     elif "chain shirt" in armor or "scale" in armor:
         base = 13 + min(dex_mod, 2) + (1 if "scale" in armor else 0)
     elif "studded" in armor:
@@ -253,7 +254,7 @@ async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
                 timeout=_MONSTER_LOOKUP_TIMEOUT_S,
             )
         except Exception as e:
-            log.info("monster_lookup_failed", extra={"name": name, "error": str(e)[:200]})
+            log.info("monster_lookup_failed", extra={"monster_name": name, "error": str(e)[:200]})
             continue
         out += list(hits or [])
     return out
@@ -298,7 +299,7 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
         )
         for e in setup.enemies[:6]:
             if any(_name_matches(e.name, a) for a in allies):
-                log.info("dropped_ally_from_roster", extra={"name": e.name})
+                log.info("dropped_ally_from_roster", extra={"ally_name": e.name})
                 continue
             enemies.append(
                 {

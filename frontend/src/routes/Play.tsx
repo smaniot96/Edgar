@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { apiFetch, isNotFound } from "../api/client";
+import { isNotFound, startSessionIntro } from "../api/client";
 import { ComposerBar } from "../components/ComposerBar";
 import { MessageList } from "../components/MessageList";
 import { CampaignEndPanel } from "../components/play/CampaignEndPanel";
@@ -98,12 +98,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     setIntroPending(true);
     (async () => {
       try {
-        const r = await apiFetch(`/api/sessions/${sessionId}/intro`, { method: "POST" });
-        const data = (await r.json()) as {
-          started: boolean;
-          narration?: string;
-          current_scene_id?: string | null;
-        };
+        const data = await startSessionIntro(sessionId);
         if (data.started && data.narration) {
           dispatch({ type: "append", line: { id: "intro", role: "dm", content: data.narration } });
           if (data.current_scene_id !== undefined) setSceneId(data.current_scene_id);

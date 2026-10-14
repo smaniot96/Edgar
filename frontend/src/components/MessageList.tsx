@@ -8,8 +8,6 @@ import { RollCard } from "./play/RollCard";
 import { Button } from "./ui/Button";
 import type { DmLine, ErrorLine, Line, PendingTurn } from "./play/turnState";
 
-export type { Line } from "./play/turnState";
-
 const DevPanel = lazy(() => import("../dev/DevPanel").then((m) => ({ default: m.DevPanel })));
 
 /** Distance from the bottom (px) within which new content keeps the view pinned. */

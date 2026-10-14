@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 
 import { cn } from "../../lib/cn";
 import type { SheetCharacter } from "./gameState";
-import { HpBar } from "./HpBar";
+import { HpBar } from "../ui/HpBar";
 
 export function PlayHeader({
   title,

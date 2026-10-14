@@ -135,6 +135,18 @@ export function sheetFromLibrary(
   };
 }
 
+/** Select this campaign's saved sheet; a later assignment belongs to a different adventure. */
+export function sheetForCampaign(
+  character: CharacterRead,
+  assignments: CharacterAssignmentHistoryRead[],
+  campaignId: number,
+): SheetCharacter {
+  const matching = assignments.filter((a) => a.campaign_id === campaignId);
+  const assignment = matching.find((a) => a.status === "active") ??
+    matching.sort((a, b) => b.assigned_at.localeCompare(a.assigned_at))[0];
+  return sheetFromLibrary(character, assignment);
+}
+
 /** Merge the `done` payload's character into the current sheet (fields are optional). */
 export function mergeTurnCharacter(
   prev: SheetCharacter | null,

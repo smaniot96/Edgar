@@ -112,6 +112,7 @@ apps/ingestion/
 │   ├── main.py    # CLI entrypoint
 │   ├── extract.py # PDF → per-page text (pymupdf4llm)
 │   ├── chunk.py  # Heading-aware chunking (stat blocks kept whole)
+│   ├── paths.py  # Shared Docker/local output path selection
 │   └── embed.py  # Embed + upsert to Qdrant
 ├── tests/
 └── pyproject.toml

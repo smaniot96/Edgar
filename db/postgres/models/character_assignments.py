@@ -25,6 +25,8 @@ class CharacterAssignment(Base):
             postgresql_where=text("ended_at IS NULL"),
         ),
         CheckConstraint("hp_current <= hp_max", name="character_assignments_hp_within_max"),
+        CheckConstraint("hp_current >= 0", name="character_assignments_hp_nonnegative"),
+        CheckConstraint("hp_max >= 1", name="character_assignments_hp_max_positive"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

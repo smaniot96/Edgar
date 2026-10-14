@@ -2,7 +2,7 @@ import { useEffect } from "react";
 
 import { cn } from "../../lib/cn";
 import { abilityModifier, formatModifier, type SheetCharacter } from "./gameState";
-import { HpBar } from "./HpBar";
+import { HpBar } from "../ui/HpBar";
 
 function SectionTitle({ children }: { children: string }) {
   return (

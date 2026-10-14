@@ -15,7 +15,6 @@ dependencies = [
     "openai>=2.24.0",
     "qdrant-client>=1.17.0",
     "sqlalchemy[asyncio]>=2.0.47",
-    "python-dotenv>=1.0.0",
     "tenacity>=9.0.0",
 ]
 

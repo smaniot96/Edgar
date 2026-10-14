@@ -9,6 +9,7 @@ Importing this module loads `.env` from the Edgar repo root once, regardless of 
 
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 
@@ -32,8 +33,10 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = os.getenv("QDRANT_PORT", "6333")
 
 # `postgresql+asyncpg://` is required so SQLAlchemy uses the async driver.
+# Encode credentials as URL components so delimiters and spaces reach asyncpg unchanged.
 DATABASE_URL = (
-    f"postgresql+asyncpg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}"
+    f"postgresql+asyncpg://{quote(POSTGRES_USER, safe='')}:{quote(POSTGRES_PASSWORD, safe='')}"
+    f"@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}"
 )
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 VECTOR_DB_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"

@@ -12,7 +12,8 @@ The chat UI is a React SPA under [`frontend/`](frontend/README.md), served by th
 
 ```
 cp .env.example .env          # set OPENAI_API_KEY
-make up                        # docker compose up + migrate + seed
+make build                   # build API (including UI) and migration images
+make up                      # migrate, start the runtime stack, wait, seed
 open http://localhost:8000/ui
 ```
 
@@ -20,13 +21,16 @@ For local UI development with hot reload, run the API and Vite in two terminals 
 
 ```
 make frontend-install          # once
-# Terminal A: start API (e.g. docker compose up api, or uvicorn from repo root)
+# Terminal A (after make build):
+make dev-up                    # current backend source + hot reload
 # Terminal B:
 make frontend-dev
 open http://localhost:5173/ui/
 ```
 
 `make up` runs Alembic (`make migrate`), brings the stack up, polls `/health` until the API answers (default 60s; override with `WAIT_TIMEOUT_SEC`), then hits `/api/seed`. Use `make logs` to tail the API container, `make down` to stop. `/health` is liveness only; `/ready` also checks Postgres, Redis and Qdrant (503 with a per-component breakdown if one is down).
+
+Run `make build` again after changing dependencies or migrations, or to update the baked UI/backend in base mode. Development mode mounts current backend and migration source; dependency changes still need a rebuild. The API at port 8000 serves the UI built into its image; use Vite on port 5173 for frontend hot reload. When switching between base and development modes, run the corresponding `make up` or `make dev-up` to recreate services with that configuration.
 
 ### Compose services and profiles
 
@@ -38,7 +42,11 @@ open http://localhost:5173/ui/
 | `ingestion` | `tools` | `make ingest PDF=... COLLECTION=...` |
 | `rules_engine` | `rules` | `make rules` (rules-only RAG demo) |
 
-Postgres (5432), Redis (6379) and Qdrant (6333) are published on `127.0.0.1` only; the API listens on port 8000. Redis and Qdrant images are pinned (`redis:8.6.3`, `qdrant/qdrant:v1.16.3`); bump them deliberately. Images run as a non-root user and each Dockerfile target installs only its own workspace package (`uv sync --package ...`); the `api` image includes `ingestion` because uploads and AI-authored campaigns are embedded in-process. `docker-compose.override.yml` (gitignored, dev only) bind-mounts the source and runs uvicorn with `--reload`.
+All services are published on `127.0.0.1` only, including the API on port 8000. Redis and Qdrant images are pinned (`redis:8.6.3`, `qdrant/qdrant:v1.16.3`); bump them deliberately. Images run as a non-root user and each Dockerfile target installs only its own workspace package (`uv sync --package ...`); the `api` image includes `ingestion` because uploads and AI-authored campaigns are embedded in-process.
+
+Compose explicitly rotates container output with the `json-file` driver, retaining up to three 10 MB files per container. `make logs` reads this output; recreating a service applies changed logging options. PostgreSQL's `event_log` stores campaign history and adjudications as application data. Container log rotation does not delete that history.
+
+`docker-compose.dev.yml` is a tracked, optional overlay: it mounts backend source, runs uvicorn with `--reload`, enables developer diagnostics, and mounts current migrations into the migration job. Select it with `make dev-up` or `docker compose -f docker-compose.yml -f docker-compose.dev.yml ...`. Matching `dev-build`, `dev-migrate`, `dev-logs` and `dev-down` targets use the same files. Plain Make targets select only `docker-compose.yml` and do not auto-load personal overrides. The former local `docker-compose.override.yml` was removed; Compose no longer automatically applies it.
 
 Uploads and AI generation run as in-process background tasks. If the API restarts mid-way, the adventure is marked `failed` on the next startup; `POST /api/adventures/{slug}/retry` re-runs it.
 
@@ -82,18 +90,24 @@ Edgar/
     vector/          Qdrant client, embeddings, rules vs adventure retrieval
   tools/             Dice tool (deterministic, used by the agent)
   data/              PDFs and extracted markdown (gitignored, bind-mounted)
+  work-register/     Optional local-only register, individual work briefs and audit evidence
   tests/             Pytest suite (testcontainers Postgres, fakeredis, fake LLM)
   Dockerfile         Multi-stage: python-base / migrate / api / ingestion / rules_engine
   docker-compose.yml api + db + redis + qdrant; migrate/ingestion/rules_engine behind profiles
+  docker-compose.dev.yml  Opt-in backend hot reload and current migration source
   pyproject.toml     uv workspace root
-  Makefile           up / down / logs / migrate / seed / ingest / rules / test / lint / check-migrations / frontend-*
+  Makefile           build / up / down / logs / migrate / dev-* / seed / ingest / rules / test / lint / check-migrations / frontend-*
 ```
 
 `db/`, `tools/`, `core/`, and the four apps are independent uv workspace members; the workspace root lockfile is the only `uv.lock` you should regenerate.
 
+The optional personal [work register](work-register/REGISTER.md) is the local planning entry point: choose an Open item, follow its linked Markdown brief, then ask the implementing agent to start by ID. Each brief includes scope, acceptance criteria, dependencies and preserved audit evidence. The register, story library and copied reports/playtest evidence are gitignored, excluded from Docker build contexts and absent from a fresh clone. Repository setup and operation do not require them. The superseded root `audit/` folder was removed after the independent coverage review passed; the library retains its evidence independently. The intentionally deleted old database dump and ingestion logs were not recreated.
+
 ## Configuration
 
 `config.py` lives in `core/src/edgar_core/config.py`. It reads component env vars (`DB_HOST`, `POSTGRES_USER`, etc.) and builds the URLs the rest of the code consumes (`DATABASE_URL`, `REDIS_URL`, `VECTOR_DB_URL`). Docker overrides only host names so the same `.env` works on the host (via `localhost`) and inside Compose (via `db`, `redis`, `qdrant`). `LLM_MODEL` and `EMBEDDING_MODEL` are env-overridable; defaults are `gpt-6-luna` and `text-embedding-3-small`. Reasoning models (`gpt-5*`, `gpt-6*`, `o*`) only accept the default temperature, so the agent sends `LLM_REASONING_EFFORT` (default `low`) instead and calls them through the OpenAI Responses API (Chat Completions rejects function-calling structured output combined with a reasoning effort on these models); classic models such as `gpt-4o-mini` still get per-node temperatures.
+
+The API sends structlog, standard-library/server logs and in-process ingestion logs through one output formatter. `ENV=local` uses readable console output; other values use JSON with UTC timestamps, log level, logger name and request correlation. `X-Request-ID` accepts bounded IDs from a proxy and is echoed on responses, including unhandled errors. Common credential fields and credential URL forms are redacted, SQL bound parameters are hidden, and traceback locals are disabled. Avoid logging request bodies, prompts or arbitrary secrets: pattern-based redaction is not a complete privacy policy.
 
 ## Tests
 
@@ -105,11 +119,13 @@ The suite spins up Postgres 16 via testcontainers (running `alembic upgrade head
 
 After changing a model, add an Alembic migration in `db/alembic/versions/` and confirm `make check-migrations` (`alembic check` against your migrated database) reports no drift.
 
+Revision `11_character_bounds` enforces the public character bounds in PostgreSQL (levels 1–20, positive maximum HP and nonnegative assignment HP) and adds an index for session/event-type/id reads. It checks existing rows before making changes and refuses invalid data with counts and constraint names. Correct any invalid historical rows explicitly before retrying; this migration does not clamp or delete them. Run migration upgrade/downgrade verification on a disposable database, then use `make migrate` or `make dev-migrate` for the selected running configuration.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on pushes and PRs to `main`:
 
-* **edgar-ruff**: `uv sync --locked --group dev`, then `ruff check .` (rules `E,F,I,B,UP`; `claude-report/`, `audit/`, `plans/` are excluded). Formatting is not enforced yet.
+* **edgar-ruff**: `uv sync --locked --group dev`, then `ruff check .` (rules `E,F,I,B,UP`; `audit/`, `plans/` and `frontend/` are excluded). Formatting is not enforced yet.
 * **edgar-tests**: the pytest suite with `CI=true` (missing Docker fails the job).
 * **edgar-migrations**: against a Postgres service container, `alembic upgrade head`, `alembic check` (models vs migrations drift), and a downgrade/upgrade of the latest revision.
 * **docker-build**: builds the `api` and `migrate` Docker targets.

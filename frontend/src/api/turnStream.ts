@@ -1,5 +1,5 @@
-import { readSse } from "../api/sse";
-import type { AdjudicationResult, DebugPayload, TurnResult } from "../api/types";
+import { readSse } from "./sse";
+import type { AdjudicationResult, DebugPayload, TurnResult } from "./types";
 
 export interface TurnStreamHandlers {
   onStatus?: (stage: string) => void;
@@ -44,7 +44,7 @@ export function parseTurnError(payload: unknown, fallback = "Something went wron
   if (!payload || typeof payload !== "object") return { message: fallback };
   const p = payload as Record<string, unknown>;
   let code = str(p.code);
-  let message = str(p.message);
+  let message = str(p.message) ?? str(p.raw);
   const detail = p.detail;
   if (!message && typeof detail === "string") message = str(detail);
   if (detail && typeof detail === "object" && !Array.isArray(detail)) {

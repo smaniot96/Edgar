@@ -12,20 +12,17 @@ from db.postgres.models import Campaign, WorldFlag
 
 from ..dependencies import get_session
 from ..schemas.world_flag import WorldFlagCreate, WorldFlagRead, WorldFlagUpdate
+from ..services.world_flags import load_world_flag, upsert_world_flag
 from ._common import Page, get_or_404
 
 router = APIRouter(tags=["world-flags"])
-
-
-async def _require_campaign(campaign_id: int, db: AsyncSession) -> Campaign:
-    return await get_or_404(db, Campaign, campaign_id, "Campaign")
 
 
 @router.get("/campaigns/{campaign_id}/world-flags", response_model=list[WorldFlagRead])
 async def list_world_flags(
     campaign_id: int, db: AsyncSession = Depends(get_session), page: Page = Depends()
 ):
-    await _require_campaign(campaign_id, db)
+    await get_or_404(db, Campaign, campaign_id, "Campaign")
     result = await db.execute(
         select(WorldFlag)
         .where(WorldFlag.campaign_id == campaign_id)
@@ -41,18 +38,8 @@ async def create_or_update_world_flag(
     campaign_id: int, body: WorldFlagCreate, db: AsyncSession = Depends(get_session)
 ):
     """Upsert: if the key already exists, update the value; otherwise insert."""
-    await _require_campaign(campaign_id, db)
-    result = await db.execute(
-        select(WorldFlag).where(
-            WorldFlag.campaign_id == campaign_id, WorldFlag.key == body.key
-        )
-    )
-    flag = result.scalar_one_or_none()
-    if flag is None:
-        flag = WorldFlag(campaign_id=campaign_id, key=body.key, value=body.value)
-        db.add(flag)
-    else:
-        flag.value = body.value
+    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    flag = await upsert_world_flag(db, campaign_id, body.key, body.value)
     await db.commit()
     await db.refresh(flag)
     return WorldFlagRead.model_validate(flag)
@@ -65,13 +52,8 @@ async def update_world_flag(
     body: WorldFlagUpdate,
     db: AsyncSession = Depends(get_session),
 ):
-    await _require_campaign(campaign_id, db)
-    result = await db.execute(
-        select(WorldFlag).where(
-            WorldFlag.campaign_id == campaign_id, WorldFlag.key == key
-        )
-    )
-    flag = result.scalar_one_or_none()
+    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    flag = await load_world_flag(db, campaign_id, key)
     if flag is None:
         raise HTTPException(status_code=404, detail="World flag not found")
     flag.value = body.value
@@ -84,13 +66,8 @@ async def update_world_flag(
 async def delete_world_flag(
     campaign_id: int, key: str, db: AsyncSession = Depends(get_session)
 ):
-    await _require_campaign(campaign_id, db)
-    result = await db.execute(
-        select(WorldFlag).where(
-            WorldFlag.campaign_id == campaign_id, WorldFlag.key == key
-        )
-    )
-    flag = result.scalar_one_or_none()
+    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    flag = await load_world_flag(db, campaign_id, key)
     if flag is None:
         raise HTTPException(status_code=404, detail="World flag not found")
     await db.delete(flag)

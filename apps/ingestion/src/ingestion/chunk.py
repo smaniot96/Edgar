@@ -66,10 +66,6 @@ class _Section:
     path: list[_Heading]
     paras: list[tuple[str, int]] = field(default_factory=list)  # (text, page)
 
-    @property
-    def text(self) -> str:
-        return "\n\n".join(p for p, _ in self.paras)
-
     def looks_like_stat_block(self) -> bool:
         return _stat_block_start(self.paras) is not None
 

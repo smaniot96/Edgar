@@ -270,4 +270,3 @@ export function DevPanel({
     </div>
   );
 }
-export default DevPanel;

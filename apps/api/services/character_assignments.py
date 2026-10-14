@@ -13,32 +13,27 @@ from db.postgres.models import Character, CharacterAssignment
 
 
 async def load_active_assignment(
-    db: AsyncSession, character_id: int, campaign_id: int
+    db: AsyncSession, character_id: int, campaign_id: int | None
 ) -> CharacterAssignment | None:
-    r = await db.execute(
+    """Load a character's active assignment, optionally scoped to one campaign."""
+    query = (
         select(CharacterAssignment)
         .where(
             CharacterAssignment.character_id == character_id,
-            CharacterAssignment.campaign_id == campaign_id,
             CharacterAssignment.ended_at.is_(None),
         )
         .options(selectinload(CharacterAssignment.character))
     )
+    if campaign_id is not None:
+        query = query.where(CharacterAssignment.campaign_id == campaign_id)
+    r = await db.execute(query)
     return r.scalar_one_or_none()
 
 
 async def load_active_assignment_any_campaign(
     db: AsyncSession, character_id: int
 ) -> CharacterAssignment | None:
-    r = await db.execute(
-        select(CharacterAssignment)
-        .where(
-            CharacterAssignment.character_id == character_id,
-            CharacterAssignment.ended_at.is_(None),
-        )
-        .options(selectinload(CharacterAssignment.character))
-    )
-    return r.scalar_one_or_none()
+    return await load_active_assignment(db, character_id, campaign_id=None)
 
 
 def seed_assignment_row_payload(character: Character) -> dict[str, Any]:

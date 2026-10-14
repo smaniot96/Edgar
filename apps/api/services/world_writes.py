@@ -40,6 +40,7 @@ from agent.resolution import (
 from db.postgres.models import Session as SessionModel, WorldFlag
 
 from .character_assignments import load_active_assignment
+from .world_flags import upsert_world_flag
 
 log = structlog.get_logger()
 
@@ -74,17 +75,7 @@ async def apply_adjudication(
         if fu.key == COMPLETION_FLAG and not completion_ok:
             log.warning("completion_flag_rejected", status=adj.completion_status)
             continue
-        existing = await db.execute(
-            select(WorldFlag).where(
-                WorldFlag.campaign_id == game_session.campaign_id,
-                WorldFlag.key == fu.key,
-            )
-        )
-        flag = existing.scalar_one_or_none()
-        if flag:
-            flag.value = fu.value
-        else:
-            db.add(WorldFlag(campaign_id=game_session.campaign_id, key=fu.key, value=fu.value))
+        await upsert_world_flag(db, game_session.campaign_id, fu.key, fu.value)
 
     if adj.flags_cleared:
         wanted = [str(k) for k in adj.flags_cleared]

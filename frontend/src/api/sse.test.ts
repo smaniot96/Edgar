@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { consumeTurnStream, parseTurnError } from "../hooks/useSSE";
+import { consumeTurnStream, parseTurnError } from "./turnStream";
 import { createSseParser, readSse } from "./sse";
 
 function streamResponse(chunks: string[]): Response {
@@ -123,6 +123,11 @@ describe("consumeTurnStream", () => {
       onActivity: () => n++,
     });
     expect(n).toBe(3);
+  });
+
+  it("preserves raw error frames when the server sends plain text", async () => {
+    const out = await consumeTurnStream(streamResponse(["event: error\ndata: Busy\n\n"]), {});
+    expect(out).toEqual({ kind: "error", error: { message: "Busy" } });
   });
 });
 

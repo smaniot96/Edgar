@@ -7,6 +7,7 @@ from db.vector.collections import (
     campaign_lore_collection,
     effective_adventure_collection_names,
     effective_rules_collection_names,
+    ensure_collection,
     existing_collection_names,
     invalidate_collection_cache,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "effective_adventure_collection_names",
     "effective_rules_collection_names",
     "embed_query",
+    "ensure_collection",
     "existing_collection_names",
     "get_embeddings",
     "get_qdrant_client",

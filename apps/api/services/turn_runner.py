@@ -84,11 +84,6 @@ def sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-def _chunk_text(chunk: Any) -> str:
-    """Text of a langchain stream chunk (str or Responses-API list-of-blocks content)."""
-    return message_text(chunk)
-
-
 async def persist_turn(session_id: int, body_message: str, result: dict[str, Any]) -> dict[str, Any]:
     """Write the whole turn in one transaction and return the `done` payload.
 
@@ -318,7 +313,7 @@ async def stream_session_turn(
         narration_parts: list[str] = []
         try:
             async for chunk in llm.astream(prompt):
-                tok = _chunk_text(chunk)
+                tok = message_text(chunk)
                 if not tok:
                     continue
                 narration_parts.append(tok)

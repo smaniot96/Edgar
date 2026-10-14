@@ -40,6 +40,7 @@ from ..services.turn_runner import (
     stream_session_turn,
 )
 from ..services.world_flags import load_world_flags
+from ._common import get_or_404
 
 log = structlog.get_logger()
 
@@ -59,10 +60,7 @@ async def _load_turn_initial_state(
     the request's pooled connection is not held across the turn's LLM calls (the turn's writes
     use their own short-lived session in `persist_turn`).
     """
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_or_404(db, SessionModel, session_id, "Session")
 
     camp_result = await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
     campaign = camp_result.scalar_one_or_none()
@@ -119,10 +117,7 @@ async def list_sessions(
 
 @router.get("/sessions/{session_id}", response_model=SessionRead)
 async def get_session_by_id(session_id: int, db: AsyncSession = Depends(get_session)):
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_or_404(db, SessionModel, session_id, "Session")
     return SessionRead.model_validate(session)
 
 
@@ -132,18 +127,14 @@ async def get_session_combat(session_id: int, db: AsyncSession = Depends(get_ses
 
     Lets the client restore the combat HUD after a reload.
     """
-    exists = await db.execute(select(SessionModel.id).where(SessionModel.id == session_id))
-    if exists.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await get_or_404(db, SessionModel, session_id, "Session")
     return combat_state_public(await load_active_combat(db, session_id))
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageRead])
 async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_session)):
     """Hydrate chat UI from narration rows in event_log (oldest first)."""
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await get_or_404(db, SessionModel, session_id, "Session")
 
     ev_result = await db.execute(
         select(EventLog)
@@ -191,10 +182,7 @@ async def session_intro(
     if lock is None:
         raise HTTPException(status_code=409, detail="Session is busy; please retry.")
     try:
-        result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-        session = result.scalar_one_or_none()
-        if session is None:
-            raise HTTPException(status_code=404, detail="Session not found")
+        session = await get_or_404(db, SessionModel, session_id, "Session")
 
         camp_res = await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
         campaign = camp_res.scalar_one_or_none()
@@ -241,10 +229,7 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
 async def update_session(
     session_id: int, body: SessionUpdate, db: AsyncSession = Depends(get_session)
 ):
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_or_404(db, SessionModel, session_id, "Session")
     update_data = body.model_dump(exclude_unset=True)
     # Same invariant create enforces: the active character must be playing in this campaign.
     new_character_id = update_data.get("active_character_id")
@@ -264,10 +249,7 @@ async def update_session(
 
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(session_id: int, db: AsyncSession = Depends(get_session)):
-    result = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_or_404(db, SessionModel, session_id, "Session")
     await db.delete(session)
     await db.commit()
 

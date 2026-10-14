@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import { apiBase } from "../../api/client";
 import type { TurnResult } from "../../api/types";
-import { consumeTurnStream, parseTurnError } from "../../hooks/useSSE";
+import { consumeTurnStream, parseTurnError } from "../../api/turnStream";
 import { initialTurnState, turnReducer } from "./turnState";
 
 /** Abort the turn if the server sends nothing (not even a keep-alive) for this long. */

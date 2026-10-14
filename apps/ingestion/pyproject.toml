@@ -12,8 +12,6 @@ dependencies = [
     "db",
     "edgar_core",
     "loguru>=0.7.0",
-    "openai>=2.28.0",
-    "pydantic>=2.12.5",
     "pymupdf4llm>=1.27.2.1",
     "qdrant-client>=1.17.1",
 ]

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { apiFetch, errorMessage } from "../../api/client";
+import { errorMessage, reopenCampaign } from "../../api/client";
 import { Button, ButtonLink } from "../ui/Button";
 
 /** Replaces the composer once the campaign is over, with ways forward. */
@@ -19,7 +19,7 @@ export function CampaignEndPanel({
     setReopening(true);
     setError(null);
     try {
-      await apiFetch(`/api/campaigns/${campaignId}/reopen`, { method: "POST" });
+      await reopenCampaign(campaignId);
       onReopened();
     } catch (e) {
       setError(errorMessage(e));

@@ -6,14 +6,9 @@ commits (`services.session_messages.maybe_update_memory_summary`), so this LLM c
 on the critical path of a turn. The summary is fed back to the agent as `state["memory_summary"]`.
 """
 
-import logging
-
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.llm import make_chat_model, message_text
-from agent.state import AgentState
-
-log = logging.getLogger(__name__)
 
 MEMORY_SUMMARY_PROMPT = (
     'Update the "story so far" for a solo D&D adventure. You get the previous summary (may be '
@@ -44,17 +39,3 @@ async def summarize_story(previous_summary: str | None, messages: list) -> str:
         ]
     )
     return message_text(summary).strip()
-
-
-async def memory_summarizer_node(state: AgentState) -> dict:
-    """Graph-node wrapper (not wired into the turn graph): fold `messages` into
-    `memory_summary`. Failures are logged and leave the existing summary untouched."""
-    messages = state.get("messages") or []
-    if not messages:
-        return {}
-    try:
-        summary = await summarize_story(state.get("memory_summary"), messages)
-    except Exception:
-        log.warning("memory_summary_failed", exc_info=True)
-        return {}
-    return {"memory_summary": summary}

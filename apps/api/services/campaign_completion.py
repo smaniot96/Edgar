@@ -19,9 +19,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.models.adjudication import AdjudicationResult
+from agent.resolution import completion_proposed
 from db.postgres.models import Campaign, CharacterAssignment
-
-_TRUTHY = {"true", "1", "yes", "complete", "completed", "victory"}
 
 
 def _completion_flagged(adj: AdjudicationResult | None) -> bool:
@@ -35,10 +34,29 @@ def _completion_flagged(adj: AdjudicationResult | None) -> bool:
     status = getattr(adj, "completion_status", None)
     if status is not None:
         return status == "accepted"
-    for fu in adj.flags_set:
-        if fu.key == "campaign_complete" and str(fu.value).strip().lower() in _TRUTHY:
-            return True
-    return False
+    return completion_proposed(adj)
+
+
+async def close_campaign(db: AsyncSession, campaign: Campaign) -> bool:
+    """End a campaign and its active assignments with one shared timestamp.
+
+    Reopening uses that timestamp to distinguish these assignments from manual releases.
+    The caller commits or flushes the change as part of its own transaction.
+    """
+    if campaign.status == "ended":
+        return False
+    now = datetime.now(UTC)
+    campaign.status = "ended"
+    campaign.ended_at = now
+    await db.execute(
+        update(CharacterAssignment)
+        .where(
+            CharacterAssignment.campaign_id == campaign.id,
+            CharacterAssignment.ended_at.is_(None),
+        )
+        .values(ended_at=now)
+    )
+    return True
 
 
 async def maybe_complete_campaign(
@@ -49,20 +67,9 @@ async def maybe_complete_campaign(
 
     result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
     campaign = result.scalar_one_or_none()
-    if campaign is None or campaign.status == "ended":
+    if campaign is None or not await close_campaign(db, campaign):
         return False
 
-    now = datetime.now(UTC)
-    campaign.status = "ended"
-    campaign.ended_at = now
-    await db.execute(
-        update(CharacterAssignment)
-        .where(
-            CharacterAssignment.campaign_id == campaign_id,
-            CharacterAssignment.ended_at.is_(None),
-        )
-        .values(ended_at=now)
-    )
     # Flush only: the caller (turn_runner.persist_turn) commits this with the rest of the turn.
     await db.flush()
     return True

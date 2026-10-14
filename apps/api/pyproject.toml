@@ -18,10 +18,12 @@ dependencies = [
     # The upload / AI-authoring endpoints embed PDFs in-process via `ingestion.embed`.
     "ingestion",
     "langchain-core>=1.2.19",
-    "langchain-openai>=1.1.11",
+    "loguru>=0.7.0",
     "pydantic>=2.12.5",
     "python-multipart>=0.0.9",
+    "qdrant-client>=1.17.1",
     "redis>=5.0.0",
+    "sqlalchemy[asyncio]>=2.0.47",
     "structlog>=25.5.0",
     "uvicorn>=0.40.0",
 ]

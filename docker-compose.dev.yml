@@ -1,0 +1,36 @@
+# Opt-in local development: make dev-up (after make build), or
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Dependency/lockfile changes still require make build. For frontend hot reload,
+# run make frontend-dev and open http://localhost:5173/ui/.
+services:
+  api:
+    environment:
+      EDGAR_DEBUG: "1"
+    volumes:
+      - ./apps:/app/apps
+      - ./db:/app/db
+      - ./tools:/app/tools
+      - ./core:/app/core
+    command:
+      - uvicorn
+      - apps.api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/apps
+      - --reload-dir
+      - /app/db
+      - --reload-dir
+      - /app/tools
+      - --reload-dir
+      - /app/core
+
+  # Use current migration and configuration source in development as well.
+  # Base mode still tests the migrations baked into the migrate image.
+  migrate:
+    volumes:
+      - ./db:/app/db
+      - ./core:/app/core

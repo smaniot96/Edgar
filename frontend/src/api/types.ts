@@ -89,13 +89,6 @@ export interface WorldFlagRead {
   value: string;
 }
 
-export interface SeedResponse {
-  user_id: number;
-  campaign_id: number;
-  session_id: number;
-  message: string;
-}
-
 export interface SessionRead {
   id: number;
   campaign_id: number;
@@ -109,6 +102,12 @@ export interface ChatMessageRead {
   role: "user" | "dm";
   content: string;
   created_at: string;
+}
+
+export interface SessionIntroRead {
+  started: boolean;
+  narration?: string;
+  current_scene_id?: string | null;
 }
 
 export interface CampaignRead {
@@ -297,11 +296,4 @@ export interface TurnResult {
   current_scene_id?: string | null;
   combat_state?: CombatState | null;
   campaign_complete?: boolean;
-}
-
-/** Error payload of a failed turn (SSE `error` frame or HTTP error body). */
-export interface TurnErrorPayload {
-  code?: string;
-  message?: string;
-  detail?: string | { code?: string; message?: string } | unknown;
 }

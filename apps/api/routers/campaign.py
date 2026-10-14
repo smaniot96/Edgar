@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -11,13 +10,10 @@ from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 from ..dependencies import current_user_id, get_session
 from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
+from ..services.campaign_completion import close_campaign
 from ._common import Page, get_or_404
 
 router = APIRouter(tags=["campaigns"])
-
-
-async def _load_campaign_or_404(db: AsyncSession, campaign_id: int) -> Campaign:
-    return await get_or_404(db, Campaign, campaign_id, "Campaign")
 
 
 @router.get("/campaigns", response_model=list[CampaignRead])
@@ -39,7 +35,7 @@ async def list_campaigns(
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignRead)
 async def get_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
-    campaign = await _load_campaign_or_404(db, campaign_id)
+    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     return CampaignRead.model_validate(campaign)
 
 
@@ -113,7 +109,7 @@ async def create_campaign(
 async def update_campaign(
     campaign_id: int, body: CampaignUpdate, db: AsyncSession = Depends(get_session)
 ):
-    campaign = await _load_campaign_or_404(db, campaign_id)
+    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     update_data = body.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(campaign, key, value)
@@ -124,7 +120,7 @@ async def update_campaign(
 
 @router.delete("/campaigns/{campaign_id}", status_code=204)
 async def delete_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
-    campaign = await _load_campaign_or_404(db, campaign_id)
+    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     await db.delete(campaign)
     await db.commit()
 
@@ -136,20 +132,9 @@ async def end_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)
     The closed assignments get exactly `campaign.ended_at` as their `ended_at`; that shared
     timestamp is what `reopen` uses to find (only) the assignments this end closed.
     """
-    campaign = await _load_campaign_or_404(db, campaign_id)
-    if campaign.status == "ended":
+    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    if not await close_campaign(db, campaign):
         return CampaignRead.model_validate(campaign)
-    now = datetime.now(UTC)
-    campaign.status = "ended"
-    campaign.ended_at = now
-    await db.execute(
-        update(CharacterAssignment)
-        .where(
-            CharacterAssignment.campaign_id == campaign_id,
-            CharacterAssignment.ended_at.is_(None),
-        )
-        .values(ended_at=now)
-    )
     await db.commit()
     await db.refresh(campaign)
     return CampaignRead.model_validate(campaign)
@@ -165,7 +150,7 @@ async def reopen_campaign(campaign_id: int, db: AsyncSession = Depends(get_sessi
     A character that has since become active in another campaign is left ended (a character
     can only be active in one campaign at a time).
     """
-    campaign = await _load_campaign_or_404(db, campaign_id)
+    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     ended_snapshot = campaign.ended_at
     campaign.status = "active"
     campaign.ended_at = None

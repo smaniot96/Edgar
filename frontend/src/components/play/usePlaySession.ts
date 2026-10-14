@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { apiFetch, getAdventure, getCampaign, getSession } from "../../api/client";
+import {
+  getAdventure,
+  getCampaign,
+  getCharacter,
+  getSession,
+  getSessionCombat,
+  listCharacterAssignments,
+  listSessionMessages,
+} from "../../api/client";
 import type {
   CampaignRead,
-  CharacterAssignmentHistoryRead,
-  CharacterRead,
   ChatMessageRead,
   CombatState,
-  SessionRead,
   TurnResult,
 } from "../../api/types";
 import { campaignDisplayName, isGenericCampaignTitle } from "../../lib/campaign";
 import { rememberLastSession } from "../../lib/lastSession";
-import { mergeTurnCharacter, sheetFromLibrary, type SheetCharacter } from "./gameState";
+import { mergeTurnCharacter, sheetForCampaign, type SheetCharacter } from "./gameState";
 
 export interface PlaySessionState {
   loading: boolean;
@@ -40,16 +45,10 @@ const initial: PlaySessionState = {
   boot: null,
 };
 
-async function getJson<T>(path: string): Promise<T> {
-  return (await (await apiFetch(path)).json()) as T;
-}
-
 /** Active, un-ended combat for the session; null if none or the endpoint isn't available. */
-async function loadCombat(sessionId: number, session: SessionRead): Promise<CombatState | null> {
-  const embedded = (session as SessionRead & { combat_state?: CombatState | null }).combat_state;
-  if (embedded !== undefined) return embedded && !embedded.ended ? embedded : null;
+async function loadCombat(sessionId: number, signal: AbortSignal): Promise<CombatState | null> {
   try {
-    const c = await getJson<CombatState | null>(`/api/sessions/${sessionId}/combat`);
+    const c = await getSessionCombat(sessionId, signal);
     return c && Array.isArray(c.combatants) && !c.ended ? c : null;
   } catch {
     return null; // endpoint missing (404) or no active combat
@@ -57,29 +56,24 @@ async function loadCombat(sessionId: number, session: SessionRead): Promise<Comb
 }
 
 /** Player-facing campaign name (the adventure's title when the campaign title is generic). */
-async function loadTitle(campaign: CampaignRead | null): Promise<string> {
+async function loadTitle(campaign: CampaignRead | null, signal: AbortSignal): Promise<string> {
   if (!campaign) return "Edgar";
   let adventure = null;
   const slug = campaign.adventure_collections[0];
-  if (slug && isGenericCampaignTitle(campaign)) adventure = await getAdventure(slug).catch(() => null);
+  if (slug && isGenericCampaignTitle(campaign)) adventure = await getAdventure(slug, signal).catch(() => null);
   return campaignDisplayName(campaign, adventure);
 }
 
 async function loadCharacter(
   characterId: number,
   campaignId: number,
+  signal: AbortSignal,
 ): Promise<SheetCharacter | null> {
   const [c, assigns] = await Promise.all([
-    getJson<CharacterRead>(`/api/characters/${characterId}`),
-    getJson<CharacterAssignmentHistoryRead[]>(`/api/characters/${characterId}/assignments`).catch(
-      () => [] as CharacterAssignmentHistoryRead[],
-    ),
+    getCharacter(characterId, signal),
+    listCharacterAssignments(characterId, signal).catch(() => []),
   ]);
-  const active =
-    assigns.find((a) => a.campaign_id === campaignId && a.status === "active") ??
-    assigns.find((a) => a.status === "active") ??
-    null;
-  return sheetFromLibrary(c, active);
+  return sheetForCampaign(c, assigns, campaignId);
 }
 
 /** Loads everything the play screen needs for a session and applies post-turn updates. */
@@ -89,20 +83,20 @@ export function usePlaySession(sessionId: number) {
 
   useEffect(() => {
     if (!Number.isFinite(sessionId) || sessionId < 1) return;
-    let cancelled = false;
+    const ctrl = new AbortController();
     (async () => {
       try {
-        const session = await getSession(sessionId);
+        const session = await getSession(sessionId, ctrl.signal);
         const [campaign, character, combat, history] = await Promise.all([
-          getCampaign(session.campaign_id).catch(() => null),
+          getCampaign(session.campaign_id, ctrl.signal).catch(() => null),
           session.active_character_id
-            ? loadCharacter(session.active_character_id, session.campaign_id).catch(() => null)
+            ? loadCharacter(session.active_character_id, session.campaign_id, ctrl.signal).catch(() => null)
             : Promise.resolve(null),
-          loadCombat(sessionId, session),
-          getJson<ChatMessageRead[]>(`/api/sessions/${sessionId}/messages`),
+          loadCombat(sessionId, ctrl.signal),
+          listSessionMessages(sessionId, ctrl.signal),
         ]);
-        const title = await loadTitle(campaign);
-        if (cancelled) return;
+        const title = await loadTitle(campaign, ctrl.signal);
+        if (ctrl.signal.aborted) return;
         rememberLastSession(sessionId);
         setState({
           loading: false,
@@ -116,13 +110,11 @@ export function usePlaySession(sessionId: number) {
           boot: { history, campaignEnded: campaign?.status === "ended" },
         });
       } catch (e) {
-        if (cancelled) return;
+        if (ctrl.signal.aborted) return;
         setState({ ...initial, loading: false, error: e });
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => ctrl.abort();
   }, [sessionId, attempt]);
 
   /** Re-run the boot fetch (after an error). */

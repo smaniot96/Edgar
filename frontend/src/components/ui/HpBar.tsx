@@ -14,12 +14,14 @@ export function HpBar({
   max,
   className,
   compact = false,
+  showValue = true,
   label = "HP",
 }: {
   current: number | null;
   max: number | null;
   className?: string;
   compact?: boolean;
+  showValue?: boolean;
   label?: string;
 }) {
   const known = current != null && max != null && max > 0;
@@ -46,14 +48,16 @@ export function HpBar({
           style={{ width: `${(ratio ?? 0) * 100}%` }}
         />
       </div>
-      <span
-        className={cn(
-          "shrink-0 font-mono text-xs tabular-nums",
-          down ? "font-semibold text-danger" : ratio != null && ratio <= 0.25 ? "text-danger" : "text-ink",
-        )}
-      >
-        {down ? "Down" : text}
-      </span>
+      {showValue ? (
+        <span
+          className={cn(
+            "shrink-0 font-mono text-xs tabular-nums",
+            down ? "font-semibold text-danger" : ratio != null && ratio <= 0.25 ? "text-danger" : "text-ink",
+          )}
+        >
+          {down ? "Down" : text}
+        </span>
+      ) : null}
     </div>
   );
 }

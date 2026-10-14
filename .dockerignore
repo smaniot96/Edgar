@@ -23,9 +23,10 @@ frontend/dist
 
 # Not part of the runtime image
 tests/
-claude-report/
 audit/
+work-register/
 plans/
+backups/
 docker-compose*.yml
 Makefile
 

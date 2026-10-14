@@ -35,6 +35,7 @@ from ..services.adventures_meta import (
     load_meta as load_adventure_metadata,
     meta_path as _metadata_path,
     metadata_slugs,
+    reserve_meta,
     save_meta as _save_adventure_metadata,
 )
 
@@ -118,7 +119,7 @@ def get_adventure(slug: str):
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
 
 
-def _ingest_adventure(slug: str, pdf_path: str, title: str) -> None:
+def _ingest_adventure(slug: str, pdf_path: str) -> None:
     """Background worker: embed the PDF and flip the adventure's status to ready/failed."""
     # Imported here so the API process only pays the ingestion import cost on first upload.
     from ingestion.embed import run_pipeline
@@ -176,9 +177,11 @@ def _copy_capped(src: BinaryIO, dest: Path, max_bytes: int) -> int:
 def _reserve_slug(desired: str, meta: dict) -> str:
     """Pick a free slug (no collection, no metadata file) and write its metadata. Blocking."""
     taken = set(_all_collection_names()) | metadata_slugs()
-    slug = _unique_slug(desired, taken)
-    _save_adventure_metadata(slug, meta)
-    return slug
+    while True:
+        slug = _unique_slug(desired, taken)
+        if reserve_meta(slug, meta):
+            return slug
+        taken.add(slug)
 
 
 @router.post("/adventures/upload", response_model=AdventureUploadResponse, status_code=202)
@@ -232,7 +235,7 @@ async def upload_adventure(
             detail=f"PDF too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
         )
 
-    background.add_task(_ingest_adventure, slug, str(pdf_path), desired_title)
+    background.add_task(_ingest_adventure, slug, str(pdf_path))
     log.info("adventure_upload_accepted", slug=slug, filename=filename, bytes=size)
     return AdventureUploadResponse(slug=slug, title=desired_title, status="processing")
 
@@ -304,7 +307,7 @@ def retry_adventure(slug: str, background: BackgroundTasks):
             generation.get("size") or "medium",
         )
     elif pdf_path.is_file():
-        task_args = (_ingest_adventure, slug, str(pdf_path), title)
+        task_args = (_ingest_adventure, slug, str(pdf_path))
     else:
         raise HTTPException(status_code=410, detail="The source PDF is gone; upload it again.")
 

@@ -5,7 +5,6 @@ request-id middleware so structured logs and 500 responses share a correlation i
 structlog at startup.
 """
 
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from edgar_core.config import API_TITLE, API_VERSION
 
-from .logging_config import configure_logging
+from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
 from .routers._common import HTTPErrorWithContext
 from .routers.adventures import router as adventures_router
 from .routers.campaign import router as campaign_router
@@ -47,33 +46,22 @@ async def lifespan(app: FastAPI):
             log.warning("adventures_marked_failed_after_restart", slugs=stale)
     except OSError:
         log.exception("adventures_stale_scan_failed")
-    yield
-    # Lazy import: avoids importing Redis at module load (helps tests that don't need it).
-    from .dependencies import close_redis
+    try:
+        yield
+    finally:
+        # Lazy imports keep unrelated tests independent of Redis/engine initialization.
+        from db.postgres import session as db_session_module
 
-    await close_redis()
+        from .dependencies import close_redis
+
+        try:
+            await close_redis()
+        finally:
+            await db_session_module.engine.dispose()
 
 
 app = FastAPI(title=API_TITLE, version=API_VERSION, lifespan=lifespan)
-
-
-@app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
-    """Honour an inbound `X-Request-ID` (e.g. from a load balancer) or mint a new one.
-
-    The id is bound into structlog's contextvars so every log line emitted while handling the
-    request carries it, and echoed back as a response header so clients can correlate.
-    """
-    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
-    request.state.request_id = request_id
-    structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(request_id=request_id)
-    try:
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
-    finally:
-        structlog.contextvars.clear_contextvars()
+app.add_middleware(RequestContextMiddleware)
 
 
 @app.exception_handler(HTTPErrorWithContext)
@@ -93,10 +81,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     Only reached for exceptions nobody else handled: HTTPException and RequestValidationError
     are converted by FastAPI's own handlers (ExceptionMiddleware) before they get here.
     """
-    request_id = (
-        getattr(request.state, "request_id", None)
-        or request.headers.get("x-request-id")
-        or str(uuid.uuid4())
+    request_id = getattr(request.state, "request_id", None) or request_id_from_header(
+        request.headers.get("x-request-id")
     )
     log.exception("unhandled", request_id=request_id, path=request.url.path)
     return JSONResponse(
@@ -106,6 +92,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
             "type": "internal",
             "request_id": request_id,
         },
+        headers={"X-Request-ID": request_id},
     )
 
 

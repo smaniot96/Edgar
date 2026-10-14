@@ -34,7 +34,7 @@ asyncio_default_test_loop_scope = "session"
 line-length = 100
 target-version = "py312"
 # Local notes / one-off scripts, not part of the product.
-extend-exclude = ["claude-report", "audit", "plans", "frontend"]
+extend-exclude = ["audit", "plans", "frontend"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,10 +16,12 @@ if TYPE_CHECKING:
 
 class Character(Base):
     __tablename__ = "characters"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    owner_user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+    __table_args__ = (
+        CheckConstraint("level BETWEEN 1 AND 20", name="characters_level_valid"),
+        CheckConstraint("hp_max >= 1", name="characters_hp_max_positive"),
     )
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     character_class: Mapped[str] = mapped_column("class", String(255), nullable=False)
     level: Mapped[int] = mapped_column(Integer, nullable=False)

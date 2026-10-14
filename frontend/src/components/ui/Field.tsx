@@ -8,14 +8,6 @@ export function Input({ className, ...rest }: ComponentProps<"input">) {
   return <input className={cn(controlClasses, className)} {...rest} />;
 }
 
-export function Textarea({ className, ...rest }: ComponentProps<"textarea">) {
-  return <textarea className={cn(controlClasses, "min-h-20", className)} {...rest} />;
-}
-
-export function Select({ className, ...rest }: ComponentProps<"select">) {
-  return <select className={cn(controlClasses, className)} {...rest} />;
-}
-
 /** Props a Field hands to its control so label, hint and error are wired up. */
 export interface FieldControlProps {
   id: string;

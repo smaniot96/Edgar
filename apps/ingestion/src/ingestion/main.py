@@ -6,22 +6,20 @@ from pathlib import Path
 from loguru import logger
 
 from db.vector.collections import campaign_lore_collection
-from edgar_core.config import EDGAR_ROOT
 from ingestion.embed import run_pipeline
 from ingestion.extract import extract_and_save_markdown
-
-logger.remove()
-logger.add(sys.stderr, format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
-
-
-def _default_markdown_dir() -> Path:
-    """Default markdown output dir: /output/markdown (Docker bind mount) or Edgar/data/markdown (local)."""
-    if Path("/output/markdown").exists():
-        return Path("/output/markdown")
-    return EDGAR_ROOT / "data" / "markdown"
+from ingestion.paths import default_markdown_dir
 
 
 def main() -> None:
+    # Configure only the CLI process; importing it must not replace API logging sinks.
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        backtrace=False,
+        diagnose=False,
+    )
     parser = argparse.ArgumentParser(
         description="Ingest PDFs into Qdrant for RAG (extract, chunk, embed, upsert)"
     )
@@ -29,7 +27,7 @@ def main() -> None:
         "path",
         type=Path,
         nargs="?",
-        help="Path to PDF file (required unless --extract-only with no path)",
+        help="Path to PDF file (required for ingestion and --extract-only)",
     )
     parser.add_argument(
         "--collection",
@@ -94,26 +92,22 @@ def main() -> None:
             return args.collection
         return "dnd_rules"
 
+    if not args.path:
+        mode = "--extract-only" if args.extract_only else "full ingestion"
+        parser.error(f"path is required for {mode}")
+    if not args.path.exists():
+        logger.error("File not found: {}", args.path)
+        sys.exit(1)
+
     if args.extract_only:
-        if not args.path:
-            parser.error("path is required for --extract-only")
-        if not args.path.exists():
-            logger.error("File not found: {}", args.path)
-            sys.exit(1)
         try:
-            out_dir = args.markdown_dir or _default_markdown_dir()
+            out_dir = args.markdown_dir or default_markdown_dir()
             out_path = extract_and_save_markdown(args.path, out_dir)
             logger.info("Saved markdown to {}", out_path)
         except Exception:
             logger.exception("Extract failed")
             sys.exit(1)
         return
-
-    if not args.path:
-        parser.error("path is required for full ingestion")
-    if not args.path.exists():
-        logger.error("File not found: {}", args.path)
-        sys.exit(1)
 
     collection_name = resolved_collection_name()
     try:

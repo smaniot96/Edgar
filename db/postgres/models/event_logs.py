@@ -18,6 +18,8 @@ class EventLog(Base):
     __table_args__ = (
         # Covers the FK lookup and the per-session chronological reads (chat history, recaps).
         Index("ix_event_log_session_id_created_at", "session_id", "created_at"),
+        # Summary lookups and the narration range folded into each summary use id order.
+        Index("ix_event_log_session_id_event_type_id", "session_id", "event_type", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

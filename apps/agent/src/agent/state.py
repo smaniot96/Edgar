@@ -38,8 +38,7 @@ class AgentState(TypedDict, total=False):
     # single transaction (nodes never commit on their own).
     telemetry_events: list[dict]
 
-    # Reserved / advisory
-    state_updates_applied: bool  # written by API after apply_adjudication
+    # Test injection
     qdrant_client: Any  # tests inject a fake; production uses get_qdrant_client()
 
     # Set by any node on failure; the API turns this into a 503.

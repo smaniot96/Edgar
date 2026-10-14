@@ -3,14 +3,36 @@
 # `docker compose up -d` only starts the runtime stack (api, db, redis, qdrant). `migrate` and
 # `ingestion` sit behind the `tools` compose profile and `rules_engine` behind `rules`;
 # `docker compose run` enables a service's profile automatically, so the targets below work.
-.PHONY: up down logs migrate seed ingest rules test lint check-migrations wait-api \
+.PHONY: build up down logs migrate dev-build dev-up dev-down dev-logs dev-migrate \
+	seed ingest rules test lint check-migrations wait-api \
 	frontend-install frontend-dev frontend-build
 
-COMPOSE ?= docker compose
+COMPOSE ?= docker compose -f docker-compose.yml
+DEV_COMPOSE ?= docker compose -f docker-compose.yml -f docker-compose.dev.yml
+.DEFAULT_GOAL := up
 PDF ?=
 COLLECTION ?= rules_player_handbook
 API_URL ?= http://localhost:8000
 WAIT_TIMEOUT_SEC ?= 60
+
+build:
+	$(COMPOSE) build api migrate
+
+# Development mode is opt-in; the base stack always uses the built images.
+dev-build:
+	$(MAKE) build COMPOSE="$(DEV_COMPOSE)"
+
+dev-up:
+	$(MAKE) up COMPOSE="$(DEV_COMPOSE)"
+
+dev-down:
+	$(MAKE) down COMPOSE="$(DEV_COMPOSE)"
+
+dev-logs:
+	$(MAKE) logs COMPOSE="$(DEV_COMPOSE)"
+
+dev-migrate:
+	$(MAKE) migrate COMPOSE="$(DEV_COMPOSE)"
 
 up: wait-api
 	curl -fsS -X POST $(API_URL)/api/seed | jq

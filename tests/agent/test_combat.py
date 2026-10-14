@@ -1,5 +1,6 @@
 """Combat subgraph: engine-decided hits, initiative order, HP ownership, targeting, completion."""
 
+import logging
 import random
 
 import pytest
@@ -7,6 +8,8 @@ import pytest
 from agent.graph_combat import (
     EncounterSetup,
     EnemyStat,
+    _monster_context,
+    _player_ac,
     classify_disposition,
     combat_round_node,
     is_flee,
@@ -80,6 +83,32 @@ def _state(combatants: list[dict] | None, message: str, **extra) -> dict:
 
 
 # --- pure helpers --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("armor", "dex", "expected"),
+    [
+        ("half plate", 16, 17),
+        ("half plate", 8, 14),
+        ("breastplate", 16, 16),
+        ("breastplate", 8, 13),
+        ("plate", 16, 18),
+        ("splint", 16, 17),
+        ("chain mail", 16, 16),
+        ("chain shirt", 16, 15),
+        ("scale mail", 16, 16),
+        ("studded leather", 16, 15),
+        ("leather", 16, 14),
+        ("", 16, 13),
+    ],
+)
+@pytest.mark.parametrize("shield", [False, True])
+def test_player_armor_class(armor: str, dex: int, expected: int, shield: bool) -> None:
+    character = {
+        "stats": {"DEX": dex},
+        "inventory": {"armor": armor, "weapons": ["shield"] if shield else []},
+    }
+    assert _player_ac(character) == expected + (2 if shield else 0)
 
 
 @pytest.mark.parametrize(
@@ -279,7 +308,8 @@ async def test_boss_kill_with_proposal_completes(fake_llm_schema, fake_retrieval
 
 
 @pytest.mark.asyncio
-async def test_encounter_respects_ally_dispositions(fake_llm_schema, fake_retrieval) -> None:
+async def test_encounter_respects_ally_dispositions(fake_llm_schema, fake_retrieval, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="agent.graph_combat")
     fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", check="attack", target="bandit")
     fake_llm_schema.responses[EncounterSetup] = EncounterSetup(
         enemies=[EnemyStat(name="Bandit", hp_max=8), EnemyStat(name="Sildar", hp_max=10)]
@@ -294,9 +324,28 @@ async def test_encounter_respects_ally_dispositions(fake_llm_schema, fake_retrie
         out = await _round(fake_llm_schema, state)
     names = [c["name"] for c in out["combat_state"]["combatants"] if not c["is_player"]]
     assert names == ["Bandit"]
+    assert any(
+        record.message == "dropped_ally_from_roster" and record.ally_name == "Sildar"
+        for record in caplog.records
+    )
     builder_prompt = next(m for s, m in fake_llm_schema.calls if s is EncounterSetup)[1].content
     assert "ALLIES" in builder_prompt and "Sildar" in builder_prompt and "Klarg" in builder_prompt
     assert "<player_action>" in builder_prompt
+
+
+@pytest.mark.asyncio
+async def test_monster_lookup_failure_keeps_encounter_fallback_available(monkeypatch, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="agent.graph_combat")
+
+    def unavailable(*_args, **_kwargs):
+        raise ConnectionError("monster corpus unavailable")
+
+    monkeypatch.setattr("agent.graph_combat.retrieve_monster", unavailable)
+    assert await _monster_context({}, ["Goblin"]) == []
+    assert any(
+        record.message == "monster_lookup_failed" and record.monster_name == "Goblin"
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio

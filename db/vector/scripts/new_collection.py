@@ -4,10 +4,7 @@ Run from Edgar: uv run python db/vector/scripts/new_collection.py "dnd_rules_phb
 """
 import sys
 
-from qdrant_client.http.exceptions import UnexpectedResponse
-from qdrant_client.models import Distance, VectorParams
-
-from db.vector import VECTOR_SIZE, get_qdrant_client
+from db.vector import VECTOR_SIZE, ensure_collection, get_qdrant_client
 
 
 def main() -> None:
@@ -22,18 +19,9 @@ def main() -> None:
         sys.exit(1)
 
     client = get_qdrant_client()
-    try:
-        client.get_collection(name)
+    if not ensure_collection(client, name):
         print(f"Collection '{name}' already exists. Skipping.")
         return
-    except UnexpectedResponse as e:
-        if e.status_code != 404:
-            raise
-
-    client.create_collection(
-        collection_name=name,
-        vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-    )
     print(f"Created collection '{name}' (vector_size={VECTOR_SIZE}, distance=COSINE).")
 
 
