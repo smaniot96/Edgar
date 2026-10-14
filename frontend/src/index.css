@@ -70,11 +70,14 @@
 }
 
 .edgar-smoke {
+  /* fill-box: transform-origin refers to the element's own box, not the SVG canvas. */
+  transform-box: fill-box;
   transform-origin: center bottom;
   animation: edgar-smoke-drift 7s ease-in-out infinite;
 }
 
 .edgar-ember {
+  transform-box: fill-box;
   transform-origin: center;
   animation: edgar-ember-flicker 3.2s ease-in-out infinite;
 }
