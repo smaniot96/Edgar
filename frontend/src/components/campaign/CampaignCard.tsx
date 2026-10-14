@@ -1,3 +1,6 @@
+import { useState } from "react";
+
+import { retryAdventure } from "../../api/client";
 import type { AdventureRead } from "../../api/types";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
@@ -5,8 +8,10 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/format";
 import { Pill } from "../Pill";
 import { Button } from "../ui/Button";
+import { ErrorNotice } from "../ui/ErrorNotice";
 import { PlayIcon } from "../ui/icons";
 import { cardClasses } from "../ui/styles";
+import { ExtractionPreview } from "./ExtractionPreview";
 
 function StatusBadge({ state }: { state: CardModel["state"] }) {
   switch (state) {
@@ -62,17 +67,35 @@ export function CampaignCard({
   onDelete,
   opening,
   deleting,
+  onRetried,
 }: {
   card: CardModel;
   onPlay: (card: CardModel) => void;
   onDelete: (card: CardModel) => void;
   opening: boolean;
   deleting: boolean;
+  onRetried?: () => void;
 }) {
   const { isDev } = useMode();
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<unknown>(null);
   const { adventure, name, state, lastPlayed } = card;
   const playable = state === "ready" || state === "ended" || (state === "recovery" && !!card.campaign);
   const showAdventureTitle = name !== adventure.title;
+  const recoverable = state === "failed" || state === "recovery";
+
+  async function retry(reviewed?: { reviewed_source_sha256: string; reviewed_extraction_sha256: string }) {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await retryAdventure(adventure.slug, reviewed);
+      onRetried?.();
+    } catch (error) {
+      setRetryError(error);
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   return (
     <article className={cn(cardClasses, "flex flex-col")}>
@@ -97,15 +120,15 @@ export function CampaignCard({
           {isDev && adventure.chunks != null ? <Pill>{adventure.chunks} chunks</Pill> : null}
           {isDev && card.campaign ? <Pill className="font-mono">campaign #{card.campaign.id}</Pill> : null}
         </div>
-        {state === "recovery" ? <p className="mb-3 text-sm text-warning">The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play.</p> : null}
+        {state === "recovery" ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : adventure.error || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
         {state === "failed" ? (
           <p className="mb-3 rounded-control bg-danger-soft px-2 py-1.5 text-xs text-danger">
-            Edgar couldn't prepare this campaign. Delete it and try again.
-            {isDev && adventure.error ? (
-              <span className="mt-1 block font-mono text-[11px] text-ink-muted">{adventure.error}</span>
-            ) : null}
+            {adventure.error || "Edgar couldn't prepare this campaign. Retry the retained source or upload a corrected PDF."}
           </p>
         ) : null}
+        {adventure.extraction_preview_available ? <ExtractionPreview slug={adventure.slug} onUsePreview={recoverable && adventure.ingestion?.source_kind === "pdf" ? (sourceHash, extractionHash) => retry({ reviewed_source_sha256: sourceHash, reviewed_extraction_sha256: extractionHash }) : undefined} /> : null}
+        {recoverable && adventure.can_retry ? <Button variant="secondary" size="sm" loading={retrying} onClick={() => void retry()} className="mb-3">Retry retained source</Button> : null}
+        <ErrorNotice error={retryError} />
         {state === "processing" ? (
           <p className="mb-3 text-xs italic text-ink-muted">
             Building your campaign… larger sizes take a few minutes. You can leave this page; it

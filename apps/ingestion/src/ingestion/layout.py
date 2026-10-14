@@ -300,8 +300,7 @@ def render_native_page(
         if line.heading:
             title = line.text.strip("*_ ")
             if letters(title) in STAT_SUBHEADINGS:
-                title = next(name for name in STAT_SUBHEADINGS if name == letters(title))
-                title = re.sub(r"(LEGENDARY|BONUS|LAIR|MYTHIC)(ACTIONS)", r"\1 \2", title)
+                title = re.sub(r"(LEGENDARY|BONUS|LAIR|MYTHIC)(ACTIONS)", r"\1 \2", letters(title))
             elif sum(c.isupper() for c in title) / max(1, sum(c.isalpha() for c in title)) >= 0.6:
                 title = " ".join(word.capitalize() for word in title.split())
             paragraphs.append(f"## {title}")

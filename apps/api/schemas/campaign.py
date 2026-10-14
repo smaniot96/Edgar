@@ -19,6 +19,10 @@ class SourceRead(BaseModel):
     collection_exists: bool = False
     source_pdf_available: bool = False
     message: str | None = None
+    failure_code: str | None = None
+    extraction_preview_available: bool = False
+    extraction_preview_current: bool = False
+    ingestion: dict | None = None
 
 
 class CampaignCreate(BaseModel):

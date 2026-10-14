@@ -292,7 +292,31 @@ def test_reviewed_pipeline_indexes_the_exact_preview_once(native_pdf, tmp_path, 
     )
     assert count == len(calls[0][0])
     assert calls[0][2] == {"replace": True}
-    assert calls[0][0] == chunk_pages(result.text_pages(), "prepared")
+    expected = chunk_pages(result.text_pages(), "prepared")
+    for chunk in expected:
+        chunk["source_sha256"] = result.source_sha256
+        chunk["extraction_sha256"] = result.text_sha256()
+    assert calls[0][0] == expected
+
+
+def test_changed_preview_after_review_is_rejected_before_indexing(
+    native_pdf, tmp_path, monkeypatch
+):
+    extraction = extract_document(native_pdf)
+    acknowledged = (extraction.source_sha256, extraction.text_sha256())
+    extraction.pages[0].text += "\n\nA later local edit changes the selected extraction."
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    monkeypatch.setattr(embed, "get_qdrant_client", lambda: pytest.fail("client called"))
+    monkeypatch.setattr(embed, "get_embeddings", lambda *_: pytest.fail("embedding called"))
+    with pytest.raises(ValueError, match="inspected extraction changed"):
+        embed.run_pipeline(
+            native_pdf,
+            "prepared",
+            reviewed_extraction=report,
+            reviewed_identity=acknowledged,
+            replace=True,
+            save_markdown=False,
+        )
 
 
 def test_complete_large_stat_record_is_indivisible_by_default():

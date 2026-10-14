@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 AdventureStatus = Literal[
     "processing", "ready", "failed", "missing", "empty", "partial", "unavailable"
@@ -22,6 +22,11 @@ class AdventureRead(BaseModel):
     source_filename: str | None = None
     error: str | None = None
     created_at: str | None = None
+    failure_code: str | None = None
+    extraction_preview_available: bool = False
+    extraction_preview_current: bool = False
+    ingestion: dict | None = None
+    can_retry: bool = False
 
 
 class AdventureUpdate(BaseModel):
@@ -35,6 +40,11 @@ class AdventureUploadResponse(BaseModel):
     slug: str
     title: str
     status: AdventureStatus
+
+
+class AdventureRetryRequest(BaseModel):
+    reviewed_source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    reviewed_extraction_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 CampaignSize = Literal["small", "medium", "large", "gigantic"]

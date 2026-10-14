@@ -19,6 +19,34 @@ SIZE_TYPE = re.compile(
     re.I,
 )
 
+_DIAGNOSTIC_MESSAGES = {
+    "duplicate_word_layer": "Words were duplicated during extraction. Compare the preview with the PDF and retry with a readable source.",
+    "duplicate_text_layer": "A paragraph was extracted more than once. Inspect overlapping text layers before retrying.",
+    "interleaved_stat_records": "Statistics from different records were mixed. Inspect column order and creature headings before retrying.",
+    "incomplete_stat_fields": "A stat record lost its armor class or hit points. Compare the complete record with the PDF before retrying.",
+    "missing_stat_heading": "A stat record has no usable creature heading. Inspect the PDF's headings before retrying.",
+    "garbage_stat_heading": "A stat record inherited an unrelated heading. Inspect creature identity and column order before retrying.",
+    "missing_stat_heading_or_type": "A creature heading or type could not be read. Inspect the image text and OCR before retrying.",
+    "missing_stat_type": "A creature's size or type could not be read. Compare the record with the PDF before retrying.",
+    "ambiguous_column_gutter": "The page's columns could not be separated reliably. Inspect column order and upload a clearer PDF.",
+    "ambiguous_spanning_column_text": "Text spans the page's columns ambiguously. Inspect reading order and upload a clearer PDF.",
+    "partial_native_numbers_lost_in_ocr": "OCR dropped numbers present in the source text. Inspect numeric fields and retry with a readable PDF.",
+    "insufficient_ocr_text_on_nonblank_page": "OCR recovered too little text from a content page. Check OCR availability and upload a clearer PDF.",
+    "full_page_ocr_review_required": "This page was read with OCR. Compare text, tables and numbers with the PDF.",
+    "raster_stat_header_ocr_review_required": "A creature heading was read from an image. Confirm its name, size and type in the PDF.",
+    "raster_stat_subheading_ocr_review_required": "A stat subheading was read from an image. Confirm actions and record boundaries in the PDF.",
+    "raster_backed_native_layer_completeness_review_required": "This page includes images and text. Check that rules and tables inside images appear in the preview.",
+    "source_text_possible_numeric_ocr_ambiguity": "Some source numbers or dice symbols may be ambiguous. Compare them with the PDF before using the rules.",
+    "illustration_caption_separated_from_stat_record": "An illustration caption was separated from the stat record. Confirm the creature heading in the preview.",
+}
+
+
+def diagnostic_message(code: str) -> str:
+    """One player-readable adapter; retain original codes in local diagnostics."""
+    if code.startswith("removed_identical_overlapping_spans:"):
+        return "Repeated overlapping text spans were removed. Confirm the preview matches the PDF."
+    return _DIAGNOSTIC_MESSAGES.get(code, code.replace("_", " "))
+
 
 def letters(text: str) -> str:
     return re.sub(r"[^A-Z]", "", text.upper())
@@ -75,15 +103,6 @@ def check_text(text: str) -> dict:
         "hit_points_fields": len(_HP.findall(text)),
         "errors": sorted(set(errors)),
     }
-
-
-def require_clean_pages(pages: list[tuple[int, str]]) -> None:
-    failures = {page: check_text(text)["errors"] for page, text in pages}
-    failures = {page: errors for page, errors in failures.items() if errors}
-    if failures:
-        raise ValueError(
-            f"Extraction quality checks failed: {failures}. Inspect the extraction preview."
-        )
 
 
 def require_separate_stat_chunks(chunks: list[dict]) -> None:

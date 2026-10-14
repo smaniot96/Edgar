@@ -225,6 +225,7 @@ export default function Home() {
                 onDelete={(c) => void handleDelete(c)}
                 opening={openingSlug === card.adventure.slug}
                 deleting={deletingSlug === card.adventure.slug}
+            onRetried={() => { adventures.refetch(); campaigns.refetch(); }}
               />
             ))}
           </div>

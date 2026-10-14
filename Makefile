@@ -12,6 +12,7 @@ DEV_COMPOSE ?= docker compose -f docker-compose.yml -f docker-compose.dev.yml
 .DEFAULT_GOAL := up
 PDF ?=
 COLLECTION ?= rules_player_handbook
+INGEST_ARGS ?=
 API_URL ?= http://localhost:8000
 WAIT_TIMEOUT_SEC ?= 60
 
@@ -62,7 +63,7 @@ seed:
 	curl -fsS -X POST $(API_URL)/api/seed | jq
 
 ingest:
-	$(COMPOSE) run --rm ingestion /data/$(PDF) --collection $(COLLECTION)
+	$(COMPOSE) run --rm ingestion /data/$(PDF) --collection $(COLLECTION) $(INGEST_ARGS)
 
 rules:
 	$(COMPOSE) run --rm rules_engine

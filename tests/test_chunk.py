@@ -137,3 +137,25 @@ def test_ocr_noise_stat_subheading_is_merged() -> None:
     page = _STAT_BLOCK_PAGE.replace("## ACTIONS", "## **AC T IONS**")
     chunks = chunk_pages([(1, page)], source="mm", chunk_size=300)
     assert {c["section"] for c in chunks} == {"Goblin", "Golem"}
+
+
+def test_exact_page_membership_does_not_invent_missing_middle_page():
+    chunks = chunk_pages([(1, "Opening text."), (3, "Ending text.")], "module", chunk_size=500)
+    assert len(chunks) == 1
+    assert chunks[0]["page"] == 1 and chunks[0]["page_end"] == 3
+    assert chunks[0]["source_pages"] == [1, 3]
+
+
+def test_overlap_tracks_only_text_actually_carried_from_source_pages():
+    pages = [(1, "old page " * 5), (2, "new page " * 5), (3, "final paragraph")]
+    chunks = chunk_pages(pages, "module", chunk_size=100, overlap=20)
+    assert chunks[0]["source_pages"] == [1, 2]
+    assert chunks[1]["source_pages"] == [2, 3]
+    assert "old page" not in chunks[1]["text"]
+
+
+def test_heading_only_page_keeps_its_exact_provenance():
+    chunks = chunk_pages(
+        [(1, "# Adventure Title"), (2, "## Chapter 1: Bridge\n\nThe party arrives.")], "module"
+    )
+    assert {n for chunk in chunks for n in chunk["source_pages"]} == {1, 2}

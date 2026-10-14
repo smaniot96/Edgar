@@ -16,7 +16,7 @@ import pymupdf4llm
 
 from ingestion.artifacts import source_digest, text_digest
 from ingestion.layout import native_lines, ocr_stat_header, render_native_page
-from ingestion.quality import check_text, require_clean_pages
+from ingestion.quality import check_text
 
 EXTRACTION_VERSION = 1
 
@@ -29,6 +29,10 @@ class ExtractedPage:
     quality: dict
     warnings: list[str] = field(default_factory=list)
     candidates: list[dict] = field(default_factory=list)
+
+    def errors(self) -> list[str]:
+        """Recheck selected text while retaining geometry/OCR failures from extraction."""
+        return sorted(set(self.quality.get("errors", []) + check_text(self.text)["errors"]))
 
 
 @dataclass
@@ -48,12 +52,11 @@ class Extraction:
         return text_digest(self.markdown())
 
     def require_valid(self) -> None:
-        errors = {p.page: p.quality["errors"] for p in self.pages if p.quality["errors"]}
+        errors = {p.page: errors for p in self.pages if (errors := p.errors())}
         if errors:
             raise ValueError(
                 f"Extraction quality checks failed: {errors}. Save and inspect the preview before indexing."
             )
-        require_clean_pages(self.text_pages())
 
 
 def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Extraction:
@@ -211,20 +214,3 @@ def load_reviewed_extraction(pdf_path: str | Path, report_path: str | Path) -> E
         raise ValueError("Selected text differs from the reviewed Markdown preview.")
     extraction.require_valid()
     return extraction
-
-
-def extract_full_markdown(path: str | Path) -> str:
-    extraction = extract_document(path)
-    extraction.require_valid()
-    return "\n\n".join(p.text for p in extraction.pages)
-
-
-def extract_and_save_markdown(pdf_path: str | Path, output_dir: str | Path) -> Path:
-    """Save a reviewable preview, including failed checks in its JSON sidecar."""
-    return save_extraction(extract_document(pdf_path), output_dir)[0]
-
-
-def extract_text_by_page(path: str | Path) -> list[tuple[int, str]]:
-    extraction = extract_document(path)
-    extraction.require_valid()
-    return extraction.text_pages()

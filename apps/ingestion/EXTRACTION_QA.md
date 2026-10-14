@@ -43,8 +43,10 @@ review and possible numeric glyph ambiguity; absent raster headings use explicit
 warnings. A reviewer must compare mechanics, omitted phrases and headings with the rendered
 original before acknowledging any complete rulebook bundle for indexing. Full-document review
 and reindexing have not occurred. Unfamiliar layouts may be rejected for explicit review; scanned
-pages need Tesseract with English language data. Broad readiness/coverage and atomic index
-promotion are separate work.
+pages need Tesseract with English language data. The integrated readiness gate also checks
+full page coverage, actual contributing chunk pages, source/text identity and live usable
+vectors before declaring newly validated sources ready. Those checks do not approve a
+playable opening. Atomic index promotion remains separate work.
 
 The inspection commands are offline:
 

@@ -21,7 +21,9 @@ between batches as a courtesy to OpenAI rate limits. The retry policy lives in
 """
 
 import hashlib
+import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
@@ -37,9 +39,16 @@ from qdrant_client.models import (
 from db.vector import ensure_collection, get_embeddings, get_qdrant_client
 from db.vector.collections import is_rules_collection
 from ingestion.chunk import chunk_pages
-from ingestion.extract import extract_document, load_reviewed_extraction, save_extraction
+from ingestion.extract import (
+    ExtractedPage,
+    Extraction,
+    extract_document,
+    load_reviewed_extraction,
+    save_extraction,
+)
 from ingestion.paths import default_markdown_dir
-from ingestion.quality import require_separate_stat_chunks
+from ingestion.quality import check_text, require_separate_stat_chunks
+from ingestion.readiness import prepare_report, require_ready, stamp_chunks
 
 BATCH_SIZE = 50
 BATCH_DELAY_SEC = 0.5
@@ -60,8 +69,11 @@ def run_pipeline(
     markdown_dir: Path | None = None,
     replace: bool = False,
     reviewed_extraction: str | Path | None = None,
+    preview_dir: Path | None = None,
+    on_prepared: Callable[[dict], None] | None = None,
+    reviewed_identity: tuple[str, str] | None = None,
 ) -> int:
-    """Returns the number of chunks ingested. Returns 0 on empty PDFs (no error)."""
+    """Validate and persist the selected extraction before any embedding or client write."""
     pdf_path = Path(pdf_path)
     source = pdf_path.stem
 
@@ -71,27 +83,23 @@ def run_pipeline(
         if reviewed_extraction is not None
         else extract_document(pdf_path)
     )
-    if save_markdown or (needs_review and reviewed_extraction is None):
+    if (
+        reviewed_identity is not None
+        and (extraction.source_sha256, extraction.text_sha256()) != reviewed_identity
+    ):
+        raise ValueError(
+            "The inspected extraction changed. Inspect the current preview again before indexing."
+        )
+    out_dir = preview_dir
+    if out_dir is None and (save_markdown or (needs_review and reviewed_extraction is None)):
         out_dir = markdown_dir or default_markdown_dir()
-        out_path, report_path = save_extraction(extraction, out_dir)
-        logger.info("Saved extraction preview to {} and {}", out_path, report_path)
+    chunks = _prepare_extraction(extraction, "pdf", chunk_size, overlap, out_dir, on_prepared)
     if needs_review and reviewed_extraction is None:
+        out_path, report_path = out_dir / f"{source}.md", out_dir / f"{source}.extraction.json"
         raise ValueError(
             "Rulebook indexing and PDF replacement require a reviewed extraction preview. "
             f"Inspect {out_path} and {report_path}, then pass --reviewed-extraction {report_path}."
         )
-    extraction.require_valid()
-    pages = extraction.text_pages()
-    if not pages:
-        logger.warning("No text extracted from {}", pdf_path)
-        return 0
-
-    chunks = chunk_pages(pages, source=source, chunk_size=chunk_size, overlap=overlap)
-    require_separate_stat_chunks(chunks)
-    if not chunks:
-        logger.warning("No chunks produced from {}", pdf_path)
-        return 0
-
     return _embed_and_upsert(chunks, collection_name, replace=replace)
 
 
@@ -102,16 +110,72 @@ def ingest_pages(
     chunk_size: int = 1000,
     overlap: int = 100,
     replace: bool = False,
+    preview_dir: Path | None = None,
+    on_prepared: Callable[[dict], None] | None = None,
+    expected_pages: int | None = None,
 ) -> int:
     """Chunk + embed + upsert already-extracted `(page, text)` pages (e.g. AI-generated text).
 
     Mirrors `run_pipeline` but skips the PDF extraction step, so callers that already have text
     (a generated campaign, a markdown doc) can reuse the same chunking/embedding/idempotency.
     """
-    chunks = chunk_pages(pages, source=source, chunk_size=chunk_size, overlap=overlap)
-    if not chunks:
-        return 0
+    extraction = Extraction(
+        source,
+        "",
+        expected_pages if expected_pages is not None else len(pages),
+        [ExtractedPage(n, text, "generated", check_text(text)) for n, text in pages],
+    )
+    extraction.source_sha256 = extraction.text_sha256()
+    issues = []
+    for page, text in pages:
+        body = re.sub(r"(?m)^#{1,6}\s+.*$", "", text).strip()
+        if expected_pages is not None and len(re.findall(r"\b\w+\b", body)) < 12:
+            issues.append(
+                {
+                    "code": "incomplete_generated_page",
+                    "page": page,
+                    "message": "A generated chapter contains too little manuscript text. Retry generation.",
+                }
+            )
+    chunks = _prepare_extraction(
+        extraction,
+        "generated" if expected_pages is not None else "text",
+        chunk_size,
+        overlap,
+        preview_dir,
+        on_prepared,
+        issues,
+    )
     return _embed_and_upsert(chunks, collection_name, replace=replace)
+
+
+def _prepare_extraction(
+    extraction: Extraction,
+    source_kind: str,
+    chunk_size: int,
+    overlap: int,
+    preview_dir: Path | None,
+    on_prepared: Callable[[dict], None] | None,
+    extra_issues: list[dict] | None = None,
+) -> list[dict]:
+    """One quality/coverage gate shared by PDF and generated manuscript entry points."""
+    chunks = chunk_pages(
+        extraction.text_pages(), source=extraction.source, chunk_size=chunk_size, overlap=overlap
+    )
+    issues = list(extra_issues or [])
+    try:
+        require_separate_stat_chunks(chunks)
+    except ValueError as exc:
+        issues.append({"code": "stat_chunk_integrity", "message": str(exc)})
+    report = prepare_report(extraction, source_kind=source_kind, chunks=chunks, extra_issues=issues)
+    if preview_dir is not None:
+        out_path, report_path = save_extraction(extraction, preview_dir, readiness=report)
+        logger.info("Saved extraction preview to {} and {}", out_path, report_path)
+    if on_prepared is not None:
+        on_prepared(report)
+    require_ready(report)
+    stamp_chunks(chunks, report)
+    return chunks
 
 
 def _chunk_payload(c: dict) -> dict:
@@ -121,7 +185,16 @@ def _chunk_payload(c: dict) -> dict:
         "source": c["source"],
         "chunk_index": c["index"],
     }
-    for key in ("page_end", "section", "chapter", "heading_path", "stat_block"):
+    for key in (
+        "page_end",
+        "source_pages",
+        "source_sha256",
+        "extraction_sha256",
+        "section",
+        "chapter",
+        "heading_path",
+        "stat_block",
+    ):
         if c.get(key) is not None:
             payload[key] = c[key]
     return payload

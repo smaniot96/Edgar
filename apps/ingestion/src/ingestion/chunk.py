@@ -29,22 +29,16 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ingestion.quality import SIZE_TYPE, STAT_SUBHEADINGS
+
 ChunkDict = dict[str, Any]
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _CHAPTER_RE = re.compile(r"^(chapter|part|appendix|book)\b", re.IGNORECASE)
 # Stat-block sub-headings, compared letters-only so OCR noise like "AC T IONS" still matches.
-_STAT_SUBHEADINGS = frozenset(
-    {"ACTIONS", "REACTIONS", "BONUSACTIONS", "LEGENDARYACTIONS", "LAIRACTIONS", "MYTHICACTIONS"}
-)
 # pymupdf sometimes promotes a stat line ("Armor Class 7") to a heading.
 _STAT_FIELD_HEADING_RE = re.compile(
     r"^(armor class|hit points|speed|challenge|saving throws|skills|senses|languages|str\b)",
-    re.IGNORECASE,
-)
-_SIZE_TYPE_RE = re.compile(
-    r"^[_*\s]*(tiny|small|medium|large|huge|gargantuan)\b.{0,80}?"
-    r"\b(lawful|neutral|chaotic|unaligned|any)\b",
     re.IGNORECASE,
 )
 _AC_RE = re.compile(r"Armor Class\W{0,6}\d")
@@ -61,6 +55,7 @@ class _Heading:
     level: int
     title: str
     is_chapter: bool
+    page: int
 
 
 @dataclass
@@ -93,12 +88,15 @@ def chunk_pages(
 
     chunks: list[ChunkDict] = []
     for section in sections:
-        if not section.paras:
+        if not section.paras and not section.path:
             continue
         titles = [h.title for h in section.path]
         heading_path = _PATH_SEP.join(titles) if titles else None
         chapter = next((h.title for h in section.path if h.is_chapter), None)
         name = titles[-1] if titles else None
+        if not section.paras:
+            # Heading-only title/section pages contain real source text.
+            section.paras = [(name, section.path[-1].page)]
 
         stat_idx = _stat_block_start(section.paras)
         groups: list[tuple[list[tuple[str, int]], bool]] = []
@@ -115,12 +113,15 @@ def chunk_pages(
             cap = stat_cap if is_stat else chunk_size
             if is_stat and stat_block_max is None:
                 cap = max(cap, sum(len(p) + 2 for p, _ in paras) + len(heading_path or "") + 1)
-            for body, page, page_end in _pack(paras, heading_path, cap, overlap):
+            for body, page, page_end, source_pages in _pack(
+                paras, heading_path, cap, overlap, [(h.title, h.page) for h in section.path]
+            ):
                 chunks.append(
                     {
                         "text": body,
                         "page": page,
                         "page_end": page_end,
+                        "source_pages": source_pages,
                         "index": len(chunks),
                         "source": source,
                         "section": name,
@@ -151,11 +152,11 @@ def _build_sections(pages: list[tuple[int, str]]) -> list[_Section]:
             level, title = value
             letters = re.sub(r"[^A-Z]", "", title.upper())
             if current.looks_like_stat_block() and (
-                letters in _STAT_SUBHEADINGS or _STAT_FIELD_HEADING_RE.match(title)
+                letters in STAT_SUBHEADINGS or _STAT_FIELD_HEADING_RE.match(title)
             ):
                 # Part of the stat block: keep it in the same section, as plain text.
                 current.paras.append(
-                    (title.upper() if letters in _STAT_SUBHEADINGS else title, page_num)
+                    (title.upper() if letters in STAT_SUBHEADINGS else title, page_num)
                 )
                 continue
 
@@ -163,7 +164,7 @@ def _build_sections(pages: list[tuple[int, str]]) -> list[_Section]:
             level = 0 if is_chapter else level
             while stack and stack[-1].level >= level:
                 stack.pop()
-            stack.append(_Heading(level=level, title=title, is_chapter=is_chapter))
+            stack.append(_Heading(level=level, title=title, is_chapter=is_chapter, page=page_num))
             current = _Section(path=list(stack))
             sections.append(current)
     return sections
@@ -223,7 +224,7 @@ def _is_real_heading(title: str) -> bool:
 def _stat_block_start(paras: list[tuple[str, int]]) -> int | None:
     """Index of the paragraph where a stat block begins, or None if there is none."""
     for i, (p, _) in enumerate(paras):
-        if _SIZE_TYPE_RE.match(p):
+        if SIZE_TYPE.match(p.lstrip("_* \t")):
             # Make sure it really is a stat block: stats must follow within a few paragraphs.
             window = " ".join(t for t, _ in paras[i : i + 4])
             if _AC_RE.search(window) or _HP_RE.search(window):
@@ -242,8 +243,12 @@ def _stat_block_start(paras: list[tuple[str, int]]) -> int | None:
 
 
 def _pack(
-    paras: list[tuple[str, int]], heading_path: str | None, cap: int, overlap: int
-) -> list[tuple[str, int, int]]:
+    paras: list[tuple[str, int]],
+    heading_path: str | None,
+    cap: int,
+    overlap: int,
+    heading_origins: list[tuple[str, int]],
+) -> list[tuple[str, int, int, list[int]]]:
     """Greedy paragraph packing under `cap` chars (heading prefix included)."""
     prefix = ""
     if heading_path:
@@ -256,29 +261,48 @@ def _pack(
     if budget < max(20, cap // 3):
         prefix, budget = "", cap
     overlap = min(overlap, budget // 3)
+    prefix_pages = set()
+    prefix_position = 0
+    visible_prefix = len(prefix.rstrip("…"))
+    for title, page in heading_origins:
+        if prefix_position < visible_prefix:
+            prefix_pages.add(page)
+        prefix_position += len(title) + len(_PATH_SEP)
 
     def emit(body: str) -> str:
         return f"{prefix}\n{body}" if prefix else body
 
-    out: list[tuple[str, int, int]] = []
+    out: list[tuple[str, int, int, list[int]]] = []
     cur: list[str] = []
     cur_len = 0
     cur_start: int | None = None
     cur_end: int | None = None
     carry = ""  # overlap tail from the previous chunk of this section
+    cur_spans: list[tuple[int, int, int]] = []  # exact body character ranges -> source page
+    carry_spans: list[tuple[int, int, int]] = []
 
     def flush() -> None:
-        nonlocal cur, cur_len, cur_start, cur_end, carry
+        nonlocal cur, cur_len, cur_start, cur_end, carry, cur_spans, carry_spans
         if not cur:
             return
         body = "\n\n".join(cur)
-        out.append((emit(body), cur_start, cur_end))
+        out.append(
+            (emit(body), cur_start, cur_end, sorted(prefix_pages | {p for _, _, p in cur_spans}))
+        )
         carry = _tail(body, overlap)
+        carry_start = body.rfind(carry) if carry else len(body)
+        carry_spans = [
+            (max(0, start - carry_start), end - carry_start, page)
+            for start, end, page in cur_spans
+            if end > carry_start
+        ]
         cur, cur_len, cur_start, cur_end = [], 0, None, None
+        cur_spans = []
 
     for para, page in paras:
         sep = 2 if cur else 0
         if cur and cur_len + sep + len(para) <= budget:
+            cur_spans.append((cur_len + sep, cur_len + sep + len(para), page))
             cur.append(para)
             cur_len += sep + len(para)
             cur_end = page
@@ -287,15 +311,18 @@ def _pack(
         flush()
         if carry and len(carry) + 2 + len(para) <= budget:
             cur, cur_len, cur_start, cur_end = [carry, para], len(carry) + 2 + len(para), page, page
+            cur_spans = carry_spans + [(len(carry) + 2, len(carry) + 2 + len(para), page)]
             continue
         if len(para) <= budget:
             cur, cur_len, cur_start, cur_end = [para], len(para), page, page
+            cur_spans = [(0, len(para), page)]
             continue
 
         # Oversized paragraph: whitespace-aware sliding window.
         for piece in _windows(para, budget, overlap):
-            out.append((emit(piece), page, page))
+            out.append((emit(piece), page, page, sorted(prefix_pages | {page})))
         carry = _tail(para, overlap)
+        carry_spans = [(0, len(carry), page)] if carry else []
     flush()
     return out
 

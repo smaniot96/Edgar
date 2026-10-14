@@ -82,3 +82,47 @@ def test_coverage_paginates_and_never_downloads_embeddings(corpus, monkeypatch):
     assert len(calls) == 2
     corpus.delete_collection("module")
     assert inspect_source("module", client=corpus)["status"] == "missing"
+
+
+def test_validated_hash_and_physical_page_coverage_are_required(corpus):
+    add_source(corpus, "module", [])
+
+    def put(index, page, *, source_hash="approved", extraction_hash="selected"):
+        corpus.upsert(
+            "module",
+            [
+                PointStruct(
+                    id=index,
+                    vector=[1.0] + [0.0] * (VECTOR_SIZE - 1),
+                    payload={
+                        "text": "Nonempty passage",
+                        "page": page,
+                        "source_pages": [page],
+                        "source_sha256": source_hash,
+                        "extraction_sha256": extraction_hash,
+                    },
+                )
+            ],
+        )
+
+    def status():
+        return inspect_source(
+            "module",
+            client=corpus,
+            expected_chunks=2,
+            expected_source_hash="approved",
+            expected_extraction_hash="selected",
+            expected_pages=[1, 2],
+        )["status"]
+
+    put(1, 1)
+    put(2, 1)
+    assert status() == "partial"  # correct count, missing the second physical page
+    put(2, 2, source_hash="older-source")
+    assert status() == "partial"
+    put(2, 2, extraction_hash="older-extraction")
+    assert status() == "partial"
+    put(2, 2)
+    assert status() == "ready"
+    put(3, 2)
+    assert status() == "partial"  # unrecorded stale points must not pass readiness
