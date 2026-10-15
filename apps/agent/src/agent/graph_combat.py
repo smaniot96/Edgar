@@ -41,11 +41,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from agent.combat_telemetry import combat_round_event
 from agent.combatants import (
     INERT_NPC_DISPOSITIONS,
     apply_defeat,
@@ -55,6 +57,7 @@ from agent.combatants import (
     disposition_of,
     finish_victory,
     roster_violations,
+    stable_id,
     view_fields,
 )
 from agent.llm import make_chat_model
@@ -520,9 +523,13 @@ async def combat_round_node(state: AgentState) -> dict:
 
     log_lines: list[str] = []
     dice_log: list[dict] = []
+    # Stage timings this round actually measures (EDG-031). A stage that does not run is absent.
+    stage_ms: dict[str, int] = {}
 
     # --- Retrieve context (degrades to empty context on outage) ---
+    t_stage = time.monotonic()
     retr = await world_retriever_node(state)
+    stage_ms["retrieving_ms"] = int((time.monotonic() - t_stage) * 1000)
     if retr.get("error"):
         return retr
     state = {**state, **retr}
@@ -628,11 +635,14 @@ async def combat_round_node(state: AgentState) -> dict:
             log_lines.append(f"{hero} digs deep and uses Second Wind, recovering {sw.total} HP to stay in the fight!")
 
     round_actors: list[str] = []
+    actors: list[dict] = []
+    outcomes: list[dict] = []
 
     def enemy_turn(e: dict) -> None:
         if not can_act(e) or hp <= 0 or fled:
             return
         round_actors.append(_display(e))
+        actors.append({"id": stable_id(e), "name": _display(e)})
         atk = roll(f"1d20{int(e.get('attack_bonus', 3)):+d}")
         dice_log.append(atk.to_log(f"{e['name']} attack"))
         natural = atk.rolls[0]
@@ -646,9 +656,31 @@ async def combat_round_node(state: AgentState) -> dict:
             dmg = max(1, dmg_roll.total)
             crit = " Critical hit!" if natural == 20 else ""
             log_lines.append(f"{e['name']} hits {hero} for {dmg} damage (rolled {atk.total} vs AC {player_ac}).{crit}")
+            outcomes.append(
+                {
+                    "actor": stable_id(e),
+                    "action": "attack",
+                    "hit": True,
+                    "roll": atk.total,
+                    "target_ac": player_ac,
+                    "critical": natural == 20,
+                    "damage": dmg,
+                }
+            )
             damage_player(dmg)
         else:
             log_lines.append(f"{e['name']} misses {hero} (rolled {atk.total} vs AC {player_ac}).")
+            outcomes.append(
+                {
+                    "actor": stable_id(e),
+                    "action": "attack",
+                    "hit": False,
+                    "roll": atk.total,
+                    "target_ac": player_ac,
+                    "critical": False,
+                    "damage": 0,
+                }
+            )
 
     player_index = combatants.index(player)
     before = [c for c in combatants[:player_index] if not c.get("is_player")]
@@ -664,13 +696,16 @@ async def combat_round_node(state: AgentState) -> dict:
     inventory_used: list[str] = []
     player_acted = hp > 0
     extra_outcome = ""
+    player_action: dict = {"action": "none", "result": "down"}
     if not player_acted:
         log_lines.append(f"{hero} is down before they can act.")
     elif fled:
+        player_action = {"action": "flee", "result": "fled"}
         log_lines.append(f"{hero} disengages and flees the fight.")
     elif missing_item:
         wanted = getattr(parsed, "uses_item", None) or "that item"
         extra_outcome = f"{hero} reaches for {wanted}, but does not have it."
+        player_action = {"action": "item", "result": "not_carried"}
         log_lines.append(extra_outcome)
     elif heal_item:
         heal = heal_from_consumable(character, heal_item)
@@ -680,20 +715,26 @@ async def combat_round_node(state: AgentState) -> dict:
             hp = min(player_hp_max, hp + heal.amount)
             inventory_used.append(heal_item)
             extra_outcome = f"{hero} uses {heal_item} and regains {heal.amount} HP."
+            player_action = {"action": "item", "item": heal_item, "result": "healed", "healed": heal.amount}
             log_lines.append(extra_outcome)
+        else:
+            player_action = {"action": "item", "item": heal_item, "result": "no_effect"}
     elif wants_second_wind:
         if second_wind_used:
             extra_outcome = f"{hero} has already used Second Wind this encounter."
+            player_action = {"action": "second_wind", "result": "already_used"}
         else:
             sw = roll(f"1d10+{int(character.get('level') or 1)}")
             dice_log.append(sw.to_log("second wind"))
             hp = min(player_hp_max, hp + sw.total)
             second_wind_used = True
             extra_outcome = f"{hero} uses Second Wind and regains {sw.total} HP."
+            player_action = {"action": "second_wind", "result": "used", "recovered": sw.total}
         log_lines.append(extra_outcome)
     elif spell_declared:
         # Narrative ruling only; appended to the round summary below.
         extra_outcome = ""
+        player_action = {"action": "declared_action", "result": "narrative_only"}
     elif is_attack and target is not None:
         check_result = resolve_attack(character, int(target.get("ac", 12)), spell=is_spell, hint=player_input)
         if check_result.success:
@@ -713,18 +754,31 @@ async def combat_round_node(state: AgentState) -> dict:
             extra_outcome = f"{crit}{hero} hits {target['name']} for {dealt} damage {status}"
         else:
             extra_outcome = f"{hero} misses {target['name']}."
+        player_action = {
+            "action": "spell" if is_spell else "attack",
+            "target": stable_id(target),
+            "hit": bool(check_result.success),
+            "damage": dealt,
+            "target_disposition": disposition_of(target),
+        }
         log_lines.append(f"{check_result.describe()}. {extra_outcome}")
     else:
         check_result, extra = resolve_from_parsed(character, parsed, player_input=player_input)
         dice_log += extra
+        player_action = {
+            "action": "check",
+            "success": check_result.success if check_result is not None else None,
+        }
         if check_result is not None:
             log_lines.append(check_result.describe() + ".")
 
     # --- Adjudicator: describes consequences of the known outcome (flags/scene/items) ---
     if player_acted and not fled:
+        t_stage = time.monotonic()
         adj = await adjudicate(
             state, engine_check=check_result, in_combat=True, extra_outcome=extra_outcome or None
         )
+        stage_ms["adjudicating_ms"] = int((time.monotonic() - t_stage) * 1000)
         if adj.mechanical_summary and check_result is None:
             log_lines.append(adj.mechanical_summary)
     else:
@@ -812,7 +866,9 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Narrate the whole round in one call ---
     combat_state["round_actors"] = round_actors
     narr_state = {**state, "adjudication_result": adj, "combat_state": combat_state}
+    t_stage = time.monotonic()
     narr_updates = await narrator_node(narr_state)
+    stage_ms["narrating_ms"] = int((time.monotonic() - t_stage) * 1000)
     if narr_updates.get("error"):
         return {**retr, "error": narr_updates["error"]}
     narration = narr_updates.get("narration", "")
@@ -832,6 +888,27 @@ async def combat_round_node(state: AgentState) -> dict:
     elif outcome == "fled":
         narration += "\n\n*(You have left the fight.)*"
 
+    round_event = combat_round_event(
+        turn_id=state.get("turn_id"),
+        round_num=round_num,
+        ended=ended,
+        outcome=outcome,
+        actors=actors,
+        player_action=player_action,
+        outcomes=outcomes,
+        dispositions=[
+            {
+                "id": stable_id(c),
+                "name": _display(c),
+                "is_player": bool(c.get("is_player")),
+                "disposition": disposition_of(c),
+                "hp_current": c.get("hp_current"),
+            }
+            for c in combatants
+        ],
+        dice_log=adj.dice_log,
+        stage_ms=stage_ms,
+    )
     return {
         **retr,
         "combat_state": combat_state,
@@ -840,6 +917,8 @@ async def combat_round_node(state: AgentState) -> dict:
         "adjudication_result": adj,
         "rules_context": state.get("rules_context", []),
         "adventure_context": state.get("adventure_context", []),
+        # Written in the turn transaction by persist_turn (EDG-031); never committed here.
+        "telemetry_events": [round_event],
     }
 
 
