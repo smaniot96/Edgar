@@ -95,6 +95,11 @@ simulate (`GET /api/rules/supported-scope`):
   disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
   release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
   are shown in the combat roster and given to the narrator.
+- Captives: a foe knocked out in a nonlethal victory stays alive as a captive. The player can release
+  it (it is no longer a captive and is never an enemy again) or kill it, but only with an explicit
+  lethal declaration in their own words; no dice are rolled. An attack on a captive without that
+  declaration starts no combat and receives a ruling asking whether to release, question or kill.
+  Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, declared spell effects, spell slots and concentration, other
   condition effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and
