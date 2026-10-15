@@ -139,11 +139,36 @@ export interface SessionRead {
   active_character_id: number | null;
 }
 
+/** Whether a DM line's original roll was stored (EDG-030). Legacy rows are "not_captured". */
+export type RollStatus = "captured" | "no_roll" | "not_captured";
+
+/** The turn's original ruling and dice as stored at commit. Reload shows these; nothing re-rolls. */
+export interface RollRecord {
+  turn_id: string | null;
+  check: string | null;
+  success: boolean;
+  dc: number | null;
+  against: "DC" | "AC" | null;
+  modifier: number | null;
+  roll_expression: string | null;
+  natural_roll: number | null;
+  dice_result: number | null;
+  damage: number | null;
+  healing: number | null;
+  conditions: string[];
+  mechanical_summary: string;
+  dice_log: DiceLogEntry[];
+}
+
 export interface ChatMessageRead {
   citations?: SourceCitation[];
   ruling_citation_ids?: string[];
   role: "user" | "dm";
   content: string;
+  /** DM lines only. */
+  turn_id?: string | null;
+  roll_status?: RollStatus | null;
+  roll?: RollRecord | null;
   created_at: string;
 }
 
@@ -388,4 +413,6 @@ export interface TurnResult {
   current_scene_id?: string | null;
   combat_state?: CombatState | null;
   campaign_complete?: boolean;
+  roll_status?: RollStatus | null;
+  roll?: RollRecord | null;
 }
