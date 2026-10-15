@@ -106,6 +106,13 @@ and marks the source failed with its manuscript available for inspection and ret
 Legacy sources without extraction evidence retain the live coverage checks introduced by EDG-001.
 Atomic index promotion and concurrent retry isolation remain EDG-015 work.
 
+For a generated source, authors can export the exact retained original Markdown locally with
+`docker compose exec api python -m apps.api.services.manuscript <slug> /data/exports/<file>.md`.
+The command verifies the retained file's SHA-256 before publishing the export; the output path
+must be in a directory available inside the API container. It reports legacy sources and missing
+or modified originals as unavailable instead of rebuilding text from index chunks. There is no
+player-facing manuscript download route.
+
 This contract uses the existing adventure JSON directories for metadata and extraction bundles,
 and optional `source_pages`, `source_sha256` and `extraction_sha256` fields in Qdrant chunk
 payloads. It introduces no relational database migration or separate extraction store.

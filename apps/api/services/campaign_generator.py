@@ -215,6 +215,10 @@ async def build_generated_campaign(
         title, description, pages = await generate_campaign(
             title_hint, theme, size, load_meta(slug).get("rules_edition", "2014")
         )
+        from .manuscript import save_candidate_manuscript
+
+        manuscript = "\n\n".join(text for _, text in sorted(pages))
+        save_candidate_manuscript(slug, token, manuscript)
         receipt_updates.update(title=title, description=description)
         n = await asyncio.to_thread(
             ingest_pages,

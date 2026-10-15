@@ -142,11 +142,41 @@ def prepare_attempt(slug: str, token: str, report: dict, updates: dict | None = 
             meta["ingestion"] = summary
         version = report.get("index_version")
         if version and report["quality_passed"]:
+            manuscript = meta.get("manuscript")
+            if isinstance(manuscript, dict) and manuscript.get("attempt_id") == token:
+                manuscript.update(
+                    source_sha256=report.get("source_sha256"),
+                    extraction_sha256=report.get("extraction_sha256"),
+                    index_version=version,
+                )
+            elif (
+                isinstance(manuscript, dict)
+                and manuscript.get("source_sha256") == report.get("source_sha256")
+                and manuscript.get("extraction_sha256") == report.get("extraction_sha256")
+            ):
+                # Manifest-only reindexing can create a fresh vector attempt without
+                # generating new prose. Keep the independent manuscript reference current.
+                manuscript["index_version"] = version
+            previous = meta.get("ready_receipt") or meta
+            previous_ingestion = previous.get("ingestion") or {}
+            source_changed = previous_ingestion.get("extraction_sha256") and previous_ingestion.get(
+                "extraction_sha256"
+            ) != report.get("extraction_sha256")
             receipt = {
                 k: v
                 for k, v in meta.items()
                 if k not in ("attempt", "ready_receipt", "index_receipts", "last_attempt")
             }
+            if source_changed:
+                receipt.pop("manifest", None)
+                receipt.pop("manifest_draft", None)
+                meta["attempt"]["invalidate_manifest"] = True
+                candidate = receipt.get("manuscript")
+                if isinstance(candidate, dict) and candidate.get("extraction_sha256") != report.get(
+                    "extraction_sha256"
+                ):
+                    receipt.pop("manuscript", None)
+                    meta.pop("manuscript", None)
             receipt.update(
                 updates or {},
                 status="ready",
@@ -196,6 +226,9 @@ def finish_attempt(slug: str, token: str, updates: dict, *, success: bool = Fals
                 if success:
                     meta.pop("ready_receipt", None)
                     if updates.get("manifest"):
+                        meta.pop("manifest_draft", None)
+                    if meta.get("attempt", {}).get("invalidate_manifest"):
+                        meta.pop("manifest", None)
                         meta.pop("manifest_draft", None)
             else:
                 meta.update(previous)
