@@ -258,6 +258,24 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         implementation="agent.combatants:add_effect",
         test="tests/agent/test_supported_rules.py::test_supported_contested_maneuver_applies_effect",
     ),
+    Mechanic(
+        id="captive_lifecycle",
+        title="Captives after a fight: release, declared kill, or a ruling",
+        scope=(
+            "A living captive won by a nonlethal victory can be released by the player's declared "
+            "release: it becomes released, is neutral and is never an enemy again. It can be killed "
+            "only by an explicit lethal declaration in the player's own words; the captive then "
+            "becomes dead. Attacking a captive without a declared kill starts no combat and makes no "
+            "roll: the engine asks whether the player releases, questions or kills them. Questioning "
+            "a captive is narrated as before. Each outcome is recorded in the session story ledger "
+            "with its combat identity. No dice are rolled for these actions."
+        ),
+        implementation="agent.captives:captive_turn",
+        test=(
+            "tests/agent/test_captive_lifecycle.py::"
+            "test_release_turn_returns_engine_outcome_without_dice_or_combat"
+        ),
+    ),
 )
 
 UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (

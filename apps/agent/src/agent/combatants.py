@@ -19,6 +19,11 @@ advantage/disadvantage state of an attack. Missing or malformed `effects` reads 
 Legacy rows (written before `disposition` existed) carry only `alive`/`hp_current`. They are
 read honestly: `alive` False means "defeated" (cause unknown). It is not treated as proof of
 death or capture, and no nonlethal intent is invented. No stored data is rewritten.
+
+After the fight (EDG-146), captured and dead foes are session NPC rows (`captive`, `dead`), and
+every captured, dead or defeated outcome is an `encounter` fact in the story ledger. A player may
+then release a captive (`released`) or kill it on an explicit lethal declaration (`dead`); see
+`agent.captives`. The ended combat record itself is never rewritten.
 """
 
 from __future__ import annotations
@@ -69,7 +74,10 @@ _LETHAL_TEXT = re.compile(
 )
 # Post-combat NPC dispositions written for combatants (session NPC rows, not manual records).
 NPC_DISPOSITION = {"captured": "captive", "dead": "dead"}
-INERT_NPC_DISPOSITIONS = frozenset(NPC_DISPOSITION.values())
+# EDG-146: a player-released captive is no longer a captive but is still never re-rostered as a
+# foe. It is neutral (not hostile), so it is not an enemy either.
+RELEASED_NPC_DISPOSITION = "released"
+INERT_NPC_DISPOSITIONS = frozenset({*NPC_DISPOSITION.values(), RELEASED_NPC_DISPOSITION})
 _ATTACK_VERBS = (
     r"hits?|strikes?|swings?|attacks?|lunges?|stabs?|shoots?|slashes?|bites?|slams?|cuts?|"
     r"thrusts?|fires|lashes?|smashes?|clubs?|jabs?|hurls?|charges?"
