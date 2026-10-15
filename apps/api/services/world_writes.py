@@ -144,3 +144,57 @@ def _remove_item(inv: dict, name: str) -> bool:
             return True
     log.info("inventory_remove_missing_item", item=str(name)[:80])
     return False
+
+
+async def apply_story_inventory(db, game_session, effects, *, initial_state: dict) -> None:
+    """Project accepted object ownership into the existing assignment inside the turn tx.
+
+    Stable identity stays in the ledger after movement/consumption. Names are display text;
+    removal uses the canonical identity, with reviewed exact-name binding for legacy gear.
+    """
+    from agent.object_effects import OBJECT_KINDS, object_definition, validate_object_effect
+    from edgar_core.story import StoryEffect, story_target_id
+
+    objects = [effect for effect in effects if effect.kind in OBJECT_KINDS]
+    if not objects:
+        return
+    ass = await load_active_assignment(
+        db, game_session.active_character_id, game_session.campaign_id
+    )
+    if ass is None:
+        raise MissingCharacterAssignmentError("No active character assignment for object effects")
+    import copy
+
+    inv = copy.deepcopy(ass.inventory or {})
+    validated = []
+    for accepted in objects:
+        effect = StoryEffect.model_validate(
+            accepted.model_dump(include=set(StoryEffect.model_fields))
+        )
+        normalized = validate_object_effect(effect, initial_state, validated)
+        if normalized is None or normalized != effect:
+            raise ValueError("Story object availability changed before commit")
+        validated.append(accepted)
+        identity = story_target_id(effect.target)
+        definition = object_definition(effect, initial_state)
+        if effect.kind == "acquire":
+            items = list(inv.get("items") or [])
+            items.append(
+                {"name": accepted.display_name or "Recovered item", "story_object_id": identity}
+            )
+            inv["items"] = items
+        elif effect.kind in {"consume", "transfer"}:
+            found = False
+            for entries in inv.values():
+                if not isinstance(entries, list):
+                    continue
+                for index, entry in enumerate(entries):
+                    if isinstance(entry, dict) and entry.get("story_object_id") == identity:
+                        entries.pop(index)
+                        found = True
+                        break
+                if found:
+                    break
+            if not found and definition.initial_owner == "character":
+                _remove_item(inv, definition.title)
+    ass.inventory = inv
