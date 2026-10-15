@@ -431,6 +431,7 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         "player_ac": combat_state.get("player_ac"),
         "second_wind_used": combat_state.get("second_wind_used", False),
         "second_wind_uses_remaining": combat_state.get("second_wind_uses_remaining"),
+        "raging": bool(combat_state.get("raging", False)),
     }
 
 

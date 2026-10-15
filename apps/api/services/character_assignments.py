@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agent.class_features import class_feature_status
 from agent.resolution import second_wind_status
 from db.postgres.models import Character, CharacterAssignment
 
@@ -71,4 +72,8 @@ async def character_play_state(
     second_wind = second_wind_status(out)
     if second_wind is not None:
         out["second_wind"] = second_wind
+    # Additive view of the class feature uses (EDG-145); absent for classes without them.
+    class_features = class_feature_status(out)
+    if class_features is not None:
+        out["class_features"] = class_features
     return out

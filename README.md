@@ -91,6 +91,12 @@ simulate (`GET /api/rules/supported-scope`):
   player's action in or out of combat and restored by a short or long rest; no automatic use at 0
   HP); short and long rest healing (a long rest also restores spell slots); healing potions taken
   from inventory.
+- Class features in combat: Fighter Action Surge (one use, two from level 17, restored by a short or
+  long rest; it adds one more attack on the same foe in that round), Rogue Sneak Attack (1d6 per two
+  rogue levels, once per turn, on a hit with a finesse or ranged weapon that has advantage from an
+  engine source) and Barbarian Rage (uses per long rest by level; +2, +3 or +4 damage on melee
+  Strength hits until the encounter ends). Uses and recharge are tracked on the sheet; a declared
+  feature the engine does not execute gets a ruling and no effect.
 - Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
   darts, upcast by slot), Sacred Flame (DEX save) and Cure Wounds (self-heal). Their dice are
   rolled by the engine, leveled spells spend a slot tracked per character, and a cast with no slot
@@ -109,8 +115,10 @@ simulate (`GET /api/rules/supported-scope`):
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, concentration, other condition
   effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and class
-  features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
-  mechanical effect.
+  features other than Second Wind, Action Surge, Sneak Attack and Rage (Divine Smite, Lay on Hands,
+  Bardic Inspiration, Channel Divinity, Wild Shape, sorcery and ki points, Flurry of Blows, Stunning
+  Strike, Superiority Dice, Martial Arts; Rage's damage resistance). A declared action of this kind
+  gets a narrative ruling and no mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   scaled down for a single level-1 hero.
 

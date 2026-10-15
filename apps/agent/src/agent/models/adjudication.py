@@ -37,6 +37,9 @@ class CharacterUpdate(BaseModel):
     # Engine-owned Second Wind uses left on the sheet (EDG-025). Set only by the engine after a
     # use or a rest; any model-proposed value is cleared in enforce_side_effects.
     second_wind_uses_remaining: SkipJsonSchema[int | None] = None
+    # Engine-owned class feature uses left, per feature (EDG-145): only the features written are
+    # changed. Cleared for model proposals in enforce_side_effects.
+    class_feature_uses: SkipJsonSchema[dict[str, int] | None] = None
     # Engine-owned spell slot ledger (EDG-027): the expended count per spell level, written when
     # set (an empty map clears it, e.g. after a long rest). Hidden from the model's schema.
     spell_slots_expended: SkipJsonSchema[dict[str, int] | None] = None

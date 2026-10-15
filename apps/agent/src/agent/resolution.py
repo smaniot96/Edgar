@@ -803,13 +803,17 @@ def roll_attack_damage(
     *,
     hint: str = "",
     rng: random.Random | None = None,
+    bonus: int = 0,
 ) -> tuple[int, DiceOutcome]:
-    """Weapon (or cantrip) damage for a hit; dice doubled on a critical."""
+    """Weapon (or cantrip) damage for a hit; dice doubled on a critical.
+
+    `bonus` is a flat engine-owned modifier (a class feature such as Rage); it is not doubled.
+    """
     if attack.kind == "spell_attack":
         # Spell damage is a catalog effect (agent.spells); a class-die stand-in is never rolled.
         raise ValueError("spell attacks take their damage from agent.spells.resolve_spell")
     weapon = attack.weapon or choose_weapon(character, hint)
-    mod = ability_modifier(character, _attack_ability(character, weapon))
+    mod = ability_modifier(character, _attack_ability(character, weapon)) + bonus
     expr = f"{weapon.dice}{mod:+d}" if mod else weapon.dice
     if attack.critical:
         expr = _double_dice(expr)
@@ -1000,8 +1004,10 @@ def heal_from_rest(
 # rules corpus, so its scaling is not implemented (see the contract entry).
 
 SECOND_WIND_KEY = "second_wind"
+# Class feature uses (EDG-145), one nested entry per feature: agent.class_features.
+CLASS_FEATURES_KEY = "class_features"
 # Sheet `stats` keys written only by the engine; a manual sheet edit must not overwrite them.
-ENGINE_STATS_KEYS = (SECOND_WIND_KEY, "spell_slots_expended")
+ENGINE_STATS_KEYS = (SECOND_WIND_KEY, CLASS_FEATURES_KEY, "spell_slots_expended")
 SECOND_WIND_REFUSAL = (
     "{hero} has already used Second Wind and has no uses left until a short or long rest. "
     "No healing is rolled."
@@ -1276,6 +1282,8 @@ def enforce_side_effects(
     if cu is not None:
         # Second Wind uses are engine-owned: a model-proposed count is never persisted.
         cu.second_wind_uses_remaining = None
+        # Class feature uses (EDG-145) are engine-owned too.
+        cu.class_feature_uses = None
         # Spell slots are an engine ledger (agent.spells): a model proposal never sets them.
         cu.spell_slots_expended = None
         cu.add_conditions = normalise_conditions(cu.add_conditions)
@@ -1330,6 +1338,7 @@ def enforce_side_effects(
 
         heal: HealResult | None = None
         sw_remaining: int | None = None
+        cf_restored: dict[str, int] | None = None
         sw_refusal = ""
         item = find_healing_consumable(
             character, parsed=parsed, player_input=player_input, proposed_removals=proposed_removals
@@ -1341,6 +1350,10 @@ def enforce_side_effects(
             if rest:
                 heal = heal_from_rest(character, rest, rng)
                 sw_remaining = second_wind_after_rest(character, rest)
+                # Class feature recovery (EDG-145). Local import: agent.class_features imports this module.
+                from agent.class_features import class_feature_after_rest
+
+                cf_restored = class_feature_after_rest(character, rest)
             elif declares_second_wind(player_input) and is_fighter(character):
                 # Out of combat the player's Second Wind is an engine use, spent or refused.
                 heal = spend_second_wind(character, rng=rng)
@@ -1364,6 +1377,11 @@ def enforce_side_effects(
                 cu = CharacterUpdate()
                 adj.character_update = cu
             cu.second_wind_uses_remaining = sw_remaining
+        if cf_restored:
+            if cu is None:
+                cu = CharacterUpdate()
+                adj.character_update = cu
+            cu.class_feature_uses = cf_restored
         if sw_refusal:
             adj.mechanical_summary = " ".join(x for x in (sw_refusal, adj.mechanical_summary) if x)
         if cu is None and hp_delta:

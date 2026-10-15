@@ -1,9 +1,9 @@
 """Load the active combat row for a session and persist updates after a turn.
 
 Convention: agent-state `combat_state` carries the DB row id when it has been persisted.
-Derived/HUD keys (`initiative`, `current_turn`, `player_ac`, `second_wind_used`) are rebuilt
-from `combatants` on load (each combatant carries its `init`; the player carries `ac` and
-`second_wind_used`), so no extra columns are needed.
+Derived/HUD keys (`initiative`, `current_turn`, `player_ac`, `second_wind_used`, `raging`) are rebuilt
+from `combatants` on load (each combatant carries its `init`; the player carries `ac`,
+`second_wind_used` and `raging`), so no extra columns are needed.
 `persist_combat` uses that id to UPDATE the existing row; missing id means a new encounter
 and we INSERT. The agent's combat subgraph spreads the existing dict on every update so the
 id flows through unchanged.
@@ -49,6 +49,7 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
         # Per-encounter facts live on the player combatant (the table has no columns for them).
         "player_ac": player.get("ac"),
         "second_wind_used": bool(player.get("second_wind_used", False)),
+        "raging": bool(player.get("raging", False)),
     }
     if all("init" in c for c in combatants) and combatants:
         from agent.graph_combat import initiative_view
