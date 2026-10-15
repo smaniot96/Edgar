@@ -34,6 +34,9 @@ class CharacterUpdate(BaseModel):
     remove_conditions: list[str] = Field(default_factory=list)
     inventory_add: list[str] = Field(default_factory=list)
     inventory_remove: list[str] = Field(default_factory=list)
+    # Engine-owned Second Wind uses left on the sheet (EDG-025). Set only by the engine after a
+    # use or a rest; any model-proposed value is cleared in enforce_side_effects.
+    second_wind_uses_remaining: SkipJsonSchema[int | None] = None
     # Engine-owned spell slot ledger (EDG-027): the expended count per spell level, written when
     # set (an empty map clears it, e.g. after a long rest). Hidden from the model's schema.
     spell_slots_expended: SkipJsonSchema[dict[str, int] | None] = None

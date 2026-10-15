@@ -147,14 +147,18 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="second_wind",
-        title="Fighter Second Wind (encounter-based)",
+        title="Fighter Second Wind (one use, restored by rests)",
         scope=(
-            "Fighter only: 1d10 plus level healing, once per encounter. It is used by the player "
-            "action or automatically when a blow would drop the fighter to 0 HP. This is not the "
-            "rest-recharged resource of the rules; the expenditure rule is not implemented."
+            "Fighter only, one use. The player's action spends it, in or out of combat: the engine "
+            "rolls 1d10 plus fighter level and caps the result at max HP. A request with no use left "
+            "is refused without a roll. Uses are stored on the character sheet, so they carry over "
+            "between encounters, and a short or long rest restores the use. There is no automatic "
+            "use at 0 HP. Any action economy (bonus action) is not tracked. 2024 campaigns follow "
+            "this same single-use rule; the 2024 class table (more uses at higher levels) is not "
+            "implemented."
         ),
-        implementation="agent.graph_combat:combat_round_node",
-        test="tests/agent/test_supported_rules.py::test_supported_second_wind_once_per_encounter",
+        implementation="agent.resolution:spend_second_wind",
+        test="tests/agent/test_supported_rules.py::test_supported_second_wind_uses_and_rest_recovery",
     ),
     Mechanic(
         id="hazard_damage",
@@ -199,8 +203,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="long_rest",
         title="Long rest healing",
         scope=(
-            "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum and every "
-            "expended spell slot. No other long-rest resource is reset by the engine."
+            "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum, every "
+            "expended spell slot and a fighter's Second Wind use. No other long-rest resource is "
+            "reset by the engine."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_long_rest_restores_hp",
@@ -211,7 +216,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "A short rest (rest-for-an-hour wording) rolls one hit die of the class plus the CON "
             "modifier, minimum 1 HP. Dice are not counted down, so short rests are not limited by "
-            "Hit Dice."
+            "Hit Dice. A short rest also restores a fighter's Second Wind use."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_short_rest_has_no_ledger",
@@ -307,12 +312,6 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         owner="EDG-026",
     ),
     UnsupportedMechanic(
-        id="second_wind_recharge",
-        title="Second Wind expenditure and recovery rules",
-        boundary="Second Wind is limited to one use per encounter, not to the rules' recharge.",
-        owner="EDG-025",
-    ),
-    UnsupportedMechanic(
         id="monster_traits",
         title="Monster traits, multiattack and special actions",
         boundary="Enemies attack once per round with the single attack recorded in their roster.",
@@ -341,10 +340,6 @@ SOLO_ADAPTATIONS: tuple[str, ...] = (
         "levels scale those numbers up and allow more foes. Over-budget foes are clamped into range "
         "or left out, never renamed. Exact creature identities and source records are kept. The "
         "combat start notes any adaptation, and the combat state records it."
-    ),
-    (
-        "Second Wind rallies the fighter once per encounter, automatically when a blow would "
-        "otherwise reduce them to 0 HP."
     ),
 )
 

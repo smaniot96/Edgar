@@ -1,8 +1,61 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #101216;
+  --color-surface: #1a1c20;
+  --color-surface-sunken: #15161a;
+  --color-surface-raised: #22252b;
+  --color-line: #2a2c30;
+  --color-line-strong: #3a3d44;
+  --color-ink: #e6e6e6;
+  --color-ink-muted: #a3a9b3;
+  --color-ink-subtle: #8b919a;
+  --color-ember: #f59e0b;
+  --color-ember-50: #fffbeb;
+  --color-ember-100: #fef3c7;
+  --color-ember-200: #fde68a;
+  --color-ember-300: #fcd34d;
+  --color-ember-400: #fbbf24;
+  --color-ember-500: #f59e0b;
+  --color-ember-600: #d97706;
+  --color-ember-700: #b45309;
+  --color-ember-800: #92400e;
+  --color-ember-900: #78350f;
+  --color-ember-950: #451a03;
+  --color-danger: #f87171;
+  --color-danger-strong: #b91c1c;
+  --color-danger-soft: #3a1414;
+  --color-success: #4ade80;
+  --color-success-soft: #10331f;
+  --color-info: #93c5fd;
+  --color-info-soft: #1f3a5f;
+  --color-warning: #facc15;
+  --color-warning-soft: #3b2900;
+  --font-display: "Cormorant Garamond", Cormorant, Georgia, Cambria, "Times New Roman", serif;
+  --text-display-sm: 1.375rem;
+  --text-display-sm--line-height: 1.75rem;
+  --text-display-sm--font-weight: 600;
+  --text-display-md: 1.75rem;
+  --text-display-md--line-height: 2.125rem;
+  --text-display-md--font-weight: 600;
+  --text-display-lg: 2.25rem;
+  --text-display-lg--line-height: 2.5rem;
+  --text-display-lg--font-weight: 700;
+  --radius-control: 0.375rem;
+  --radius-card: 0.75rem;
+  --shadow-ember: 0 0 24px -8px rgb(255 107 43 / 50%);
+}
 
 @layer base {
+  /* Tailwind 3 used gray-200 for borders without an explicit color. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+
   :root {
     color-scheme: dark;
   }

@@ -16,8 +16,9 @@ Design (solo-playable, finishable, engine-decided):
     player's Athletics is contested by the foe's Dexterity; a won contest records a typed effect in
     `combatants[].effects`, which sets advantage/disadvantage on attacks (`attack_roll_mode`) until a
     declared release, the foe's defeat or the end of the encounter.
-  * HP only changes through engine rolls: enemy attacks, Second Wind (fighter, once per
-    encounter), or a healing consumable that is actually in inventory (and is then removed).
+  * HP only changes through engine rolls: enemy attacks, Second Wind (fighter; one use, restored
+    by a short or long rest, persisted on the character sheet), or a healing consumable that is
+    actually in inventory (and is then removed).
     The adjudicator LLM's `hp_delta` is ignored in combat (no double counting).
   * NPC dispositions are respected: friendly NPCs are never statted as enemies unless the
     player explicitly attacks them by name.
@@ -30,10 +31,11 @@ Design (solo-playable, finishable, engine-decided):
 `initiative_order` (names), `initiative` ([{name, id, init, is_player, hp, hp_max, ac, alive,
 disposition, can_act}], highest first), `current_turn` (display name of who acts next, i.e. the
 player, or None when ended), `current_turn_index` (index into `initiative`), `player_ac`,
-`second_wind_used`. Disposition semantics live in `agent.combatants`: `alive` means living
-(active, unconscious or captured), and only an `active` combatant above 0 HP can act. A declared
-nonlethal knockout is `unconscious`, a declared lethal one `dead`, and an undeclared one
-`defeated`. An unconscious foe becomes `captured` when the fight is won.
+`second_wind_used` (derived: the fighter has no Second Wind use left) and
+`second_wind_uses_remaining` (the sheet resource, authoritative). Disposition semantics live in
+`agent.combatants`: `alive` means living (active, unconscious or captured), and only an `active`
+combatant above 0 HP can act. A declared nonlethal knockout is `unconscious`, a declared lethal
+one `dead`, and an undeclared one `defeated`. An unconscious foe becomes `captured` when the fight is won.
 
 The subgraph is a single node; the multi-round loop is driven by repeated player turns through
 the API. `combat_state.id` is preserved across turns by spreading the existing dict so
@@ -74,6 +76,7 @@ from agent.nodes import narrator_node, world_retriever_node
 from agent.nodes.rules_adjudicator import adjudicate
 from agent.prompts import UNTRUSTED_INPUT_NOTICE, wrap_player_action
 from agent.resolution import (
+    SECOND_WIND_REFUSAL,
     CheckResult,
     ability_modifier,
     character_class,
@@ -87,6 +90,9 @@ from agent.resolution import (
     resolve_attack,
     resolve_from_parsed,
     roll_attack_damage,
+    second_wind_remaining,
+    second_wind_status,
+    spend_second_wind,
 )
 from agent.spells import CastPlan, cast_request, narrate, resolve_spell
 from agent.state import AgentState
@@ -103,6 +109,10 @@ log = logging.getLogger(__name__)
 
 # Hard cap so a runaway encounter cannot loop forever; reaching it ends combat as a stalemate.
 MAX_COMBAT_ROUNDS = 12
+
+# Second Wind is used by the player's action only. The rules have no automatic rally at 0 HP, so
+# this code-owned switch stays False; enabling it requires a documented game mode (EDG-025).
+SECOND_WIND_AUTO_AT_ZERO_HP = False
 
 # Defaults used when the encounter builder LLM call is unavailable or returns nothing usable.
 _DEFAULT_ENEMY = {"hp_max": 9, "ac": 12, "attack_bonus": 3, "damage_dice": "1d6+1", "initiative_bonus": 1}
@@ -639,7 +649,6 @@ async def combat_round_node(state: AgentState) -> dict:
             "ac": player_ac,
             "disposition": "active" if player_hp > 0 else "unconscious",
             "alive": player_hp > 0,
-            "second_wind_used": False,
             # Per-encounter facts live on the player combatant: the table has no column for them.
             "solo_budget": budget_summary,
         }
@@ -679,7 +688,9 @@ async def combat_round_node(state: AgentState) -> dict:
     player["hp_max"] = player_hp_max
     player_ac = int(player.get("ac") or combat_state.get("player_ac") or _player_ac(character))
     player["ac"] = player_ac
-    second_wind_used = bool(player.get("second_wind_used") or combat_state.get("second_wind_used"))
+    # Second Wind uses come from the sheet, never from the encounter: they persist across fights.
+    sw_before = second_wind_remaining(character)
+    sw_left = sw_before
 
     # --- Decide the player's action BEFORE any dice, so a bad target never burns a round ---
     is_attack, is_spell = (False, False) if fled else _is_attack_action(parsed, named)
@@ -742,15 +753,16 @@ async def combat_round_node(state: AgentState) -> dict:
     hp = player_hp
 
     def damage_player(amount: int) -> None:
-        nonlocal hp, second_wind_used
+        nonlocal hp, sw_left
         hp = max(0, hp - amount)
-        # Fighter's Second Wind: once per encounter, when a blow would drop them, they rally.
-        if hp <= 0 and "fighter" in character_class(character) and not second_wind_used and not fled:
-            sw = roll(f"1d10+{int(character.get('level') or 1)}")
-            dice_log.append(sw.to_log("second wind"))
-            hp = sw.total
-            second_wind_used = True
-            log_lines.append(f"{hero} digs deep and uses Second Wind, recovering {sw.total} HP to stay in the fight!")
+        # No automatic rally unless a documented game mode enables it (default off).
+        if SECOND_WIND_AUTO_AT_ZERO_HP and hp <= 0 and not fled:
+            sw = spend_second_wind(character, remaining=sw_left)
+            if sw is not None:
+                dice_log.append(sw.dice.to_log("second wind"))
+                hp = sw.amount
+                sw_left -= 1
+                log_lines.append(f"{hero} digs deep and uses Second Wind, recovering {sw.amount} HP to stay in the fight!")
 
     round_actors: list[str] = []
 
@@ -811,14 +823,15 @@ async def combat_round_node(state: AgentState) -> dict:
             extra_outcome = f"{hero} uses {heal_item} and regains {heal.amount} HP."
             log_lines.append(extra_outcome)
     elif wants_second_wind:
-        if second_wind_used:
-            extra_outcome = f"{hero} has already used Second Wind this encounter."
+        sw = spend_second_wind(character, remaining=sw_left)
+        if sw is None:
+            # Refused without a roll: no uses left until a short or long rest.
+            extra_outcome = SECOND_WIND_REFUSAL.format(hero=hero)
         else:
-            sw = roll(f"1d10+{int(character.get('level') or 1)}")
-            dice_log.append(sw.to_log("second wind"))
-            hp = min(player_hp_max, hp + sw.total)
-            second_wind_used = True
-            extra_outcome = f"{hero} uses Second Wind and regains {sw.total} HP."
+            dice_log.append(sw.dice.to_log("second wind"))
+            hp = min(player_hp_max, hp + sw.amount)
+            sw_left -= 1
+            extra_outcome = f"{hero} uses Second Wind and regains {sw.amount} HP."
         log_lines.append(extra_outcome)
     elif spell_plan is not None:
         # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
@@ -939,6 +952,8 @@ async def combat_round_node(state: AgentState) -> dict:
 
     player["hp_current"] = hp
     apply_player_disposition(player, subdued=False)
+    # Derived mirror for the HUD only; the sheet resource above is the authority.
+    second_wind_used = bool(second_wind_status(character)) and sw_left <= 0
     player["second_wind_used"] = second_wind_used
     active_enemies = [e for e in enemies if can_act(e)]
 
@@ -983,6 +998,7 @@ async def combat_round_node(state: AgentState) -> dict:
             "outcome": outcome,
             "player_ac": player_ac,
             "second_wind_used": second_wind_used,
+            "second_wind_uses_remaining": sw_left,
             "current_turn_index": player_view_index,
             "current_turn": None if ended else _display(player),
         }
@@ -992,6 +1008,9 @@ async def combat_round_node(state: AgentState) -> dict:
     cu = adj.character_update or CharacterUpdate()
     cu.hp_delta = hp - player_hp
     cu.damage_dice = None
+    if sw_left != sw_before:
+        # Only a spent use is written; a sheet without the key keeps deriving its full uses.
+        cu.second_wind_uses_remaining = sw_left
     cu.spell_slots_expended = spell_expended
     for item in inventory_used:
         if item not in cu.inventory_remove:
