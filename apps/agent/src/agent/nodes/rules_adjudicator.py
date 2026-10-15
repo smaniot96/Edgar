@@ -38,7 +38,14 @@ from agent.resolution import (
     decide_completion,
     enforce_side_effects,
     known_scene_ids,
+    resolve_check,
     resolve_from_parsed,
+)
+from agent.resolution_policies import (
+    exact_recall_fact,
+    policy_effects_for_outcome,
+    policy_source_is_fresh,
+    selected_policy,
 )
 from agent.state import AgentState
 from db.vector.retrieval import rule_policy
@@ -211,9 +218,51 @@ async def adjudicate(
     character = state.get("character")
     player_input = state.get("player_input", "")
 
+    recall = exact_recall_fact(state, parsed)
+    if recall is not None:
+        state["exact_recall"] = recall
+        citation = recall.get("citation")
+        return AdjudicationResult(
+            success=True,
+            mechanical_summary="You revisit an earned clue.",
+            citations=[citation] if citation else [],
+            citation_ids=[citation["reference_id"]] if citation else [],
+            completion_status="none",
+        )
+
+    selected = selected_policy(state, parsed)
+    policy_requested = bool(getattr(parsed, "resolution_policy_id", None))
+    if policy_requested:
+        if (
+            in_combat
+            or selected is None
+            or not selected.get("available")
+            or not policy_source_is_fresh(selected, state)
+        ):
+            state["policy_rejection"] = True
+            return AdjudicationResult(
+                success=False,
+                mechanical_summary="That approach is not available in the current circumstances.",
+                completion_status="none",
+            )
+
     check_result = engine_check
     extra_log: list[dict] = []
-    if check_result is None and not in_combat:
+    if selected is not None and not in_combat:
+        policy = selected["policy"]
+        if policy.mode == "check":
+            check_result = resolve_check(character, policy.check, dc=policy.dc, hint=player_input)
+            if check_result is None:
+                state["policy_rejection"] = True
+                return AdjudicationResult(
+                    success=False,
+                    mechanical_summary="That approach is not available in the current circumstances.",
+                    completion_status="none",
+                )
+            extra_log = list(check_result.dice_log)
+        else:
+            check_result = None
+    elif check_result is None and not in_combat:
         check_result, extra_log = resolve_from_parsed(character, parsed, player_input=player_input)
 
     messages = build_adjudicator_prompt(
@@ -235,20 +284,40 @@ async def adjudicate(
         result.success = True
         result.dice_result = extra_log[0]["total"] if extra_log else None
 
-    enforce_side_effects(
-        result,
-        character=character,
-        check_result=check_result,
-        world_flags=state.get("world_flags"),
-        current_scene_id=state.get("current_scene_id"),
-        adventure_context=state.get("adventure_context"),
-        player_input=player_input,
-        parsed=parsed,
-        in_combat=in_combat,
-        canonical_inventory=state.get("manifest_status") == "reviewed",
-    )
+    policy_effects: list = []
+    if selected is not None:
+        # Policy turns accept only reviewed, engine-authored changes. Model proposals are
+        # cleared before the normal validators and persistence hooks run.
+        policy_effects, reveal_authorizations = policy_effects_for_outcome(
+            state, selected, success=result.success
+        )
+        result.story_effects = policy_effects
+        result.character_update = None
+        result.damage = None
+        result.conditions = []
+        result.flags_set = []
+        result.flags_cleared = []
+        result.scene_id = None
+        result.citation_ids = []
+        state["authorized_policy_effect_keys"] = list(selected.get("authorized_effect_keys", []))
+        state["policy_reveal_authorizations"] = reveal_authorizations
+        state["policy_expected_effects"] = len(policy_effects)
+
+    if selected is None:
+        enforce_side_effects(
+            result,
+            character=character,
+            check_result=check_result,
+            world_flags=state.get("world_flags"),
+            current_scene_id=state.get("current_scene_id"),
+            adventure_context=state.get("adventure_context"),
+            player_input=player_input,
+            parsed=parsed,
+            in_combat=in_combat,
+            canonical_inventory=state.get("manifest_status") == "reviewed",
+        )
     result = enforce_manifest_effects(result, state)
-    if not in_combat:
+    if not in_combat and selected is None:
         decide_completion(
             result,
             world_flags=state.get("world_flags"),
@@ -257,10 +326,61 @@ async def adjudicate(
         )
     await prepare_story_validation_state(result, state)
     result = validate_story_effects(result, state)
-    if state.get("manifest_status") == "reviewed" or result.story_effects:
+    if selected is not None:
+        accepted = result.accepted_story_effects
+        # Persistence validates the canonicalized accepted effects again. Object validation
+        # may add a quantity or resolved owner, so authorize exactly that sealed form.
+        state["authorized_policy_effect_keys"] = [
+            effect.model_dump_json(exclude={"player_text"}) for effect in accepted
+        ]
+        missing = [
+            proposal
+            for proposal in policy_effects
+            if not any(
+                fact.kind == proposal.kind
+                and fact.target == proposal.target
+                and fact.status == proposal.status
+                for fact in accepted
+            )
+        ]
+        if (
+            selected.get("generation_failed")
+            or len(policy_effects) != selected.get("expected_effect_count", len(policy_effects))
+            or missing
+        ):
+            # A policy is atomic: never commit a discovery while dropping its authored cost,
+            # or consume gear without the coupled environmental result.
+            result.accepted_story_effects = []
+            result.story_effects = []
+            result.scene_id = state.get("current_scene_id")
+            state["policy_rejection"] = True
+            result.mechanical_summary = (
+                "That approach is not available in the current circumstances."
+            )
+        if state.get("policy_rejection"):
+            state["policy_narration"] = (
+                "That approach is not available in the current circumstances."
+            )
+        else:
+            outcome_line = (
+                "Your approach succeeds." if result.success else "Your approach does not succeed."
+            )
+            source_text = [
+                effect.player_text.strip()
+                for effect in result.accepted_story_effects
+                if effect.player_text and effect.player_text.strip()
+            ]
+            state["policy_narration"] = "\n\n".join([outcome_line, *source_text])
+    if selected is None and (state.get("manifest_status") == "reviewed" or result.story_effects):
         safe_story_summary(
             result,
             check_result.describe() if check_result else "The attempt proceeds without a roll.",
+        )
+    elif selected is not None and not state.get("policy_rejection"):
+        result.mechanical_summary = (
+            check_result.describe()
+            if check_result
+            else "The reviewed action proceeds without a roll."
         )
     evidence = _rules_context(state) + eligible_context(
         state.get("planner_context", [])
@@ -282,4 +402,9 @@ async def rules_adjudicator_node(state: AgentState) -> dict:
     return {
         "adjudication_result": result,
         "story_reveal_context": state.get("story_reveal_context", []),
+        "exact_recall": state.get("exact_recall"),
+        "policy_rejection": state.get("policy_rejection", False),
+        "policy_narration": state.get("policy_narration"),
+        "authorized_policy_effect_keys": state.get("authorized_policy_effect_keys", []),
+        "policy_reveal_authorizations": state.get("policy_reveal_authorizations", []),
     }

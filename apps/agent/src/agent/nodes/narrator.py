@@ -158,15 +158,24 @@ async def narrator_node(state: AgentState) -> dict:
     + `llm.astream`, which is why prompt construction lives in a free function above.
     """
     llm = make_narrator_model()
-    prompt = build_narrator_prompt(state)
     messages = state.get("messages", [])
 
-    try:
-        response = await llm.ainvoke(prompt)
-    except Exception as e:
-        return {"narration": "", "error": str(e)}
+    recall = state.get("exact_recall")
+    if recall:
+        page = f", p. {recall['page']}" if recall.get("page") else ""
+        narration = f"From {recall['source']}{page}:\n\n{recall['text']}"
+    elif state.get("policy_rejection"):
+        narration = "That approach is not available in the current circumstances."
+    elif state.get("policy_narration") is not None:
+        narration = state["policy_narration"]
+    else:
+        prompt = build_narrator_prompt(state)
+        try:
+            response = await llm.ainvoke(prompt)
+        except Exception as e:
+            return {"narration": "", "error": str(e)}
+        narration = message_text(response)
 
-    narration = message_text(response)
     updated_messages = list(messages)
     updated_messages.append(AIMessage(content=narration))
     return {"narration": narration, "messages": updated_messages}

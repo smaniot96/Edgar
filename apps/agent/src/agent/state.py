@@ -16,6 +16,11 @@ class AgentState(TypedDict, total=False):
     # Inputs from the API
     story_reveal_context: list  # Exact reviewed self-gated player spans; validator-only
     story_state: dict  # Serialized edgar_core.story.StoryState; committed session facts only
+    exact_recall: dict  # Exact text/source from one committed public clue, narrator-only
+    policy_rejection: bool  # Safe generic rejection for unavailable reviewed actions
+    policy_narration: str  # Deterministic narration for an engine-resolved reviewed policy
+    authorized_policy_effect_keys: list[str]  # Validator-only policy consequence receipts
+    policy_reveal_authorizations: list[dict]  # Exact policy-authorized player reveal passages
     turn_id: str  # Server-generated per-turn provenance identity
     turn_snapshot: dict  # Initial position/active character used for atomic stale-state checks
     player_input: str

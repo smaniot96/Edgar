@@ -31,6 +31,8 @@ Return:
 - retrieval_query: a short mechanics query (<= 15 words) naming the relevant rule, skill, spell or feature. Keep NPC names, rooms and story clues out of this rules query; reviewed scene state supplies adventure context.
 - uses_item: the inventory item the player consumes/uses this turn (e.g. "potion of healing"), else null.
 - confirms_ending: true ONLY if the player explicitly agrees to end the adventure/campaign now (typically answering a question about concluding the story). Otherwise false.
+- resolution_policy_id: an exact collection-qualified key from the reviewed current-scene action choices only when the player's stated approach matches that choice; otherwise null. Never invent or expose a key.
+- recall_fact_id: an exact fact_id from the session-earned public clues only when the player explicitly asks to reread/quote/recall that clue; otherwise null. Never select a clue merely because it is the only one.
 - entities: optional extra details (e.g. {{"weapon": "longsword"}}). When the player explicitly names a spell or class feature, include "spell" or "feature" with its canonical English rulebook name; preserve qualifiers and do not infer an unmentioned spell or feature.
 
 Do NOT invent dice expressions, modifiers or DCs; the engine computes them from the character sheet."""

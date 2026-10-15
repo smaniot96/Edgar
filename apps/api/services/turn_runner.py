@@ -420,7 +420,11 @@ def _debug_payload(
     the RAG chunks actually retrieved (the silently-dead-RAG class of bug), full combat
     internals (enemy AC/attack/damage/HP, initiative, second wind), stage timings, and model."""
     return {
-        "parsed_input": parsed.model_dump() if parsed is not None else None,
+        # Policy selectors and earned-clue IDs can encode reviewed internal names. They are
+        # model-only routing data, so omit them from the optional client developer stream.
+        "parsed_input": parsed.model_dump(exclude={"resolution_policy_id", "recall_fact_id"})
+        if parsed is not None
+        else None,
         "rules_context": _truncate_ctx(rules_ctx),
         "adventure_context": _truncate_ctx(adv_ctx),
         "rules_context_count": len(rules_ctx or []),
@@ -520,6 +524,20 @@ async def stream_session_turn(
     if is_combat:
         # The combat subgraph already narrated the round; pseudo-stream it word by word.
         narration = state.get("narration") or ""
+        for piece in _yield_narration_tokens(narration):
+            yield sse_event("token", {"text": piece})
+    elif state.get("exact_recall"):
+        recall = state["exact_recall"]
+        page = f", p. {recall['page']}" if recall.get("page") else ""
+        narration = f"From {recall['source']}{page}:\n\n{recall['text']}"
+        for piece in _yield_narration_tokens(narration):
+            yield sse_event("token", {"text": piece})
+    elif state.get("policy_rejection"):
+        narration = "That approach is not available in the current circumstances."
+        for piece in _yield_narration_tokens(narration):
+            yield sse_event("token", {"text": piece})
+    elif state.get("policy_narration") is not None:
+        narration = state["policy_narration"]
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
     else:
