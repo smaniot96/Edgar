@@ -50,6 +50,11 @@ from agent.resolution_policies import (
     selected_policy,
 )
 from agent.state import AgentState
+from agent.supported_rules import (
+    actions_for_state,
+    apply_adjudication_boundary,
+    boundary_prompt_block,
+)
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
 
@@ -79,6 +84,9 @@ def build_adjudicator_prompt(
     player_input = state.get("player_input", "")
     parsed = state.get("parsed_input")
     parts: list[str] = [wrap_player_action(player_input)]
+    boundary = boundary_prompt_block(actions_for_state(state))
+    if boundary:
+        parts.append(boundary)
 
     if check_result is not None:
         parts.append(f"Engine outcome (final, do not change): {check_result.describe()}")
@@ -219,6 +227,7 @@ async def adjudicate(
     parsed = state.get("parsed_input")
     character = state.get("character")
     player_input = state.get("player_input", "")
+    actions = actions_for_state(state)
 
     recall = exact_recall_fact(state, parsed)
     if recall is not None:
@@ -285,6 +294,9 @@ async def adjudicate(
     else:
         result.success = True
         result.dice_result = extra_log[0]["total"] if extra_log else None
+
+    # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
+    apply_adjudication_boundary(result, actions)
 
     policy_effects: list = []
     if selected is not None:
