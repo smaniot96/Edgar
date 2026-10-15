@@ -37,9 +37,10 @@ from sqlalchemy import select
 import db.postgres.session as db_session_module
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
-from agent.nodes.narrator import build_narrator_prompt, make_narrator_model
+from agent.nodes.narrator import build_narrator_prompt, make_narrator_model, narrator_context
 from db.postgres.models import EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
+from edgar_core.sources import citations_for, public_citations
 
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
@@ -54,6 +55,10 @@ PUBLIC_ERRORS: dict[str, tuple[int, str]] = {
     "campaign_sources_unavailable": (
         409,
         "The campaign adventure source is unavailable. Recover it or choose homebrew play.",
+    ),
+    "adventure_manifest_review_required": (
+        409,
+        "Review and publish the adventure scene manifest before module play.",
     ),
     "llm_unavailable": (503, "The Dungeon Master is unavailable right now. Try again."),
     "character_not_assigned": (
@@ -91,6 +96,15 @@ def sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def public_adjudication(adjudication) -> dict | None:
+    if adjudication is None:
+        return None
+    value = adjudication.model_dump()
+    value["citations"] = public_citations(value.get("citations", []))
+    value["citation_ids"] = [r["reference_id"] for r in value["citations"]]
+    return value
+
+
 async def persist_turn(
     session_id: int, body_message: str, result: dict[str, Any]
 ) -> dict[str, Any]:
@@ -103,6 +117,16 @@ async def persist_turn(
     new_combat = result.get("combat_state")
     adjudication = result.get("adjudication_result")
     narration = result.get("narration", "") or ""
+    edition = result.get("rules_edition", "2014")
+    rules, adventure = narrator_context(result)
+    ruling_refs = public_citations(adjudication.citations) if adjudication else []
+    citations = list(
+        {
+            ref["reference_id"]: ref
+            for ref in public_citations(citations_for(rules + adventure, edition)) + ruling_refs
+        }.values()
+    )
+    ruling_citation_ids = [ref["reference_id"] for ref in ruling_refs]
     async with db_session_module.async_session_factory() as db:
         try:
             game_session = (
@@ -127,7 +151,13 @@ async def persist_turn(
                 EventLog(
                     session_id=session_id,
                     event_type="narration",
-                    payload={"player_input": body_message, "narration": narration},
+                    payload={
+                        "player_input": body_message,
+                        "narration": narration,
+                        "citations": citations,
+                        "ruling_citation_ids": ruling_citation_ids,
+                        "rules_edition": edition,
+                    },
                 )
             )
 
@@ -150,6 +180,9 @@ async def persist_turn(
 
     return {
         "narration": narration,
+        "citations": citations,
+        "ruling_citation_ids": ruling_citation_ids,
+        "rules_edition": edition,
         "character": character_out,
         "current_scene_id": current_scene_id,
         "combat_state": combat_state_public(new_combat),
@@ -209,6 +242,7 @@ def _truncate_ctx(items: Any, n: int = 8, width: int = 320) -> list[dict[str, An
                 "page": c.get("page"),
                 "collection": c.get("collection"),
                 "score": c.get("score"),
+                "citation": citations_for([c])[0],
             }
         )
     return out
@@ -311,7 +345,7 @@ async def stream_session_turn(
 
     adjudication = state.get("adjudication_result")
     if adjudication is not None:
-        yield sse_event("adjudication", adjudication.model_dump())
+        yield sse_event("adjudication", public_adjudication(adjudication))
 
     yield sse_event("status", {"stage": "narrating"})
     if is_combat:

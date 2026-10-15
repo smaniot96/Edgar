@@ -134,6 +134,7 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
 
 function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [rulesEdition, setRulesEdition] = useState<"2014" | "2024" | "unspecified">("unspecified");
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -145,7 +146,7 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
     setBusy(true);
     setError(null);
     try {
-      const created = await uploadAdventure(file, title);
+      const created = await uploadAdventure(file, title, rulesEdition);
       setFile(null);
       setTitle("");
       if (fileRef.current) fileRef.current.value = "";
@@ -164,6 +165,11 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
         take a few minutes) and becomes playable when ready.
       </p>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <Field label="Source rules edition" hint="Use unspecified when the publication does not declare an edition.">
+          {(p) => <select {...p} value={rulesEdition} onChange={(e) => setRulesEdition(e.target.value as typeof rulesEdition)} className="rounded-control border border-line bg-surface p-2 text-sm">
+            <option value="unspecified">Unspecified</option><option value="2014">2014</option><option value="2024">2024</option>
+          </select>}
+        </Field>
         <Field label="Adventure PDF" required className="flex-1">
           {(p) => (
             <Input

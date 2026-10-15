@@ -103,6 +103,7 @@ def prepare_report(
     return {
         "report_version": REPORT_VERSION,
         "source_kind": source_kind,
+        "rules_edition": extraction.rules_edition,
         "source_sha256": extraction.source_sha256,
         "extraction_sha256": extraction.text_sha256(),
         "page_count": page_count,
@@ -125,6 +126,7 @@ def report_summary(report: dict) -> dict:
         for key in (
             "report_version",
             "source_kind",
+            "rules_edition",
             "source_sha256",
             "extraction_sha256",
             "page_count",
@@ -153,3 +155,4 @@ def stamp_chunks(chunks: list[dict], report: dict) -> None:
     for chunk in chunks:
         chunk["source_sha256"] = report["source_sha256"]
         chunk["extraction_sha256"] = report["extraction_sha256"]
+        chunk["rules_edition"] = report["rules_edition"]

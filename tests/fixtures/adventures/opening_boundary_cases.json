@@ -1,0 +1,47 @@
+{
+  "description": "Invented text used to generate EDG-016 synthetic PDFs; gold passages are review expectations, not runtime scene IDs.",
+  "collections": {
+    "lantern_at_low_water": [
+      {"page": 1, "chunk_index": 0, "source": "Lantern at Low Water (synthetic)", "heading_path": "Cover", "text": "Lantern at Low Water\nAn invented adventure for regression tests. Cover illustration credits."},
+      {"page": 2, "chunk_index": 1, "source": "Lantern at Low Water (synthetic)", "heading_path": "Credits", "text": "Credits\nWritten, edited and typeset by the fictional Low Water Press. No adventure begins on this page."},
+      {"page": 3, "chunk_index": 2, "source": "Lantern at Low Water (synthetic)", "heading_path": "Contents", "text": "Contents\nAdventure begins: opening scene and read-aloud introduction ..... 16\nBeginning the final confrontation ..... 42"},
+      {"page": 4, "chunk_index": 3, "source": "Lantern at Low Water (synthetic)", "heading_path": "Legal notices", "text": "Legal notices\nAll fictional names are invented for this test. This page describes reproduction permissions."},
+      {"page": 5, "chunk_index": 4, "source": "Lantern at Low Water (synthetic)", "heading_path": "Using the book", "text": "Using the book\nPage numbers in the contents refer to physical pages. Symbols distinguish maps, notes and appendices."},
+      {"page": 6, "chunk_index": 5, "source": "Lantern at Low Water (synthetic)", "heading_path": "DM-only synopsis", "text": "DM-only synopsis\nThe harbor keeper secretly serves the drowned prince. The green lantern hides the prince's true name; this is revealed only in the final confrontation."},
+      {"page": 7, "chunk_index": 6, "source": "Lantern at Low Water (synthetic)", "heading_path": "Map legend", "text": "Map legend\nSquares mark buildings, dotted lines mark tracks, and gray areas mark low tide."},
+      {"page": 8, "chunk_index": 7, "source": "Lantern at Low Water (synthetic)", "heading_path": "Publication notes", "text": "Publication notes\nThis edition contains a glossary after the adventure and a blank notes page."},
+      {"page": 9, "chunk_index": 8, "source": "Lantern at Low Water (synthetic)", "heading_path": "Accessibility", "text": "Accessibility\nMap labels are repeated in the appendix. These notes are for using the publication."},
+      {"page": 10, "chunk_index": 9, "source": "Lantern at Low Water (synthetic)", "heading_path": "Printing maps", "text": "Printing maps\nUse the separate printable map sheets. This instruction is not a scene."},
+      {"page": 11, "chunk_index": 10, "source": "Lantern at Low Water (synthetic)", "heading_path": "Acknowledgments", "text": "Acknowledgments\nThanks to the fictional playtest group and map readers."},
+      {"page": 12, "chunk_index": 11, "source": "Lantern at Low Water (synthetic)", "heading_path": "Glossary conventions", "text": "Glossary conventions\nItalic words refer to the glossary. Bold words refer to index terms."},
+      {"page": 13, "chunk_index": 12, "source": "Lantern at Low Water (synthetic)", "heading_path": "Errata", "text": "Errata\nThe second printing corrects a map label in the appendix."},
+      {"page": 14, "chunk_index": 13, "source": "Lantern at Low Water (synthetic)", "heading_path": "Reference sheets", "text": "Reference sheets\nThe back of the publication includes blank character notes and reference cards."},
+      {"page": 15, "chunk_index": 14, "source": "Lantern at Low Water (synthetic)", "heading_path": "Index conventions", "text": "Index conventions\nEntries use physical page numbers and omit the legal notices."},
+      {"page": 16, "chunk_index": 15, "source": "Lantern at Low Water (synthetic)", "heading_path": "The ferry steps", "text": "The ferry steps\nRead aloud: At low tide, your ferry settles beside the worn stone steps of Gull Harbor. A rain-soaked courier waves from beneath a green lantern. She holds out a sealed letter and says, 'You arrived just in time. Will you help me find the missing boat?'\nDM only: The courier carries a forged seal planted by the harbor keeper. Do not reveal the forgery until the players inspect it."},
+      {"page": 17, "chunk_index": 16, "source": "Lantern at Low Water (synthetic)", "heading_path": "The ferry steps", "text": "Read aloud: Around you, the market is closing for the evening. Fishmongers fold their awnings while porters carry the last baskets inland. Beyond the quay, the tide has uncovered a path of flat stones leading toward a small watch house. Its shutter is open, and a steady yellow light falls across the wet ground. The courier points to the path, then to a row of empty mooring posts. 'The boat should have returned before sunset,' she says. 'I have waited here since the bells rang, and nobody will tell me why it is late.' A bell sounds again from the watch house. The market quiets. The courier draws her coat around the letter, giving you time to answer. Your pack is still at your feet, and the ferryman waits with one hand on the rope. You can speak to the courier, look toward the watch house, or ask the ferryman what he saw on the crossing. No choice has been made for you. The stone steps glisten beneath the lantern. What do you do?"},
+      {"page": 42, "chunk_index": 17, "source": "Lantern at Low Water (synthetic)", "heading_path": "Beginning the final confrontation", "text": "Beginning the final confrontation\nThe drowned prince rises from the black water and claims the green lantern. This later ending is not the starting scene."}
+    ],
+    "orchard_road": [
+      {"page": 1, "chunk_index": 0, "source": "Orchard Road (synthetic)", "heading_path": "The fallen bridge", "text": "Read aloud: A fallen bridge blocks the orchard road. An apple cart waits beside the broken rail, and its driver asks for your help."},
+      {"page": 2, "chunk_index": 1, "source": "Orchard Road (synthetic)", "heading_path": "DM-only background", "text": "DM-only background\nThe cart conceals a stolen crown. Its owner appears only after the bridge is repaired."}
+    ]
+  },
+  "gold": {
+    "primary_collection": "lantern_at_low_water",
+    "secondary_collection": "orchard_road",
+    "opening_title": "The ferry steps",
+    "public_passages": [
+      {"collection": "lantern_at_low_water", "page": 16, "chunk_index": 15, "text": "At low tide, your ferry settles beside the worn stone steps of Gull Harbor. A rain-soaked courier waves from beneath a green lantern. She holds out a sealed letter and says, 'You arrived just in time. Will you help me find the missing boat?'"},
+      {"collection": "lantern_at_low_water", "page": 17, "chunk_index": 16, "text": "Around you, the market is closing for the evening. Fishmongers fold their awnings while porters carry the last baskets inland. Beyond the quay, the tide has uncovered a path of flat stones leading toward a small watch house. Its shutter is open, and a steady yellow light falls across the wet ground. The courier points to the path, then to a row of empty mooring posts. 'The boat should have returned before sunset,' she says. 'I have waited here since the bells rang, and nobody will tell me why it is late.' A bell sounds again from the watch house. The market quiets. The courier draws her coat around the letter, giving you time to answer. Your pack is still at your feet, and the ferryman waits with one hand on the rope. You can speak to the courier, look toward the watch house, or ask the ferryman what he saw on the crossing. No choice has been made for you. The stone steps glisten beneath the lantern. What do you do?"}
+    ],
+    "excluded_passages": [
+      {"collection": "lantern_at_low_water", "page": 1, "chunk_index": 0, "reason": "boilerplate", "text": "Cover illustration credits."},
+      {"collection": "lantern_at_low_water", "page": 3, "chunk_index": 2, "reason": "contents", "text": "Adventure begins: opening scene and read-aloud introduction ..... 16"},
+      {"collection": "lantern_at_low_water", "page": 6, "chunk_index": 5, "reason": "DM synopsis", "text": "The harbor keeper secretly serves the drowned prince."},
+      {"collection": "lantern_at_low_water", "page": 16, "chunk_index": 15, "reason": "DM note in mixed-audience chunk", "text": "The courier carries a forged seal planted by the harbor keeper."},
+      {"collection": "lantern_at_low_water", "page": 42, "chunk_index": 17, "reason": "future ending", "text": "The drowned prince rises from the black water and claims the green lantern."},
+      {"collection": "orchard_road", "page": 1, "chunk_index": 0, "reason": "unselected secondary opening", "text": "A fallen bridge blocks the orchard road."},
+      {"collection": "orchard_road", "page": 2, "chunk_index": 1, "reason": "secondary DM secret", "text": "The cart conceals a stolen crown."}
+    ]
+  }
+}

@@ -27,6 +27,7 @@ from db.vector.collections import (
     is_campaign_lore_collection,
     is_rules_collection,
 )
+from edgar_core.sources import SourceEdition
 
 from ..schemas.adventure import (
     AdventureGenerateRequest,
@@ -94,6 +95,7 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     return AdventureRead(
         slug=slug,
         title=meta.get("title") or slug.replace("_", " ").title(),
+        rules_edition=meta.get("rules_edition", "unspecified"),
         description=meta.get("description"),
         level_range=meta.get("level_range"),
         cover_image=meta.get("cover_image"),
@@ -274,6 +276,7 @@ def _ingest_adventure(
             replace=reviewed_extraction is not None,
             reviewed_extraction=reviewed_extraction,
             reviewed_identity=reviewed_identity,
+            rules_edition=load_adventure_metadata(slug).get("rules_edition", "unspecified"),
         )
         meta = load_adventure_metadata(slug)
         from ..services.campaign_sources import inspect_ingestion_source
@@ -362,6 +365,7 @@ async def upload_adventure(
     background: BackgroundTasks,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
+    rules_edition: SourceEdition = Form(default="unspecified"),
 ):
     """Upload a campaign PDF; it embeds in the background and becomes a playable adventure.
 
@@ -380,6 +384,7 @@ async def upload_adventure(
         _slugify(desired_title),
         {
             "title": desired_title,
+            "rules_edition": rules_edition,
             "status": "processing",
             "chunks": None,
             "error": None,
@@ -430,6 +435,7 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
         base,
         {
             "title": title_hint or "AI campaign (generating…)",
+            "rules_edition": body.rules_edition,
             "status": "processing",
             "chunks": None,
             "error": None,
@@ -557,7 +563,7 @@ def _retry_adventure(
 
 @router.patch("/adventures/{slug}", response_model=AdventureRead)
 def update_adventure(slug: str, body: AdventureUpdate):
-    """Upsert adventure metadata (title, description, level_range, cover_image)."""
+    """Update metadata; changing the edition invalidates any earlier manifest receipt."""
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
     if slug not in collection_slugs and not _metadata_path(slug).is_file():

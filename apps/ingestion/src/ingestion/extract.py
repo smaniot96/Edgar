@@ -14,6 +14,7 @@ from pathlib import Path
 import pymupdf
 import pymupdf4llm
 
+from edgar_core.sources import SourceEdition
 from ingestion.artifacts import source_digest, text_digest
 from ingestion.layout import native_lines, ocr_stat_header, render_native_page
 from ingestion.quality import check_text
@@ -41,6 +42,7 @@ class Extraction:
     source_sha256: str
     page_count: int
     pages: list[ExtractedPage]
+    rules_edition: SourceEdition = "unspecified"
 
     def text_pages(self) -> list[tuple[int, str]]:
         return [(p.page, p.text) for p in self.pages]
@@ -52,6 +54,8 @@ class Extraction:
         return text_digest(self.markdown())
 
     def require_valid(self) -> None:
+        if self.rules_edition not in ("2014", "2024", "unspecified"):
+            raise ValueError("Declare rules edition 2014, 2024 or unspecified.")
         errors = {p.page: errors for p in self.pages if (errors := p.errors())}
         if errors:
             raise ValueError(
@@ -177,26 +181,48 @@ def save_extraction(
     return markdown, report
 
 
-def load_reviewed_extraction(pdf_path: str | Path, report_path: str | Path) -> Extraction:
+def load_reviewed_extraction(pdf_path: str | Path | None, report_path: str | Path) -> Extraction:
     """Use the exact preview explicitly acknowledged by the caller, without re-extracting.
 
+    Pass pdf_path=None only for an explicitly generated/text manuscript bundle.
     This is a local review contract, not authentication or atomic index promotion. Reject
     stale sources, incomplete subsets, changed previews and failed quality checks before
     any embedding/client call. The JSON's selected text is the indexing input.
     """
-    pdf_path, report_path = Path(pdf_path), Path(report_path)
+    pdf_path, report_path = Path(pdf_path) if pdf_path is not None else None, Path(report_path)
     data = json.loads(report_path.read_text(encoding="utf-8"))
     if data["extraction_version"] != EXTRACTION_VERSION:
         raise ValueError("Extraction preview version changed; extract and review again.")
-    if data["source"] != pdf_path.stem or data["source_sha256"] != source_digest(pdf_path):
-        raise ValueError("Extraction preview does not match this PDF; extract and review again.")
-    markdown = report_path.with_name(f"{pdf_path.stem}.md")
+    source = (
+        pdf_path.stem if pdf_path is not None else report_path.name.removesuffix(".extraction.json")
+    )
+    if data["source"] != source:
+        raise ValueError("Extraction preview does not match this source; extract and review again.")
+    if pdf_path is not None:
+        if data["source_sha256"] != source_digest(pdf_path):
+            raise ValueError(
+                "Extraction preview does not match this PDF; extract and review again."
+            )
+    elif (data.get("readiness") or {}).get("source_kind") not in ("generated", "text") or data[
+        "source_sha256"
+    ] != data["markdown_sha256"]:
+        raise ValueError(
+            "A generated review requires an explicit manuscript bundle and matching text identity."
+        )
+    markdown = report_path.with_name(f"{source}.md")
     if text_digest(markdown.read_text(encoding="utf-8")) != data["markdown_sha256"]:
         raise ValueError("Markdown preview changed; extract and review a consistent bundle again.")
     page_numbers = [p["page"] for p in data["pages"]]
-    with pymupdf.open(pdf_path) as doc:
-        if data["page_count"] != len(doc) or page_numbers != list(range(1, len(doc) + 1)):
-            raise ValueError("Review bundle must cover every physical PDF page in order.")
+    count = data["page_count"]
+    if pdf_path is not None:
+        with pymupdf.open(pdf_path) as doc:
+            count = len(doc)
+    if data["page_count"] != count or page_numbers != list(range(1, count + 1)):
+        raise ValueError(
+            "Review bundle must cover every physical PDF page in order."
+            if pdf_path is not None
+            else "Review bundle must cover every manuscript page in order."
+        )
     pages = []
     for page in data["pages"]:
         if page["text_sha256"] != text_digest(page["text"]):
@@ -209,7 +235,13 @@ def load_reviewed_extraction(pdf_path: str | Path, report_path: str | Path) -> E
                 }
             )
         )
-    extraction = Extraction(data["source"], data["source_sha256"], data["page_count"], pages)
+    extraction = Extraction(
+        data["source"],
+        data["source_sha256"],
+        data["page_count"],
+        pages,
+        rules_edition=data.get("rules_edition", "unspecified"),
+    )
     if extraction.text_sha256() != data["markdown_sha256"]:
         raise ValueError("Selected text differs from the reviewed Markdown preview.")
     extraction.require_valid()

@@ -22,6 +22,8 @@ class AgentState(TypedDict, total=False):
     adventure_collections: list[str]  # campaigns.adventure_collections
     world_flags: dict[str, str]
     current_scene_id: str | None
+    rules_edition: str
+    adventure_manifests: dict[str, dict]  # validated manifests from existing adventure metadata
     npcs: list  # [{name, disposition}] loaded from DB; used to keep allies out of enemy rosters
     combat_state: dict  # loaded from DB if an encounter is in progress
     memory_summary: str | None  # rolling "story so far" for turns older than `messages`
@@ -30,6 +32,10 @@ class AgentState(TypedDict, total=False):
     parsed_input: ParsedInput  # InputParser
     rules_context: list  # WorldRetriever (rules bucket)
     adventure_context: list  # WorldRetriever (adventure bucket)
+    planner_context: list  # relevant reviewed private passages; never narrator/player context
+    allowed_scene_ids: list[str]  # current scene and prerequisite-unlocked branch destinations
+    discovery_entities: list[dict]  # canonical IDs and their existing WorldFlag discovery keys
+    manifest_status: str  # reviewed | review_required | homebrew
     retrieved_context: list  # WorldRetriever (legacy merged view; nodes prefer the split)
     error_code: str
     source_mode: str

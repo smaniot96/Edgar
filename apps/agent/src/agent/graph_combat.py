@@ -250,7 +250,10 @@ async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
     for name in names[:3]:
         try:
             hits = await asyncio.wait_for(
-                asyncio.to_thread(retrieve_monster, name, client=client),
+                asyncio.to_thread(
+                    retrieve_monster, name, client=client,
+                    rules_edition=state.get("rules_edition", "2014"),
+                ),
                 timeout=_MONSTER_LOOKUP_TIMEOUT_S,
             )
         except Exception as e:

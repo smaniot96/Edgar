@@ -3,7 +3,7 @@
 The model designs a full adventure — premise, factions, NPCs, and a chapter outline — then
 expands each chapter into rich module text. The result is embedded through the same pipeline as
 an uploaded PDF (`ingestion.ingest_pages`), so a generated campaign is playable identically:
-the opening-scene intro, RAG grounding, and combat all work with no special-casing.
+reviewed scene retrieval, opening narration, and combat use the same source contract. Generated manuscripts require explicit manifest review before module play.
 
 Size controls scope: more chapters + richer guidance => a considerably longer campaign.
 Generation runs as a background task; status is tracked in the adventure metadata
@@ -62,9 +62,9 @@ class CampaignOutline(BaseModel):
     chapters: list[ChapterOutline] = Field(default_factory=list)
 
 
-def _outline_system(size: str, n_chapters: int) -> str:
+def _outline_system(size: str, n_chapters: int, rules_edition: str = "2014") -> str:
     return (
-        "You are a master Dungeon Master and adventure designer for D&D 5e. Design "
+        f"You are a master Dungeon Master and adventure designer for D&D 5e, {rules_edition} edition. Design "
         f"{_SIZE_GUIDANCE.get(size, _SIZE_GUIDANCE['medium'])} "
         f"Produce a coherent outline with EXACTLY {n_chapters} chapters that build on each other "
         "with rising tension and a satisfying climax and resolution. Make it original, vivid, and "
@@ -73,9 +73,9 @@ def _outline_system(size: str, n_chapters: int) -> str:
     )
 
 
-def _chapter_system() -> str:
+def _chapter_system(rules_edition: str = "2014") -> str:
     return (
-        "You are writing one chapter of a D&D 5e adventure module for the Dungeon Master to run. "
+        f"You are writing one chapter of a D&D 5e {rules_edition} edition adventure module for the Dungeon Master to run. "
         "Write rich, runnable markdown for THIS chapter only: a short read-aloud/boxed intro, the "
         "key locations and what's there, the NPCs (with motivations and a line or two of dialogue), "
         "encounters (with rough monster types and difficulty for a low-level party), skill "
@@ -86,7 +86,7 @@ def _chapter_system() -> str:
 
 
 async def _generate_outline(
-    title_hint: str, theme: str, size: str, n_chapters: int
+    title_hint: str, theme: str, size: str, n_chapters: int, rules_edition: str = "2014"
 ) -> CampaignOutline:
     llm = make_chat_model(temperature=0.8)
     structured = llm.with_structured_output(CampaignOutline, method="function_calling")
@@ -98,7 +98,7 @@ async def _generate_outline(
     asks.append("Design the adventure now.")
     outline = await structured.ainvoke(
         [
-            SystemMessage(content=_outline_system(size, n_chapters)),
+            SystemMessage(content=_outline_system(size, n_chapters, rules_edition)),
             HumanMessage(content=" ".join(asks)),
         ]
     )
@@ -106,7 +106,11 @@ async def _generate_outline(
 
 
 async def _expand_chapter(
-    outline: CampaignOutline, index: int, total: int, sem: asyncio.Semaphore
+    outline: CampaignOutline,
+    index: int,
+    total: int,
+    sem: asyncio.Semaphore,
+    rules_edition: str = "2014",
 ) -> str:
     chapter = outline.chapters[index]
     is_first = index == 0
@@ -133,7 +137,7 @@ async def _expand_chapter(
     async with sem:
         llm = make_chat_model(temperature=0.8)
         resp = await llm.ainvoke(
-            [SystemMessage(content=_chapter_system()), HumanMessage(content=context)]
+            [SystemMessage(content=_chapter_system(rules_edition)), HumanMessage(content=context)]
         )
     body = message_text(resp)
     if len(re.findall(r"\b\w+\b", body)) < 20:
@@ -144,7 +148,7 @@ async def _expand_chapter(
 
 
 async def generate_campaign(
-    title_hint: str, theme: str, size: str
+    title_hint: str, theme: str, size: str, rules_edition: str = "2014"
 ) -> tuple[str, str, list[tuple[int, str]]]:
     """Returns (title, description, pages) where pages are `(page_no, markdown)` for embedding.
 
@@ -152,7 +156,7 @@ async def generate_campaign(
     reads the earliest pages) starts the player at the true beginning.
     """
     n_chapters = SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"])
-    outline = await _generate_outline(title_hint, theme, size, n_chapters)
+    outline = await _generate_outline(title_hint, theme, size, n_chapters, rules_edition)
     if len(outline.chapters) != n_chapters:
         raise IncompleteGeneration(
             f"The generated outline contains {len(outline.chapters)} of {n_chapters} required chapters. Retry generation."
@@ -161,7 +165,10 @@ async def generate_campaign(
 
     sem = asyncio.Semaphore(_MAX_CONCURRENT)
     chapter_texts = await asyncio.gather(
-        *[_expand_chapter(outline, i, total, sem) for i in range(len(outline.chapters))]
+        *[
+            _expand_chapter(outline, i, total, sem, rules_edition)
+            for i in range(len(outline.chapters))
+        ]
     )
 
     front_matter = (
@@ -198,13 +205,16 @@ async def build_generated_campaign(slug: str, title_hint: str, theme: str, size:
 
     structlog.contextvars.bind_contextvars(adventure_slug=slug)
     try:
-        title, description, pages = await generate_campaign(title_hint, theme, size)
+        title, description, pages = await generate_campaign(
+            title_hint, theme, size, load_meta(slug).get("rules_edition", "2014")
+        )
         n = await asyncio.to_thread(
             ingest_pages,
             pages,
             slug,
             slug,
             expected_pages=SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"]),
+            rules_edition=load_meta(slug).get("rules_edition", "unspecified"),
             preview_dir=ADVENTURES_DIR / slug,
             on_prepared=prepared,
             replace=True,

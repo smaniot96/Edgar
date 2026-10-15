@@ -32,6 +32,9 @@ class TurnResponse(BaseModel):
     source_status: list[dict] = Field(default_factory=list)
     source_mode: str = "module"
     narration: str
+    citations: list[dict] = Field(default_factory=list)
+    rules_edition: str = "2014"
+    ruling_citation_ids: list[str] = Field(default_factory=list)
     adjudication: dict | None = None
     combat_state: dict | None = None
     current_scene_id: str | None = None

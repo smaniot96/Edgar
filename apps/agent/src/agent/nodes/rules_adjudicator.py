@@ -12,8 +12,8 @@ Flow:
      into a proposal that needs confirmation.
 
 Structured-output failure is retried once, then the turn continues with a neutral outcome (the
-engine result, no side effects). Only the *rules* bucket goes into the prompt; adventure text is
-narrator-only so the adjudicator cannot rule on flavour (it does get scene ids for `scene_id`).
+engine result, no side effects). Rules and reviewed current-scene planner/player evidence retain their provenance in the
+prompt. Only explicitly selected, supplied reference IDs can support the persisted ruling.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import logging
 
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult
+from agent.nodes.manifest_effects import enforce_manifest_effects
 from agent.prompts import RULES_ADJUDICATOR, wrap_player_action
 from agent.resolution import (
     CheckResult,
@@ -31,6 +32,7 @@ from agent.resolution import (
     resolve_from_parsed,
 )
 from agent.state import AgentState
+from edgar_core.sources import citations_for, cited_excerpt, eligible_context
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +44,7 @@ def _rules_context(state: AgentState) -> list:
     rules_context = state.get("rules_context", [])
     if not rules_context:
         rules_context = [c for c in state.get("retrieved_context", []) if c.get("kind") == "rules"]
-    return rules_context
+    return eligible_context(rules_context, state.get("rules_edition", "2014"))
 
 
 def build_adjudicator_prompt(
@@ -59,7 +61,9 @@ def build_adjudicator_prompt(
     if check_result is not None:
         parts.append(f"Engine outcome (final, do not change): {check_result.describe()}")
     else:
-        parts.append("Engine outcome (final): no roll needed; the attempt simply happens (success=true).")
+        parts.append(
+            "Engine outcome (final): no roll needed; the attempt simply happens (success=true)."
+        )
     if extra_outcome:
         parts.append(f"Additional engine results this turn: {extra_outcome}")
     for entry in dice_log or []:
@@ -75,16 +79,26 @@ def build_adjudicator_prompt(
             f"stats {character.get('stats')}, inventory {character.get('inventory')}"
         )
 
+    parts.append(
+        f"Selected rules edition: {state.get('rules_edition', '2014')}. Unknown source editions are unverified evidence."
+    )
     scene = state.get("current_scene_id")
     parts.append(f"Current scene id: {scene or '(none yet)'}")
-    known = sorted(known_scene_ids(scene, state.get("adventure_context")) - {scene})
+    known = sorted(
+        set(
+            state.get("allowed_scene_ids") or known_scene_ids(scene, state.get("adventure_context"))
+        )
+        - {scene}
+    )
     if known:
         parts.append(f"Scene ids seen in the adventure context: {', '.join(known[:20])}")
 
     flags = state.get("world_flags") or {}
     if flags:
         shown = list(flags.items())[:_MAX_FLAGS_IN_PROMPT]
-        parts.append("Current world flags (key = value): " + "; ".join(f"{k} = {v}" for k, v in shown))
+        parts.append(
+            "Current world flags (key = value): " + "; ".join(f"{k} = {v}" for k, v in shown)
+        )
     else:
         parts.append("Current world flags: (none)")
 
@@ -96,7 +110,29 @@ def build_adjudicator_prompt(
     if rules_context:
         parts.append("Official rules excerpts (Player Handbook, DMG, Monster Manual):")
         for c in rules_context:
-            parts.append(f"- {c.get('text', '')} (source: {c.get('source', '')})")
+            parts.append(cited_excerpt(c, state.get("rules_edition", "2014")))
+    if state.get("manifest_status") == "reviewed" and state.get("adventure_context"):
+        parts.append("Reviewed player-visible current-scene evidence:")
+        parts.extend(
+            cited_excerpt(c, state.get("rules_edition", "2014"))
+            for c in eligible_context(
+                state["adventure_context"], state.get("rules_edition", "2014")
+            )
+        )
+    if state.get("planner_context"):
+        parts.append(
+            "Private current-scene planner evidence (never disclose secrets in summaries):"
+        )
+        parts.extend(
+            cited_excerpt(c, state.get("rules_edition", "2014")) for c in state["planner_context"]
+        )
+    if state.get("discovery_entities"):
+        parts.append(
+            f"Canonical discoveries: {state['discovery_entities']}. Set only their exact discovery_flag to discovered after a justified successful discovery."
+        )
+    parts.append(
+        "Return citation_ids only for the exact supplied references supporting the ruling. Do not cite unrelated excerpts."
+    )
 
     return [
         {"role": "system", "content": RULES_ADJUDICATOR},
@@ -162,7 +198,9 @@ async def adjudicate(
     if check_result is not None:
         check_result.apply_to(result)
         if check_result.describe() not in result.mechanical_summary:
-            result.mechanical_summary = f"{check_result.describe()}. {result.mechanical_summary}".strip()
+            result.mechanical_summary = (
+                f"{check_result.describe()}. {result.mechanical_summary}".strip()
+            )
     else:
         result.success = True
         result.dice_result = extra_log[0]["total"] if extra_log else None
@@ -178,6 +216,7 @@ async def adjudicate(
         parsed=parsed,
         in_combat=in_combat,
     )
+    result = enforce_manifest_effects(result, state)
     if not in_combat:
         decide_completion(
             result,
@@ -185,6 +224,18 @@ async def adjudicate(
             parsed=parsed,
             player_input=player_input,
         )
+    evidence = _rules_context(state) + eligible_context(
+        state.get("planner_context", [])
+        + (
+            state.get("adventure_context", []) if state.get("manifest_status") == "reviewed" else []
+        ),
+        state.get("rules_edition", "2014"),
+    )
+    refs = {
+        r["reference_id"]: r for r in citations_for(evidence, state.get("rules_edition", "2014"))
+    }
+    result.citations = [refs[rid] for rid in dict.fromkeys(result.citation_ids) if rid in refs]
+    result.citation_ids = [r["reference_id"] for r in result.citations]
     return result
 
 

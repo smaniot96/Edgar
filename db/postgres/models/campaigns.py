@@ -24,6 +24,7 @@ class Campaign(Base):
         CheckConstraint(
             "source_mode IN ('module', 'homebrew')", name="campaigns_source_mode_valid"
         ),
+        CheckConstraint("rules_edition IN ('2014', '2024')", name="campaigns_rules_edition_valid"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -40,6 +41,9 @@ class Campaign(Base):
     )
     source_mode: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default=text("'module'")
+    )
+    rules_edition: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'2014'")
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

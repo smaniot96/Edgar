@@ -184,9 +184,10 @@ export function getAdventure(slug: string, signal?: AbortSignal): Promise<Advent
   return getJson(`/api/adventures/${encodeURIComponent(slug)}`, signal);
 }
 
-export async function uploadAdventure(file: File, title?: string): Promise<AdventureRead> {
+export async function uploadAdventure(file: File, title?: string, rulesEdition: "2014" | "2024" | "unspecified" = "unspecified"): Promise<AdventureRead> {
   const form = new FormData();
   form.append("file", file);
+  form.append("rules_edition", rulesEdition);
   if (title && title.trim()) form.append("title", title.trim());
   return json(await apiFetch("/api/adventures/upload", { method: "POST", body: form }));
 }
@@ -218,6 +219,10 @@ export function listCampaigns(signal?: AbortSignal): Promise<CampaignRead[]> {
 
 export function getCampaign(id: number, signal?: AbortSignal): Promise<CampaignRead> {
   return getJson(`/api/campaigns/${id}`, signal);
+}
+
+export function setCampaignRulesEdition(id: number, rules_edition: "2014" | "2024"): Promise<CampaignRead> {
+  return sendJson("PATCH", `/api/campaigns/${id}`, { rules_edition });
 }
 
 export function setCampaignSourceMode(id: number, source_mode: "module" | "homebrew"): Promise<CampaignRead> {

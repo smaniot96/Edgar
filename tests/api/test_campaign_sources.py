@@ -217,7 +217,7 @@ async def test_legacy_invalid_binding_remains_visible(api_client, source_corpus,
     assert not result.json()[0]["play_allowed"]
 
 
-async def test_intro_does_not_silently_improvise_when_ready_corpus_yields_no_opening(
+async def test_intro_requires_review_before_module_play_and_allows_explicit_homebrew(
     api_client, source_corpus, monkeypatch
 ):
     from langchain_core.messages import AIMessage
@@ -228,14 +228,13 @@ async def test_intro_does_not_silently_improvise_when_ready_corpus_yields_no_ope
     cid, sid = seed["campaign_id"], seed["session_id"]
     slug = (await api_client.get(f"/api/campaigns/{cid}")).json()["adventure_collections"][0]
     source(source_corpus, slug, ["The actual module text"])
-    monkeypatch.setattr(session_intro, "_fetch_opening_text", lambda *_: "")
-    monkeypatch.setattr(session_intro, "search_adventure_context", lambda *a, **kw: [])
     model = AsyncMock()
     model.ainvoke.return_value = AIMessage(content="A chosen homebrew opening")
     monkeypatch.setattr(session_intro, "make_chat_model", lambda **kw: model)
     response = await api_client.post(f"/api/sessions/{sid}/intro")
     assert response.status_code == 409
-    assert response.json()["detail"]["sources"][0]["status"] == "unavailable"
+    assert response.json()["detail"]["code"] == "adventure_manifest_review_required"
+    assert response.json()["detail"]["source"] == slug
     model.ainvoke.assert_not_called()
     await api_client.patch(f"/api/campaigns/{cid}", json={"source_mode": "homebrew"})
     response = await api_client.post(f"/api/sessions/{sid}/intro")

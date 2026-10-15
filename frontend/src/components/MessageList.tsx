@@ -71,6 +71,14 @@ const DmRow = memo(function DmRow({ line, isDev }: { line: DmLine; isDev: boolea
           )}
         >
           <Narration text={line.content} />
+          {line.citations?.length ? <details className="mt-2 font-sans text-xs text-ink-muted">
+            <summary>Source references</summary>
+            <p>References supplied for this turn; ruling evidence was explicitly selected by the adjudicator.</p>
+            <ul className="mt-1 space-y-1">{line.citations.map((ref) => <li key={ref.reference_id}>
+              {ref.source} · edition {ref.rules_edition} · pages {ref.source_pages.join(", ") || "unknown"} · {ref.edition_status}{line.ruling_citation_ids?.includes(ref.reference_id) ? " · ruling evidence" : ""}
+              <details><summary>Version</summary><p className="break-all">Source: {ref.source_sha256 ?? "unknown"}<br />Extraction: {ref.extraction_sha256 ?? "unknown"}</p></details>
+            </li>)}</ul>
+          </details> : null}
         </div>
         {line.interrupted ? (
           <p className="mt-1 text-xs italic text-ember-400/80">— narration interrupted (not saved)</p>

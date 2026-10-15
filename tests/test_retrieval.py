@@ -15,7 +15,9 @@ from db.vector.collections import invalidate_collection_cache
 class FakeQdrant:
     """Minimal QdrantClient stand-in: `get_collections` + `query_points`."""
 
-    def __init__(self, data: dict[str, list[tuple[float, dict[str, Any]]]], fail: set[str] | None = None):
+    def __init__(
+        self, data: dict[str, list[tuple[float, dict[str, Any]]]], fail: set[str] | None = None
+    ):
         self.data = data
         self.fail = fail or set()
         self.queried: list[str] = []
@@ -25,13 +27,25 @@ class FakeQdrant:
         self.list_calls += 1
         return SimpleNamespace(collections=[SimpleNamespace(name=n) for n in self.data])
 
-    def query_points(self, collection_name: str, query, limit: int, with_payload: bool):
+    def query_points(
+        self, collection_name: str, query, limit: int, with_payload: bool, query_filter=None
+    ):
         self.queried.append(collection_name)
         if collection_name in self.fail:
             raise ConnectionError("qdrant down")
         if collection_name not in self.data:
             raise ValueError(f"Collection {collection_name} not found")
-        hits = sorted(self.data[collection_name], key=lambda h: h[0], reverse=True)[:limit]
+        candidates = self.data[collection_name]
+        if query_filter is not None:
+            candidates = [
+                (s, p)
+                for s, p in candidates
+                if all(
+                    p.get(condition.key) != condition.match.value
+                    for condition in query_filter.must_not
+                )
+            ]
+        hits = sorted(candidates, key=lambda h: h[0], reverse=True)[:limit]
         return SimpleNamespace(points=[SimpleNamespace(score=s, payload=p) for s, p in hits])
 
 
@@ -63,7 +77,9 @@ def test_results_ranked_globally_across_collections() -> None:
             "rules_monster_manual": [(0.9, _p("goblin stat block")), (0.4, _p("hobgoblin lore"))],
         }
     )
-    out = retrieval.search_rules_context("grapple a goblin", client=client, limit=None, min_score=None)
+    out = retrieval.search_rules_context(
+        "grapple a goblin", client=client, limit=None, min_score=None
+    )
     assert [c["score"] for c in out] == [0.9, 0.5, 0.4, 0.35, 0.3]
     assert out[0]["collection"] == "rules_monster_manual"
     assert all(c["kind"] == "rules" for c in out)
@@ -107,7 +123,10 @@ def test_total_cap_applied() -> None:
     assert len(out) == 3
     assert [c["score"] for c in out] == sorted((c["score"] for c in out), reverse=True)
     # Default cap is finite even when callers only pass limit_per_collection.
-    assert len(retrieval.search_rules_context("anything", client=client)) == retrieval.DEFAULT_RULES_LIMIT
+    assert (
+        len(retrieval.search_rules_context("anything", client=client))
+        == retrieval.DEFAULT_RULES_LIMIT
+    )
 
 
 def test_missing_collections_are_not_queried() -> None:
@@ -127,7 +146,9 @@ def test_campaign_lore_competes_on_score() -> None:
             "campaign_lore_7": [(0.8, _p("dm note: the priest is a doppelganger"))],
         }
     )
-    out = retrieval.search_adventure_context("priest", ["chalice_of_the_mountain_god"], campaign_id=7, client=client)
+    out = retrieval.search_adventure_context(
+        "priest", ["chalice_of_the_mountain_god"], campaign_id=7, client=client
+    )
     assert out[0]["collection"] == "campaign_lore_7"
 
 
@@ -159,7 +180,10 @@ def test_failed_collection_logged_and_others_returned(caplog: pytest.LogCaptureF
     with caplog.at_level(logging.WARNING, logger="db.vector.retrieval"):
         out = retrieval.search_rules_context("q", client=client)
     assert [c["text"] for c in out] == ["phb"]
-    assert any("rules_dm_guide" in r.getMessage() and "ConnectionError" in r.getMessage() for r in caplog.records)
+    assert any(
+        "rules_dm_guide" in r.getMessage() and "ConnectionError" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_total_outage_raises() -> None:
@@ -174,7 +198,15 @@ def test_heading_payload_fields_passed_through() -> None:
     client = FakeQdrant(
         {
             "rules_player_handbook": [
-                (0.5, _p("Chapter 9 > Grappling\nWhen you want to grab", section="Grappling", chapter="Chapter 9", heading_path="Chapter 9 > Grappling")),
+                (
+                    0.5,
+                    _p(
+                        "Chapter 9 > Grappling\nWhen you want to grab",
+                        section="Grappling",
+                        chapter="Chapter 9",
+                        heading_path="Chapter 9 > Grappling",
+                    ),
+                ),
                 (0.4, _p("legacy chunk without structure")),
             ]
         }
@@ -193,9 +225,19 @@ def test_retrieve_monster_prefers_named_stat_block() -> None:
     client = FakeQdrant(
         {
             "rules_monster_manual": [
-                (0.52, _p("Goblinoids are a family of creatures ruled by hobgoblins and bugbears.")),
+                (
+                    0.52,
+                    _p("Goblinoids are a family of creatures ruled by hobgoblins and bugbears."),
+                ),
                 (0.50, _p(stat, section="Goblin", heading_path="Goblin", stat_block=True)),
-                (0.49, _p("Bugbear\nArmor Class 16 Hit Points 27 (5d8 + 5)", section="Bugbear", stat_block=True)),
+                (
+                    0.49,
+                    _p(
+                        "Bugbear\nArmor Class 16 Hit Points 27 (5d8 + 5)",
+                        section="Bugbear",
+                        stat_block=True,
+                    ),
+                ),
             ],
             "rules_player_handbook": [(0.95, _p("goblin mentioned in the PHB"))],
         }
@@ -214,70 +256,51 @@ def test_retrieve_monster_without_monster_manual_returns_empty() -> None:
     assert retrieval.retrieve_monster("  ", client=client) == []
 
 
-# --- session intro reads the earliest pages, not an arbitrary scroll window -----------------
-
-
-class _FakeScrollClient:
-    """Points with hash-like ids in arbitrary order; supports order_by or range filter."""
-
-    def __init__(self, *, has_index: bool, index_creatable: bool):
-        self.has_index = has_index
-        self.index_creatable = index_creatable
-        self.points = [
-            SimpleNamespace(id=(page * 7919) % 1009, payload={"text": f"page {page} part {i}", "page": page, "chunk_index": page * 10 + i})
-            for page in range(300, 0, -1)
-            for i in (1, 0)
-        ]
-
-    def scroll(self, collection_name, limit, with_payload, with_vectors, order_by=None, scroll_filter=None):
-        pts = self.points
-        if order_by is not None:
-            if not self.has_index:
-                raise RuntimeError("No range index for `order_by` key `page`")
-            pts = sorted(pts, key=lambda p: p.payload["page"])
-        if scroll_filter is not None:
-            lte = scroll_filter.must[0].range.lte
-            pts = [p for p in pts if p.payload["page"] <= lte]
-        return pts[:limit], None
-
-    def create_payload_index(self, collection_name, field_name, field_schema, wait=True):
-        if not self.index_creatable:
-            raise RuntimeError("forbidden")
-        self.has_index = True
-
-
-@pytest.mark.parametrize(
-    ("has_index", "index_creatable"), [(True, False), (False, True), (False, False)]
-)
-def test_intro_reads_first_pages_in_order(monkeypatch: pytest.MonkeyPatch, has_index: bool, index_creatable: bool) -> None:
-    from apps.api.services import session_intro as si
-
-    fake = _FakeScrollClient(has_index=has_index, index_creatable=index_creatable)
-    monkeypatch.setattr(si, "get_qdrant_client", lambda: fake)
-    monkeypatch.setattr(si, "_page_index_attempted", set())
-    text = si._fetch_opening_text(["big_module"], max_chunks=3)
-    assert text.splitlines() == ["page 1 part 0", "page 1 part 1", "page 2 part 0"]
-
-
 def test_required_missing_module_cannot_be_hidden_by_other_module_or_lore():
-    client = FakeQdrant({"usable": [(0.8, _p("Good module"))], "campaign_lore_7": [(0.9, _p("Lore"))]})
+    client = FakeQdrant(
+        {"usable": [(0.8, _p("Good module"))], "campaign_lore_7": [(0.9, _p("Lore"))]}
+    )
     with pytest.raises(retrieval.RetrievalError, match="missing"):
-        retrieval.search_adventure_context("Explore", ["lost", "usable"], campaign_id=7,
-                                           client=client, require_bound_sources=True)
+        retrieval.search_adventure_context(
+            "Explore", ["lost", "usable"], campaign_id=7, client=client, require_bound_sources=True
+        )
 
 
 def test_required_query_failure_is_not_hidden_by_partial_success():
-    client = FakeQdrant({"usable": [(0.8, _p("Good module"))], "lost": [(0.9, _p("Lost module"))]}, fail={"lost"})
+    client = FakeQdrant(
+        {"usable": [(0.8, _p("Good module"))], "lost": [(0.9, _p("Lost module"))]}, fail={"lost"}
+    )
     with pytest.raises(retrieval.RetrievalError, match="lost"):
-        retrieval.search_adventure_context("Explore", ["usable", "lost"], client=client,
-                                           require_bound_sources=True)
+        retrieval.search_adventure_context(
+            "Explore", ["usable", "lost"], client=client, require_bound_sources=True
+        )
 
 
 def test_required_source_inventory_is_fresh_and_campaign_lore_is_optional():
     client = FakeQdrant({"usable": [(0.8, _p("Good module"))]})
-    assert retrieval.search_adventure_context("Explore", ["usable"], campaign_id=7,
-        client=client, require_bound_sources=True)
+    assert retrieval.search_adventure_context(
+        "Explore", ["usable"], campaign_id=7, client=client, require_bound_sources=True
+    )
     client.data.clear()
     with pytest.raises(retrieval.RetrievalError):
-        retrieval.search_adventure_context("Explore", ["usable"], campaign_id=7,
-            client=client, require_bound_sources=True)
+        retrieval.search_adventure_context(
+            "Explore", ["usable"], campaign_id=7, client=client, require_bound_sources=True
+        )
+
+
+def test_edition_filter_precedes_search_limit_and_duplicate_removal():
+    client = FakeQdrant(
+        {
+            "rules_player_handbook": [
+                (0.99, _p("The same rule text", rules_edition="2024")),
+                (0.98, _p("Different new edition text", rules_edition="2024")),
+                (0.80, _p("The same rule text", rules_edition="2014")),
+                (0.70, _p("Unknown legacy edition")),
+            ]
+        }
+    )
+    hits = retrieval.search_rules_context(
+        "rule", client=client, rules_edition="2014", limit_per_collection=2
+    )
+    assert [h["text"] for h in hits] == ["The same rule text", "Unknown legacy edition"]
+    assert hits[0]["rules_edition"] == "2014" and "rules_edition" not in hits[1]

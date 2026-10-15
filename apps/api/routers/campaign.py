@@ -100,6 +100,7 @@ async def create_campaign(
     await require_sources(adv, body.source_mode)
     campaign = Campaign(
         source_mode=body.source_mode,
+        rules_edition=body.rules_edition,
         title=body.title,
         system=body.system,
         created_by=owner_id,
