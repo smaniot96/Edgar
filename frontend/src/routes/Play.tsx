@@ -160,10 +160,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   );
 
   const handleRetry = useCallback(
-    (turnId: string, input: string) => {
-      // The failed input was restored to the composer; don't leave a duplicate there.
-      setDraft((d) => (d.trim() === input ? "" : d));
-      retry(turnId, input);
+    (turnId: string, input: string, requestId?: string, draftRevision?: number) => {
+      retry(turnId, input, requestId, draftRevision);
     },
     [retry],
   );
@@ -224,12 +222,12 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
               pending={
                 pending ??
                 (introPending
-                  ? { turnId: "intro", input: "", stage: null, text: "", adjudication: null, debug: null }
+                  ? { turnId: "intro", requestId: "intro", input: "", stage: null, text: "", adjudication: null, debug: null }
                   : null)
               }
               onRetry={handleRetry}
-              canRetry={!busy && !campaignComplete && game.campaign?.play_allowed !== false}
-              forceScrollKey={pending?.turnId ?? null}
+              onCheckReceipt={turn.checkReceipt}
+              canRetry={!busy}
               onQuickReply={campaignComplete || game.campaign?.play_allowed === false ? undefined : handleQuickReply}
             />
           )}

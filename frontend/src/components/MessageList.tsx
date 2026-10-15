@@ -60,7 +60,13 @@ function DmLabel() {
 
 const DmRow = memo(function DmRow({ line, isDev }: { line: DmLine; isDev: boolean }) {
   return (
-    <article className="flex flex-col items-start gap-2" aria-label="Dungeon Master">
+    <article
+      id={line.eventId != null ? `story-event-${line.eventId}` : undefined}
+      tabIndex={line.eventId != null ? -1 : undefined}
+      data-event-id={line.eventId}
+      className="flex flex-col items-start gap-2 outline-none focus-visible:ring-2 focus-visible:ring-ember-500/70"
+      aria-label="Dungeon Master"
+    >
       {line.rollStatus === "not_captured" ? (
         <p className="text-xs italic text-ink-subtle" data-roll-status="not_captured">
           Roll details were not captured for this turn.
@@ -112,25 +118,38 @@ const DmRow = memo(function DmRow({ line, isDev }: { line: DmLine; isDev: boolea
 function ErrorRow({
   line,
   onRetry,
+  onCheckReceipt,
   canRetry,
 }: {
   line: ErrorLine;
-  onRetry?: (turnId: string, input: string) => void;
+  onRetry?: (turnId: string, input: string, requestId?: string, draftRevision?: number) => void;
+  onCheckReceipt?: (turnId: string, requestId: string, input: string, draftRevision?: number) => void;
   canRetry: boolean;
 }) {
-  const retryable = !!(onRetry && line.turnId && line.retryInput);
+  const retryable = !!(onRetry && line.turnId && line.retryInput && line.retryRequestId && !line.uncertain);
+  const checkable = !!(onCheckReceipt && line.turnId && line.retryInput && line.retryRequestId && line.uncertain);
   return (
     <div
       role="alert"
       className="flex max-w-[65ch] flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-danger-strong/60 bg-danger-soft/60 px-3 py-2 text-sm text-danger"
     >
       <span className="min-w-0 flex-1">{line.content}</span>
+      {checkable ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={!canRetry}
+          onClick={() => onCheckReceipt?.(line.turnId as string, line.retryRequestId as string, line.retryInput as string, line.draftRevision)}
+        >
+          Check save status
+        </Button>
+      ) : null}
       {retryable ? (
         <Button
           variant="secondary"
           size="sm"
           disabled={!canRetry}
-          onClick={() => onRetry?.(line.turnId as string, line.retryInput as string)}
+          onClick={() => onRetry?.(line.turnId as string, line.retryInput as string, line.retryRequestId, line.draftRevision)}
         >
           Retry
         </Button>
@@ -143,11 +162,13 @@ function Row({
   line,
   isDev,
   onRetry,
+  onCheckReceipt,
   canRetry,
 }: {
   line: Line;
   isDev: boolean;
-  onRetry?: (turnId: string, input: string) => void;
+  onRetry?: (turnId: string, input: string, requestId?: string, draftRevision?: number) => void;
+  onCheckReceipt?: (turnId: string, requestId: string, input: string, draftRevision?: number) => void;
   canRetry: boolean;
 }) {
   switch (line.role) {
@@ -169,7 +190,7 @@ function Row({
     case "dm":
       return <DmRow line={line} isDev={isDev} />;
     case "error":
-      return <ErrorRow line={line} onRetry={onRetry} canRetry={canRetry} />;
+      return <ErrorRow line={line} onRetry={onRetry} onCheckReceipt={onCheckReceipt} canRetry={canRetry} />;
     case "notice":
       return (
         <p className="mx-auto max-w-[65ch] text-center text-sm italic text-ink-muted">{line.content}</p>
@@ -234,22 +255,32 @@ export function MessageList({
   messages,
   pending,
   onRetry,
+  onCheckReceipt,
   canRetry = true,
-  forceScrollKey,
+  layoutKey,
+  storageKey,
+  restoreReady = true,
   onQuickReply,
 }: {
   messages: Line[];
   pending: PendingTurn | null;
-  onRetry?: (turnId: string, input: string) => void;
+  onRetry?: (turnId: string, input: string, requestId?: string, draftRevision?: number) => void;
+  onCheckReceipt?: (turnId: string, requestId: string, input: string, draftRevision?: number) => void;
   canRetry?: boolean;
-  /** Changing this (e.g. a new turn id) scrolls to the bottom regardless of position. */
-  forceScrollKey?: string | null;
+  /** Changes when a tool opens or the available story width changes. */
+  layoutKey?: string | number;
+  /** Session-scoped storage key for restoring the reader's current history anchor. */
+  storageKey?: string;
+  /** Wait until the boot transcript is seeded before applying the saved anchor. */
+  restoreReady?: boolean;
   /** Send a canned reply (e.g. confirming the end of the adventure). Omit to hide such prompts. */
   onQuickReply?: (text: string) => void;
 }) {
   const { isDev } = useMode();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nearBottomRef = useRef(true);
+  const anchorRef = useRef<{ messageId: string | null; eventId: number | null; offset: number; scrollTop: number } | null>(null);
+  const restoredRef = useRef(false);
   const [showJump, setShowJump] = useState(false);
 
   const last = messages[messages.length - 1];
@@ -264,13 +295,89 @@ export function MessageList({
     setShowJump(false);
   }, []);
 
+  const findAnchor = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const top = el.getBoundingClientRect().top;
+    const rows = el.querySelectorAll<HTMLElement>("[data-message-id]");
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom > top + 1) {
+        const event = row.dataset.eventId;
+        return {
+          messageId: row.dataset.messageId || null,
+          eventId: event && /^\d+$/.test(event) ? Number(event) : null,
+          offset: rect.top - top,
+          scrollTop: el.scrollTop,
+        };
+      }
+    }
+    return { messageId: null, eventId: null, offset: 0, scrollTop: el.scrollTop };
+  }, []);
+
+  const storeAnchor = useCallback((anchor: NonNullable<typeof anchorRef.current>) => {
+    anchorRef.current = anchor;
+    if (!storageKey) return;
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(anchor));
+    } catch {
+      /* Storage is best-effort; the live view still keeps its anchor in memory. */
+    }
+  }, [storageKey]);
+
+  const restoreAnchor = useCallback(() => {
+    const el = scrollRef.current;
+    const anchor = anchorRef.current;
+    if (!el || !anchor) return;
+    const row = anchor.eventId != null
+      ? el.querySelector<HTMLElement>(`[data-event-id="${anchor.eventId}"]`)
+      : anchor.messageId
+        ? Array.from(el.querySelectorAll<HTMLElement>("[data-message-id]")).find((candidate) => candidate.dataset.messageId === anchor.messageId)
+        : null;
+    if (row) {
+      el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.offset;
+    } else {
+      el.scrollTop = Math.min(anchor.scrollTop, el.scrollHeight - el.clientHeight);
+    }
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICKY_THRESHOLD;
+    setShowJump(!nearBottomRef.current);
+  }, []);
+
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const near = el.scrollHeight - el.scrollTop - el.clientHeight <= STICKY_THRESHOLD;
     nearBottomRef.current = near;
     setShowJump(!near);
-  }, []);
+    const anchor = findAnchor();
+    if (anchor) storeAnchor(anchor);
+  }, [findAnchor, storeAnchor]);
+
+  // Restore a session's last visible line after route navigation or a full reload.
+  useLayoutEffect(() => {
+    if (!restoreReady || restoredRef.current) return;
+    if (storageKey) {
+      try {
+        const raw = sessionStorage.getItem(storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as typeof anchorRef.current;
+          if (parsed && typeof parsed.scrollTop === "number" && typeof parsed.offset === "number") {
+            anchorRef.current = parsed;
+            restoreAnchor();
+            restoredRef.current = true;
+            return;
+          }
+        }
+      } catch {
+        /* Ignore a malformed or unavailable session-scoped anchor. */
+      }
+    }
+    restoredRef.current = true;
+    if (nearBottomRef.current) {
+      const anchor = findAnchor();
+      if (anchor) storeAnchor(anchor);
+    }
+  }, [messages, storageKey, findAnchor, restoreAnchor, storeAnchor, restoreReady]);
 
   // Follow new content only while the reader is already at the bottom.
   const pendingText = pending?.text;
@@ -280,14 +387,32 @@ export function MessageList({
     if (!el) return;
     if (nearBottomRef.current) {
       el.scrollTop = el.scrollHeight;
+      const anchor = findAnchor();
+      if (anchor) storeAnchor(anchor);
     } else if (el.scrollHeight - el.scrollTop - el.clientHeight > STICKY_THRESHOLD) {
       setShowJump(true);
     }
-  }, [messages, pendingText, pendingStage]);
+  }, [messages, pendingText, pendingStage, findAnchor, storeAnchor]);
 
+  // Preserve a stable visible line when the side tool changes width or the viewport resizes.
   useEffect(() => {
-    if (forceScrollKey) scrollToBottom();
-  }, [forceScrollKey, scrollToBottom]);
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (nearBottomRef.current) {
+        el.scrollTop = el.scrollHeight;
+      } else {
+        restoreAnchor();
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [restoreAnchor]);
+
+  useLayoutEffect(() => {
+    if (!restoredRef.current || nearBottomRef.current) return;
+    restoreAnchor();
+  }, [layoutKey, restoreAnchor]);
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -306,7 +431,9 @@ export function MessageList({
             <p className="text-center text-sm italic text-ink-subtle">Your adventure is about to begin…</p>
           ) : null}
           {messages.map((m) => (
-            <Row key={m.id} line={m} isDev={isDev} onRetry={onRetry} canRetry={canRetry} />
+            <div key={m.id} data-message-id={m.id} data-event-id={m.role === "dm" ? m.eventId : undefined}>
+              <Row line={m} isDev={isDev} onRetry={onRetry} onCheckReceipt={onCheckReceipt} canRetry={canRetry} />
+            </div>
           ))}
           {showCompletionPrompt ? (
             <CompletionPrompt onReply={onQuickReply} disabled={!canRetry} />
@@ -317,7 +444,7 @@ export function MessageList({
       {showJump ? (
         <button
           type="button"
-          onClick={() => scrollToBottom(true)}
+          onClick={() => scrollToBottom(!(typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches))}
           className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-ember-700/70 bg-surface/95 px-3 py-1 text-xs font-semibold text-ember-200 shadow-lg shadow-black/40 hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
         >
           ↓ Jump to latest
