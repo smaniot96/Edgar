@@ -16,7 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.combatants import NPC_DISPOSITION, disposition_of
-from db.postgres.models import NPC, CombatState
+from db.postgres.models import NPC, CombatState, Session as SessionModel
+
+from .story_state import persist_captive_fact
+
+# Combat-owned NPC dispositions a player can act on after the fight (EDG-146).
+CAPTIVE_NPC_DISPOSITIONS = frozenset({"captive", "released", "dead"})
+_CAPTIVE_NPC_DISPOSITION = {"release": "released", "kill": "dead"}
 
 
 async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
@@ -43,6 +49,7 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
         # Per-encounter facts live on the player combatant (the table has no columns for them).
         "player_ac": player.get("ac"),
         "second_wind_used": bool(player.get("second_wind_used", False)),
+        "solo_budget": player.get("solo_budget"),
     }
     if all("init" in c for c in combatants) and combatants:
         from agent.graph_combat import initiative_view
@@ -209,4 +216,99 @@ async def persist_combat_npcs(
         else:
             npc.disposition = npc_disposition
             npc.stat_block = stat_block
+    await db.flush()
+
+
+async def load_combat_captives(db: AsyncSession, session_id: int) -> list[dict]:
+    """Combat-owned captive, released and dead foes of this session, for the captive ruling.
+
+    Only session rows whose identity is `combat:<id>:<hash>` qualify, so manual campaign NPCs and
+    story-effect NPCs never reach the captive path.
+    """
+    rows = list(
+        await db.scalars(
+            select(NPC)
+            .where(NPC.session_id == session_id, NPC.story_identity.like("combat:%"))
+            .order_by(NPC.id)
+        )
+    )
+    owned = [
+        (npc, (npc.stat_block or {}).get("combat_id"), (npc.stat_block or {}).get("combatant_id"))
+        for npc in rows
+        if npc.disposition in CAPTIVE_NPC_DISPOSITIONS
+    ]
+    combat_ids = {cid for _, cid, _ in owned if isinstance(cid, int)}
+    rounds = (
+        dict(
+            (
+                await db.execute(
+                    select(CombatState.id, CombatState.round).where(CombatState.id.in_(combat_ids))
+                )
+            ).all()
+        )
+        if combat_ids
+        else {}
+    )
+    return [
+        {
+            "name": npc.name,
+            "disposition": npc.disposition,
+            "combat_id": cid,
+            "combatant_id": combatant_id,
+            "combat_round": rounds.get(cid),
+        }
+        for npc, cid, combatant_id in owned
+        if isinstance(cid, int) and isinstance(combatant_id, str)
+    ]
+
+
+async def persist_captive_outcome(
+    db: AsyncSession,
+    game_session: SessionModel,
+    outcome: dict,
+    *,
+    event_id: int,
+    turn_id: str,
+) -> None:
+    """Apply an engine-decided release or kill to its combat-owned NPC row and the ledger.
+
+    Caller commits. A replay that already holds the target state is a no-op; any other state
+    other than `captive` is a stale plan and fails the whole turn.
+    """
+    action = outcome.get("action")
+    if _CAPTIVE_NPC_DISPOSITION.get(action) != outcome.get("npc_disposition"):
+        raise ValueError("Captive outcome is not a supported engine action")
+    combat_id, combatant_id = outcome.get("combat_id"), outcome.get("combatant_id")
+    if not isinstance(combat_id, int) or not isinstance(combatant_id, str):
+        raise ValueError("Captive outcome has no encounter identity")
+    npc = await db.scalar(
+        select(NPC)
+        .where(
+            NPC.session_id == game_session.id,
+            NPC.story_identity == _combat_npc_identity(combat_id, combatant_id),
+        )
+        .with_for_update()
+    )
+    if npc is None:
+        raise ValueError("Captive record for this encounter is missing")
+    target = outcome["npc_disposition"]
+    if npc.disposition != target:
+        if npc.disposition != "captive":
+            raise ValueError("A captive outcome cannot be rewritten")
+        npc.disposition = target
+        npc.stat_block = {
+            **(npc.stat_block or {}),
+            "life_state": "dead" if action == "kill" else "living",
+        }
+    await persist_captive_fact(
+        db,
+        game_session,
+        combat_id=combat_id,
+        combatant_id=combatant_id,
+        status="dead" if action == "kill" else "released",
+        display_name=npc.name,
+        combat_round=outcome.get("combat_round"),
+        event_id=event_id,
+        turn_id=turn_id,
+    )
     await db.flush()

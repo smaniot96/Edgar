@@ -48,7 +48,7 @@ Compose explicitly rotates container output with the `json-file` driver, retaini
 
 `docker-compose.dev.yml` is a tracked, optional overlay: it mounts backend source, runs uvicorn with `--reload`, enables developer diagnostics, and mounts current migrations into the migration job. Select it with `make dev-up` or `docker compose -f docker-compose.yml -f docker-compose.dev.yml ...`. Matching `dev-build`, `dev-migrate`, `dev-logs` and `dev-down` targets use the same files. Plain Make targets select only `docker-compose.yml` and do not auto-load personal overrides. The former local `docker-compose.override.yml` was removed; Compose no longer automatically applies it.
 
-Uploads and AI generation run as in-process background tasks. If the API restarts mid-way, the adventure is marked `failed` on the next startup; `POST /api/adventures/{slug}/retry` re-runs it.
+Uploads and AI generation run as in-process background tasks. A restart marks unfinished work `interrupted` on startup; it does not resume a worker automatically. Generation saves its outline and completed chapters so an explicit retry can resume missing chapters or rebuild the index from a completed manuscript. PDF jobs retry from a retained upload or inspected extraction. A failed replacement leaves the last published source available, and `POST /api/adventures/{slug}/cancel` requests cancellation at the next safe boundary. Adventure status includes a safe job summary with the current stage, saved chapter count and next recovery action; it does not expose manuscript content or invent a percentage/ETA.
 
 ## Playing
 
@@ -87,21 +87,34 @@ simulate (`GET /api/rules/supported-scope`):
 - Executed by the engine: d20 ability, skill, save and tool checks against DCs of 10/15/20/25;
   weapon attacks with natural 1 and 20 handling and proficiency only where the class or sheet grants
   it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
-  table; initiative; combat rounds in initiative order; Fighter Second Wind (once per encounter);
-  short and long rest healing; healing potions taken from inventory.
+  table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, spent by the
+  player's action in or out of combat and restored by a short or long rest; no automatic use at 0
+  HP); short and long rest healing (a long rest also restores spell slots); healing potions taken
+  from inventory.
+- Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
+  darts, upcast by slot), Sacred Flame (DEX save) and Cure Wounds (self-heal). Their dice are
+  rolled by the engine, leveled spells spend a slot tracked per character, and a cast with no slot
+  left is refused with no effect.
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage) or knocks it prone (its attacks have
   disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
   release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
   are shown in the combat roster and given to the narrator.
+- Captives: a foe knocked out in a nonlethal victory stays alive as a captive. The player can release
+  it (it is no longer a captive and is never an enemy again) or kill it, but only with an explicit
+  lethal declaration in their own words; no dice are rolled. An attack on a captive without that
+  declaration starts no combat and receives a ruling asking whether to release, question or kill.
+  Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
-  other maneuvers, escape contests, declared spell effects, spell slots and concentration, other
-  condition effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and
-  class features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
+  other maneuvers, escape contests, spells outside that catalog, concentration, other condition
+  effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and class
+  features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
   mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
-  scaled down for a single level-1 hero.
+  fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
+  with level. Over-budget foes are clamped or left out, exact creature identities are kept, and the
+  combat start notes any adaptation.
 
 ## Repo layout
 

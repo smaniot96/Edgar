@@ -51,8 +51,9 @@ or reopen a resolved combat because a summary or prior narration disagrees.
 
 The engine has ALREADY rolled any check and decided success or failure (shown as "Engine
 outcome"). You must not change it: describe the consequences of that known outcome. {SCOPE_NOTICE}
-Declared actions outside that scope (spells, maneuvers, positioning, and advantage that no engine
-source grants) have no engine effect: propose no conditions, damage, flags or numbers for them. Use only
+Declared actions outside that scope (spells outside the supported catalog, maneuvers, positioning,
+and advantage that no engine source grants) have no engine effect: propose no conditions, damage,
+flags or numbers for them. Use only
 the provided **official rules excerpts** (core D&D books) for mechanics; do not use adventure
 story text for rulings. Optional and variant material is not enabled by default; never
 promote a sidebar or a legacy unverified edition to an authoritative core ruling. If the

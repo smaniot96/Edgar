@@ -45,14 +45,19 @@ from agent.nodes.narrator import (
     make_narrator_model,
     narrator_context,
 )
-from agent.supported_rules import actions_for_state, apply_narration_boundary, engine_roll_mode
+from agent.supported_rules import (
+    actions_for_state,
+    apply_narration_boundary,
+    engine_roll_mode,
+    executed_spell_for_state,
+)
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
 from edgar_core.sources import citations_for, public_citations
 
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
-from .combat import persist_combat, persist_combat_npcs
+from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
 from .roll_record import build_roll_record, roll_status_for
 from .world_writes import (
     MissingCharacterAssignmentError,
@@ -237,7 +242,11 @@ async def persist_turn(
             ):
                 raise ValueError("Turn state changed during generation")
 
-            from .story_state import load_story_state, persist_story_effects
+            from .story_state import (
+                load_story_state,
+                persist_combat_outcome_facts,
+                persist_story_effects,
+            )
 
             expected_story = result.get("story_state") or {"facts": []}
             current_story = await load_story_state(db, session_id, game_session.campaign_id)
@@ -282,6 +291,7 @@ async def persist_turn(
                     },
                 )
 
+            combat_id = None
             if new_combat:
                 combat_id = await persist_combat(db, session_id, new_combat)
                 await persist_combat_npcs(
@@ -333,6 +343,25 @@ async def persist_turn(
                     effects,
                     event_id=narration_event.id,
                     expected_state=expected_story,
+                )
+            # EDG-146: engine outcomes join the same ledger and NPC rows in this transaction.
+            ledger_turn = turn_id or f"engine-{narration_event.id}"
+            if combat_id is not None and new_combat.get("ended"):
+                await persist_combat_outcome_facts(
+                    db,
+                    game_session,
+                    combat_id,
+                    new_combat,
+                    event_id=narration_event.id,
+                    turn_id=ledger_turn,
+                )
+            if result.get("captive_outcome"):
+                await persist_captive_outcome(
+                    db,
+                    game_session,
+                    result["captive_outcome"],
+                    event_id=narration_event.id,
+                    turn_id=ledger_turn,
                 )
 
             character_out = await character_play_state(
@@ -410,6 +439,9 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         "current_turn_index": combat_state.get("current_turn_index"),
         "player_ac": combat_state.get("player_ac"),
         "second_wind_used": combat_state.get("second_wind_used", False),
+        # Additive (EDG-148): whether the engine fitted this roster to the solo budget, and why.
+        "solo_budget": combat_state.get("solo_budget"),
+        "second_wind_uses_remaining": combat_state.get("second_wind_uses_remaining"),
     }
 
 
@@ -574,7 +606,10 @@ async def stream_session_turn(
             yield sse_event("error", error_body("llm_unavailable"))
             return
         narration = apply_narration_boundary(
-            message_text(response), actions, engine_roll_mode=engine_roll_mode(state)
+            message_text(response),
+            actions,
+            engine_roll_mode=engine_roll_mode(state),
+            executed_spell=executed_spell_for_state(state),
         )
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})

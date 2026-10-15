@@ -28,7 +28,7 @@ def _bundle(slug: str):
     if kind not in ("pdf", "generated", "text"):
         raise ManifestError("Source kind is unverified. Recover its canonical extraction first.")
     extraction = load_reviewed_extraction(
-        store.PDF_DIR / f"{slug}.pdf" if kind == "pdf" else None,
+        store.source_pdf_path(slug, meta) if kind == "pdf" else None,
         _active_extraction_path(slug, meta),
     )
     if (
@@ -129,7 +129,7 @@ def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
     try:
         if meta["ingestion"]["source_kind"] == "pdf":
             chunks = run_pipeline(
-                store.PDF_DIR / f"{slug}.pdf",
+                store.source_pdf_path(slug, meta),
                 slug,
                 replace=True,
                 reviewed_extraction=_active_extraction_path(slug, meta),

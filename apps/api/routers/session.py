@@ -28,7 +28,11 @@ from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, Sessi
 from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
 from ..services.campaign_sources import require_campaign_sources
 from ..services.character_assignments import character_play_state, load_active_assignment
-from ..services.combat import load_active_combat, load_resolved_combat_outcomes
+from ..services.combat import (
+    load_active_combat,
+    load_combat_captives,
+    load_resolved_combat_outcomes,
+)
 from ..services.npcs import load_npcs
 from ..services.roll_record import stored_roll
 from ..services.session_intro import generate_session_intro
@@ -135,6 +139,7 @@ async def _load_turn_initial_state(
         or (next(iter(manifests.values()))["opening_scene_id"] if manifests else None),
         "character": character,
         "npcs": npc_summaries,
+        "combat_captives": await load_combat_captives(db, session_id),
         "memory_summary": memory_summary,
     }
     combat = await load_active_combat(db, session_id)
@@ -381,7 +386,8 @@ async def session_turn(
             citations=done["citations"],
             rules_edition=done["rules_edition"],
             ruling_citation_ids=done["ruling_citation_ids"],
-            combat_state=result.get("combat_state"),
+            # The public roster shape only: raw combatants carry planner-only creature provenance.
+            combat_state=done["combat_state"],
             current_scene_id=done["current_scene_id"],
             character=done["character"],
             campaign_complete=done["campaign_complete"],

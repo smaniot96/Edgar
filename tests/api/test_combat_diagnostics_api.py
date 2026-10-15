@@ -78,7 +78,14 @@ async def test_sync_combat_turn_stores_round_and_reload_returns_it(
     assert {a["id"] for a in row["actors"]} <= {"Goblin"}
     assert any(d["is_player"] for d in row["dispositions"])
     # Planner-only creature provenance never reaches the player payload or the stored row.
-    assert "e" * 64 not in turn.text and "source_sha256" not in turn.text
+    # (The developer `debug` block legitimately lists retrieved chunks with their provenance, so
+    # the player-facing fields and the combat diagnostics are checked individually.)
+    player_visible = str(
+        {k: body.get(k) for k in ("narration", "adjudication", "combat_state", "character")}
+    )
+    assert "e" * 64 not in player_visible and "source_sha256" not in player_visible
+    assert "source_sha256" not in str(body["combat_diagnostics"])
+    assert "e" * 64 not in str(body["combat_diagnostics"])
     assert "e" * 64 not in str(row)
 
     reloaded = await api_client.get(f"/api/sessions/{sid}/diagnostics/combat")
