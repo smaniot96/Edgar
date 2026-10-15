@@ -51,7 +51,7 @@ hero's concentration is the `concentration` field of the combat payload and of t
 foe's position band and spent reaction are stored on its combatant row (`band`, `reaction_used`,
 additive; a row without `band` reads as melee and is not rewritten), and a Dash or Disengage the hero
 takes is recorded in the turn's `economy`. The scope is also summarised in the rules and narrator
-prompts.
+prompts. Declared actions are read in English. Italian and Spanish are read only for a few casting, advantage, cover, lethality and action words. A catalog spell resolves only when its English name is in the declaration; a spell the parser names from another language is ruled as not resolved. Other languages are not classified by these words and rely on the parser's own entities. The payload carries this as `declaration_language`.
 
 ## Health
 

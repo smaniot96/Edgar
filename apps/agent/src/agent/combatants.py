@@ -95,17 +95,24 @@ _EFFECT_TEXT = {
 }
 
 # The player's own declared intent, read from their words. Nonlethal wins when both appear
-# ("I try to knock him out, I don't want to kill him").
+# ("I try to knock him out, I don't want to kill him"). Italian and Spanish intent words are read
+# too ("ucciderlo", "matarlo", "KO", "sin matarlo"); other languages are not declared (see README).
 _NONLETHAL_TEXT = re.compile(
-    r"\b(?:knock\w*\s+(?:\w+\s+){0,3}out|subdu\w*|non-?lethal\w*|take\s+\w+\s+(?:alive|prisoner)"
-    r"|capture\w*|(?:don'?t|do\s+not|won'?t|will\s+not|without)\b[^.!?\n]{0,40}?\bkill\w*"
+    r"\b(?:knock\w*\s+(?:\w+\s+){0,3}out|subdu\w*|non-?lethal\w*|take\s+(?:\w+\s+){0,3}(?:alive|prisoner)"
+    r"|capture\w*|prisoner|prisionero\w*|prigionier\w*|cattur\w*|captur\w*"
+    r"|(?:don'?t|do\s+not|won'?t|will\s+not|without)\b[^.!?\n]{0,40}?\bkill\w*"
+    r"|\bnot\s+(?:to\s+|trying\s+to\s+)?kill\w*|senza\s+uccid\w*|non\s+voglio\s+uccid\w*"
+    r"|sin\s+matar\w*|\bKO\b|inconscient\w*|unconscious|senseless|insensible"
     r"|spare\s+(?:\w+\s+)?life"
     r"|stun\w*)\b",
     re.IGNORECASE,
 )
+# "kill time" and "kill the lights" are not attacks on a creature.
 _LETHAL_TEXT = re.compile(
-    r"\b(?:kill|kills|killing|slay|slays|execute|executes|finish\s+(?:him|her|them|it)\s+off"
-    r"|cut\s+(?:him|her|them|it)\s+down|butcher)\b",
+    r"\b(?:(?:kill|kills|killing)\b(?!\s+(?:time|the\s+(?:lights?|lamp|candles?|music|engine|power"
+    r"|mood|conversation|silence)))|slay|slays|execute|executes|finish(?:es|ed|ing)?\s+off"
+    r"|finish\s+(?:him|her|them|it)\s+off|cut\s+(?:him|her|them|it)\s+down|butcher"
+    r"|\bmatar\w*|\bammazz\w*|\buccid\w*)\b",
     re.IGNORECASE,
 )
 # Post-combat NPC dispositions written for combatants (session NPC rows, not manual records).
@@ -119,7 +126,11 @@ _ATTACK_VERBS = (
     r"thrusts?|fires|lashes?|smashes?|clubs?|jabs?|hurls?|charges?"
 )
 _OTHER_ATTACKER = re.compile(
-    r"\b(?:other|second|another|additional|third|remaining)\s+([a-z][a-z-]*)\b", re.IGNORECASE
+    # Only an attack by a second X counts ("the other goblin remains poised" is not an attacker). "the
+    # remaining Raider" names the surviving foe and is not listed.
+    r"\b(?:other|second|another|additional|third)\s+([a-z][a-z-]*)\b"
+    r"[^.!?\n]{0,40}?\s(?:" + _ATTACK_VERBS + r")\b",
+    re.IGNORECASE,
 )
 # Supported contested maneuvers, read from the player's words (EDG-021). Shove-away and other
 # maneuvers are not matched here, so they stay unsupported and receive a ruling.
@@ -198,16 +209,25 @@ def can_act(c: Mapping[str, Any]) -> bool:
 
 
 def declared_lethality(parsed: Any, player_input: str | None) -> Lethality | None:
-    """The player's declared intent for an attack: the parser's field, else their own words."""
+    """The player's declared intent for an attack: the parser's field, else their own words.
+
+    EDG-147 measurement: the real parser named a lethal kill for "stab through the heart" with no
+    declaration in the words. A kill is never inferred, so a parser-only "lethal" is ignored. A
+    parser-declared "nonlethal" stands alone (the foe is left alive), and a field that the words
+    contradict is kept as before (EDG-022). Without a field, the words decide.
+    """
+    text = player_input or ""
+    words: Lethality | None = None
+    if _NONLETHAL_TEXT.search(text):
+        words = "nonlethal"
+    elif _LETHAL_TEXT.search(text):
+        words = "lethal"
     declared = getattr(parsed, "lethality", None)
+    if declared == "lethal" and words is None:
+        return None
     if declared in ("lethal", "nonlethal"):
         return declared
-    text = player_input or ""
-    if _NONLETHAL_TEXT.search(text):
-        return "nonlethal"
-    if _LETHAL_TEXT.search(text):
-        return "lethal"
-    return None
+    return words
 
 
 def apply_defeat(c: dict, lethality: Lethality | None) -> None:
@@ -444,7 +464,7 @@ def roster_violations(text: str, combatants: Iterable[Mapping[str, Any]]) -> lis
     for match in _OTHER_ATTACKER.finditer(text):
         noun = match.group(1).lower()
         if noun in all_nouns and active_nouns[noun] <= 1:
-            problems.append(match.group(0))
+            problems.append(" ".join(match.group(0).split()[:2]))
     return problems
 
 

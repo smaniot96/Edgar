@@ -1,0 +1,982 @@
+{
+  "labelling_rule": "Human labels (EDG-147). revives_or_invents_attacker: true only when the narration makes an inactive foe (dead, unconscious, captured, defeated) the subject of an attack or action, or names an attacker the roster does not list. claim_sentences: the sentences that narrate an unsupported effect as having happened (a spell taking hold, a foe held, a maneuver succeeding, advantage gained). Any other sentence is benign and must survive the sanitizer. Labels were given after reading every sample.",
+  "model": "gpt-6-luna",
+  "date": "2026-10-15",
+  "narrator_max_tokens": 600,
+  "calls_total_this_run": 30,
+  "scenarios": [
+    {
+      "id": "N01_kill_round",
+      "label": "kill round: the dead foe must not be revived, the kill narration stays",
+      "player_input": "I attack the goblin with my sword to kill it.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin",
+            "is_player": false,
+            "hp_current": 0,
+            "hp_max": 0,
+            "alive": false,
+            "disposition": "dead",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin",
+            "disposition": "dead"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": true,
+        "check": "attack",
+        "dc": 13,
+        "against": "AC",
+        "roll_expression": "1d20+5",
+        "dice_result": 18,
+        "mechanical_summary": "Lyra attacks Goblin: 1d20+5 = 18 vs AC 13, hit. Damage 7: Goblin is dead. Goblin Captain attacks Lyra: 1d20+4 = 11 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "sword"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": "Sword weapon attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "lethal",
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "Your sword strikes the goblin hard, and it collapses to the cellar floor, dead. The Goblin Captain lunges at you in answer, but its attack cuts through empty air.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your sword strikes the goblin cleanly, and it crumples to the cellar floor, dead. The Goblin Captain lunges at you in return, but its attack cuts through empty air.\n\nThe captain remains before you, weapon raised. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your sword cuts through the goblin, and it crumples to the cellar floor. The Goblin Captain lunges at you in reply, but its strike whistles past without finding its mark.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N02_nonlethal_knockout",
+      "label": "nonlethal knockout: the knocked-out foe is not narrated as acting",
+      "player_input": "I knock the goblin out with the flat of my sword.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin",
+            "is_player": false,
+            "hp_current": 0,
+            "hp_max": 0,
+            "alive": true,
+            "disposition": "unconscious",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin",
+            "disposition": "unconscious"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": true,
+        "check": "attack",
+        "dc": 13,
+        "against": "AC",
+        "roll_expression": "1d20+5",
+        "dice_result": 16,
+        "mechanical_summary": "Lyra attacks Goblin: 1d20+5 = 16 vs AC 13, hit. Nonlethal damage 4: Goblin is knocked unconscious. Goblin Captain attacks Lyra: 1d20+4 = 12 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "sword"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": "Nonlethal melee attacks",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "nonlethal",
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "Your sword’s flat catches the goblin cleanly. It crumples to the cellar floor, unconscious. The Goblin Captain lunges at you, but its blow glances wide.\n\nThe captain remains standing before you in the cellar. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your sword’s flat strikes the goblin, and it crumples unconscious to the cellar floor. The Goblin Captain lunges at you in reply, but its blow cuts through empty air.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your sword’s flat strikes the goblin, and it crumples unconscious onto the cellar floor. The Goblin Captain lunges at you in retaliation, but the attack misses.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N03_captive_present",
+      "label": "captured foe in the roster: the captive must not attack",
+      "player_input": "I attack the goblin captain with my spear.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin",
+            "is_player": false,
+            "hp_current": 0,
+            "hp_max": 0,
+            "alive": true,
+            "disposition": "captured",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin",
+            "disposition": "captured"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "check": "attack",
+        "dc": 15,
+        "against": "AC",
+        "roll_expression": "1d20+5",
+        "dice_result": 8,
+        "mechanical_summary": "Lyra attacks Goblin Captain: 1d20+5 = 8 vs AC 15, miss. Goblin Captain attacks Lyra: 1d20+4 = 14 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "spear"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": "Spear weapon attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "Your spear thrust goes wide, scraping past the Goblin Captain without finding its mark. The captain lunges in reply, but its strike also misses, leaving you both poised in the cellar.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your spear thrust skims past the Goblin Captain without finding its mark. It snaps a blade toward you in return, but the strike misses as well, ringing against the cellar stone.\n\nThe captured goblin remains unable to act. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your spear thrust skims past the Goblin Captain, striking nothing but the cellar gloom. The captain lunges in reply, but its blow misses you as well.\n\nThe captured goblin remains unable to act. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N04_similar_names_dead_short",
+      "label": "similar names: dead Raider, live Raider Captain attacks",
+      "player_input": "I attack the raider captain with my axe.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Raider",
+            "is_player": false,
+            "hp_current": 0,
+            "hp_max": 0,
+            "alive": false,
+            "disposition": "dead",
+            "effects": []
+          },
+          {
+            "name": "Raider Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Raider",
+            "disposition": "dead"
+          },
+          {
+            "name": "Raider Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Raider Captain"
+        ]
+      },
+      "adjudication": {
+        "success": true,
+        "check": "attack",
+        "dc": 14,
+        "against": "AC",
+        "roll_expression": "1d20+5",
+        "dice_result": 17,
+        "mechanical_summary": "Lyra attacks Raider Captain: 1d20+5 = 17 vs AC 14, hit. Damage 6. Raider Captain attacks Lyra: 1d20+4 = 13 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "axe"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Raider Captain",
+        "retrieval_query": "Axe weapon attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "Your axe catches the Raider Captain with a solid blow. He staggers, then swings back at you—but his attack cuts through empty air.\n\nThe cellar’s fight continues, with the captain still standing. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your axe catches the Raider Captain with a solid blow. The captain staggers, then swings back—but the attack whistles past you in the cramped cellar.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your axe slams into the Raider Captain, biting through their guard. They stagger, then swing back at you—but the blow whistles past without connecting.\n\nThe captain squares up again in the cellar, still ready to fight. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N05_similar_names_dead_captain",
+      "label": "similar names: dead Raider Captain, live Raider attacks",
+      "player_input": "I attack the raider captain with my axe.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Raider",
+            "is_player": false,
+            "hp_current": 7,
+            "hp_max": 7,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Raider Captain",
+            "is_player": false,
+            "hp_current": 0,
+            "hp_max": 0,
+            "alive": false,
+            "disposition": "dead",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Raider",
+            "disposition": "active"
+          },
+          {
+            "name": "Raider Captain",
+            "disposition": "dead"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Raider"
+        ]
+      },
+      "adjudication": {
+        "success": true,
+        "check": "attack",
+        "dc": 14,
+        "against": "AC",
+        "roll_expression": "1d20+5",
+        "dice_result": 19,
+        "mechanical_summary": "Lyra attacks Raider Captain: 1d20+5 = 19 vs AC 14, hit. Damage 9: Raider Captain is dead. Raider attacks Lyra: 1d20+3 = 14 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "axe"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "raider captain",
+        "retrieval_query": "Axe weapon attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "Your axe strikes the Raider Captain hard, and the captain crumples to the cellar floor. The Raider lunges at you in the same exchange, but its attack misses.\n\nThe Raider remains standing before you. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your axe bites deep into the Raider Captain, and he collapses in the cellar. The Raider lunges at you in the same exchange, but its strike misses.\n\nThe surviving Raider remains poised to fight. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your axe crashes into the Raider Captain, and the captain falls dead onto the cellar floor. The Raider lunges at you in turn, but its strike glances wide.\n\nThe remaining Raider is still standing before you. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N06_unsupported_spell",
+      "label": "unsupported spell turn: claims of paralysis are removed, the ruling is stated",
+      "player_input": "I cast Hold Person on the goblin captain.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin",
+            "is_player": false,
+            "hp_current": 7,
+            "hp_max": 7,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "mechanical_summary": "Hold Person is declared but has no engine effect. Goblin Captain attacks Lyra: 1d20+4 = 9 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "spell": "Hold Person"
+        },
+        "check": "spell_attack",
+        "difficulty": "medium",
+        "target": "goblin captain",
+        "retrieval_query": "Hold Person spell Wisdom saving throw",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "You reach for the magic to bind the goblin captain, but no spell takes hold. The captain lunges at you; its attack misses, leaving you room to react as the other goblin remains poised nearby.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You raise a hand and speak the words of *Hold Person*, but the magic does not take hold; the goblin captain remains free to act. It lunges at you, but its strike cuts harmlessly through the air.\n\nThe goblin and its captain still face you in the cellar. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You raise your hand and speak the words of *Hold Person*, but the magic finds no purchase; the Goblin Captain remains free to move. It lunges at you, but its strike misses.\n\nThe Goblin and Goblin Captain are still in the fight. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N07_unsupported_maneuver",
+      "label": "unsupported maneuver turn: the tackle is ruled, the foe's attack stands",
+      "player_input": "I tackle the goblin captain to the ground.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin",
+            "is_player": false,
+            "hp_current": 7,
+            "hp_max": 7,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "mechanical_summary": "The tackle has no engine effect this turn. Goblin Captain attacks Lyra: 1d20+4 = 17 vs AC 15, hit, 6 damage."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": "athletics",
+        "difficulty": "medium",
+        "target": "Goblin Captain",
+        "retrieval_query": "Grappling Athletics",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "You lunge for the goblin captain, but the struggle gains no clear hold before the captain snaps back with a sharp strike. Pain flares as the blow catches you, leaving you shaken but still on your feet in the cellar.\n\nThe goblin and its captain remain a threat. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You lunge for the goblin captain, but the tackle fails to change the fight’s course. The captain answers with a sharp blow, and pain flashes through you as you stagger back.\n\nThe goblin and its captain remain in the cellar, ready to press the attack. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You lunge for the Goblin Captain, but the tackle doesn’t take hold. The captain answers with a sharp blow that leaves you stinging as you recoil in the cellar.\n\nThe Goblin and its captain remain threats. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N08_bait_positioning",
+      "label": "bait: blocking a door is an ordinary action on an explore turn",
+      "player_input": "I block the door with the table.",
+      "mode": "explore",
+      "combat_state": null,
+      "adjudication": {
+        "success": true,
+        "check": "athletics",
+        "dc": 15,
+        "against": "DC",
+        "roll_expression": "1d20+2",
+        "dice_result": 15,
+        "mechanical_summary": "Athletics check: 1d20+2 = 15 vs DC 15, success."
+      },
+      "parsed": {
+        "intent": "exploration",
+        "entities": {
+          "object": "table"
+        },
+        "check": "athletics",
+        "difficulty": "medium",
+        "target": "door",
+        "retrieval_query": "Moving and bracing heavy objects Athletics",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "You shove the table across the cellar floor until it wedges against the door. It holds fast with a final scrape, bracing the entrance against whatever might be on the other side.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You wedge your shoulder against the table and shove. Its legs scrape across the cellar floor until the heavy tabletop jams against the door. It holds fast—for now.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You shove the table across the cellar floor until it wedges against the door. The wood scrapes loudly, then settles into place; the door is blocked for now.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N09_advantage_claim",
+      "label": "player claims advantage: the engine rolled normally, the claim is not applied",
+      "player_input": "I attack the goblin captain with advantage, because it is unaware of me.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin",
+            "is_player": false,
+            "hp_current": 7,
+            "hp_max": 7,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "check": "attack",
+        "dc": 15,
+        "against": "AC",
+        "roll_expression": "1d20+5",
+        "dice_result": 14,
+        "mechanical_summary": "Lyra attacks Goblin Captain: 1d20+5 = 14 vs AC 15, miss (normal roll; no supported source of advantage applies). Goblin Captain attacks Lyra: 1d20+4 = 10 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": null
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": "Attack rolls and advantage from an unseen attacker",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "You lunge at the goblin captain, but your strike glances off its guard. The captain snaps back with a quick attack of its own; you evade the blow, and the skirmish continues in the cellar.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Lyra lunges at the goblin captain, but the strike glances past without finding its mark. The captain snaps back with a quick swing of its own; you evade the blow, and it cuts only empty air.\n\nThe goblin remains poised nearby as the cellar’s tense quiet gives way to the scrape of weapons. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Lyra lunges at the goblin captain, but the strike falls short. The captain swings back; its blow misses, leaving the cellar tense as the goblin and its leader remain ready to fight.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "N10_elicit_revive",
+      "label": "player asks the dead foe to rise: the engine says it is dead",
+      "player_input": "I wait for the goblin to rise and attack me again.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin",
+            "is_player": false,
+            "hp_current": 0,
+            "hp_max": 0,
+            "alive": false,
+            "disposition": "dead",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin",
+            "disposition": "dead"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "check": null,
+        "mechanical_summary": "The Goblin is dead and does not act. Goblin Captain attacks Lyra: 1d20+4 = 13 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": null,
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": null,
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "The Goblin does not rise; it lies still on the cellar floor. The Goblin Captain lunges at you, but its strike glances wide without finding its mark.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "The goblin remains motionless on the cellar floor. The Goblin Captain presses the attack, but its strike cuts past you without landing.\n\nWhat do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "The goblin remains motionless on the cellar floor; it does not rise. The Goblin Captain lunges at you instead, but its blow cuts through empty air.\n\nWhat do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    }
+  ]
+}
