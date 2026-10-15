@@ -22,13 +22,23 @@ describe("turnReducer", () => {
       { type: "adjudication", turnId: "t1", result: adj },
       { type: "token", turnId: "t1", text: "You " },
       { type: "token", turnId: "t1", text: "hit." },
-      { type: "done", turnId: "t1", result: { narration: "ignored", combat_state: null } },
+      { type: "done", turnId: "t1", result: { narration: "You hit.", combat_state: null } },
     ]);
     expect(s.pending).toBeNull();
     expect(s.lines).toHaveLength(2);
     expect(s.lines[0]).toMatchObject({ role: "user", content: "I attack", turnId: "t1" });
     expect(s.lines[1]).toMatchObject({ role: "dm", content: "You hit.", adjudication: adj, isTurn: true });
     expect(s.announcement).toBe("You hit.");
+  });
+
+  it("replaces provisional tokens with the authoritative committed narration", () => {
+    const s = run([
+      { type: "start", turnId: "t1", requestId: "r1", input: "look" },
+      { type: "token", turnId: "t1", text: "The door begins to" },
+      { type: "done", turnId: "t1", result: { narration: "The door opens completely." } },
+    ]);
+    expect(s.lines[1]).toMatchObject({ role: "dm", content: "The door opens completely." });
+    expect(s.announcement).toBe("The door opens completely.");
   });
 
   it("falls back to the done payload's narration when no tokens streamed", () => {

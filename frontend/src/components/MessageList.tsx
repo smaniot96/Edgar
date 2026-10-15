@@ -93,7 +93,9 @@ const DmRow = memo(function DmRow({ line, isDev }: { line: DmLine; isDev: boolea
           </details> : null}
         </div>
         {line.interrupted ? (
-          <p className="mt-1 text-xs italic text-ember-400/80">— narration interrupted (not saved)</p>
+          <p className="mt-1 text-xs italic text-ember-400/80">
+            {line.uncertain ? "— narration interrupted; save not confirmed" : "— narration interrupted (not saved)"}
+          </p>
         ) : null}
       </div>
       {line.combatOutcome ? (
@@ -184,7 +186,7 @@ function Row({
             <span className="sr-only">You: </span>
             {line.content}
           </div>
-          {line.failed ? <span className="text-[0.7rem] text-ink-subtle">Not recorded</span> : null}
+          {line.failed ? <span className="text-[0.7rem] text-ink-subtle">{line.uncertain ? "Save not confirmed" : "Not recorded"}</span> : null}
         </div>
       );
     case "dm":

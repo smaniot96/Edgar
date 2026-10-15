@@ -19,6 +19,8 @@ interface BaseLine {
   turnId?: string;
   /** Player-safe narration event used to open this line from a journal entry. */
   eventId?: number;
+  /** Transport ended before the server's saved outcome could be confirmed. */
+  uncertain?: boolean;
 }
 
 export interface UserLine extends BaseLine {
@@ -143,7 +145,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       return {
         ...state,
         lines: [...state.lines,
-          { id: `${action.turnId}:user`, turnId: action.turnId, role: "user", content: action.input, failed: true },
+          { id: `${action.turnId}:user`, turnId: action.turnId, role: "user", content: action.input, failed: true, uncertain: true },
           { id: `${action.turnId}:error`, turnId: action.turnId, role: "error", content: "Checking whether this action was saved…", retryInput: action.input, retryRequestId: action.requestId, draftRevision: action.draftRevision, uncertain: true },
         ],
       };
@@ -172,8 +174,8 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
   if (action.type === "markRetryable") {
     return {
       ...state,
-      lines: state.lines.map((line) => line.role === "error" && line.turnId === action.turnId
-        ? { ...line, content: action.message, uncertain: false }
+      lines: state.lines.map((line) => line.turnId === action.turnId
+        ? { ...line, ...(line.role === "error" ? { content: action.message } : {}), uncertain: false }
         : line),
     };
   }
@@ -186,7 +188,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
     const lines = state.lines.filter((line) => line.turnId !== action.turnId);
     const alreadyInHistory = eventId != null && lines.some((line) => line.role === "dm" && line.eventId === eventId);
     if (alreadyInHistory) return { ...state, lines, pending: null, announcement: narration };
-    if (existingUser?.role === "user") lines.push({ ...existingUser, failed: false });
+    if (existingUser?.role === "user") lines.push({ ...existingUser, failed: false, uncertain: false });
     lines.push({
       id: `${action.turnId}:dm`,
       turnId: action.turnId,
@@ -227,9 +229,8 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       return { ...state, pending: { ...p, debug: action.payload } };
     case "done": {
       const r = action.result;
-      const fallback =
+      const content =
         typeof r.narration === "string" && r.narration.trim() ? r.narration : "[no narration]";
-      const content = p.text.trim() ? p.text : fallback;
       const line: DmLine = {
         id: `${p.turnId}:dm`,
         turnId: p.turnId,
@@ -257,7 +258,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         };
       }
       const lines: Line[] = state.lines.map((l) =>
-        l.turnId === p.turnId && l.role === "user" ? { ...l, failed: true } : l,
+        l.turnId === p.turnId && l.role === "user" ? { ...l, failed: true, uncertain: action.uncertain } : l,
       );
       if (p.text.trim()) {
         lines.push({
@@ -269,6 +270,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
           debug: p.debug,
           isTurn: true,
           interrupted: true,
+          uncertain: action.uncertain,
         });
       }
       lines.push({

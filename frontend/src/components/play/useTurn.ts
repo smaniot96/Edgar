@@ -77,6 +77,8 @@ async function readReceipt(response: Response): Promise<TurnResult> {
 export function useTurn(sessionId: number, options: UseTurnOptions) {
   const [state, dispatch] = useReducer(turnReducer, initialTurnState);
   const [checking, setChecking] = useState(false);
+  const linesRef = useRef(state.lines);
+  useEffect(() => { linesRef.current = state.lines; }, [state.lines]);
   const optsRef = useRef(options);
   useEffect(() => { optsRef.current = options; });
   const activeRef = useRef<ActiveTurn | null>(null);
@@ -114,8 +116,15 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
       if (ctrl.signal.aborted) return;
       if (response.status === 200) {
         const result = await readReceipt(response);
+        if (ctrl.signal.aborted) return;
+        const alreadyLoaded = result.event_id != null && linesRef.current.some(
+          (line) => line.role === "dm" && line.eventId === result.event_id,
+        );
         dispatch({ type: "receiptCommitted", turnId, result });
-        notifyCommitted(result, requestId, draftRevision);
+        // Boot already holds current state when this historical receipt is in its log.
+        // Acknowledge the draft without replaying old character snapshots or success chips.
+        if (alreadyLoaded) optsRef.current.onAcknowledged?.(draftRevision, requestId);
+        else notifyCommitted(result, requestId, draftRevision);
       } else if (response.status === 404) {
         dispatch({ type: "markRetryable", turnId, message: "The server confirms this action was not saved. You can retry it safely." });
       } else if (response.status === 409) {
