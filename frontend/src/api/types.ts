@@ -370,6 +370,10 @@ export interface Combatant {
   disposition?: string | null;
   can_act?: boolean | null;
   effects?: CombatEffect[] | null;
+  /** A foe's distance band from the hero (EDG-044): "melee" or "ranged"; null for the hero or a legacy row. */
+  band?: string | null;
+  /** Whether the foe's reaction is spent (EDG-044, an opportunity attack this round). */
+  reaction_used?: boolean | null;
 }
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | null;
@@ -386,6 +390,8 @@ export interface InitiativeEntry {
   disposition?: string | null;
   can_act?: boolean | null;
   effects?: CombatEffect[] | null;
+  band?: string | null;
+  reaction_used?: boolean | null;
 }
 
 /** What the hero's last turn spent, as the engine recorded it (EDG-044, additive). */
