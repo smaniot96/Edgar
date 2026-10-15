@@ -14,7 +14,7 @@ programmatic callers can explicitly set `stat_block_max` when splitting is inten
 boundaries under `--chunk-size` with `--overlap` characters of carry-over.
 
 Payload per point: `text, page, page_end, source, chunk_index, section, chapter, heading_path,
-stat_block, source_pages, source_sha256, extraction_sha256`. `source_pages` records actual
+stat_block, source_pages, source_sha256, extraction_sha256, rules_edition, index_version`. `source_pages` records actual
 contributing text, headings and overlap rather than inferring coverage from page ranges.
 Collections ingested before this change only have `text, page, source`; retrieval
 handles both. New collections get a `page` payload index (used by the session intro).
@@ -89,11 +89,16 @@ Options: `--collection` / `-c`, `--campaign-id`, `--chunk-size`, `--overlap`, `-
 
 ## Re-ingesting after the heading-aware chunker change
 
-Point ids hash the chunk boundaries, so a plain re-ingest would leave the old page-cut chunks next to
-the new ones. Use `--replace`: after **all** new chunks are embedded and upserted, points of the same
-`source` (PDF stem) that this run did not write are deleted. An embedding/upsert failure skips stale deletion, and other
-sources sharing the collection are untouched. Re-embedding costs OpenAI tokens (a core book is a few
-thousand chunks).
+Every ingest stages a complete immutable source version. Its digest covers full payload text,
+chunk boundaries, source/extraction hashes, reviewed manifest, declared edition and embedding
+model. Retries reuse only verified points of that exact version. Changed text under one source
+slug cannot mix with an older partial attempt.
+
+The complete stored payload/vector set is checked before a single Qdrant routing point activates
+it. Failed stages retain the prior ready version. Successful activation removes obsolete points
+only for that source; unrelated sources sharing the collection remain intact. Cleanup failure
+leaves inactive points hidden and an identical retry can finish cleanup without re-embedding.
+`--replace` remains available to request the explicit reviewed-PDF replacement workflow.
 
 Extract and inspect a complete bundle first. A changed PDF, changed preview, sampled subset or
 failed structural checks cannot be indexed as a reviewed source. For example:
@@ -130,13 +135,33 @@ Unknown layouts can fail closed and require source review.
 Representative text, stat records and **unreviewed** scene candidates are available from the
 library/recovery preview, with a plain-text full Markdown download. Failed PDF recovery can
 index an explicitly inspected current preview; exact acknowledged source/text hashes are
-rechecked by the worker. Generated recovery prunes stale same-source chunks after a complete
-validated upsert. Replacement retains existing post-upsert pruning; atomic promotion remains
-separate work. No live index is replaced by extraction-only inspection.
+rechecked by the worker. Workers reserve an attempt before dispatch and stage extraction bundles
+under the existing adventure directory's `.attempts/<id>/`. The canonical Markdown and extraction
+paths remain available. A failed replacement retains the prior ready manuscript, manifest and
+metadata receipt; its diagnostics remain in its attempt directory. Proposed receipts are persisted
+before atomic activation, so a restart after activation can select the matching receipt and
+immutable manuscript even before canonical file publication completes. Stale workers cannot
+activate an index or publish metadata/manuscript files after a newer accepted attempt.
+No live index is replaced by extraction-only inspection.
 
 For sampled offline QA, `--extract-only --pages 73 258` selects physical one-based pages.
 Sample bundles are inspectable but cannot be used for full indexing. See
 [EXTRACTION_QA.md](EXTRACTION_QA.md) for the five real-page checks and transcription limits.
+
+## Shared storage and concurrent readers
+
+`db.vector.versions.active_index_read(client, collection, query_filter=None)` composes the caller's
+filter with the current active-source route after one control-point read. Keep its context open
+for the entire query or paginated scroll. Readiness, reviewed scenes, retrieval and inspection
+use this contract; direct unfiltered Qdrant reads are storage diagnostics and include staging
+points plus the unembedded control point.
+
+All readers/writers coordinate activation and pruning through `flock` on one shared filesystem.
+Compose mounts `./data/.index-locks` at `/index-locks` in API, ingestion and rules-engine services.
+A host CLI using those services must set `EDGAR_INDEX_LOCK_DIR` to the absolute host
+`Edgar/data/.index-locks` directory (the default when `/data` is absent). Independent machines
+without that same lock directory are outside this concurrency contract. Existing Qdrant
+collections and their legacy source points remain usable without a migration.
 
 ## Migrating Qdrant data from legacy names
 

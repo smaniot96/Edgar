@@ -17,7 +17,14 @@ from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
-from qdrant_client.models import FieldCondition, Filter, HasIdCondition, MatchAny, MatchValue, PointStruct
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    HasIdCondition,
+    MatchAny,
+    MatchValue,
+    PointStruct,
+)
 
 from edgar_core.config import EDGAR_ROOT, EMBEDDING_MODEL
 
@@ -29,7 +36,9 @@ class SupersededIngestion(RuntimeError):
 
 
 def _lock_dir() -> Path:
-    default = Path("/data/.index-locks") if Path("/data").is_dir() else EDGAR_ROOT / "data/.index-locks"
+    default = (
+        Path("/data/.index-locks") if Path("/data").is_dir() else EDGAR_ROOT / "data/.index-locks"
+    )
     return Path(os.environ.get("EDGAR_INDEX_LOCK_DIR", default))
 
 
@@ -51,7 +60,9 @@ def read_index_state(client, collection_name: str) -> dict:
     # implement retrieve; transport errors propagate rather than exposing staged points.
     if not hasattr(client, "retrieve"):
         return {"schema": 1, "sources": {}}
-    points = client.retrieve(collection_name=collection_name, ids=[INDEX_STATE_ID], with_payload=True, with_vectors=False)
+    points = client.retrieve(
+        collection_name=collection_name, ids=[INDEX_STATE_ID], with_payload=True, with_vectors=False
+    )
     if not points:
         return {"schema": 1, "sources": {}}
     state = points[0].payload or {}
@@ -61,7 +72,11 @@ def read_index_state(client, collection_name: str) -> dict:
 
 
 def _write_state(client, collection_name: str, state: dict) -> None:
-    client.upsert(collection_name=collection_name, points=[PointStruct(id=INDEX_STATE_ID, vector={}, payload=state)], wait=True)
+    client.upsert(
+        collection_name=collection_name,
+        points=[PointStruct(id=INDEX_STATE_ID, vector={}, payload=state)],
+        wait=True,
+    )
 
 
 def active_filter(state: dict, query_filter: Filter | None = None) -> Filter | None:
@@ -78,29 +93,57 @@ def active_filter(state: dict, query_filter: Filter | None = None) -> Filter | N
             # points available. Staged points always carry index_version.
             from qdrant_client.models import IsEmptyCondition, PayloadField
 
-            allowed.append(Filter(must=[FieldCondition(key="source", match=MatchValue(value=source)), IsEmptyCondition(is_empty=PayloadField(key="index_version"))]))
+            allowed.append(
+                Filter(
+                    must=[
+                        FieldCondition(key="source", match=MatchValue(value=source)),
+                        IsEmptyCondition(is_empty=PayloadField(key="index_version")),
+                    ]
+                )
+            )
     routed = Filter(should=allowed, must_not=[HasIdCondition(has_id=[INDEX_STATE_ID])])
     return Filter(must=[query_filter, routed]) if query_filter is not None else routed
 
 
 @contextmanager
-def active_index_read(client, collection_name: str, query_filter: Filter | None = None):
+def active_index_read(
+    client,
+    collection_name: str,
+    query_filter: Filter | None = None,
+    *,
+    state_out: dict | None = None,
+):
     """Hold a consistent active-only route through an entire search/scroll/count operation."""
     with index_lock(collection_name, shared=True):
-        yield active_filter(read_index_state(client, collection_name), query_filter)
+        state = read_index_state(client, collection_name)
+        if state_out is not None:
+            state_out.update(state)
+        yield active_filter(state, query_filter)
 
 
 def version_filter(source: str, index_version: str) -> Filter:
-    return Filter(must=[FieldCondition(key="source", match=MatchValue(value=source)), FieldCondition(key="index_version", match=MatchValue(value=index_version))])
+    return Filter(
+        must=[
+            FieldCondition(key="source", match=MatchValue(value=source)),
+            FieldCondition(key="index_version", match=MatchValue(value=index_version)),
+        ]
+    )
 
 
 def index_version(payloads: list[dict]) -> str:
     """Include full text, chunk boundaries, manifests, editions and embedding model."""
-    canonical = json.dumps({"schema": 1, "embedding_model": EMBEDDING_MODEL, "payloads": payloads}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(
+        {"schema": 1, "embedding_model": EMBEDDING_MODEL, "payloads": payloads},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def begin_index(client, collection_name: str, source: str, version: str, *, guard: Callable | None = None) -> str:
+def begin_index(
+    client, collection_name: str, source: str, version: str, *, guard: Callable | None = None
+) -> str:
     token = uuid.uuid4().hex
     with guard() if guard else nullcontext():
         with index_lock(collection_name):
@@ -111,13 +154,26 @@ def begin_index(client, collection_name: str, source: str, version: str, *, guar
     return token
 
 
-def promote_index(client, collection_name: str, source: str, version: str, token: str, receipt: dict, *, validate: Callable, guard: Callable | None = None, cleanup: Callable | None = None) -> None:
+def promote_index(
+    client,
+    collection_name: str,
+    source: str,
+    version: str,
+    token: str,
+    receipt: dict,
+    *,
+    validate: Callable,
+    guard: Callable | None = None,
+    cleanup: Callable | None = None,
+) -> None:
     with guard() if guard else nullcontext():
         with index_lock(collection_name):
             state = read_index_state(client, collection_name)
             entry = state["sources"].get(source, {})
             if (entry.get("pending") or {}).get("token") != token:
-                raise SupersededIngestion("This source ingestion was superseded by a newer attempt.")
+                raise SupersededIngestion(
+                    "This source ingestion was superseded by a newer attempt."
+                )
             validate()
             entry["active"] = {**receipt, "index_version": version}
             entry.pop("pending", None)

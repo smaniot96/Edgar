@@ -11,3 +11,18 @@ Qdrant client, embeddings, and the rules vs adventure retrieval split.
 `retrieval.search_rules_context` and `retrieval.search_adventure_context` embed a query once, search only the candidate collections that exist, then merge all hits, sort them globally by score, drop hits under `min_score` (default 0.2), de-duplicate exact / near-identical text (word Jaccard ≥ 0.85) and cap the total (`limit`: 6 rules, 8 adventure). Chunks are `{text, source, page, kind, collection, score}` plus `section` / `chapter` / `heading_path` / `page_end` / `stat_block` when the payload has them. A failing collection is logged as a warning (collection name + exception type); if every queried collection fails, `RetrievalError` is raised. Both accept an optional `client` so tests inject a fake Qdrant.
 
 `retrieval.retrieve_monster(name)` searches only the Monster Manual collections and re-ranks hits so the stat block that names the creature comes first (default 2 chunks).
+
+`versions.active_index_read(client, collection_name, query_filter=None)` is the required context
+for all corpus queries, counts and paginated scrolls. It reads a single unembedded routing point
+and yields the caller filter combined with exactly the active version of each managed source.
+Legacy unmanaged sources stay visible. Keep the context open through the complete read so
+promotion/pruning cannot invalidate an in-flight route. `source_status.inspect_source` verifies
+only active coverage and excludes staged points and the routing point.
+
+Version metadata stays in the existing Qdrant collection. Lock files use existing local data
+storage (`EDGAR_INDEX_LOCK_DIR`); API, ingestion and rules-engine containers mount the same
+`./data/.index-locks` directory. A host CLI must use that same directory. This protects concurrent
+processes sharing one filesystem; it is not a multi-host distributed locking protocol. Each
+source has an immutable content-derived `index_version`, a latest attempt token, and an active
+receipt. Newer claims fence stale writers. Activation replaces one routing point only after
+stored payload/vector validation; source-scoped obsolete-point cleanup follows under the lock.

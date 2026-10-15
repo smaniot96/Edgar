@@ -36,6 +36,7 @@ from db.vector.collections import (
     existing_collection_names,
 )
 from db.vector.embeddings import embed_query, get_embeddings  # noqa: F401  (re-exported)
+from db.vector.versions import active_index_read
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import ManifestError, require_published, select_scene_context
 
@@ -195,48 +196,49 @@ def retrieve_active_scene(
     found = {}
     offset = None
     try:
-        while True:
-            points, offset = q.scroll(
-                collection_name=collection,
-                scroll_filter=query_filter,
-                limit=256,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
-            for point in points:
-                payload = point.payload or {}
-                passage_id = payload.get("passage_id")
-                passage = expected.get(passage_id)
-                if passage is None or passage_id in found:
-                    raise ManifestError("Index contains ambiguous reviewed passage identities.")
-                expected_payload = {
-                    **filters,
-                    "source": manifest.source,
-                    "page": passage.page,
-                    "page_end": passage.page,
-                    "source_pages": [passage.page],
-                    "text_sha256": passage.text_sha256,
-                    "audience": passage.audience,
-                    "scene_ids": passage.scene_ids,
-                    "entity_ids": passage.entity_ids,
-                    "requires": passage.requires,
-                    "span_start": passage.start,
-                    "span_end": passage.end,
-                }
-                if (
-                    any(payload.get(k) != v for k, v in expected_payload.items())
-                    or not isinstance(payload.get("text"), str)
-                    or text_digest(payload["text"]) != passage.text_sha256
-                ):
-                    raise ManifestError("Indexed passage differs from its reviewed manifest.")
-                found[passage_id] = {
-                    **_chunk_from_payload(payload, kind="adventure"),
-                    "collection": collection,
-                    "score": None,
-                }
-            if offset is None:
-                break
+        with active_index_read(q, collection, query_filter) as query_filter:
+            while True:
+                points, offset = q.scroll(
+                    collection_name=collection,
+                    scroll_filter=query_filter,
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                for point in points:
+                    payload = point.payload or {}
+                    passage_id = payload.get("passage_id")
+                    passage = expected.get(passage_id)
+                    if passage is None or passage_id in found:
+                        raise ManifestError("Index contains ambiguous reviewed passage identities.")
+                    expected_payload = {
+                        **filters,
+                        "source": manifest.source,
+                        "page": passage.page,
+                        "page_end": passage.page,
+                        "source_pages": [passage.page],
+                        "text_sha256": passage.text_sha256,
+                        "audience": passage.audience,
+                        "scene_ids": passage.scene_ids,
+                        "entity_ids": passage.entity_ids,
+                        "requires": passage.requires,
+                        "span_start": passage.start,
+                        "span_end": passage.end,
+                    }
+                    if (
+                        any(payload.get(k) != v for k, v in expected_payload.items())
+                        or not isinstance(payload.get("text"), str)
+                        or text_digest(payload["text"]) != passage.text_sha256
+                    ):
+                        raise ManifestError("Indexed passage differs from its reviewed manifest.")
+                    found[passage_id] = {
+                        **_chunk_from_payload(payload, kind="adventure"),
+                        "collection": collection,
+                        "score": None,
+                    }
+                if offset is None:
+                    break
     except ManifestError:
         raise
     except Exception as exc:
@@ -477,6 +479,13 @@ def _monster_bonus(chunk: dict[str, Any], key: str) -> float:
 
 
 def _query_collection(q: QdrantClient, collection_name: str, vector, limit: int, query_filter=None):
+    with active_index_read(q, collection_name, query_filter) as active_query_filter:
+        return _query_active_collection(q, collection_name, vector, limit, active_query_filter)
+
+
+def _query_active_collection(
+    q: QdrantClient, collection_name: str, vector, limit: int, query_filter=None
+):
     """Run a vector search, preferring the modern `query_points` API.
 
     qdrant-client >= 1.12 removed the legacy `Client.search` method in favour of

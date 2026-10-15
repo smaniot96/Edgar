@@ -12,6 +12,7 @@ from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchVa
 
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.retrieval import _chunk_from_payload, retrieve_active_scene
+from db.vector.versions import active_index_read
 from edgar_core.manifests import (
     AdventureManifest,
     ManifestError,
@@ -169,7 +170,10 @@ def test_long_pdf_compile_edit_publish_and_active_state_retrieval(source_bundle,
     manifest = load_published_manifest(metadata)
     assert {e.kind for e in manifest.entities} == {"actor", "clue", "hazard", "ending"}
     assert {e.entity_id for e in manifest.entities if e.kind == "ending"} == {"peace", "ruin"}
-    points, _ = isolated_index.scroll("branching", limit=500, with_payload=True)
+    with active_index_read(isolated_index, "branching") as active_filter:
+        points, _ = isolated_index.scroll(
+            "branching", limit=500, with_payload=True, scroll_filter=active_filter
+        )
     assert len(points) == len(manifest.passages)
     assert {p.payload["passage_id"] for p in points} == {p.passage_id for p in manifest.passages}
     assert any(p.payload.get("scene_id") == "broken_oath_ending" for p in points)
@@ -368,7 +372,8 @@ def test_failed_publication_retains_reviewable_draft_without_certifying_index(
             "branching", reviewed_digest=edited["reviewed_digest"], reviewer="Reader"
         )
     metadata = store.load_meta("branching")
-    assert metadata["status"] == "failed" and "manifest" not in metadata
+    assert metadata["status"] == "ready" and "manifest" not in metadata
+    assert metadata["last_attempt"]["status"] == "failed"
     assert metadata["manifest_draft"]["reviewed_sha256"] is None
 
 

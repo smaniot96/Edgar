@@ -121,7 +121,7 @@ def prepare_report(
 
 def report_summary(report: dict) -> dict:
     """Small metadata record used for uncached live source verification."""
-    return {
+    summary = {
         key: report[key]
         for key in (
             "report_version",
@@ -138,6 +138,9 @@ def report_summary(report: dict) -> dict:
             "review_note",
         )
     }
+    if report.get("index_version"):
+        summary["index_version"] = report["index_version"]
+    return summary
 
 
 def require_ready(report: dict) -> None:

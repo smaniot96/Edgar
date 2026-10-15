@@ -7,6 +7,7 @@ import pytest
 from qdrant_client import QdrantClient
 
 from db.vector.embeddings import VECTOR_SIZE
+from db.vector.versions import active_index_read
 from ingestion import embed
 from ingestion.extract import ExtractedPage, Extraction, save_extraction
 from ingestion.readiness import (
@@ -255,7 +256,8 @@ def test_generated_retry_prunes_old_source_only_after_complete_success(tmp_path,
         embed.ingest_pages(
             new, "draft", "draft", expected_pages=1, replace=True, preview_dir=tmp_path
         )
-        current = client.scroll("draft")[0]
+        with active_index_read(client, "draft") as active_filter:
+            current = client.scroll("draft", scroll_filter=active_filter)[0]
         assert len(current) == 1 and current[0].id not in old_ids
         assert "revised manuscript" in current[0].payload["text"]
         assert current[0].payload["source_pages"] == [1]
