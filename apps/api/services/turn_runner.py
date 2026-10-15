@@ -35,6 +35,7 @@ import structlog
 from sqlalchemy import select
 
 import db.postgres.session as db_session_module
+from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
 from agent.combatants import can_act, disposition_of
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
@@ -420,6 +421,14 @@ def _truncate_ctx(items: Any, n: int = 8, width: int = 320) -> list[dict[str, An
     return out
 
 
+def combat_round_from_events(events: list[dict] | None) -> dict[str, Any] | None:
+    """The developer view of this turn's combat round, or None for a non-combat turn."""
+    for event in events or []:
+        if event.get("event_type") == COMBAT_ROUND_EVENT:
+            return combat_round_public(event.get("payload"))
+    return None
+
+
 def _debug_payload(
     *,
     parsed: Any,
@@ -428,6 +437,7 @@ def _debug_payload(
     world_flags_in: dict | None,
     combat_state: dict | None,
     timings: dict[str, int],
+    combat_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Everything a developer needs to confirm a turn ran correctly: intent classification,
     the RAG chunks actually retrieved (the silently-dead-RAG class of bug), full combat
@@ -455,6 +465,8 @@ def _debug_payload(
         if combat_state
         else combat_state,
         "timings_ms": timings,
+        # Combat turns only: the round's actors, original dice and outcomes (EDG-031).
+        "combat_diagnostics": combat_diagnostics,
         "model": LLM_MODEL,
     }
 
@@ -591,6 +603,9 @@ async def stream_session_turn(
     lap("saving_ms")
 
     if debug:
+        combat_diagnostics = combat_round_from_events(state.get("telemetry_events"))
+        # Stages the combat round measured itself. Unmeasured ones stay absent (UI: unavailable).
+        combat_timings = (combat_diagnostics or {}).get("timings_ms") or {}
         yield sse_event(
             "debug",
             _debug_payload(
@@ -599,7 +614,12 @@ async def stream_session_turn(
                 adv_ctx=state.get("adventure_context"),
                 world_flags_in=initial_state.get("world_flags"),
                 combat_state=state.get("combat_state"),
-                timings={**timings, "total_ms": int((time.monotonic() - t0) * 1000)},
+                timings={
+                    **timings,
+                    **combat_timings,
+                    "total_ms": int((time.monotonic() - t0) * 1000),
+                },
+                combat_diagnostics=combat_diagnostics,
             ),
         )
     yield sse_event("done", done_payload)
