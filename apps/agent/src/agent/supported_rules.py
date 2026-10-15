@@ -397,7 +397,7 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"\b(?:spell|spells|spellcasting|spellcast|cantrips?|rituals?|incantation|"
             r"incantesimo|incantesimi|lancio|lanciare|incantato|incantata)\b"
             r"|\bcast(?:s|ing)?\b(?!\s+(?:off|aside|doubt|suspicion|about|around|out|your|a\s+"
-            r"(?:glance|look|light|shadow))\b)"
+            r"(?:glance|look|light|shadow|net|line|vote|lot)|my\s+(?:eyes|gaze|net|line))\b)"
             r"|\b(?:" + _SPELL_NAMES + r")\b",
             re.IGNORECASE,
         ),
@@ -426,7 +426,14 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
-    (ADVANTAGE, re.compile(r"\b(?:advantage|disadvantage|with an edge)\b", re.IGNORECASE)),
+    (
+        ADVANTAGE,
+        re.compile(
+            r"(?<!take\s)(?<!takes\s)(?<!taking\s)(?<!took\s)(?<!taken\s)"
+            r"\b(?:advantage|disadvantage|with an edge)\b(?!\s+of\b)",
+            re.IGNORECASE,
+        ),
+    ),
     (
         ACTION_ECONOMY,
         re.compile(

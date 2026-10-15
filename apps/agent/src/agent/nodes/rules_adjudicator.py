@@ -283,6 +283,10 @@ async def adjudicate(
     if result is None:
         result = _neutral(check_result, state)
 
+    # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
+    # Runs before the engine's own roll line is stamped on, so engine dice are never stripped.
+    apply_adjudication_boundary(result, actions)
+
     # Authoritative numbers: never trust the model's success/dice.
     result.dice_log = list(extra_log)
     if check_result is not None:
@@ -294,9 +298,6 @@ async def adjudicate(
     else:
         result.success = True
         result.dice_result = extra_log[0]["total"] if extra_log else None
-
-    # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
-    apply_adjudication_boundary(result, actions)
 
     policy_effects: list = []
     if selected is not None:

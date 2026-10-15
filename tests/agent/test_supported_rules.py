@@ -359,6 +359,8 @@ def test_supported_completion_needs_confirmation() -> None:
         ("I search the room for traps", []),
         ("Lancio Dardo Incantato sul goblin.", ["spell"]),
         ("I cast a glance at the door", []),
+        ("I take advantage of the distraction to slip past", []),
+        ("I cast my net over the crowd of fishers", []),
         ("I disarm the trap with my thieves tools", []),
     ],
 )
@@ -448,6 +450,8 @@ async def test_claimed_maneuver_rolls_plain_check_and_records_no_restraint(fake_
     assert adj.character_update is None or adj.character_update.add_conditions == []
     assert "pinned" not in adj.mechanical_summary and "restrained by" not in adj.mechanical_summary
     assert "Narrative ruling: this maneuver has no engine effect" in adj.mechanical_summary
+    # The engine's own roll line (it contains "1d20+N") survives the boundary.
+    assert "athletics:" in adj.mechanical_summary and "d20 rolled" in adj.mechanical_summary
 
 
 @pytest.mark.asyncio
