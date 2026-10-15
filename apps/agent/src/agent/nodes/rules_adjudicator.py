@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 
 from agent.history import continuity_context
 from agent.llm import make_chat_model
@@ -56,9 +57,7 @@ from agent.supported_rules import (
     actions_for_state,
     apply_adjudication_boundary,
     boundary_prompt_block,
-    engine_effects_for_state,
-    engine_roll_mode,
-    executed_spell_for_state,
+    engine_applied_for_state,
 )
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
@@ -335,13 +334,10 @@ async def adjudicate(
 
     # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
     # Runs before the engine's own roll line is stamped on, so engine dice are never stripped.
-    apply_adjudication_boundary(
-        result,
-        actions,
-        engine_roll_mode=engine_roll_mode(state),
-        executed_spell=spell_outcome is not None or executed_spell_for_state(state),
-        engine_effects=engine_effects_for_state(state),
-    )
+    applied = engine_applied_for_state(state)
+    if spell_outcome is not None:
+        applied = replace(applied, executed_spell=True)
+    apply_adjudication_boundary(result, actions, applied=applied)
 
     # Authoritative numbers: never trust the model's success/dice.
     result.dice_log = list(extra_log)
@@ -483,5 +479,5 @@ async def rules_adjudicator_node(state: AgentState) -> dict:
         "policy_narration": state.get("policy_narration"),
         "authorized_policy_effect_keys": state.get("authorized_policy_effect_keys", []),
         "policy_reveal_authorizations": state.get("policy_reveal_authorizations", []),
-        ENGINE_ROLL_MODE_KEY: engine_roll_mode(state),
+        ENGINE_ROLL_MODE_KEY: engine_applied_for_state(state).roll_mode,
     }
