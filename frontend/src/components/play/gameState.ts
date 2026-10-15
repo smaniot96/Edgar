@@ -191,6 +191,9 @@ export interface HudCombatant {
   ac: number | null;
   init: number | null;
   alive: boolean;
+  /** Engine disposition (`active`, `unconscious`, `captured`, `dead`, `defeated`) when known. */
+  disposition: string | null;
+  canAct: boolean | null;
   isCurrent: boolean;
 }
 
@@ -226,6 +229,8 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
       ac: num(c.ac),
       init,
       alive: c.alive !== false && (num(c.hp_current) ?? 1) > 0,
+      disposition: c.disposition ?? null,
+      canAct: typeof c.can_act === "boolean" ? c.can_act : null,
       isCurrent: false,
     };
   };
@@ -242,6 +247,8 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
           hpMax: num(e.hp_max) ?? base.hpMax,
           ac: num(e.ac) ?? base.ac,
           alive: typeof e.alive === "boolean" ? e.alive : base.alive && (hp == null || hp > 0),
+          disposition: e.disposition ?? base.disposition,
+          canAct: typeof e.can_act === "boolean" ? e.can_act : base.canAct,
         });
       } else {
         const hp = num(e.hp);
@@ -254,6 +261,8 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
           ac: num(e.ac),
           init: num(e.init),
           alive: typeof e.alive === "boolean" ? e.alive : hp == null || hp > 0,
+          disposition: e.disposition ?? null,
+          canAct: typeof e.can_act === "boolean" ? e.can_act : null,
           isCurrent: false,
         });
       }
