@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -373,6 +373,7 @@ async def _replayed_turn(
 @router.get("/sessions/{session_id}/turns/{request_id}")
 async def get_turn_receipt(
     session_id: int,
+    response: Response,
     request_id: str = Path(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
@@ -382,6 +383,7 @@ async def get_turn_receipt(
     Lock contention means the original turn may still commit: absence must never be
     reported as final while that writer is active. Clients retry only by explicit action.
     """
+    response.headers["Cache-Control"] = "private, no-store"
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
         raise HTTPException(status_code=409, detail=_BUSY_DETAIL)

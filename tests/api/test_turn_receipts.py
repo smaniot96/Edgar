@@ -59,6 +59,7 @@ async def test_lost_ack_replay_never_runs_provider_or_repeats_state(
     monkeypatch.setattr("apps.api.routers.session._load_turn_initial_state", forbidden)
     receipt = await api_client.get(f"/api/sessions/{sid}/turns/{body['request_id']}")
     assert receipt.status_code == 200, receipt.text
+    assert receipt.headers["cache-control"] == "private, no-store"
     assert receipt.json()["status"] == "committed"
     assert receipt.json()["result"]["narration"] == done["narration"]
     assert isinstance(receipt.json()["result"]["event_id"], int)
