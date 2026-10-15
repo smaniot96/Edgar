@@ -103,6 +103,27 @@ it("opens verified journal history and reports only a newly committed journal de
   expect(container.textContent).toContain("Journal updated: Moon mark.");
 });
 
+it("opens selected journal entries from safe links and supports expanded, larger reading", async () => {
+  harness.game = gameFixture();
+  harness.journal = { ...harness.journal, data: journalFixture() };
+  const render = (entry = "clue-1") => root.render(
+    <MemoryRouter initialEntries={[`/play/1?tool=journal&entry=${entry}`]}>
+      <Routes><Route path="/play/:sessionId" element={<Play />} /></Routes>
+    </MemoryRouter>,
+  );
+  await act(() => render());
+  const panel = container.querySelector<HTMLElement>('[aria-label="Journal tool"]');
+  expect(panel).not.toBeNull();
+  expect(container.querySelector("#journal-entry-clue-1")?.getAttribute("aria-current")).toBe("true");
+
+  const button = (name: string) => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === name) ?? null;
+  await act(() => button("Expand view")?.click());
+  expect(panel?.className).toContain("lg:w-[min(55vw,52rem)]");
+  await act(() => button("Larger text")?.click());
+  expect(container.querySelector("#journal-entry-clue-1 .journal-entry-copy")?.className).toContain("text-base");
+  expect(container.querySelector("#journal-entry-clue-1 .journal-entry-copy")?.textContent).toBe("A wax seal bears a star.");
+});
+
 
 it("waits for the boot transcript before reconciling a saved pending request", async () => {
   harness.game = gameFixture();

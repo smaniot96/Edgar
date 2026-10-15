@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { JournalPanel } from "../journal/JournalPanel";
 import type { JournalCategory, JournalRead } from "../journal/types";
@@ -68,6 +68,8 @@ export function PlayToolPanel({
   const panelRef = useRef<HTMLElement | null>(null);
   const narrow = useNarrowViewport();
   const open = activeTool === "journal" || activeTool === "map";
+  const [expandedJournal, setExpandedJournal] = useState(false);
+  const [largeJournalText, setLargeJournalText] = useState(false);
   useModalFocus(open, narrow, onClose, panelRef);
   if (!open) return null;
 
@@ -81,10 +83,31 @@ export function PlayToolPanel({
         role={narrow ? "dialog" : undefined}
         aria-modal={narrow ? true : undefined}
         tabIndex={narrow ? -1 : undefined}
-        className="fixed inset-y-0 right-0 z-40 flex w-[min(28rem,92vw)] flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 lg:static lg:z-auto lg:w-[min(30vw,25rem)] lg:shrink-0 lg:shadow-none"
+        className={`fixed inset-y-0 right-0 z-40 flex w-[min(28rem,92vw)] flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
           <h2 className="min-w-0 flex-1 font-display text-lg font-semibold text-ink">{title}</h2>
+          {activeTool === "journal" ? (
+            <>
+              <Button
+                className="hidden lg:inline-flex"
+                variant="secondary"
+                size="sm"
+                aria-expanded={expandedJournal}
+                onClick={() => setExpandedJournal((value) => !value)}
+              >
+                {expandedJournal ? "Compact view" : "Expand view"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                aria-pressed={largeJournalText}
+                onClick={() => setLargeJournalText((value) => !value)}
+              >
+                {largeJournalText ? "Standard text" : "Larger text"}
+              </Button>
+            </>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -106,6 +129,7 @@ export function PlayToolPanel({
               query={query}
               onQueryChange={onQueryChange}
               onOpenHistory={onOpenHistory}
+              largeText={largeJournalText}
             />
           ) : (
             <section aria-labelledby="map-unavailable-heading" className="rounded-control border border-line bg-surface p-4">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 import { ApiError, getCampaign, isNotFound, startSessionIntro } from "../api/client";
 import { SourceRecovery } from "../components/campaign/SourceRecovery";
@@ -62,6 +62,7 @@ function PlayNotFound() {
 }
 
 function PlayScreen({ sessionId }: { sessionId: number }) {
+  const [searchParams] = useSearchParams();
   const { isDev } = useMode();
   const game = usePlaySession(sessionId);
   const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign } = game;
@@ -78,11 +79,28 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const historyOverlayRef = useRef(typeof window !== "undefined" && window.history.state?.__edgarPlayTool === true);
+  const handledJournalLinkRef = useRef<string | null>(null);
   const knownRequestRef = useRef<string | null>(null);
   const recoveredRequestRef = useRef<string | null>(null);
   const pendingJournalFeedbackRef = useRef<{ before: Map<string, string>; afterRevision: number } | null>(null);
   const [journalFeedback, setJournalFeedback] = useState("");
   const [journalFeedbackEntryId, setJournalFeedbackEntryId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("tool") !== "journal") return;
+    const entryId = searchParams.get("entry");
+    if (!entryId) return;
+    const linkKey = `${sessionId}:${entryId}`;
+    if (handledJournalLinkRef.current === linkKey) return;
+    handledJournalLinkRef.current = linkKey;
+    setWorkspace((current) => ({
+      ...current,
+      activeTool: "journal",
+      query: "",
+      category: "all",
+      selectedEntryId: entryId,
+    }));
+  }, [searchParams, sessionId, setWorkspace]);
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() => {

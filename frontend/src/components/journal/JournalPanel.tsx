@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { apiBase } from "../../api/client";
 import { Pill } from "../../components/Pill";
@@ -20,6 +20,8 @@ const CATEGORIES: { value: JournalCategory | "all"; label: string }[] = [
   { value: "consequence", label: "Story changes" },
 ];
 
+const PAGE_SIZE = 24;
+
 export interface JournalPanelProps {
   data: JournalRead | null;
   loading: boolean;
@@ -33,10 +35,23 @@ export interface JournalPanelProps {
   query: string;
   onQueryChange: (value: string) => void;
   onOpenHistory?: (historyEventId: number) => void;
+  largeText?: boolean;
 }
 
 function statusLabel(status: JournalEntry["status"]): string {
+  if (status === "announced") return "announced for later";
+  if (status === "known") return "known, not visited";
   return status.replaceAll("_", " ");
+}
+
+function ownershipLabel(ownership: NonNullable<JournalEntry["ownership"]>): string {
+  switch (ownership) {
+    case "carried": return "In this character’s inventory";
+    case "left_behind": return "Left at a known place";
+    case "with_another_character": return "With another character";
+    case "consumed": return "Used up";
+    case "untracked": return "Ownership is not recorded";
+  }
 }
 
 function EntryCard({
@@ -46,6 +61,8 @@ function EntryCard({
   onSelect,
   onOpenHistory,
   onSelectRelated,
+  largeText,
+  relatedEntries,
 }: {
   id: string;
   entry: JournalEntry;
@@ -53,6 +70,8 @@ function EntryCard({
   onSelect: () => void;
   onSelectRelated: (id: string) => void;
   onOpenHistory?: (historyEventId: number) => void;
+  largeText: boolean;
+  relatedEntries: JournalEntry[];
 }) {
   return (
     <article
@@ -81,7 +100,26 @@ function EntryCard({
           </Button>
         </div>
       </div>
-      {entry.text ? <p className="mt-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed text-ink-muted">{entry.text}</p> : null}
+      {entry.text ? <p className={`journal-entry-copy mt-2 select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-ink-muted ${largeText ? "text-base leading-7" : "text-sm leading-relaxed"}`}>{entry.text}</p> : null}
+      {entry.ownership ? (
+        <p className="mt-2 text-xs text-ink-subtle"><span className="font-medium">Item:</span> {ownershipLabel(entry.ownership)}</p>
+      ) : null}
+      {entry.category === "clock" && (entry.quantity !== null || entry.clock_maximum != null) ? (
+        <p className="mt-2 text-xs text-ink-subtle">
+          {entry.quantity !== null ? (
+            <>
+              <span className="font-medium">Current progress:</span>{" "}
+              {entry.clock_maximum !== null && entry.clock_maximum !== undefined
+                ? `${entry.quantity} of ${entry.clock_maximum}`
+                : entry.quantity}
+            </>
+          ) : (
+            <>
+              <span className="font-medium">Known maximum:</span>{" "}{entry.clock_maximum}
+            </>
+          )}
+        </p>
+      ) : null}
       <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-subtle">
         {entry.origin.turn_number !== null ? (
           <div>
@@ -112,6 +150,16 @@ function EntryCard({
           </div>
         ) : null}
       </dl>
+      {relatedEntries.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-subtle">
+          <span className="font-medium">Related:</span>
+          {relatedEntries.map((related) => (
+            <button key={related.id} type="button" className="text-ember-700 underline decoration-ember-400 underline-offset-2" onClick={() => onSelectRelated(related.id)}>
+              {related.category === "place" ? "Place: " : related.category === "clue" ? "Clue: " : "Entry: "}{related.title}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {entry.history.length > 0 ? (
         <details className="mt-3 border-t border-line pt-2 text-sm">
           <summary className="cursor-pointer text-xs font-medium text-ink-muted">
@@ -167,6 +215,7 @@ export function JournalPanel({
   query,
   onQueryChange,
   onOpenHistory,
+  largeText = false,
 }: JournalPanelProps) {
   const params = new URLSearchParams();
   if (query.trim()) params.set("q", query.trim());
@@ -186,6 +235,16 @@ export function JournalPanel({
       entry.origin.citation,
     ].filter(Boolean).join(" ").toLocaleLowerCase().includes(normalizedQuery);
   }), [data, category, normalizedQuery]);
+  const filterKey = `${data?.session_id ?? "none"}:${category}:${normalizedQuery}`;
+  const [pageState, setPageState] = useState<{ key: string; count: number }>({ key: "", count: PAGE_SIZE });
+  // A new session or filter starts at the beginning. The server payload is already the
+  // authorized projection; this only keeps a long visible journal quick to scan.
+  const baseVisibleCount = pageState.key === filterKey ? pageState.count : PAGE_SIZE;
+  const selectedIndex = selectedEntryId
+    ? entries.findIndex((entry) => entry.id === selectedEntryId)
+    : -1;
+  const visibleCount = Math.max(baseVisibleCount, selectedIndex + 1);
+  const visibleEntries = entries.slice(0, visibleCount);
 
   useEffect(() => {
     if (!selectedEntryId || !entries.some((entry) => entry.id === selectedEntryId)) return;
@@ -267,7 +326,7 @@ export function JournalPanel({
         </EmptyState>
       ) : null}
       <div className="space-y-3">
-        {entries.map((entry) => (
+        {visibleEntries.map((entry) => (
           <EntryCard
             key={entry.id}
             id={`journal-entry-${entry.id}`}
@@ -275,6 +334,8 @@ export function JournalPanel({
             selected={selectedEntryId === entry.id}
             onSelect={() => onSelectedEntryChange(selectedEntryId === entry.id ? null : entry.id)}
             onOpenHistory={onOpenHistory}
+            largeText={largeText}
+            relatedEntries={(data?.entries ?? []).filter((related) => entry.related_entry_ids?.includes(related.id))}
             onSelectRelated={(id) => {
               onCategoryChange("all");
               onQueryChange("");
@@ -283,6 +344,18 @@ export function JournalPanel({
           />
         ))}
       </div>
+      {entries.length > visibleCount ? (
+        <Button
+          className="w-full"
+          variant="secondary"
+          onClick={() => setPageState((current) => ({
+            key: filterKey,
+            count: Math.min((current.key === filterKey ? current.count : PAGE_SIZE) + PAGE_SIZE, entries.length),
+          }))}
+        >
+          Show more entries
+        </Button>
+      ) : null}
     </section>
   );
 }

@@ -27,7 +27,12 @@ async def _read_session_journal(session_id: int, db: AsyncSession) -> JournalRea
         .order_by(EventLog.created_at.asc(), EventLog.id.asc())
     )
     events = result.scalars().all()
-    return project_player_journal(session_id, state, events)
+    return project_player_journal(
+        session_id,
+        state,
+        events,
+        active_character_id=session.active_character_id,
+    )
 
 
 def _no_store(response: Response) -> None:

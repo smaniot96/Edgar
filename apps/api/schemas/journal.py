@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 JournalCategory = Literal[
     "goal",
@@ -17,6 +17,8 @@ JournalCategory = Literal[
 ]
 JournalStatus = Literal[
     "discovered",
+    "known",
+    "announced",
     "encountered",
     "visited",
     "active",
@@ -33,6 +35,13 @@ JournalStatus = Literal[
     "released",
     "dead",
     "defeated",
+]
+JournalOwnership = Literal[
+    "carried",
+    "left_behind",
+    "with_another_character",
+    "consumed",
+    "untracked",
 ]
 
 
@@ -63,9 +72,12 @@ class JournalEntry(JournalRecord):
     text: str | None
     status: JournalStatus
     quantity: int | None
+    clock_maximum: int | None = None
+    ownership: JournalOwnership | None = None
     origin: JournalOrigin
     history: list[JournalStatusChange]
     related_entry_id: str | None
+    related_entry_ids: list[str] = Field(default_factory=list)
 
 
 class JournalRead(JournalRecord):
