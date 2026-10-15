@@ -40,8 +40,9 @@ maneuvers, advantage without an engine source, positioning and similar claims ne
 conditions or flags. The exceptions are engine facts: a catalog spell (`agent.spells`) is executed
 by the engine, its dice, damage and healing come from the roll, and the spell-slot count is
 persisted in the assignment's `stats["spell_slots_expended"]`; a combat maneuver the engine actually
-applied (a won grapple, restraint or shove prone) is recorded in the combatant's `effects` and is
-not stripped from the narration. The scope is also summarised in the rules and narrator prompts.
+applied (a won grapple, restraint or shove prone) and a spell condition it recorded (a foe blinded by
+Blindness/Deafness, or marked by Guiding Bolt) are recorded in the combatant's `effects` and are not
+stripped from the narration. The scope is also summarised in the rules and narrator prompts.
 
 ## Health
 
