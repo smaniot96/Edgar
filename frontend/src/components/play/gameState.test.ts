@@ -109,6 +109,27 @@ describe("orderCombatants", () => {
   });
 });
 
+describe("combat disposition in the HUD", () => {
+  it("keeps a living captive distinct from a standing foe and a dead one", () => {
+    const rows = orderCombatants({
+      round: 3,
+      ended: false,
+      outcome: null,
+      combatants: [],
+      initiative: [
+        { name: "Bandit", init: 14, hp: 0, hp_max: 7, ac: 12, alive: true, disposition: "unconscious", can_act: false },
+        { name: "Wolf", init: 9, hp: 11, hp_max: 11, ac: 13, alive: true, disposition: "active", can_act: true },
+        { name: "Rat", init: 4, hp: 0, hp_max: 2, ac: 10, alive: false, disposition: "dead", can_act: false },
+      ],
+    });
+    expect(rows.map((r) => [r.name, r.alive, r.disposition, r.canAct])).toEqual([
+      ["Bandit", true, "unconscious", false],
+      ["Wolf", true, "active", true],
+      ["Rat", false, "dead", false],
+    ]);
+  });
+});
+
 describe("roll card text", () => {
   it("formats check, expression, DC, outcome and damage", () => {
     const p = rollParts({

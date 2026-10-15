@@ -265,6 +265,9 @@ export interface Combatant {
   attack_bonus?: number | null;
   damage_dice?: string | null;
   alive: boolean;
+  /** Combat disposition from the engine: active, unconscious, captured, dead or defeated. */
+  disposition?: string | null;
+  can_act?: boolean | null;
 }
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | null;
@@ -278,6 +281,8 @@ export interface InitiativeEntry {
   hp_max?: number | null;
   ac?: number | null;
   alive?: boolean;
+  disposition?: string | null;
+  can_act?: boolean | null;
 }
 
 export interface CombatState {

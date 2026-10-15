@@ -26,6 +26,7 @@ from .routers.character import router as character_router
 from .routers.character_presets import router as character_presets_router
 from .routers.health import router as health_router
 from .routers.npc import router as npc_router
+from .routers.rules import router as rules_router
 from .routers.seed import router as seed_router
 from .routers.session import router as session_router
 from .routers.user import router as user_router
@@ -105,6 +106,7 @@ app.include_router(campaign_characters_router, prefix="/api")
 app.include_router(character_router, prefix="/api")
 app.include_router(character_presets_router, prefix="/api")
 app.include_router(npc_router, prefix="/api")
+app.include_router(rules_router, prefix="/api")
 app.include_router(seed_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
 app.include_router(user_router, prefix="/api")

@@ -627,6 +627,12 @@ def resolve_from_parsed(
     difficulty = getattr(parsed, "difficulty", None)
     hint = player_input
     if check:
+        norm = normalise_check(check)
+        if norm is not None and norm[1] == "spell_attack":
+            # No verified spell effect exists: a spell attack would only be a class-die stand-in.
+            # The supported-action boundary (agent.supported_rules) rules on it instead.
+            log.info("declared_spell_attack_not_resolved")
+            return None, []
         return resolve_check(character, check, difficulty, hint=hint, rng=rng), []
 
     legacy = getattr(parsed, "dice_expression", None)

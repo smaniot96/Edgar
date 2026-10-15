@@ -17,10 +17,16 @@ by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI rende
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from agent.combatants import narrator_roster
 from agent.history import continuity_context, public_earned_facts
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
+from agent.supported_rules import (
+    actions_for_state,
+    apply_narration_boundary,
+    boundary_prompt_block,
+)
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import cited_excerpt, eligible_context
 from edgar_core.story import player_story_effect
@@ -83,6 +89,9 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
     current_scene_id = state.get("current_scene_id")
 
     context_parts = [f"Player's attempted action: {wrap_player_action(player_input)}"]
+    boundary = boundary_prompt_block(actions_for_state(state))
+    if boundary:
+        context_parts.append(boundary)
     if state.get("source_mode") == "homebrew":
         context_parts.append(
             "The player explicitly chose homebrew play. Continue creatively from saved story state; do not claim to follow an unavailable adventure module."
@@ -144,10 +153,14 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
     combat = state.get("combat_state") or {}
     if combat.get("initiative"):
         order = ", ".join(
-            f"{c.get('name')}{' (fallen)' if not c.get('alive', True) else ''}"
+            f"{c.get('name')}{' ' + c['disposition'] if c.get('disposition') not in (None, 'active') else ''}"
             for c in combat["initiative"]
         )
         context_parts.append(f"Initiative order this round: {order}")
+        if combat.get("combatants"):
+            context_parts.append(
+                narrator_roster(combat["combatants"], combat.get("round_actors") or [])
+            )
     context_parts.append(
         f"Selected rules edition: {edition}. Reference labels are provenance; do not recite hashes or private IDs."
     )
@@ -178,7 +191,7 @@ async def narrator_node(state: AgentState) -> dict:
             response = await llm.ainvoke(prompt)
         except Exception as e:
             return {"narration": "", "error": str(e)}
-        narration = message_text(response)
+        narration = apply_narration_boundary(message_text(response), actions_for_state(state))
 
     updated_messages = list(messages)
     updated_messages.append(AIMessage(content=narration))

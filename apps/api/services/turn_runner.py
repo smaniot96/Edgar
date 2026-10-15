@@ -35,6 +35,7 @@ import structlog
 from sqlalchemy import select
 
 import db.postgres.session as db_session_module
+from agent.combatants import can_act, disposition_of
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
 from agent.nodes.narrator import (
@@ -43,13 +44,14 @@ from agent.nodes.narrator import (
     make_narrator_model,
     narrator_context,
 )
+from agent.supported_rules import actions_for_state, apply_narration_boundary
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
 from edgar_core.sources import citations_for, public_citations
 
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
-from .combat import persist_combat
+from .combat import persist_combat, persist_combat_npcs
 from .world_writes import (
     MissingCharacterAssignmentError,
     apply_adjudication,
@@ -276,7 +278,10 @@ async def persist_turn(
                 )
 
             if new_combat:
-                await persist_combat(db, session_id, new_combat)
+                combat_id = await persist_combat(db, session_id, new_combat)
+                await persist_combat_npcs(
+                    db, session_id, game_session.campaign_id, combat_id, new_combat
+                )
 
             if adjudication:
                 discovery_keys = {
@@ -384,7 +389,10 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
                 "hp_current": c.get("hp_current"),
                 "hp_max": c.get("hp_max"),
                 "ac": c.get("ac"),
+                "id": c.get("name"),
                 "alive": c.get("alive", True),
+                "disposition": disposition_of(c),
+                "can_act": can_act(c),
             }
             for c in (combat_state.get("combatants") or [])
         ],
@@ -534,6 +542,21 @@ async def stream_session_turn(
     elif (narration := deterministic_narration(state)) is not None:
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
+    elif actions := actions_for_state(state):
+        # A declared unsupported mechanic must not reach the player unchecked: wait for the
+        # complete narration, drop claimed effects, and only then stream the bounded text.
+        prompt = build_narrator_prompt(state)
+        llm = make_narrator_model()
+        try:
+            response = await llm.ainvoke(prompt)
+        except Exception:
+            log.exception("turn_narrator_failed", session_id=session_id)
+            yield sse_event("error", error_body("llm_unavailable"))
+            return
+        narration = apply_narration_boundary(message_text(response), actions)
+        for piece in _yield_narration_tokens(narration):
+            yield sse_event("token", {"text": piece})
+        lap("narrating_ms")
     else:
         prompt = build_narrator_prompt(state)
         llm = make_narrator_model()
