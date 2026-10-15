@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
+from edgar_core.sources import cited_excerpt, eligible_context
 
 _NARRATOR_TEMPERATURE = 0.7
 _HISTORY_TAIL = 4
@@ -37,10 +38,8 @@ def make_narrator_model():
         return make_chat_model(temperature=_NARRATOR_TEMPERATURE)
 
 
-def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
-    player_input = state.get("player_input", "")
-    adjudication = state.get("adjudication_result")
-
+def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
+    """The same public evidence feeds narration and its persisted context references."""
     rules_context = state.get("rules_context", [])
     adventure_context = state.get("adventure_context", [])
     if not rules_context and not adventure_context:
@@ -48,13 +47,32 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
         rules_context = [c for c in merged if c.get("kind") == "rules"]
         adventure_context = [c for c in merged if c.get("kind") == "adventure"]
 
+    edition = state.get("rules_edition", "2014")
+    rules_context = eligible_context(rules_context, edition)
+    adventure_context = eligible_context(adventure_context, edition)
+    if state.get("manifest_status") == "reviewed":
+        adventure_context = [c for c in adventure_context if c.get("audience") == "player"]
+    return rules_context[:_RAG_BLOCK_TOP_K], (
+        adventure_context
+        if state.get("manifest_status") == "reviewed"
+        else adventure_context[:_RAG_BLOCK_TOP_K]
+    )
+
+
+def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
+    player_input = state.get("player_input", "")
+    adjudication = state.get("adjudication_result")
+    edition = state.get("rules_edition", "2014")
+    rules_context, adventure_context = narrator_context(state)
     world_flags = state.get("world_flags", {})
     current_scene_id = state.get("current_scene_id")
     messages = state.get("messages", [])
 
     context_parts = [f"Player's attempted action: {wrap_player_action(player_input)}"]
     if state.get("source_mode") == "homebrew":
-        context_parts.append("The player explicitly chose homebrew play. Continue creatively from saved story state; do not claim to follow an unavailable adventure module.")
+        context_parts.append(
+            "The player explicitly chose homebrew play. Continue creatively from saved story state; do not claim to follow an unavailable adventure module."
+        )
     summary = state.get("memory_summary")
     if summary:
         context_parts.append(f"Story so far: {summary}")
@@ -73,11 +91,11 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
             "Known NPCs (name: disposition toward the player): "
             + "; ".join(f"{n['name']}: {n.get('disposition') or 'unknown'}" for n in npcs[:15])
         )
-    if current_scene_id:
+    if current_scene_id and state.get("manifest_status") != "reviewed":
         context_parts.append(
             f"Authoritative campaign position (do not contradict or skip ahead): scene={current_scene_id}"
         )
-    if world_flags:
+    if world_flags and state.get("manifest_status") != "reviewed":
         context_parts.append(f"World flags (persisted state): {world_flags}")
     if adjudication:
         context_parts.append(f"Engine outcome (final): {adjudication.mechanical_summary}")
@@ -97,11 +115,14 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
             for c in combat["initiative"]
         )
         context_parts.append(f"Initiative order this round: {order}")
+    context_parts.append(
+        f"Selected rules edition: {edition}. Reference labels are provenance; do not recite hashes or private IDs."
+    )
     if rules_context:
-        block = "\n".join(c.get("text", "") for c in rules_context[:_RAG_BLOCK_TOP_K])
+        block = "\n".join(cited_excerpt(c, edition) for c in rules_context)
         context_parts.append(f"Official rules context:\n{block}")
     if adventure_context:
-        block = "\n".join(c.get("text", "") for c in adventure_context[:_RAG_BLOCK_TOP_K])
+        block = "\n".join(cited_excerpt(c, edition) for c in adventure_context)
         context_parts.append(f"Adventure module context (story/locations/NPCs):\n{block}")
 
     user_msg = HumanMessage(content="\n\n".join(context_parts))

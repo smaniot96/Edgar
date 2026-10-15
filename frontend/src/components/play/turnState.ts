@@ -8,6 +8,7 @@ import type {
   CombatOutcome,
   DebugPayload,
   TurnResult,
+  SourceCitation,
 } from "../../api/types";
 
 interface BaseLine {
@@ -24,6 +25,8 @@ export interface UserLine extends BaseLine {
 }
 
 export interface DmLine extends BaseLine {
+  citations?: SourceCitation[];
+  ruling_citation_ids?: string[];
   role: "dm";
   content: string;
   adjudication?: AdjudicationResult | null;
@@ -95,7 +98,7 @@ export function linesFromHistory(msgs: ChatMessageRead[]): Line[] {
     m.role === "user"
       ? { id: `h${i}`, role: "user", content: m.content }
       : // Past DM turns have no captured debug; the dev panel says so in dev mode.
-        { id: `h${i}`, role: "dm", content: m.content, isTurn: true },
+        { id: `h${i}`, role: "dm", content: m.content, citations: m.citations, ruling_citation_ids: m.ruling_citation_ids, isTurn: true },
   );
 }
 
@@ -150,6 +153,8 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         turnId: p.turnId,
         role: "dm",
         content,
+        citations: r.citations,
+        ruling_citation_ids: r.ruling_citation_ids,
         adjudication: p.adjudication,
         debug: p.debug,
         combatOutcome: r.combat_state?.ended ? r.combat_state.outcome : undefined,

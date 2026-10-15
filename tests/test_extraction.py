@@ -296,6 +296,7 @@ def test_reviewed_pipeline_indexes_the_exact_preview_once(native_pdf, tmp_path, 
     for chunk in expected:
         chunk["source_sha256"] = result.source_sha256
         chunk["extraction_sha256"] = result.text_sha256()
+        chunk["rules_edition"] = "unspecified"
     assert calls[0][0] == expected
 
 
@@ -413,3 +414,35 @@ def test_recomputed_quality_rejects_forged_clean_report(native_pdf, tmp_path):
     assert text_digest(result.pages[0].text)
     with pytest.raises(ValueError, match="duplicate_word_layer"):
         load_reviewed_extraction(native_pdf, report)
+
+
+def test_reviewed_source_edition_is_stamped_and_cannot_be_relabelled(
+    native_pdf, tmp_path, monkeypatch
+):
+    extraction = extract_document(native_pdf)
+    extraction.rules_edition = "2014"
+    _, report = save_extraction(extraction, tmp_path / "edition")
+    writes = []
+    monkeypatch.setattr(
+        embed,
+        "_embed_and_upsert",
+        lambda chunks, *args, **kwargs: writes.append(chunks) or len(chunks),
+    )
+    with pytest.raises(ValueError, match="different rules edition"):
+        embed.run_pipeline(
+            native_pdf,
+            "rules_phb",
+            reviewed_extraction=report,
+            rules_edition="2024",
+            save_markdown=False,
+        )
+    assert not writes
+    embed.run_pipeline(
+        native_pdf,
+        "rules_phb",
+        reviewed_extraction=report,
+        rules_edition="2014",
+        save_markdown=False,
+    )
+    assert writes and {c["rules_edition"] for c in writes[0]} == {"2014"}
+    assert load_reviewed_extraction(native_pdf, report).rules_edition == "2014"

@@ -13,20 +13,25 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import structlog
+from fastapi import HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.llm import make_chat_model, message_text
 from db.postgres.models import Campaign, EventLog, Session as SessionModel
-from db.vector.client import get_qdrant_client
-from db.vector.retrieval import search_adventure_context
+from db.vector.retrieval import retrieve_active_scene
+from edgar_core.manifests import ManifestError
+from edgar_core.sources import (
+    DEFAULT_RULES_EDITION,
+    citations_for,
+    cited_excerpt,
+    public_citations,
+)
 
+from . import adventure_manifests
 from .campaign_sources import require_campaign_sources, source_error
 from .character_assignments import character_play_state
-
-log = structlog.get_logger()
 
 _INTRO_TEMPERATURE = 0.7
 
@@ -41,117 +46,18 @@ INTRO_SYSTEM = (
     "or skip ahead — just set the stage."
 )
 
-_INTRO_QUERY = (
-    "The adventure begins: opening scene and read-aloud introduction. Where do the player "
-    "characters start, what is the hook that draws them in, the initial location, mood, and "
-    "the situation at the very start of the adventure."
-)
 
-
-_PAGE_WINDOWS = (2, 5, 12, 30, 80)
-_page_index_attempted: set[str] = set()
-
-
-def _payload(p: object) -> dict:
-    return getattr(p, "payload", None) or {}
-
-
-def _sort_key(p: object) -> tuple[int, int]:
-    payload = _payload(p)
-    page = payload.get("page")
-    idx = payload.get("chunk_index")
-    return (
-        page if isinstance(page, int) else 10_000,
-        idx if isinstance(idx, int) else 0,
-    )
-
-
-def _scroll_ordered_by_page(client, collection: str, limit: int) -> list:
-    """First `limit` points by ascending page via `order_by` (needs a `page` payload index).
-
-    The index is created lazily, once per collection and process; it only adds an index and
-    never touches points. Any failure returns [] so the caller can use the range-filter path.
-    """
-    from qdrant_client.models import OrderBy, PayloadSchemaType
-
-    def _scroll():
-        points, _ = client.scroll(
-            collection_name=collection,
-            limit=limit,
-            order_by=OrderBy(key="page", direction="asc"),
-            with_payload=True,
-            with_vectors=False,
+def _reviewed_opening(primary: str, edition: str) -> tuple[str, list[dict]]:
+    """The first binding owns the opening; secondary modules cannot replace its selection."""
+    manifests = adventure_manifests.campaign_manifests([primary])
+    scene_id = manifests[primary]["opening_scene_id"]
+    context = retrieve_active_scene(manifests, scene_id, {}, rules_edition=edition)
+    passages = context["adventure_context"]
+    if not passages:
+        raise ManifestError(
+            "Choose an opening scene with reviewed player text compatible with the campaign edition."
         )
-        return points
-
-    try:
-        return _scroll()
-    except Exception as e:
-        if collection in _page_index_attempted:
-            log.warning("intro_order_by_failed", collection=collection, error=type(e).__name__)
-            return []
-    _page_index_attempted.add(collection)
-    try:
-        client.create_payload_index(
-            collection_name=collection,
-            field_name="page",
-            field_schema=PayloadSchemaType.INTEGER,
-            wait=True,
-        )
-        return _scroll()
-    except Exception as e:
-        log.warning("intro_page_index_unavailable", collection=collection, error=type(e).__name__)
-        return []
-
-
-def _scroll_page_window(client, collection: str, max_chunks: int) -> list:
-    """Fallback without an index: widen a `page <= N` range filter until enough points appear."""
-    from qdrant_client.models import FieldCondition, Filter, Range
-
-    points: list = []
-    for last_page in _PAGE_WINDOWS:
-        try:
-            points, _ = client.scroll(
-                collection_name=collection,
-                scroll_filter=Filter(must=[FieldCondition(key="page", range=Range(lte=last_page))]),
-                limit=256,
-                with_payload=True,
-                with_vectors=False,
-            )
-        except Exception as e:
-            log.warning("intro_scroll_failed", collection=collection, error=type(e).__name__)
-            return []
-        if len(points) >= max_chunks:
-            break
-    return points
-
-
-def _fetch_opening_text(adventure_collections: list[str], max_chunks: int = 7) -> str:
-    """The literal start of the module: earliest-page chunks of the primary collection.
-
-    Semantic search returns the most *similar* text, which for an "opening" query is often a
-    dramatic mid-adventure scene. The actual opening (premise + read-aloud arrival) lives on the
-    first pages, so we read those directly and let the DM narrate from them. Point ids are
-    hashes, so an unfiltered scroll returns arbitrary pages; we order by the `page` payload
-    (payload index + `order_by`), or fall back to a widening `page <= N` range filter.
-    """
-    if not adventure_collections:
-        return ""
-    client = get_qdrant_client()
-    collection = adventure_collections[0]
-
-    # Over-fetch so chunks sharing the first page can be put back in reading order.
-    points = _scroll_ordered_by_page(client, collection, limit=max_chunks * 4)
-    if not points:
-        points = _scroll_page_window(client, collection, max_chunks)
-
-    points = sorted(points, key=_sort_key)
-    texts: list[str] = []
-    for p in points[:max_chunks]:
-        t = _payload(p).get("text", "")
-        if t:
-            texts.append(t[:700])
-    return "\n".join(texts)
+    return scene_id, passages
 
 
 async def _has_narration(db: AsyncSession, session_id: int) -> bool:
@@ -164,8 +70,10 @@ async def _has_narration(db: AsyncSession, session_id: int) -> bool:
 
 
 async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dict[str, Any] | None:
-    """Generate + persist the opening scene if the session has none yet. Returns a payload
-    shaped like a turn's `done` event, or None if the session already started."""
+    """Stage a fresh opening in the caller's transaction; return its public payload.
+
+    Existing narration, an unavailable model or an empty reply returns None without writes.
+    """
     if await _has_narration(db, session.id):
         return None
 
@@ -181,30 +89,34 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
 
-    # Prefer the literal start of the module; fall back to semantic search if scroll is empty.
-    try:
-        opening_text = await asyncio.to_thread(_fetch_opening_text, adventure_collections)
-        if not opening_text and not homebrew:
-            hits = await asyncio.to_thread(
-                search_adventure_context,
-                _INTRO_QUERY,
-                adventure_collections,
-                campaign_id=session.campaign_id,
-                require_bound_sources=True,
-                limit_per_collection=6,
+    edition = getattr(campaign, "rules_edition", None) or DEFAULT_RULES_EDITION
+    opening_scene_id = None
+    passages: list[dict] = []
+    if not homebrew:
+        try:
+            opening_scene_id, passages = await asyncio.to_thread(
+                _reviewed_opening, adventure_collections[0], edition
             )
-            opening_text = "\n".join(c.get("text", "") for c in hits[:6])
-    except Exception as exc:
-        for source in sources:
-            source.status = "unavailable"
-            source.message = "Adventure text could not be retrieved for the opening. Try again or choose homebrew play."
-        raise source_error(sources) from exc
+        except ManifestError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "adventure_manifest_review_required",
+                    "message": str(exc),
+                    "source": adventure_collections[0],
+                },
+            ) from exc
+        except Exception as exc:
+            for source in sources:
+                source.status = "unavailable"
+                source.message = (
+                    "Reviewed adventure text could not be retrieved for the opening. "
+                    "Try again or explicitly choose homebrew play."
+                )
+            raise source_error(sources) from exc
 
-    if not opening_text and not homebrew:
-        for source in sources:
-            source.status = "unavailable"
-            source.message = "Adventure text could not be retrieved for the opening. Try again or choose homebrew play."
-        raise source_error(sources)
+    citations = public_citations(citations_for(passages, edition))
+    opening_text = "\n\n".join(cited_excerpt(p, edition) for p in passages)
 
     context_parts: list[str] = []
     if character:
@@ -214,8 +126,9 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         )
     if opening_text:
         context_parts.append(
-            "This is the very beginning of the adventure module. Open the story HERE, at the "
-            "start — do not skip ahead to later scenes:\n" + opening_text
+            "Open the story at the reviewed opening scene. "
+            "Use only these complete player-approved passages; citation labels identify their "
+            "sources and must not be narrated. Do not skip ahead to later scenes:\n" + opening_text
         )
     else:
         context_parts.append(
@@ -237,18 +150,28 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     if not narration.strip():
         return None
 
+    if opening_scene_id is not None:
+        session.current_scene_id = opening_scene_id
+
     # Persist as the first narration event (empty player_input => renders as a DM-only message).
     db.add(
         EventLog(
             session_id=session.id,
             event_type="narration",
-            payload={"player_input": "", "narration": narration},
+            payload={
+                "player_input": "",
+                "narration": narration,
+                "current_scene_id": session.current_scene_id,
+                "citations": citations,
+                "rules_edition": edition,
+            },
         )
     )
-    await db.commit()
 
     return {
         "narration": narration,
         "character": character,
         "current_scene_id": session.current_scene_id,
+        "citations": citations,
+        "rules_edition": edition,
     }

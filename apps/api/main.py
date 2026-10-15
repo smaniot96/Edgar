@@ -18,6 +18,7 @@ from edgar_core.config import API_TITLE, API_VERSION
 
 from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
 from .routers._common import HTTPErrorWithContext
+from .routers.adventure_manifests import router as adventure_manifests_router
 from .routers.adventures import router as adventures_router
 from .routers.campaign import router as campaign_router
 from .routers.campaign_characters import router as campaign_characters_router
@@ -98,6 +99,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 app.include_router(health_router)
 app.include_router(adventures_router, prefix="/api")
+app.include_router(adventure_manifests_router, prefix="/api")
 app.include_router(campaign_router, prefix="/api")
 app.include_router(campaign_characters_router, prefix="/api")
 app.include_router(character_router, prefix="/api")

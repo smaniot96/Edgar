@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from edgar_core.sources import RulesEdition, SourceEdition
+
 AdventureStatus = Literal[
     "processing", "ready", "failed", "missing", "empty", "partial", "unavailable"
 ]
@@ -10,6 +12,7 @@ AdventureStatus = Literal[
 class AdventureRead(BaseModel):
     slug: str
     title: str
+    rules_edition: SourceEdition = "unspecified"
     description: str | None = None
     level_range: str | None = None
     cover_image: str | None = None
@@ -30,6 +33,7 @@ class AdventureRead(BaseModel):
 
 
 class AdventureUpdate(BaseModel):
+    rules_edition: SourceEdition = "unspecified"
     title: str | None = None
     description: str | None = None
     level_range: str | None = None
@@ -56,3 +60,4 @@ class AdventureGenerateRequest(BaseModel):
     title: str | None = None
     theme: str | None = None  # free-text premise/setting/tone the player wants
     size: CampaignSize = "medium"
+    rules_edition: RulesEdition = "2014"

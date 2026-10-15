@@ -16,8 +16,10 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from db.postgres.models import Campaign, EventLog, Session as SessionModel
+from edgar_core.sources import public_citations
 
 from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
@@ -37,6 +39,7 @@ from ..services.turn_runner import (
     combat_state_public,
     error_body,
     persist_turn,
+    public_adjudication,
     run_turn,
     stream_session_turn,
 )
@@ -73,6 +76,23 @@ async def _load_turn_initial_state(
             detail="Campaign has ended; reopen it to continue.",
         )
     sources = await require_campaign_sources(campaign)
+    from edgar_core.manifests import ManifestError
+
+    from ..services.adventure_manifests import campaign_manifests
+
+    try:
+        manifests = (
+            {}
+            if campaign.source_mode == "homebrew"
+            else await run_in_threadpool(
+                campaign_manifests, list(campaign.adventure_collections or [])
+            )
+        )
+    except ManifestError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "adventure_manifest_review_required", "message": str(exc)},
+        ) from exc
     world_flags = await load_world_flags(db, session.campaign_id)
 
     prior_messages = await load_session_messages(db, session_id)
@@ -91,10 +111,13 @@ async def _load_turn_initial_state(
             [] if campaign.source_mode == "homebrew" else list(campaign.adventure_collections or [])
         ),
         "source_mode": campaign.source_mode,
+        "rules_edition": campaign.rules_edition,
+        "adventure_manifests": manifests,
         "source_status": [s.model_dump() for s in sources],
         "retrieval_degraded": any(s.status != "ready" for s in sources),
         "world_flags": world_flags,
-        "current_scene_id": session.current_scene_id,
+        "current_scene_id": session.current_scene_id
+        or (next(iter(manifests.values()))["opening_scene_id"] if manifests else None),
         "character": character,
         "npcs": npc_summaries,
         "memory_summary": await load_memory_summary(db, session_id),
@@ -163,6 +186,14 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
                 ChatMessageRead(
                     role="dm",
                     content=str(p["narration"]),
+                    citations=public_citations(p.get("citations", [])),
+                    rules_edition=p.get("rules_edition"),
+                    ruling_citation_ids=[
+                        rid
+                        for rid in p.get("ruling_citation_ids", [])
+                        if rid
+                        in {r["reference_id"] for r in public_citations(p.get("citations", []))}
+                    ],
                     created_at=e.created_at,
                 )
             )
@@ -196,9 +227,9 @@ async def session_intro(
                 status_code=409, detail="Campaign has ended; reopen it to continue."
             )
 
-        if campaign is not None:
-            await require_campaign_sources(campaign)
         payload = await generate_session_intro(db, session)
+        if payload is not None:
+            await db.commit()
     finally:
         await lock.release()
 
@@ -300,7 +331,10 @@ async def session_turn(
             retrieval_degraded=done["retrieval_degraded"],
             source_status=done["source_status"],
             source_mode=done["source_mode"],
-            adjudication=adjudication.model_dump() if adjudication else None,
+            adjudication=public_adjudication(adjudication),
+            citations=done["citations"],
+            rules_edition=done["rules_edition"],
+            ruling_citation_ids=done["ruling_citation_ids"],
             combat_state=result.get("combat_state"),
             current_scene_id=done["current_scene_id"],
             character=done["character"],

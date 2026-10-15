@@ -72,6 +72,11 @@ def main() -> None:
         help="JSON extraction bundle whose selected Markdown text you have visually reviewed; required for rulebooks and --replace",
     )
     parser.add_argument(
+        "--rules-edition",
+        choices=("2014", "2024", "unspecified"),
+        help="Declared source edition; omission preserves a reviewed bundle's declaration",
+    )
+    parser.add_argument(
         "--markdown-dir",
         type=Path,
         default=None,
@@ -117,6 +122,7 @@ def main() -> None:
         try:
             out_dir = args.markdown_dir or default_markdown_dir()
             extraction = extract_document(args.path, pages=args.pages)
+            extraction.rules_edition = args.rules_edition or "unspecified"
             out_path, report_path = save_extraction(extraction, out_dir)
             logger.info("Saved markdown to {} and diagnostics to {}", out_path, report_path)
             extraction.require_valid()
@@ -136,6 +142,7 @@ def main() -> None:
             markdown_dir=args.markdown_dir,
             replace=args.replace,
             reviewed_extraction=args.reviewed_extraction,
+            rules_edition=args.rules_edition,
         )
         logger.info("Ingested {} chunks from {} into {}", n, args.path.name, collection_name)
     except Exception:

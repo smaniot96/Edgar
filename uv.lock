@@ -417,11 +417,15 @@ name = "edgar-core"
 version = "0.1.0"
 source = { editable = "core" }
 dependencies = [
+    { name = "pydantic" },
     { name = "python-dotenv" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "python-dotenv", specifier = ">=1.0.0" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0,<3" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+]
 
 [[package]]
 name = "email-validator"

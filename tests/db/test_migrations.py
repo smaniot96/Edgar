@@ -224,7 +224,7 @@ async def test_source_mode_migration_preserves_bindings_and_requires_explicit_ch
                 (
                     await connection.execute(
                         text(
-                            "SELECT title, adventure_collections, source_mode FROM campaigns WHERE id=:cid"
+                            "SELECT title, adventure_collections, source_mode, rules_edition FROM campaigns WHERE id=:cid"
                         ),
                         {"cid": cid},
                     )
@@ -236,6 +236,7 @@ async def test_source_mode_migration_preserves_bindings_and_requires_explicit_ch
                 "title": "Lost source",
                 "adventure_collections": ["lost_module"],
                 "source_mode": "module",
+                "rules_edition": "2014",
             }
             assert (
                 await connection.execute(
@@ -248,8 +249,17 @@ async def test_source_mode_migration_preserves_bindings_and_requires_explicit_ch
                         text("UPDATE campaigns SET source_mode='automatic' WHERE id=:cid"),
                         {"cid": cid},
                     )
+            with pytest.raises(IntegrityError):
+                async with connection.begin_nested():
+                    await connection.execute(
+                        text("UPDATE campaigns SET rules_edition='unknown' WHERE id=:cid"),
+                        {"cid": cid},
+                    )
             await connection.execute(
-                text("UPDATE campaigns SET source_mode='homebrew' WHERE id=:cid"), {"cid": cid}
+                text(
+                    "UPDATE campaigns SET source_mode='homebrew', rules_edition='2024' WHERE id=:cid"
+                ),
+                {"cid": cid},
             )
         assert "No new upgrade operations detected" in _alembic(postgres_env, "check").stdout
         _alembic(postgres_env, "downgrade", "11_character_bounds")

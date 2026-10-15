@@ -177,15 +177,67 @@ def fake_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
     def _rules(*_a: Any, **_kw: Any) -> list[dict[str, Any]]:
         return [{"text": "Stub rule text.", "source": "PHB", "kind": "rules", "page": 1}]
 
-    def _adv(*_a: Any, **_kw: Any) -> list[dict[str, Any]]:
-        return []
+    # Relational turn tests use a real reviewed contract and disposable indexed passage.
+    # Review/source failure tests do not install this fixture (except the race test, which
+    # overrides the independent source availability boundary).
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, PointStruct, VectorParams
 
+    from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
+    from db.vector.embeddings import VECTOR_SIZE
+    from edgar_core.artifacts import text_digest
+    from edgar_core.manifests import AdventureManifest, manifest_digest
+    from ingestion.extract import ExtractedPage, Extraction
+    from ingestion.manifest import manifest_chunks
+    from ingestion.quality import check_text
+
+    q = QdrantClient(":memory:")
+    manifests = {}
+    for slug in DEFAULT_ADVENTURE_COLLECTIONS:
+        text = "The forest trail winds through the trees. A narrow path invites you onward."
+        extraction = Extraction(
+            slug, "a" * 64, 1, [ExtractedPage(1, text, "generated", check_text(text))]
+        )
+        manifest = AdventureManifest(
+            source=slug,
+            source_sha256=extraction.source_sha256,
+            extraction_sha256=extraction.text_sha256(),
+            opening_scene_id="forest_trail",
+            scenes=[{"scene_id": "forest_trail", "title": "Forest trail"}],
+            passages=[
+                {
+                    "passage_id": "trail_text",
+                    "page": 1,
+                    "start": 0,
+                    "end": len(text),
+                    "text_sha256": text_digest(text),
+                    "scene_ids": ["forest_trail"],
+                    "audience": "player",
+                }
+            ],
+            reviewed_by="test fixture",
+        )
+        manifest.reviewed_sha256 = manifest_digest(manifest)
+        manifests[slug] = manifest.model_dump()
+        q.create_collection(
+            slug, vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
+        )
+        payload = manifest_chunks(extraction, manifest)[0]
+        q.upsert(
+            slug, [PointStruct(id=1, vector=[1.0] + [0.0] * (VECTOR_SIZE - 1), payload=payload)]
+        )
+    monkeypatch.setattr(
+        "apps.api.services.adventure_manifests.campaign_manifests",
+        lambda slugs: {slug: manifests[slug] for slug in slugs},
+    )
+    monkeypatch.setattr("db.vector.retrieval.get_qdrant_client", lambda: q)
     monkeypatch.setattr(
         "agent.nodes.world_retriever.inspect_source",
         lambda slug, **_kw: {"slug": slug, "status": "ready", "usable_chunks": 1},
     )
     monkeypatch.setattr("agent.nodes.world_retriever.search_rules_context", _rules)
-    monkeypatch.setattr("agent.nodes.world_retriever.search_adventure_context", _adv)
+    yield
+    q.close()
 
 
 @pytest.fixture

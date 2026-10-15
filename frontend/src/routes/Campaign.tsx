@@ -14,10 +14,13 @@ import {
   getCampaign,
   isNotFound,
   reopenCampaign,
+  setCampaignRulesEdition,
 } from "../api/client";
 import { SourceRecovery } from "../components/campaign/SourceRecovery";
 import { Pill } from "../components/Pill";
 import { Button, ButtonLink } from "../components/ui/Button";
+import { Field } from "../components/ui/Field";
+import { controlClasses } from "../components/ui/styles";
 import { EmptyState, LoadingText } from "../components/ui/EmptyState";
 import { ErrorNotice, OfflineState } from "../components/ui/ErrorNotice";
 import { ArrowLeftIcon } from "../components/ui/icons";
@@ -209,6 +212,12 @@ export default function CampaignView() {
         </div>
         <ErrorNotice error={actionError} />
       </header>
+      <Field label="Rules edition" hint="Source excerpts from a different edition are excluded. Sources without a declared edition remain unverified.">
+        {(p) => <select {...p} className={controlClasses} value={c.rules_edition ?? "2014"}
+          onChange={(e) => { void setCampaignRulesEdition(c.id, e.target.value as "2014" | "2024").then((updated) => campaign.setData(() => updated)).catch(setActionError); }}>
+          <option value="2014">D&D 5e · 2014</option><option value="2024">D&D 5e · 2024</option>
+        </select>}
+      </Field>
       <SourceRecovery campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
 
       <div>

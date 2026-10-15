@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from edgar_core.sources import DEFAULT_RULES_EDITION, RulesEdition
+
 from ._validators import forbid_null
 
 SourceStatus = Literal[
@@ -33,6 +35,7 @@ class CampaignCreate(BaseModel):
     system: str = Field(..., min_length=1, max_length=255)
     adventure_collections: list[str] | None = None
     source_mode: Literal["module", "homebrew"] = "module"
+    rules_edition: RulesEdition = DEFAULT_RULES_EDITION
 
 
 class CampaignRead(BaseModel):
@@ -47,6 +50,7 @@ class CampaignRead(BaseModel):
     created_at: datetime
     adventure_collections: list[str]
     source_mode: Literal["module", "homebrew"] = "module"
+    rules_edition: RulesEdition = DEFAULT_RULES_EDITION
     sources: list[SourceRead] = Field(default_factory=list)
     retrieval_degraded: bool = False
     play_allowed: bool = True
@@ -61,5 +65,8 @@ class CampaignUpdate(BaseModel):
     system: str | None = Field(None, min_length=1, max_length=255)
     adventure_collections: list[str] | None = None
     source_mode: Literal["module", "homebrew"] = "module"
+    rules_edition: RulesEdition = DEFAULT_RULES_EDITION
 
-    reject_nulls = forbid_null("title", "system", "adventure_collections", "source_mode")
+    reject_nulls = forbid_null(
+        "title", "system", "adventure_collections", "source_mode", "rules_edition"
+    )

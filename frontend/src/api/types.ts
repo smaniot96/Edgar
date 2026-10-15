@@ -58,6 +58,7 @@ export interface AdventureGenerateResponse {
 }
 
 export interface AdventureRead {
+  rules_edition?: RulesEdition | "unspecified";
   slug: string;
   title: string;
   description: string | null;
@@ -139,18 +140,30 @@ export interface SessionRead {
 }
 
 export interface ChatMessageRead {
+  citations?: SourceCitation[];
+  ruling_citation_ids?: string[];
   role: "user" | "dm";
   content: string;
   created_at: string;
 }
 
 export interface SessionIntroRead {
+  citations?: SourceCitation[];
+  ruling_citation_ids?: string[];
   started: boolean;
   narration?: string;
   current_scene_id?: string | null;
 }
 
+export type RulesEdition = "2014" | "2024";
+export interface SourceCitation {
+  reference_id: string; source: string; rules_edition: RulesEdition | "unspecified";
+  source_pages: number[]; source_sha256: string | null; extraction_sha256: string | null;
+  edition_status: "compatible" | "incompatible" | "unverified";
+}
+
 export interface CampaignRead {
+  rules_edition?: RulesEdition;
   id: number;
   title: string;
   system: string;
@@ -216,6 +229,8 @@ export interface DiceLogEntry {
 }
 
 export interface AdjudicationResult {
+  citations?: SourceCitation[];
+  ruling_citation_ids?: string[];
   success: boolean;
   damage: number | null;
   conditions?: string[] | null;
@@ -335,6 +350,8 @@ export interface TurnCharacter {
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */
 export interface TurnResult {
+  citations?: SourceCitation[];
+  ruling_citation_ids?: string[];
   retrieval_degraded?: boolean;
   source_status?: SourceRead[];
   source_mode?: "module" | "homebrew";

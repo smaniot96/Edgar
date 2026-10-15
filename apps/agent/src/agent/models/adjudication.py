@@ -53,6 +53,12 @@ class AdjudicationResult(BaseModel):
     mechanical_summary: str = ""
     dice_result: int | None = None  # overwritten by the adjudicator with the actual roll
 
+    citation_ids: list[str] = Field(
+        default_factory=list,
+        description="Exact reference IDs supporting this ruling; never invent IDs.",
+    )
+    citations: SkipJsonSchema[list[dict]] = Field(default_factory=list)
+
     # Side effects (see module docstring).
     character_update: CharacterUpdate | None = None
     flags_set: list[FlagUpdate] = Field(default_factory=list)
@@ -70,7 +76,15 @@ class AdjudicationResult(BaseModel):
     # None (not evaluated) | "none" | "pending" | "accepted" | "rejected"
     completion_status: SkipJsonSchema[str | None] = None
 
-    @field_validator("flags_set", "flags_cleared", "conditions", "dice_log", mode="before")
+    @field_validator(
+        "flags_set",
+        "flags_cleared",
+        "conditions",
+        "dice_log",
+        "citation_ids",
+        "citations",
+        mode="before",
+    )
     @classmethod
     def _null_lists_to_empty(cls, value: object) -> list:
         # Structured LLM output often sends explicit null instead of omitting keys.

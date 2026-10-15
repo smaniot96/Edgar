@@ -38,6 +38,7 @@ from qdrant_client.models import (
 
 from db.vector import ensure_collection, get_embeddings, get_qdrant_client
 from db.vector.collections import is_rules_collection
+from edgar_core.sources import SourceEdition
 from ingestion.chunk import chunk_pages
 from ingestion.extract import (
     ExtractedPage,
@@ -72,6 +73,8 @@ def run_pipeline(
     preview_dir: Path | None = None,
     on_prepared: Callable[[dict], None] | None = None,
     reviewed_identity: tuple[str, str] | None = None,
+    rules_edition: SourceEdition | None = None,
+    reviewed_manifest: dict | None = None,
 ) -> int:
     """Validate and persist the selected extraction before any embedding or client write."""
     pdf_path = Path(pdf_path)
@@ -83,6 +86,12 @@ def run_pipeline(
         if reviewed_extraction is not None
         else extract_document(pdf_path)
     )
+    if rules_edition is not None:
+        if rules_edition not in ("2014", "2024", "unspecified"):
+            raise ValueError("Declare rules edition 2014, 2024 or unspecified.")
+        if extraction.rules_edition not in ("unspecified", rules_edition):
+            raise ValueError("The reviewed source declares a different rules edition.")
+        extraction.rules_edition = rules_edition
     if (
         reviewed_identity is not None
         and (extraction.source_sha256, extraction.text_sha256()) != reviewed_identity
@@ -93,7 +102,22 @@ def run_pipeline(
     out_dir = preview_dir
     if out_dir is None and (save_markdown or (needs_review and reviewed_extraction is None)):
         out_dir = markdown_dir or default_markdown_dir()
-    chunks = _prepare_extraction(extraction, "pdf", chunk_size, overlap, out_dir, on_prepared)
+    manifest_payloads = None
+    if reviewed_manifest is not None:
+        if reviewed_extraction is None:
+            raise ValueError("Manifest indexing requires its exact reviewed extraction bundle.")
+        from ingestion.manifest import manifest_chunks
+
+        manifest_payloads = manifest_chunks(extraction, reviewed_manifest)
+    chunks = _prepare_extraction(
+        extraction,
+        "pdf",
+        chunk_size,
+        overlap,
+        out_dir,
+        on_prepared,
+        prepared_chunks=manifest_payloads,
+    )
     if needs_review and reviewed_extraction is None:
         out_path, report_path = out_dir / f"{source}.md", out_dir / f"{source}.extraction.json"
         raise ValueError(
@@ -113,6 +137,7 @@ def ingest_pages(
     preview_dir: Path | None = None,
     on_prepared: Callable[[dict], None] | None = None,
     expected_pages: int | None = None,
+    rules_edition: SourceEdition = "unspecified",
 ) -> int:
     """Chunk + embed + upsert already-extracted `(page, text)` pages (e.g. AI-generated text).
 
@@ -124,6 +149,7 @@ def ingest_pages(
         "",
         expected_pages if expected_pages is not None else len(pages),
         [ExtractedPage(n, text, "generated", check_text(text)) for n, text in pages],
+        rules_edition=rules_edition,
     )
     extraction.source_sha256 = extraction.text_sha256()
     issues = []
@@ -157,10 +183,18 @@ def _prepare_extraction(
     preview_dir: Path | None,
     on_prepared: Callable[[dict], None] | None,
     extra_issues: list[dict] | None = None,
+    prepared_chunks: list[dict] | None = None,
 ) -> list[dict]:
     """One quality/coverage gate shared by PDF and generated manuscript entry points."""
-    chunks = chunk_pages(
-        extraction.text_pages(), source=extraction.source, chunk_size=chunk_size, overlap=overlap
+    chunks = (
+        prepared_chunks
+        if prepared_chunks is not None
+        else chunk_pages(
+            extraction.text_pages(),
+            source=extraction.source,
+            chunk_size=chunk_size,
+            overlap=overlap,
+        )
     )
     issues = list(extra_issues or [])
     try:
@@ -190,10 +224,22 @@ def _chunk_payload(c: dict) -> dict:
         "source_pages",
         "source_sha256",
         "extraction_sha256",
+        "rules_edition",
         "section",
         "chapter",
         "heading_path",
         "stat_block",
+        "rules_edition",
+        "manifest_sha256",
+        "passage_id",
+        "scene_id",
+        "scene_ids",
+        "entity_ids",
+        "audience",
+        "requires",
+        "span_start",
+        "span_end",
+        "text_sha256",
     ):
         if c.get(key) is not None:
             payload[key] = c[key]

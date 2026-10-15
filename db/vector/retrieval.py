@@ -25,6 +25,7 @@ import re
 from typing import Any
 
 from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 
 from db.vector.client import get_qdrant_client
 from db.vector.collections import (
@@ -35,6 +36,8 @@ from db.vector.collections import (
     existing_collection_names,
 )
 from db.vector.embeddings import embed_query, get_embeddings  # noqa: F401  (re-exported)
+from edgar_core.artifacts import text_digest
+from edgar_core.manifests import ManifestError, require_published, select_scene_context
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,29 @@ DEFAULT_MONSTER_LIMIT = 2
 # Word-set Jaccard similarity at or above which two chunks count as duplicates.
 NEAR_DUPLICATE_JACCARD = 0.85
 
-_OPTIONAL_PAYLOAD_KEYS = ("section", "chapter", "heading_path", "page_end", "stat_block")
+_OPTIONAL_PAYLOAD_KEYS = (
+    "section",
+    "chapter",
+    "heading_path",
+    "page_end",
+    "stat_block",
+    "source_pages",
+    "source_sha256",
+    "extraction_sha256",
+    "rules_edition",
+    "chunk_index",
+    "manifest_sha256",
+    "passage_id",
+    "scene_id",
+    "scene",
+    "scene_ids",
+    "entity_ids",
+    "audience",
+    "requires",
+    "span_start",
+    "span_end",
+    "text_sha256",
+)
 
 
 class RetrievalError(RuntimeError):
@@ -65,6 +90,7 @@ def search_collections(
     min_score: float | None = DEFAULT_MIN_SCORE,
     dedupe: bool = True,
     required_collections: list[str] | None = None,
+    rules_edition: str | None = None,
 ) -> list[dict[str, Any]]:
     """Embed once, search each existing collection, return hits ranked globally by score.
 
@@ -78,13 +104,24 @@ def search_collections(
     names = _existing_only(q, collection_names, refresh=bool(required_collections))
     missing_required = set(required_collections or []) - set(names)
     if missing_required:
-        raise RetrievalError(f"required adventure collections are missing: {sorted(missing_required)}")
+        raise RetrievalError(
+            f"required adventure collections are missing: {sorted(missing_required)}"
+        )
     if not names:
         return []
 
     vector = embed_query(query_text)
-    hits = _gather_hits(q, names, vector, limit_per_collection, kind=kind,
-                        required_collections=required_collections)
+    hits = _gather_hits(
+        q,
+        names,
+        vector,
+        limit_per_collection,
+        kind=kind,
+        required_collections=required_collections,
+        rules_edition=rules_edition,
+    )
+    if rules_edition:
+        hits = [c for c in hits if c.get("rules_edition") in (None, "unspecified", rules_edition)]
     return _rank(hits, limit=limit, min_score=min_score, dedupe=dedupe)
 
 
@@ -96,6 +133,7 @@ def search_rules_context(
     client: QdrantClient | None = None,
     limit: int | None = DEFAULT_RULES_LIMIT,
     min_score: float | None = DEFAULT_MIN_SCORE,
+    rules_edition: str | None = None,
 ) -> list[dict[str, Any]]:
     """PHB + DMG + MM (canonical `rules_*` plus legacy aliases that exist), best first."""
     names = effective_rules_collection_names(include_legacy=include_legacy_collections)
@@ -107,7 +145,110 @@ def search_rules_context(
         client=client,
         limit=limit,
         min_score=min_score,
+        rules_edition=rules_edition,
     )
+
+
+def retrieve_active_scene(
+    adventure_manifests: dict[str, dict],
+    current_scene_id: str | None,
+    world_flags: dict[str, str] | None = None,
+    *,
+    client: QdrantClient | None = None,
+    rules_edition: str | None = None,
+) -> dict:
+    """Fetch exactly the reviewed current-scene spans, never broad semantic module context.
+
+    All bindings need a valid manifest. Exactly one bound manifest must own this scene;
+    ambiguous IDs require reviewer correction instead of selecting a source by accident.
+    A missing/mutated indexed span fails closed even if other scenes or sources are present.
+    """
+    manifests = {name: require_published(value) for name, value in adventure_manifests.items()}
+    owners = [
+        (name, m)
+        for name, m in manifests.items()
+        if any(s.scene_id == current_scene_id for s in m.scenes)
+    ]
+    if len(owners) != 1:
+        raise ManifestError("Current scene must belong to exactly one reviewed adventure manifest.")
+    collection, manifest = owners[0]
+    if rules_edition and manifest.rules_edition not in ("unspecified", rules_edition):
+        raise ManifestError("The adventure edition does not match the campaign rules edition.")
+    selection = select_scene_context(manifest, current_scene_id, world_flags)
+    wanted = selection["player_passage_ids"] + selection["planner_passage_ids"]
+    if not wanted:
+        raise ManifestError("Current scene has no unlocked reviewed context.")
+    q = _client(client)
+    filters = {
+        "source_sha256": manifest.source_sha256,
+        "extraction_sha256": manifest.extraction_sha256,
+        "rules_edition": manifest.rules_edition,
+        "manifest_sha256": manifest.reviewed_sha256,
+    }
+    query_filter = Filter(
+        must=[
+            *(FieldCondition(key=k, match=MatchValue(value=v)) for k, v in filters.items()),
+            FieldCondition(key="passage_id", match=MatchAny(any=wanted)),
+        ]
+    )
+    expected = {p.passage_id: p for p in manifest.passages if p.passage_id in wanted}
+    found = {}
+    offset = None
+    try:
+        while True:
+            points, offset = q.scroll(
+                collection_name=collection,
+                scroll_filter=query_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                passage_id = payload.get("passage_id")
+                passage = expected.get(passage_id)
+                if passage is None or passage_id in found:
+                    raise ManifestError("Index contains ambiguous reviewed passage identities.")
+                expected_payload = {
+                    **filters,
+                    "source": manifest.source,
+                    "page": passage.page,
+                    "page_end": passage.page,
+                    "source_pages": [passage.page],
+                    "text_sha256": passage.text_sha256,
+                    "audience": passage.audience,
+                    "scene_ids": passage.scene_ids,
+                    "entity_ids": passage.entity_ids,
+                    "requires": passage.requires,
+                    "span_start": passage.start,
+                    "span_end": passage.end,
+                }
+                if (
+                    any(payload.get(k) != v for k, v in expected_payload.items())
+                    or not isinstance(payload.get("text"), str)
+                    or text_digest(payload["text"]) != passage.text_sha256
+                ):
+                    raise ManifestError("Indexed passage differs from its reviewed manifest.")
+                found[passage_id] = {
+                    **_chunk_from_payload(payload, kind="adventure"),
+                    "collection": collection,
+                    "score": None,
+                }
+            if offset is None:
+                break
+    except ManifestError:
+        raise
+    except Exception as exc:
+        raise RetrievalError(f"Reviewed scene retrieval failed for {collection}") from exc
+    if set(found) != set(wanted):
+        raise ManifestError("Reviewed scene passages are missing or stale in the adventure index.")
+    return {
+        "adventure_context": [found[pid] for pid in selection["player_passage_ids"]],
+        "planner_context": [found[pid] for pid in selection["planner_passage_ids"]],
+        "allowed_scene_ids": selection["allowed_scene_ids"],
+        "discovery_entities": selection["entities"],
+    }
 
 
 def search_adventure_context(
@@ -151,6 +292,7 @@ def retrieve_monster(
     limit: int = DEFAULT_MONSTER_LIMIT,
     min_score: float | None = 0.15,
     collections: list[str] | None = None,
+    rules_edition: str | None = None,
 ) -> list[dict[str, Any]]:
     """Monster Manual chunks for a creature name (e.g. a combat target), stat blocks first.
 
@@ -167,8 +309,14 @@ def retrieve_monster(
     if not names:
         return []
 
-    vector = embed_query(f"{name.strip()} stat block: Armor Class, Hit Points, Speed, Challenge, Actions")
-    hits = _gather_hits(q, names, vector, max(10, limit * 5), kind="rules")
+    vector = embed_query(
+        f"{name.strip()} stat block: Armor Class, Hit Points, Speed, Challenge, Actions"
+    )
+    hits = _gather_hits(
+        q, names, vector, max(10, limit * 5), kind="rules", rules_edition=rules_edition
+    )
+    if rules_edition:
+        hits = [c for c in hits if c.get("rules_edition") in (None, "unspecified", rules_edition)]
     if min_score is not None:
         hits = [h for h in hits if h.get("score") is None or h["score"] >= min_score]
 
@@ -184,7 +332,9 @@ def retrieve_monster(
 def _existing_only(q: Any, collection_names: list[str], *, refresh: bool = False) -> list[str]:
     """Drop duplicates and collections that do not exist (when the list can be fetched)."""
     names = list(dict.fromkeys(collection_names))
-    existing = existing_collection_names(q, max_age=0.0) if refresh else existing_collection_names(q)
+    existing = (
+        existing_collection_names(q, max_age=0.0) if refresh else existing_collection_names(q)
+    )
     if existing is None:
         return names
     present = [n for n in names if n in existing]
@@ -195,18 +345,38 @@ def _existing_only(q: Any, collection_names: list[str], *, refresh: bool = False
 
 
 def _gather_hits(
-    q: Any, names: list[str], vector: list[float], limit_per_collection: int, *, kind: str,
-    required_collections: list[str] | None = None
+    q: Any,
+    names: list[str],
+    vector: list[float],
+    limit_per_collection: int,
+    *,
+    kind: str,
+    required_collections: list[str] | None = None,
+    rules_edition: str | None = None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     failures = 0
     last_error: Exception | None = None
     for collection_name in names:
         try:
-            results = _query_collection(q, collection_name, vector, limit_per_collection)
+            edition_filter = None
+            if rules_edition in ("2014", "2024"):
+                edition_filter = Filter(
+                    must_not=[
+                        FieldCondition(
+                            key="rules_edition",
+                            match=MatchValue(value="2024" if rules_edition == "2014" else "2014"),
+                        )
+                    ]
+                )
+            results = _query_collection(
+                q, collection_name, vector, limit_per_collection, edition_filter
+            )
         except Exception as e:
             if collection_name in (required_collections or []):
-                raise RetrievalError(f"required adventure collection query failed: {collection_name}") from e
+                raise RetrievalError(
+                    f"required adventure collection query failed: {collection_name}"
+                ) from e
             failures += 1
             last_error = e
             logger.warning(
@@ -242,7 +412,11 @@ def _rank(
         hits = [h for h in hits if h.get("score") is None or h["score"] >= min_score]
     if not presorted:
         # Stable sort: equal scores keep collection order. Missing scores sink to the bottom.
-        hits = sorted(hits, key=lambda h: h.get("score") if h.get("score") is not None else float("-inf"), reverse=True)
+        hits = sorted(
+            hits,
+            key=lambda h: h.get("score") if h.get("score") is not None else float("-inf"),
+            reverse=True,
+        )
 
     out: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -295,12 +469,14 @@ def _monster_bonus(chunk: dict[str, Any], key: str) -> float:
     elif key in text:
         bonus += 0.04
     raw = chunk.get("text", "")
-    if chunk.get("stat_block") or ("Armor Class" in raw and ("Hit Points" in raw or "Challenge" in raw)):
+    if chunk.get("stat_block") or (
+        "Armor Class" in raw and ("Hit Points" in raw or "Challenge" in raw)
+    ):
         bonus += 0.05
     return bonus
 
 
-def _query_collection(q: QdrantClient, collection_name: str, vector, limit: int):
+def _query_collection(q: QdrantClient, collection_name: str, vector, limit: int, query_filter=None):
     """Run a vector search, preferring the modern `query_points` API.
 
     qdrant-client >= 1.12 removed the legacy `Client.search` method in favour of
@@ -313,6 +489,7 @@ def _query_collection(q: QdrantClient, collection_name: str, vector, limit: int)
             query=vector,
             limit=limit,
             with_payload=True,
+            **({"query_filter": query_filter} if query_filter is not None else {}),
         )
         return response.points
     return q.search(
@@ -320,6 +497,7 @@ def _query_collection(q: QdrantClient, collection_name: str, vector, limit: int)
         query_vector=vector,
         limit=limit,
         with_payload=True,
+        **({"query_filter": query_filter} if query_filter is not None else {}),
     )
 
 
