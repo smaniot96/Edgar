@@ -70,15 +70,21 @@ async def apply_adjudication(
         # Retain engine HP/resources while preventing a legacy name removal from consuming
         # another same-name item after the stable object has been removed.
         acquired_names = {
-            effect.display_name.casefold() for effect in adj.accepted_story_effects
+            effect.display_name.casefold()
+            for effect in adj.accepted_story_effects
             if effect.kind == "acquire" and effect.display_name
         }
         removed_names = {
-            effect.display_name.casefold() for effect in adj.accepted_story_effects
+            effect.display_name.casefold()
+            for effect in adj.accepted_story_effects
             if effect.kind in {"consume", "transfer"} and effect.display_name
         }
-        cu.inventory_add = [name for name in cu.inventory_add if name.casefold() not in acquired_names]
-        cu.inventory_remove = [name for name in cu.inventory_remove if name.casefold() not in removed_names]
+        cu.inventory_add = [
+            name for name in cu.inventory_add if name.casefold() not in acquired_names
+        ]
+        cu.inventory_remove = [
+            name for name in cu.inventory_remove if name.casefold() not in removed_names
+        ]
         await _apply_character_update(
             db,
             game_session.active_character_id,
@@ -96,7 +102,9 @@ async def apply_adjudication(
         await upsert_world_flag(db, game_session.campaign_id, fu.key, fu.value)
 
     if adj.flags_cleared:
-        wanted = [str(k) for k in adj.flags_cleared if str(k) not in (session_discovery_keys or set())]
+        wanted = [
+            str(k) for k in adj.flags_cleared if str(k) not in (session_discovery_keys or set())
+        ]
         rows = await db.execute(
             select(WorldFlag.key).where(
                 WorldFlag.campaign_id == game_session.campaign_id,

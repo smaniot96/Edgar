@@ -251,3 +251,96 @@ async def test_story_pickup_environment_reload_and_rejection(
         str(messages) for schema, messages in fake_llm_schema.calls if schema is AdjudicationResult
     )
     assert stable_id in prompts and NOTE in prompts
+
+
+@pytest.mark.asyncio
+async def test_same_server_turn_replay_has_one_narration_and_object(story_source, fake_llm_schema, api_client):
+    import db.postgres.session as sm
+    from apps.api.routers.session import _load_turn_initial_state
+    from apps.api.services.turn_runner import persist_turn, run_turn
+
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent='exploration')
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True, story_effects=[story_source('acquire', 'note', status='acquired')])
+    sid = (await api_client.post('/api/seed')).json()['session_id']
+    async with sm.async_session_factory() as db:
+        initial = await _load_turn_initial_state(sid, 'I take the note.', db)
+    result = await run_turn(initial)
+    assert len(result['adjudication_result'].accepted_story_effects) == 1
+    first = await persist_turn(sid, initial['player_input'], result)
+    assert await persist_turn(sid, initial['player_input'], result) == first
+    async with sm.async_session_factory() as db:
+        assert await db.scalar(select(func.count()).select_from(EventLog).where(EventLog.session_id == sid, EventLog.event_type == 'narration')) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['provider', 'persistence', 'stale'])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_failed_story_turn_never_commits_effects(story_source, fake_llm_schema, api_client, monkeypatch, failure, stream):
+    import db.postgres.session as sm
+    from apps.api.services import turn_runner
+    from apps.api.services.story_state import load_story_state
+    from db.postgres.models import CharacterAssignment
+    from sqlalchemy import update
+
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent='exploration')
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True, story_effects=[story_source('acquire', 'note', status='acquired')])
+    sid = (await api_client.post('/api/seed')).json()['session_id']
+    if failure == 'provider':
+        async def boom(*args, **kw):
+            raise RuntimeError('private provider failure')
+        async def boom_stream(*args, **kw):
+            raise RuntimeError('private provider failure')
+            yield
+        monkeypatch.setattr(fake_llm_schema, 'ainvoke', boom)
+        monkeypatch.setattr(fake_llm_schema, 'astream', boom_stream)
+    elif failure == 'persistence':
+        async def boom(*args, **kw):
+            raise RuntimeError('private persistence failure')
+        monkeypatch.setattr(turn_runner, 'maybe_complete_campaign', boom)
+    else:
+        original = turn_runner.persist_turn
+        async def stale(*args, **kw):
+            async with sm.async_session_factory() as db:
+                await db.execute(update(CharacterAssignment).values(hp_current=3))
+                await db.commit()
+            return await original(*args, **kw)
+        monkeypatch.setattr(turn_runner, 'persist_turn', stale)
+        monkeypatch.setattr('apps.api.routers.session.persist_turn', stale)
+    suffix = '/stream' if stream else ''
+    response = await api_client.post(f'/api/sessions/{sid}/turn{suffix}', json={'message': 'I take the note.'})
+    if stream:
+        names = [name for name, _ in events(response.text)]
+        assert names[-1] == 'error' and 'done' not in names
+        if failure != 'provider':
+            assert 'token' in names  # Tokens are provisional until a committed done frame.
+    else:
+        assert response.status_code in {500, 503}
+    assert 'private provider failure' not in response.text
+    assert 'private persistence failure' not in response.text
+    async with sm.async_session_factory() as db:
+        assert (await load_story_state(db, sid))['facts'] == []
+        assert await db.scalar(select(func.count()).select_from(EventLog).where(EventLog.session_id == sid, EventLog.event_type == 'narration')) == 0
+        inventory = await db.scalar(select(CharacterAssignment.inventory))
+        assert not any(isinstance(item, dict) and item.get('story_object_id') for item in inventory.get('items', []))
+
+
+@pytest.mark.asyncio
+async def test_stream_cancellation_before_done_does_not_save(story_source, fake_llm_schema, api_client):
+    import db.postgres.session as sm
+    from apps.api.routers.session import _load_turn_initial_state
+    from apps.api.services.story_state import load_story_state
+    from apps.api.services.turn_runner import stream_session_turn
+
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent='exploration')
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True, story_effects=[story_source('acquire', 'note', status='acquired')])
+    sid = (await api_client.post('/api/seed')).json()['session_id']
+    async with sm.async_session_factory() as db:
+        initial = await _load_turn_initial_state(sid, 'I take the note.', db)
+    stream = stream_session_turn(session_id=sid, body_message=initial['player_input'], initial_state=initial)
+    async for frame in stream:
+        if frame.startswith('event: token'):
+            break
+    await stream.aclose()
+    async with sm.async_session_factory() as db:
+        assert (await load_story_state(db, sid))['facts'] == []
+        assert await db.scalar(select(func.count()).select_from(EventLog).where(EventLog.session_id == sid, EventLog.event_type == 'narration')) == 0

@@ -164,23 +164,35 @@ async def persist_turn(
                     return saved
 
             from starlette.concurrency import run_in_threadpool
+
             from .adventure_manifests import campaign_manifests
             from .campaign_sources import require_campaign_sources
-            from .world_flags import load_world_flags
             from .story_state import session_story_flags
+            from .world_flags import load_world_flags
 
-            campaign = (await db.execute(
-                select(Campaign).where(Campaign.id == game_session.campaign_id).with_for_update()
-            )).scalar_one()
+            campaign = (
+                await db.execute(
+                    select(Campaign)
+                    .where(Campaign.id == game_session.campaign_id)
+                    .with_for_update()
+                )
+            ).scalar_one()
             if campaign.status == "ended":
                 raise ValueError("Campaign ended during generation")
-            if (campaign.source_mode != result.get("source_mode", "module")
+            if (
+                campaign.source_mode != result.get("source_mode", "module")
                 or campaign.rules_edition != result.get("rules_edition", "2014")
-                or list(campaign.adventure_collections or []) != result.get("adventure_collections", [])):
+                or list(campaign.adventure_collections or [])
+                != result.get("adventure_collections", [])
+            ):
                 raise ValueError("Campaign source binding changed during generation")
             await require_campaign_sources(campaign)
-            current_manifests = {} if campaign.source_mode == "homebrew" else await run_in_threadpool(
-                campaign_manifests, list(campaign.adventure_collections or [])
+            current_manifests = (
+                {}
+                if campaign.source_mode == "homebrew"
+                else await run_in_threadpool(
+                    campaign_manifests, list(campaign.adventure_collections or [])
+                )
             )
             if current_manifests != (result.get("adventure_manifests") or {}):
                 raise ValueError("Reviewed adventure changed during generation")
@@ -214,7 +226,9 @@ async def persist_turn(
             if current_story != expected_story:
                 raise ValueError("Story state changed during generation")
             current_flags = session_story_flags(
-                current_story, current_manifests, await load_world_flags(db, game_session.campaign_id)
+                current_story,
+                current_manifests,
+                await load_world_flags(db, game_session.campaign_id),
             )
             if current_flags != (result.get("world_flags") or {}):
                 raise ValueError("World state changed during generation")

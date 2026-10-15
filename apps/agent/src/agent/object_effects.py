@@ -118,9 +118,14 @@ def validate_object_effect(
             destination = next(
                 (obj for obj in manifest.objects if obj.canonical_id == effect.destination), None
             )
-            if (destination is None or state.get("current_scene_id") not in destination.scene_ids
-                or not all((state.get("world_flags") or {}).get(key) == value
-                           for key, value in destination.requires.items())):
+            if (
+                destination is None
+                or state.get("current_scene_id") not in destination.scene_ids
+                or not all(
+                    (state.get("world_flags") or {}).get(key) == value
+                    for key, value in destination.requires.items()
+                )
+            ):
                 return None
         return effect.model_copy(update={"status": "used", "quantity": 1})
     if effect.kind == "environment":
