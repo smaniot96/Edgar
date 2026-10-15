@@ -70,6 +70,7 @@ from agent.combatants import (
     roster_violations,
     view_fields,
 )
+from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.nodes import narrator_node, world_retriever_node
@@ -161,10 +162,11 @@ ENCOUNTER_BUILDER = (
     "- If the player names a specific antagonist, use that EXACT name for that enemy.\n"
     "- Use ONLY the resolved foe names and their complete source records below. Never rename a "
     "creature or add an unlisted identity. Use their records for HP/AC/attack/damage.\n"
-    "- Scale for a SOLO low-level hero: keep the total threat modest. A lone boss should be "
-    "~18-30 HP; mooks ~5-11 HP. Avoid stacking many strong enemies.\n"
-    "- hp_max 5-30, ac 10-16, attack_bonus 2-5, damage_dice in NdM or NdM+K form (e.g. 1d6+1), "
-    "initiative_bonus = the creature's DEX modifier (-1..4).\n"
+    "- Scale for a SOLO hero: keep the total threat modest and stay within the solo budget given "
+    "in the context. Avoid stacking many strong enemies. The engine clamps or leaves out anything "
+    "beyond that budget.\n"
+    "- hp_max, attack_bonus and damage_dice within the solo budget; ac 10-16; damage_dice in NdM "
+    "or NdM+K form (e.g. 1d6+1); initiative_bonus = the creature's DEX modifier (-1..4).\n"
     "- is_boss: true ONLY for the adventure's final antagonist / climactic villain named in the "
     "adventure context; false for everyone else.\n\n" + UNTRUSTED_INPUT_NOTICE
 )
@@ -391,10 +393,16 @@ def _creature_source_reference(record: dict) -> dict:
     return {key: record[key] for key in fields if key in record}
 
 
-async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dict]:
-    """Build only verified identities; retain the legacy solo numerical adaptation."""
+async def _build_enemy_roster(
+    state: AgentState, targets: list[str], *, budget_summary: dict | None = None
+) -> list[dict]:
+    """Build only verified identities, then fit the roster to the solo budget (EDG-148).
+
+    `budget_summary`, when given, receives the engine's adaptation record for the combat start.
+    """
     adv_ctx = state.get("adventure_context", []) or []
     player_input = state.get("player_input", "")
+    budget = solo_budget(clamp_level((state.get("character") or {}).get("level")))
     allies, hostiles = _npc_groups(state)
     inert = _inert_npc_names(state)
     # Allies the player explicitly attacks by name become fair game (player's choice).
@@ -426,6 +434,9 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
     if adv_ctx:
         ctx_lines.append("Scene context (for flavour only; do not turn allies into enemies):")
         ctx_lines += [f"- {c.get('text', '')[:300]}" for c in adv_ctx[:2]]
+    ctx_lines.append(
+        f"Solo budget for this level-{budget.level} hero (enforced by the engine): {budget.describe()}."
+    )
     ctx_lines.append("Resolved foes and complete source records (solo numerical adaptations only):")
     ctx_lines += [f"Foe: {c['encounter_name']}\n{c['text']}" for c in monster_ctx]
 
@@ -502,6 +513,12 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
         counts[key] = counts.get(key, 0) + 1
         if counts[key] > 1:
             e["name"] = f"{e['name']} {counts[key]}"
+    # Fit to the solo budget last, so every name above is already unique when notes refer to it.
+    enemies, summary = apply_solo_budget(enemies, budget.level)
+    if summary["adapted"]:
+        log.info("solo_budget_adapted", extra={"level": budget.level, "notes": summary["notes"]})
+    if budget_summary is not None:
+        budget_summary.update(summary)
     return enemies
 
 
@@ -663,8 +680,9 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Initialise on first entry ---
     if not combat_state.get("combatants"):
+        budget_summary: dict = {}
         try:
-            enemies = await _build_enemy_roster(state, named)
+            enemies = await _build_enemy_roster(state, named, budget_summary=budget_summary)
         except CreatureResolutionError as exc:
             return {**retr, "error": str(exc), "error_code": "creature_identity_unresolved"}
         if not enemies:
@@ -679,6 +697,8 @@ async def combat_round_node(state: AgentState) -> dict:
             "ac": player_ac,
             "disposition": "active" if player_hp > 0 else "unconscious",
             "alive": player_hp > 0,
+            # Per-encounter facts live on the player combatant: the table has no column for them.
+            "solo_budget": budget_summary,
         }
         ordered = roll_initiative([player_combatant] + enemies, character)
         combat_state.update(
@@ -689,6 +709,7 @@ async def combat_round_node(state: AgentState) -> dict:
                 "current_turn_index": 0,
                 "ended": False,
                 "outcome": None,
+                "solo_budget": budget_summary,
             }
         )
         log_lines.append(
@@ -696,6 +717,8 @@ async def combat_round_node(state: AgentState) -> dict:
             + ", ".join(f"{_display(c)} {c['init']}" for c in ordered)
             + "."
         )
+        if adaptation := adaptation_sentence(budget_summary):
+            log_lines.append(adaptation)
     elif any("init" not in c for c in combat_state["combatants"]):
         # Encounter persisted before initiative was tracked: roll it now.
         combat_state["combatants"] = roll_initiative(list(combat_state["combatants"]), character)

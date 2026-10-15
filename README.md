@@ -112,7 +112,9 @@ simulate (`GET /api/rules/supported-scope`):
   features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
   mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
-  scaled down for a single level-1 hero.
+  fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
+  with level. Over-budget foes are clamped or left out, exact creature identities are kept, and the
+  combat start notes any adaptation.
 
 ## Repo layout
 
