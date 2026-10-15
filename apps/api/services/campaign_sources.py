@@ -11,8 +11,9 @@ from db.vector.collections import is_campaign_lore_collection, is_rules_collecti
 from db.vector.source_status import inspect_source
 from db.vector.versions import active_index_version
 
+from ..schemas.adventure import AdventureJobRead
 from ..schemas.campaign import CampaignRead, SourceRead
-from .adventures_meta import PDF_DIR, load_meta
+from .adventures_meta import PDF_DIR as PDF_DIR, load_meta, source_pdf_path
 
 
 def validate_binding(slug: str) -> None:
@@ -22,6 +23,97 @@ def validate_binding(slug: str) -> None:
         or is_campaign_lore_collection(slug)
     ):
         raise HTTPException(status_code=422, detail="Invalid adventure source binding.")
+
+
+def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
+    """Project only stable scalar lifecycle facts; checkpoint content remains private."""
+    job = meta.get("job")
+    if not isinstance(job, dict):
+        return None
+    kind, state, job_id = job.get("kind"), job.get("state"), job.get("job_id")
+    allowed_states = {
+        "queued", "running", "interrupted", "failed", "completed", "cancel_requested", "cancelled"
+    }
+    allowed_stages = {
+        "queued", "outline", "generating_chapters", "extracting", "embedding", "indexing",
+        "publishing", "completed", "failed", "cancelled",
+    }
+    if kind not in ("generation", "ingestion") or state not in allowed_states:
+        return None
+    if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
+        return None
+    total = job.get("total_chapters")
+    total = total if isinstance(total, int) and 0 < total <= 24 else None
+    chapters = job.get("completed_chapters", 0)
+    chapters = chapters if isinstance(chapters, int) and 0 <= chapters <= 24 else 0
+    checkpoint = bool(job.get("checkpoint_available"))
+    retryable = bool(job.get("retryable")) and not bool(job.get("checkpoint_corrupt"))
+    retained_work = "none"
+    action_label = explanation = None
+    if kind == "generation":
+        checkpoint_error = bool(job.get("checkpoint_corrupt"))
+        try:
+            from .adventures_meta import load_generation_checkpoint
+
+            saved = load_generation_checkpoint(slug, job_id, expected_chapters=total)
+            checkpoint = bool(saved["outline"] or saved["chapters"])
+            saved_chapters = saved["chapters"]
+            chapters = len(saved_chapters)
+            if any(not key.isdigit() or int(key) >= (total or 0) for key in saved_chapters):
+                checkpoint_error = True
+            complete = bool(
+                saved["outline"]
+                and total is not None
+                and chapters == total
+                and set(saved_chapters) == {str(index) for index in range(total)}
+            )
+        except (OSError, ValueError):
+            complete = False
+            checkpoint_error = True
+        if checkpoint_error:
+            checkpoint = False
+            retryable = False
+            explanation = (
+                "Saved generation progress is unreadable. Create a new campaign to generate again; "
+                "any previously published source remains available."
+            )
+        elif complete:
+            retained_work = "complete_manuscript"
+            action_label = "Rebuild index from saved manuscript"
+            explanation = "The outline and every chapter are saved. Retrying rebuilds the index without another generation call."
+        elif checkpoint:
+            retained_work = "outline_and_chapters"
+            action_label = "Resume saved chapters"
+            explanation = (
+                f"The outline and {chapters} of {total or 'the required'} chapters are saved. "
+                "Retry generates only chapters that are still missing."
+            )
+        else:
+            action_label = "Restart generation"
+            explanation = "No generation checkpoint is available. Retrying starts over and repeats paid model generation calls."
+    elif job.get("retained_source_attempt_id") or source_pdf_path(slug, meta).is_file():
+        retained_work = "source_pdf"
+        action_label = "Retry extraction and indexing"
+        explanation = "A retained PDF is available; retry reruns extraction and indexing without model generation."
+    ingestion = meta.get("ingestion") or {}
+    source_version = ingestion.get("index_version") if isinstance(ingestion, dict) else None
+    if not isinstance(source_version, str):
+        source_version = None
+    return AdventureJobRead(
+        version=1,
+        job_id=job_id,
+        kind=kind,
+        state=state,
+        stage=job.get("stage") if job.get("stage") in allowed_stages else state,
+        completed_chapters=chapters,
+        total_chapters=total,
+        checkpoint_available=checkpoint,
+        retryable=retryable,
+        retained_work=retained_work,
+        action_label=action_label,
+        explanation=explanation,
+        source_version=source_version,
+    )
 
 
 def inspect_ingestion_source(slug: str, meta: dict) -> dict:
@@ -44,7 +136,7 @@ def inspect_ingestion_source(slug: str, meta: dict) -> dict:
     if isinstance(ingestion, dict) and ingestion.get("source_kind") == "pdf":
         # The retained file must still be the validated source, not a replacement under
         # the same slug. Legacy sources without a report keep EDG-001's live checks.
-        pdf = PDF_DIR / f"{slug}.pdf"
+        pdf = source_pdf_path(slug, meta)
         try:
             from ingestion.artifacts import source_digest
 
@@ -93,7 +185,8 @@ def source_read(slug: str) -> SourceRead:
             status="unavailable",
             message="This legacy source binding is invalid. Bind a valid adventure source or choose homebrew play.",
         )
-    meta = active_metadata(slug)
+    raw_meta = load_meta(slug)
+    meta = active_metadata(slug, raw_meta)
     ingestion = meta.get("ingestion")
     live = inspect_ingestion_source(slug, meta)
     if meta.get("status") in ("processing", "failed") and live["status"] != "unavailable":
@@ -106,24 +199,56 @@ def source_read(slug: str) -> SourceRead:
         "processing": "The adventure source is being prepared.",
         "failed": "The adventure source could not be prepared. Provide its source PDF again.",
     }
-    from .adventures_meta import ADVENTURES_DIR, attempt_dir
+    from .adventures_meta import ADVENTURES_DIR, attempt_dir, candidate_pdf_path
 
+    job = raw_meta.get("job") or {}
+    candidate_id = job.get("retained_source_attempt_id")
+    if candidate_id is None and job.get("kind") == "ingestion":
+        candidate_id = job.get("attempt_id")
+    candidate_preview = attempt_dir(slug, candidate_id) if isinstance(candidate_id, str) else None
     token = meta.get("artifact_attempt")
-    preview_dir = attempt_dir(slug, token) if token else ADVENTURES_DIR / slug
-    preview_available = (preview_dir / f"{slug}.extraction.json").is_file() and (
-        preview_dir / f"{slug}.md"
-    ).is_file()
+    preview_dir = (
+        candidate_preview
+        if candidate_preview is not None
+        and (candidate_preview / f"{slug}.extraction.json").is_file()
+        and (candidate_preview / f"{slug}.md").is_file()
+        else attempt_dir(slug, token) if token else ADVENTURES_DIR / slug
+    )
+    preview_path = preview_dir / f"{slug}.extraction.json"
+    preview_available = preview_path.is_file() and (preview_dir / f"{slug}.md").is_file()
+    preview_current = preview_available and live["source_file_matches"]
+    if preview_available and candidate_preview == preview_dir:
+        try:
+            import json
+
+            preview_data = json.loads(preview_path.read_text(encoding="utf-8"))
+            readiness = preview_data.get("readiness") if isinstance(preview_data, dict) else None
+            if not isinstance(readiness, dict):
+                preview_current = False
+            elif readiness.get("source_kind", "pdf") == "generated":
+                expected_hash = (meta.get("ingestion") or {}).get("source_sha256")
+                preview_current = expected_hash == preview_data.get("source_sha256")
+            else:
+                from ingestion.artifacts import source_digest
+
+                candidate_pdf = candidate_pdf_path(slug, candidate_id)
+                if not candidate_pdf.is_file():
+                    candidate_pdf = source_pdf_path(slug, meta)
+                preview_current = source_digest(candidate_pdf) == preview_data.get("source_sha256")
+        except (OSError, ValueError):
+            preview_current = False
     return SourceRead(
         **live,
         title=meta.get("title") or slug.replace("_", " ").title(),
-        source_pdf_available=(PDF_DIR / f"{slug}.pdf").is_file(),
+        source_pdf_available=source_pdf_path(slug, meta).is_file(),
         message=meta.get("error")
         if live["status"] == "failed" and meta.get("error")
         else messages.get(live["status"]),
         failure_code=meta.get("failure_code"),
         extraction_preview_available=preview_available,
-        extraction_preview_current=preview_available and live["source_file_matches"],
+        extraction_preview_current=preview_current,
         ingestion=ingestion if isinstance(ingestion, dict) else None,
+        job=safe_job_read(raw_meta, slug),
     )
 
 

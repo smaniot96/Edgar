@@ -27,6 +27,7 @@ import { ChevronIcon, PlayIcon, PlusIcon } from "../components/ui/icons";
 import { Page, PageHeader, SectionTitle } from "../components/ui/Page";
 import { campaignDisplayName } from "../lib/campaign";
 import { buildCards, type CardModel } from "../lib/campaignCards";
+import { isJobActive } from "../lib/adventureJob";
 import { cn } from "../lib/cn";
 import { forgetLastSession, readLastSessionId, rememberLastSession } from "../lib/lastSession";
 import { useQuery } from "../lib/useQuery";
@@ -52,7 +53,9 @@ export default function Home() {
 
   // Poll while anything is still being prepared: one request at a time, timer cleared on
   // unmount or as soon as nothing is pending.
-  const hasPending = adventures.data?.some((a) => a.status === "processing") ?? false;
+  const hasPending = adventures.data?.some((a) =>
+    a.status === "processing" || isJobActive(a.job),
+  ) ?? false;
   const { loading: adventuresLoading, refetch: refetchAdventures } = adventures;
   useEffect(() => {
     if (!hasPending || adventuresLoading) return;
@@ -225,7 +228,7 @@ export default function Home() {
                 onDelete={(c) => void handleDelete(c)}
                 opening={openingSlug === card.adventure.slug}
                 deleting={deletingSlug === card.adventure.slug}
-            onRetried={() => { adventures.refetch(); campaigns.refetch(); }}
+                onRetried={() => { adventures.refetch(); campaigns.refetch(); }}
               />
             ))}
           </div>

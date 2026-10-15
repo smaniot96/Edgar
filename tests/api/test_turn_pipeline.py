@@ -324,6 +324,65 @@ async def test_unknown_creature_returns_recovery_error_without_saving_turn(
     assert await _assignment_hp(sid) == hp_before
 
 
+# --- Spell slots (EDG-027) -----------------------------------------------------------------
+
+
+async def _assignment_stats(session_id: int) -> dict:
+    import db.postgres.session as sm
+
+    async with sm.async_session_factory() as s:
+        sess = (
+            await s.execute(select(SessionModel).where(SessionModel.id == session_id))
+        ).scalar_one()
+        return (
+            await s.execute(
+                select(CharacterAssignment.stats).where(
+                    CharacterAssignment.character_id == sess.active_character_id,
+                    CharacterAssignment.campaign_id == sess.campaign_id,
+                )
+            )
+        ).scalar_one()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_declared_magic_missile_spends_a_slot_and_model_damage_is_ignored(
+    fake_llm_turn, fake_retrieval, api_client, stream
+) -> None:
+    import db.postgres.session as sm
+    from agent.models.adjudication import AdjudicationResult, CharacterUpdate
+    from agent.models.parsed_input import ParsedInput
+
+    sid = (await _seed(api_client))["session_id"]
+    async with sm.async_session_factory() as s:
+        sess = (await s.execute(select(SessionModel).where(SessionModel.id == sid))).scalar_one()
+        await s.execute(
+            update(Character)
+            .where(Character.id == sess.active_character_id)
+            .values(character_class="Wizard")
+        )
+        await s.commit()
+    fake = _fake_chat()
+    fake._parsed = ParsedInput(
+        intent="exploration", entities={"spell": "Magic Missile"}, dice_expression=None
+    )
+    fake._adj = AdjudicationResult(
+        success=True,
+        mechanical_summary="A bolt of force hits the crate.",
+        character_update=CharacterUpdate(hp_delta=-5),
+    )
+    hp_before = await _assignment_hp(sid)
+    suffix = "/stream" if stream else ""
+    response = await api_client.post(
+        f"/api/sessions/{sid}/turn{suffix}", json={"message": "I cast Magic Missile at the crate"}
+    )
+    assert response.status_code == 200, response.text
+    if stream:
+        assert [name for name, _ in _sse_events(response.text)][-1] == "done"
+    assert (await _assignment_stats(sid))["spell_slots_expended"] == {"1": 1}
+    assert await _assignment_hp(sid) == hp_before
+
+
 # --- Memory summary ------------------------------------------------------------------------
 
 

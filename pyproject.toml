@@ -21,6 +21,10 @@ dev = [
     "fakeredis>=2.35",
     "testcontainers>=4.14",
     "ruff>=0.9",
+    "mypy==1.18.2",
+    "pytest-cov==6.2.1",
+    "pip-audit==2.9.0",
+    "bandit==1.8.6",
 ]
 
 [tool.pytest.ini_options]
@@ -49,6 +53,11 @@ known-first-party = ["agent", "apps", "db", "edgar_core", "ingestion", "rules_en
 
 [tool.ruff.lint.per-file-ignores]
 "db/alembic/env.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+explicit_package_bases = true
 
 [tool.uv]
 override-dependencies = [

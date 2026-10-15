@@ -1,9 +1,10 @@
 import { useState } from "react";
 
-import { retryAdventure } from "../../api/client";
+import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { AdventureRead } from "../../api/types";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
+import { isPublicationCommitting, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/format";
 import { Pill } from "../Pill";
@@ -78,11 +79,19 @@ export function CampaignCard({
 }) {
   const { isDev } = useMode();
   const [retrying, setRetrying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [retryError, setRetryError] = useState<unknown>(null);
   const { adventure, name, state, lastPlayed } = card;
+  const job = adventure.job;
+  const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
   const playable = state === "ready" || state === "ended" || (state === "recovery" && !!card.campaign);
   const showAdventureTitle = name !== adventure.title;
   const recoverable = state === "failed" || state === "recovery";
+  const canRetryJob = job
+    ? job.retryable && ["interrupted", "failed", "cancelled"].includes(job.state)
+    : recoverable && !!adventure.can_retry;
+  const canReviewCurrentPdf = canRetryJob && adventure.extraction_preview_current &&
+    (job?.kind === "ingestion" || adventure.ingestion?.source_kind === "pdf");
 
   async function retry(reviewed?: { reviewed_source_sha256: string; reviewed_extraction_sha256: string }) {
     setRetrying(true);
@@ -96,6 +105,21 @@ export function CampaignCard({
       setRetrying(false);
     }
   }
+
+  async function cancel() {
+    setCancelling(true);
+    setRetryError(null);
+    try {
+      await cancelAdventure(adventure.slug);
+      onRetried?.();
+    } catch (error) {
+      setRetryError(error);
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  const progress = preparationProgress(job);
 
   return (
     <article className={cn(cardClasses, "flex flex-col")}>
@@ -123,16 +147,36 @@ export function CampaignCard({
         {state === "recovery" ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : adventure.error || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
         {state === "failed" ? (
           <p className="mb-3 rounded-control bg-danger-soft px-2 py-1.5 text-xs text-danger">
-            {adventure.error || "Edgar couldn't prepare this campaign. Retry the retained source or upload a corrected PDF."}
+            {adventure.error || (job?.kind === "generation"
+              ? "Edgar couldn't finish generating this campaign. Resume the saved chapters or restart generation if retained work is unavailable."
+              : "Edgar couldn't prepare this campaign. Retry the retained source or upload a corrected PDF.")}
           </p>
         ) : null}
-        {adventure.extraction_preview_available ? <ExtractionPreview slug={adventure.slug} onUsePreview={recoverable && adventure.ingestion?.source_kind === "pdf" ? (sourceHash, extractionHash) => retry({ reviewed_source_sha256: sourceHash, reviewed_extraction_sha256: extractionHash }) : undefined} /> : null}
-        {recoverable && adventure.can_retry ? <Button variant="secondary" size="sm" loading={retrying} onClick={() => void retry()} className="mb-3">Retry retained source</Button> : null}
+        {adventure.extraction_preview_available ? <ExtractionPreview slug={adventure.slug} onUsePreview={canReviewCurrentPdf ? (sourceHash, extractionHash) => retry({ reviewed_source_sha256: sourceHash, reviewed_extraction_sha256: extractionHash }) : undefined} /> : null}
+        {jobRunning ? (
+          <div role="status" className="mb-3 rounded-control border border-info/30 bg-info-soft px-3 py-2 text-sm text-ink">
+            <p className="font-medium">{progress ?? "Preparation is in progress."}</p>
+            {job?.explanation ? <p className="mt-1 text-xs text-ink-muted">{job.explanation}</p> : null}
+            {job.state === "cancel_requested" ? (
+              <p className="mt-2 text-xs text-ink-muted">Cancellation requested…</p>
+            ) : isPublicationCommitting(job) ? (
+              <p className="mt-2 text-xs text-ink-muted">Finishing publication of the validated source. Cancellation is no longer available at this stage.</p>
+            ) : (
+              <Button variant="secondary" size="sm" loading={cancelling} onClick={() => void cancel()} className="mt-2">Cancel preparation</Button>
+            )}
+          </div>
+        ) : null}
+        {job && ["interrupted", "failed", "cancelled"].includes(job.state) ? (
+          <div role="status" className="mb-3 rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-ink">
+            <p className="font-medium">{jobFailureHeading(job)}</p>
+            {job.explanation ? <p className="mt-1 text-xs text-ink-muted">{job.explanation}</p> : null}
+          </div>
+        ) : null}
+        {canRetryJob ? <Button variant="secondary" size="sm" loading={retrying} onClick={() => void retry()} className="mb-3">{job?.action_label ?? "Retry retained source"}</Button> : null}
         <ErrorNotice error={retryError} />
-        {state === "processing" ? (
+        {state === "processing" && !job ? (
           <p className="mb-3 text-xs italic text-ink-muted">
-            Building your campaign… larger sizes take a few minutes. You can leave this page; it
-            keeps working.
+            Preparation is in progress. You can leave this page; it keeps working.
           </p>
         ) : null}
         {state === "ended" ? (

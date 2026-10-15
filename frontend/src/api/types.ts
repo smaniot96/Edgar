@@ -22,6 +22,7 @@ export interface SourceRead {
   extraction_preview_available?: boolean;
   extraction_preview_current?: boolean;
   ingestion?: IngestionSummary | null;
+  job?: AdventureJobRead | null;
 }
 
 export interface IngestionSummary {
@@ -35,6 +36,22 @@ export interface IngestionSummary {
   warning_count: number;
   review_note: string;
   issues: { code: string; page?: number; message: string }[];
+}
+
+export interface AdventureJobRead {
+  version: 1;
+  job_id: string;
+  kind: "generation" | "ingestion";
+  state: "queued" | "running" | "interrupted" | "failed" | "completed" | "cancel_requested" | "cancelled";
+  stage: string;
+  completed_chapters: number;
+  total_chapters: number | null;
+  checkpoint_available: boolean;
+  retryable: boolean;
+  retained_work: "none" | "outline_and_chapters" | "complete_manuscript" | "source_pdf" | "inspected_extraction" | "published";
+  action_label: string | null;
+  explanation: string | null;
+  source_version: string | null;
 }
 
 export interface ExtractionPreview extends IngestionSummary {
@@ -71,6 +88,7 @@ export interface AdventureRead {
   created_at?: string | null;
   source_pdf_available?: boolean;
   can_retry?: boolean;
+  job?: AdventureJobRead | null;
   failure_code?: string | null;
   extraction_preview_available?: boolean;
   extraction_preview_current?: boolean;
@@ -318,6 +336,8 @@ export interface CombatState {
   ended: boolean;
   outcome: CombatOutcome;
   second_wind_used?: boolean;
+  /** Fighter Second Wind uses left on the sheet (additive). */
+  second_wind_uses_remaining?: number | null;
   initiative_order?: string[];
   initiative?: InitiativeEntry[] | null;
   /** Index into the initiative order of whose turn it is (if provided). */
@@ -399,6 +419,8 @@ export interface TurnCharacter {
   character_class?: string;
   stats?: Record<string, unknown> | null;
   inventory?: Record<string, unknown> | null;
+  /** Fighter Second Wind resource (additive; present for fighters). */
+  second_wind?: { uses_remaining: number; uses_max: number } | null;
 }
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */
