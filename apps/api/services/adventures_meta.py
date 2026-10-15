@@ -159,9 +159,10 @@ def prepare_attempt(slug: str, token: str, report: dict, updates: dict | None = 
                 manuscript["index_version"] = version
             previous = meta.get("ready_receipt") or meta
             previous_ingestion = previous.get("ingestion") or {}
-            source_changed = previous_ingestion.get("extraction_sha256") and previous_ingestion.get(
-                "extraction_sha256"
-            ) != report.get("extraction_sha256")
+            source_changed = any(
+                previous_ingestion.get(key) and previous_ingestion[key] != report.get(key)
+                for key in ("source_sha256", "extraction_sha256")
+            )
             receipt = {
                 k: v
                 for k, v in meta.items()
@@ -172,8 +173,9 @@ def prepare_attempt(slug: str, token: str, report: dict, updates: dict | None = 
                 receipt.pop("manifest_draft", None)
                 meta["attempt"]["invalidate_manifest"] = True
                 candidate = receipt.get("manuscript")
-                if isinstance(candidate, dict) and candidate.get("extraction_sha256") != report.get(
-                    "extraction_sha256"
+                if isinstance(candidate, dict) and any(
+                    candidate.get(key) != report.get(key)
+                    for key in ("source_sha256", "extraction_sha256")
                 ):
                     receipt.pop("manuscript", None)
                     meta.pop("manuscript", None)
@@ -220,15 +222,15 @@ def finish_attempt(slug: str, token: str, updates: dict, *, success: bool = Fals
                         temporary.replace(destination / path.name)
                     finally:
                         temporary.unlink(missing_ok=True)
+                if success and meta.get("attempt", {}).get("invalidate_manifest"):
+                    meta.pop("manifest", None)
+                    meta.pop("manifest_draft", None)
                 meta.update(updates)
                 if report:
                     meta["ingestion"] = report
                 if success:
                     meta.pop("ready_receipt", None)
                     if updates.get("manifest"):
-                        meta.pop("manifest_draft", None)
-                    if meta.get("attempt", {}).get("invalidate_manifest"):
-                        meta.pop("manifest", None)
                         meta.pop("manifest_draft", None)
             else:
                 meta.update(previous)

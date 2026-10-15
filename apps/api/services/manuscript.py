@@ -56,14 +56,8 @@ def resolve_canonical_manuscript(slug: str) -> CanonicalManuscript:
     # hidden while preserving local access to the previous original if vectors are unavailable.
     raw_meta = store.load_meta(slug)
     meta = active_metadata(slug, raw_meta)
-    if meta.get("status") != "ready":
-        previous = raw_meta.get("ready_receipt")
-        if isinstance(previous, dict):
-            meta = previous
-        else:
-            raise ManuscriptUnavailable(
-                "No published canonical manuscript is available for this source."
-            )
+    if meta.get("status") != "ready" and isinstance(raw_meta.get("ready_receipt"), dict):
+        meta = raw_meta["ready_receipt"]
     record = meta.get("manuscript")
     if not isinstance(record, dict):
         raise ManuscriptUnavailable(
@@ -100,14 +94,20 @@ def resolve_canonical_manuscript(slug: str) -> CanonicalManuscript:
         r"[0-9a-f]{64}", extraction_sha256
     ):
         raise ManuscriptUnavailable("The retained manuscript has no complete source provenance.")
+    ingestion = meta.get("ingestion") or {}
+    if any(
+        ingestion.get(key) and ingestion[key] != record[key]
+        for key in ("source_sha256", "extraction_sha256")
+    ):
+        raise ManuscriptUnavailable("The retained manuscript does not match this source version.")
     return CanonicalManuscript(
         path=path,
         version=version,
         sha256=digest,
         source_sha256=source_sha256,
         extraction_sha256=extraction_sha256,
-        index_version=record.get("index_version")
-        if isinstance(record.get("index_version"), str)
+        index_version=ingestion.get("index_version", record.get("index_version"))
+        if isinstance(ingestion.get("index_version", record.get("index_version")), str)
         else None,
     )
 

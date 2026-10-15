@@ -12,6 +12,7 @@ from apps.api.services import adventures_meta as store, campaign_sources, manusc
 @pytest.fixture
 def manuscript_store(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(campaign_sources, "active_index_version", lambda _slug: None)
     return tmp_path
 
 
