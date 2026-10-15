@@ -162,6 +162,17 @@ async def test_frozen_evidence_and_resulting_cited_ruling(
         "rules_edition": "2014",
         "source_mode": "homebrew",
     }
+    if "Magic Missile" in action:
+        # A caster, so a declared Magic Missile is castable rather than refused (EDG-027).
+        state["character"] = {
+            "name": "Ilse",
+            "class": "Wizard",
+            "level": 1,
+            "hp_current": 8,
+            "hp_max": 8,
+            "stats": {"INT": 16, "DEX": 14, "CON": 12, "WIS": 12, "CHA": 10, "STR": 8},
+            "inventory": {"weapons": ["quarterstaff"]},
+        }
     out = await wr.world_retriever_node(state)
     evidence = out["rules_context"]
     assert {c["section"] for c in evidence} == set(expected)
@@ -204,7 +215,9 @@ async def test_frozen_evidence_and_resulting_cited_ruling(
     if parsed.check:
         assert result.dc == 15 and result.success == (result.dice_result >= 15)
     else:
-        assert result.success is True and result.dice_result is None
+        # Without a check, the engine's own roll (if any) is the result; never the model's number.
+        assert result.success is True
+        assert result.dice_result == (result.dice_log[0]["total"] if result.dice_log else None)
 
 
 def test_exact_fallback_survives_embedding_outage_and_unspecified_campaign_edition(

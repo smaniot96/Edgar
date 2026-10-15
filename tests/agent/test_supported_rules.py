@@ -450,7 +450,7 @@ async def test_claimed_spell_effect_is_never_rolled_or_persisted(fake_llm_schema
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(
         success=True,
         damage=7,
-        mechanical_summary="Magic missile hits the goblin for 3d4 force damage.",
+        mechanical_summary="Eldritch blast hits the goblin for 3d4 force damage.",
         conditions=["stunned"],
         character_update=CharacterUpdate(
             hp_delta=-7, damage_dice="3d4", add_conditions=["stunned"]
@@ -462,7 +462,7 @@ async def test_claimed_spell_effect_is_never_rolled_or_persisted(fake_llm_schema
     )
     state = _rules_state(
         ParsedInput(intent="combat", check="spell_attack", target="goblin"),
-        "I cast magic missile at the goblin",
+        "I cast eldritch blast at the goblin",
     )
     out = await rules_adjudicator_node(state)
     adj = out["adjudication_result"]
@@ -612,13 +612,13 @@ async def test_narration_cannot_present_unsupported_effect_as_executed(fake_llm_
     from agent.nodes.narrator import narrator_node
 
     fake_llm_schema.narration = (
-        "You weave a magic missile that strikes the goblin for 3d4 force damage. "
+        "You weave an eldritch blast that strikes the goblin for 3d4 force damage. "
         "The goblin is pinned to the wall. You feel the spell drain your slot. "
         "What do you do next?"
     )
     state = _rules_state(
         ParsedInput(intent="combat", check="spell_attack", target="goblin"),
-        "I cast magic missile at the goblin",
+        "I cast eldritch blast at the goblin",
         adjudication_result=AdjudicationResult(
             success=True,
             mechanical_summary="Narrative ruling: the declared spell has no engine mechanics here.",
@@ -627,7 +627,7 @@ async def test_narration_cannot_present_unsupported_effect_as_executed(fake_llm_
     out = await narrator_node(state)
     narration = out["narration"]
     # The appended ruling may name these mechanics; the claimed sentences must not survive.
-    for claim in ("3d4", "pinned to the wall", "drain your slot", "magic missile that strikes"):
+    for claim in ("3d4", "pinned to the wall", "drain your slot", "eldritch blast that strikes"):
         assert claim not in narration
     assert "What do you do next?" in narration
     assert "Narrative ruling" in narration
@@ -651,7 +651,7 @@ def test_boundary_reaches_the_adjudicator_and_narrator_prompts() -> None:
     from agent.nodes.rules_adjudicator import build_adjudicator_prompt
 
     state = _rules_state(
-        ParsedInput(intent="combat", check="spell_attack"), "I cast magic missile at the goblin"
+        ParsedInput(intent="combat", check="spell_attack"), "I cast fireball at the goblin"
     )
     adj_prompt = build_adjudicator_prompt(state, None)[1]["content"]
     assert "Supported-action boundary for this turn" in adj_prompt

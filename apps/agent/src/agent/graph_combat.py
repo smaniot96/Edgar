@@ -87,6 +87,7 @@ from agent.resolution import (
     resolve_from_parsed,
     roll_attack_damage,
 )
+from agent.spells import CastPlan, cast_request, narrate, resolve_spell
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
@@ -508,6 +509,15 @@ def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict 
     return None, f"You don't see {named[0]} among your foes. Who do you attack? ({foes})"
 
 
+def _strike(target: dict, amount: int, parsed: Any, player_input: str) -> str:
+    """Apply an engine-rolled hit to an enemy; returns the status phrase for the round log."""
+    target["hp_current"] = max(0, int(target["hp_current"]) - amount)
+    if target["hp_current"] <= 0:
+        apply_defeat(target, declared_lethality(parsed, player_input))
+        if disposition_of(target) == "unconscious":
+            return "and it is knocked unconscious!"
+        return "and it falls!"
+    return f"({target['hp_current']}/{target['hp_max']} HP left)"
 def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | None:
     """The restrained foe a player's declared release refers to (the only one when unnamed)."""
     bound = [e for e in enemies_in_order if has_effect(e, "restrained")]
@@ -650,14 +660,22 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Decide the player's action BEFORE any dice, so a bad target never burns a round ---
     is_attack, is_spell = (False, False) if fled else _is_attack_action(parsed, named)
-    # Declared spells have no verified engine effect: they never become attack rolls (EDG-028).
+    # A declared spell never becomes a weapon-style attack roll (EDG-028). A catalog spell the
+    # character can cast resolves through agent.spells; any other declared spell keeps its ruling.
     actions = actions_for_state(state)
     spell_declared = has_declared_spell(actions)
-    if spell_declared:
+    spell_plan: CastPlan | None = None
+    request = None if fled else cast_request(player_input, parsed, character)
+    if request is not None:
+        _spell, spell_plan, refusal = request
+        if refusal:
+            # Refused cast: no roll, no round, no state change (a transparent engine refusal).
+            return _ask_player(state, refusal, combat_state=combat_state)
+    if spell_declared or spell_plan is not None:
         is_attack, is_spell = False, False
     heal_item = None
     missing_item = False
-    if not fled:
+    if not fled and spell_plan is None:
         heal_item = find_healing_consumable(character, parsed=parsed, player_input=player_input)
         if heal_item or mentions_item_use(parsed, player_input):
             # Using an item is the action; if it isn't carried, the action simply fails.
@@ -684,6 +702,15 @@ async def combat_round_node(state: AgentState) -> dict:
         target, question = select_target(enemies, named)
         if question:
             return _ask_player(state, question, combat_state=combat_state)
+    spell_target: dict | None = None
+    if spell_plan is not None and spell_plan.spell.kind != "heal":
+        spell_target, question = select_target(enemies, named)
+        if question:
+            return _ask_player(state, question, combat_state=combat_state)
+        if spell_target is None:
+            return _ask_player(
+                state, f"Who do you cast {spell_plan.spell.name} at?", combat_state=combat_state
+            )
     # Typed effects this round's engine applied; the boundary and narrator read them.
     round_effects: list[str] = []
     round_modes: list[str] = []  # d20 mode of every attack rolled this round
@@ -742,6 +769,7 @@ async def combat_round_node(state: AgentState) -> dict:
     inventory_used: list[str] = []
     player_acted = hp > 0
     extra_outcome = ""
+    spell_expended: dict[str, int] | None = None
     if not player_acted:
         log_lines.append(f"{hero} is down before they can act.")
     elif fled:
@@ -769,6 +797,39 @@ async def combat_round_node(state: AgentState) -> dict:
             second_wind_used = True
             extra_outcome = f"{hero} uses Second Wind and regains {sw.total} HP."
         log_lines.append(extra_outcome)
+    elif spell_plan is not None:
+        # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
+        # chosen foe the same way a weapon hit does.
+        save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
+        # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
+        spell_mode = (
+            attack_roll_mode(player, spell_target, ranged=True)
+            if spell_target is not None and spell_plan.spell.kind == "attack"
+            else "normal"
+        )
+        round_modes.append(spell_mode)
+        spell_result = resolve_spell(
+            character,
+            spell_plan,
+            target_ac=int(spell_target.get("ac", 12)) if spell_target else None,
+            target_save_bonus=save_bonus,
+            roll_mode=spell_mode,
+        )
+        dice_log += spell_result.dice_log
+        spell_expended = spell_result.expended
+        target_name = spell_target["name"] if spell_target else None
+        extra_outcome = narrate(spell_result, hero=hero, target=target_name)
+        if spell_result.healing:
+            hp = min(player_hp_max, hp + spell_result.healing)
+        if spell_result.damage and spell_target is not None:
+            dealt = spell_result.damage
+            status = _strike(spell_target, dealt, parsed, player_input)
+            extra_outcome = f"{extra_outcome} {status}"
+        if spell_result.attack is not None:
+            check_result = spell_result.attack
+            log_lines.append(f"{check_result.describe()}. {extra_outcome}")
+        else:
+            log_lines.append(extra_outcome)
     elif spell_declared:
         # Narrative ruling only; appended to the round summary below.
         extra_outcome = ""
@@ -823,16 +884,7 @@ async def combat_round_node(state: AgentState) -> dict:
         if check_result.success:
             dealt, dmg_roll = roll_attack_damage(character, check_result, hint=player_input)
             dice_log.append(dmg_roll.to_log("player damage"))
-            target["hp_current"] = max(0, int(target["hp_current"]) - dealt)
-            if target["hp_current"] <= 0:
-                apply_defeat(target, declared_lethality(parsed, player_input))
-                status = (
-                    "and it is knocked unconscious!"
-                    if disposition_of(target) == "unconscious"
-                    else "and it falls!"
-                )
-            else:
-                status = f"({target['hp_current']}/{target['hp_max']} HP left)"
+            status = _strike(target, dealt, parsed, player_input)
             crit = "Critical hit! " if check_result.critical else ""
             extra_outcome = f"{crit}{hero} hits {target['name']} for {dealt} damage {status}"
         else:
@@ -917,6 +969,7 @@ async def combat_round_node(state: AgentState) -> dict:
     cu = adj.character_update or CharacterUpdate()
     cu.hp_delta = hp - player_hp
     cu.damage_dice = None
+    cu.spell_slots_expended = spell_expended
     for item in inventory_used:
         if item not in cu.inventory_remove:
             cu.inventory_remove.append(item)
