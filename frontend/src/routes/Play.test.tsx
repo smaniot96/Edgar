@@ -10,18 +10,20 @@ const harness = vi.hoisted(() => ({
   game: null as unknown,
   dispatch: vi.fn(),
   busy: false,
+  historyReady: true,
+  recover: vi.fn(),
   turnOptions: null as null | { onResult?: (result: unknown) => void; onAcknowledged?: (revision: number, requestId: string) => void },
   journal: { data: null as unknown, loading: false, error: null as unknown, stale: false, settledRevision: 0, refresh: vi.fn() },
 }));
 vi.mock("../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
 vi.mock("../components/play/usePlaySession", () => ({ usePlaySession: () => harness.game }));
-vi.mock("../components/play/useTurn", () => ({ useTurn: (_sessionId: number, options: typeof harness.turnOptions) => { harness.turnOptions = options; return { dispatch: harness.dispatch, send: vi.fn(), stop: vi.fn(), retry: vi.fn(), recover: vi.fn(), checkReceipt: vi.fn(), busy: harness.busy, state: { lines: [{ id: "live", role: "dm", content: "A recently saved turn" }], pending: null, announcement: "" } }; } }));
+vi.mock("../components/play/useTurn", () => ({ useTurn: (_sessionId: number, options: typeof harness.turnOptions) => { harness.turnOptions = options; return { dispatch: harness.dispatch, send: vi.fn(), stop: vi.fn(), retry: vi.fn(), recover: harness.recover, checkReceipt: vi.fn(), busy: harness.busy, state: { historyReady: harness.historyReady, lines: [{ id: "live", role: "dm", content: "A recently saved turn" }], pending: null, announcement: "" } }; } }));
 vi.mock("../components/journal/api", () => ({ useJournal: () => harness.journal }));
 vi.mock("../components/MessageList", () => ({ MessageList: (props: { openEventId?: number | null }) => <p data-open-event-id={props.openEventId ?? "none"}>A recently saved turn</p> }));
 const campaign: CampaignRead = { id: 2, title: "Lost module", system: "5e", created_by: 1, created_at: "2026-10-14", adventure_collections: ["lost_module"], source_mode: "module", status: "active", ended_at: null, retrieval_degraded: false, play_allowed: true, sources: [] };
 let container: HTMLDivElement;
 let root: Root;
-beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); localStorage.clear(); harness.busy = false; harness.turnOptions = null; harness.journal = { data: null, loading: false, error: null, stale: false, settledRevision: 0, refresh: vi.fn() }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); localStorage.clear(); harness.busy = false; harness.historyReady = true; harness.turnOptions = null; harness.journal = { data: null, loading: false, error: null, stale: false, settledRevision: 0, refresh: vi.fn() }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(() => root.unmount()); container.remove(); window.history.replaceState({}, "", "/"); vi.unstubAllGlobals(); });
 it("preserves live transcript when readiness changes and disables module actions", async () => {
   const boot = { history: [{ role: "dm" as const, content: "Older boot history", created_at: "2026-10-14" }], campaignEnded: false };
@@ -99,4 +101,18 @@ it("opens verified journal history and reports only a newly committed journal de
   harness.journal = { ...harness.journal, data: updated, settledRevision: 1 };
   await act(render);
   expect(container.textContent).toContain("Journal updated: Moon mark.");
+});
+
+
+it("waits for the boot transcript before reconciling a saved pending request", async () => {
+  harness.game = gameFixture();
+  harness.historyReady = false;
+  const request = { requestId: "lost-done", input: "Wait", draftRevision: 1 };
+  localStorage.setItem("edgar_play_draft:v1:1", JSON.stringify({ text: "Wait", revision: 1, pendingRequest: request }));
+  const render = () => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>);
+  await act(render);
+  expect(harness.recover).not.toHaveBeenCalled();
+  harness.historyReady = true;
+  await act(render);
+  expect(harness.recover).toHaveBeenCalledExactlyOnceWith(request);
 });

@@ -191,10 +191,10 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   // Resume by checking the durable receipt before offering a retry or another action.
   useEffect(() => {
     const request = sessionDraft.pendingRequest;
-    if (!boot || !request || busy || knownRequestRef.current === request.requestId || recoveredRequestRef.current === request.requestId) return;
+    if (!boot || !turn.state.historyReady || !request || busy || knownRequestRef.current === request.requestId || recoveredRequestRef.current === request.requestId) return;
     recoveredRequestRef.current = request.requestId;
     void recoverTurn(request);
-  }, [boot, busy, sessionDraft.pendingRequest, recoverTurn]);
+  }, [boot, busy, sessionDraft.pendingRequest, recoverTurn, turn.state.historyReady]);
 
   const introRequested = useRef(false);
   useEffect(() => {
