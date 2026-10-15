@@ -73,7 +73,15 @@ async def test_failed_pdf_replacement_is_inspectable_and_reviewed_retry_survives
     pdf = store.PDF_DIR / "village.pdf"
     write_pdf(pdf, "original")
     original_bytes = pdf.read_bytes()
-    store.save_meta("village", {"status": "failed", "title": "Village", "rules_edition": "2014"})
+    store.save_meta(
+        "village",
+        {
+            "status": "failed",
+            "title": "Village",
+            "rules_edition": "2014",
+            "cover_image": "unavailable-optional-art.png",
+        },
+    )
     token = store.begin_attempt("village", job_attempt=True, job_kind="ingestion")
     extraction = extract_document(pdf)
     preview = store.attempt_dir("village", token)
