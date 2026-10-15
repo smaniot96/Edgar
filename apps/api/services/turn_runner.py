@@ -47,6 +47,7 @@ from agent.nodes.narrator import (
 from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
+    engine_roll_mode,
     executed_spell_for_state,
 )
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
@@ -558,7 +559,10 @@ async def stream_session_turn(
             yield sse_event("error", error_body("llm_unavailable"))
             return
         narration = apply_narration_boundary(
-            message_text(response), actions, executed_spell=executed_spell_for_state(state)
+            message_text(response),
+            actions,
+            engine_roll_mode=engine_roll_mode(state),
+            executed_spell=executed_spell_for_state(state),
         )
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})

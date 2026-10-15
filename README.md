@@ -85,17 +85,19 @@ The engine simulates a deliberately simplified subset of 5e, and declares what i
 simulate (`GET /api/rules/supported-scope`):
 
 - Executed by the engine: d20 ability, skill, save and tool checks against DCs of 10/15/20/25;
-  weapon attacks with natural 1 and 20 handling; AC from the armor table; initiative; combat rounds
-  in initiative order; Fighter Second Wind (once per encounter); short and long rest healing (a long
-  rest also restores spell slots); healing potions taken from inventory.
+  weapon attacks with natural 1 and 20 handling and proficiency only where the class or sheet grants
+  it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
+  table; initiative; combat rounds in initiative order; Fighter Second Wind (once per encounter);
+  short and long rest healing (a long rest also restores spell slots); healing potions taken from
+  inventory.
 - Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
   darts, upcast by slot), Sacred Flame (DEX save) and Cure Wounds (self-heal). Their dice are
   rolled by the engine, leveled spells spend a slot tracked per character, and a cast with no slot
   left is refused with no effect.
-- Not supported: advantage and disadvantage, grapple/shove/pin/restraint, spells outside that
-  catalog, concentration, condition effects, cover and positioning, bonus actions and reactions,
-  the Hit Dice ledger, and class features beyond Second Wind. A declared action of this kind gets a
-  narrative ruling and no mechanical effect.
+- Not supported: advantage claimed by the player or model without an engine source,
+  grapple/shove/pin/restraint, spells outside that catalog, concentration, condition effects, cover
+  and positioning, bonus actions and reactions, the Hit Dice ledger, and class features beyond
+  Second Wind. A declared action of this kind gets a narrative ruling and no mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   scaled down for a single level-1 hero.
 

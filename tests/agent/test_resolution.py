@@ -8,13 +8,19 @@ from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagU
 from agent.models.parsed_input import ParsedInput
 from agent.resolution import (
     COMPLETION_FLAG,
+    CONTEST_KINDS,
     PENDING_COMPLETION_FLAG,
+    RollModeSource,
     check_spec,
+    combine_roll_modes,
     decide_completion,
     enforce_side_effects,
     normalise_conditions,
+    resolve_attack,
     resolve_check,
+    resolve_contest,
     resolve_from_parsed,
+    roll_mode_for_sources,
     sanitize_inventory_add,
     validate_scene_id,
 )
@@ -286,3 +292,186 @@ def test_canonical_inventory_rejects_legacy_grants_but_keeps_engine_consumable_c
     assert adj.character_update.inventory_add == []
     assert adj.character_update.inventory_remove == ["Potion of Healing"]
     assert adj.character_update.hp_delta > 0
+
+
+# --- proficiency per weapon (EDG-024) -------------------------------------------------------
+
+CLERIC = {
+    **FIGHTER,
+    "name": "Ona",
+    "class": "Cleric",
+    "stats": {"STR": 14, "DEX": 12, "CON": 12, "INT": 10, "WIS": 16, "CHA": 10},
+    "inventory": {"weapons": ["longsword"]},
+}
+
+
+def test_unproficient_weapon_adds_no_proficiency_bonus() -> None:
+    # Wizard: DEX 14 (+2) with a longbow; wizards are not proficient with longbows.
+    archer = {**WIZARD, "inventory": {"weapons": ["longbow"]}}
+    longbow = check_spec(archer, "attack", hint="I shoot my longbow")
+    assert longbow.proficient is False and longbow.modifier == 2
+    # Cleric: STR 14 (+2) with a longsword; clerics are simple-weapon users only.
+    sword = check_spec(CLERIC, "attack", hint="I swing my longsword")
+    assert sword.proficient is False and sword.modifier == 2
+    # The same cleric with a simple mace is proficient: STR +2 plus proficiency +2.
+    mace = {**CLERIC, "inventory": {"weapons": ["mace"]}}
+    assert check_spec(mace, "attack").proficient is True
+    assert check_spec(mace, "attack").modifier == 4
+
+
+def test_proficient_weapon_categories_and_listed_grants() -> None:
+    # Fighter: simple and martial weapons.
+    assert check_spec(FIGHTER, "attack", hint="my longbow").proficient is True
+    # A sheet that lists a weapon grant makes the cleric proficient with the longsword.
+    granted = {**CLERIC, "stats": {**CLERIC["stats"], "weapon_proficiencies": ["Longsword"]}}
+    assert check_spec(granted, "attack", hint="my longsword").proficient is True
+    # A listed category grant covers every martial weapon.
+    martial = {**CLERIC, "stats": {**CLERIC["stats"], "proficiencies": ["Martial weapons"]}}
+    assert check_spec(martial, "attack", hint="my warhammer").proficient is True
+
+
+def test_unknown_class_keeps_proficiency_rather_than_inventing_a_penalty() -> None:
+    homebrew = {**CLERIC, "class": "Blood Hunter", "inventory": {"weapons": ["greatsword"]}}
+    assert check_spec(homebrew, "attack").proficient is True
+
+
+def test_unarmed_attack_keeps_proficiency() -> None:
+    unarmed = {**CLERIC, "inventory": {}}
+    spec = check_spec(unarmed, "attack")
+    assert spec.proficient is True and spec.modifier == 2 + 2  # STR +2, proficiency +2
+
+
+# --- advantage and disadvantage (EDG-024) ---------------------------------------------------
+
+
+def _two_d20(seed: int) -> list[int]:
+    rng = random.Random(seed)
+    return [rng.randint(1, 20), rng.randint(1, 20)]
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected"),
+    [
+        ((), "normal"),
+        ((None,), "normal"),
+        (("normal",), "normal"),
+        (("advantage",), "advantage"),
+        (("advantage", "advantage"), "advantage"),  # sources do not stack
+        (("disadvantage",), "disadvantage"),
+        (("advantage", "disadvantage"), "normal"),  # cancel
+        (("advantage", "normal", "disadvantage"), "normal"),
+    ],
+)
+def test_combine_roll_modes(modes, expected) -> None:
+    assert combine_roll_modes(*modes) == expected
+
+
+def test_unknown_roll_mode_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        combine_roll_modes("lucky")
+    with pytest.raises(ValueError):
+        resolve_check(FIGHTER, "athletics", roll_mode="lucky", rng=random.Random(0))
+
+
+def test_roll_mode_sources_come_only_from_the_closed_table() -> None:
+    assert roll_mode_for_sources([]) == "normal"
+    assert roll_mode_for_sources([RollModeSource.TARGET_UNCONSCIOUS]) == "advantage"
+    assert roll_mode_for_sources(["target_unconscious"]) == "advantage"
+    with pytest.raises(ValueError):
+        roll_mode_for_sources(["player_claimed_advantage"])
+
+
+@pytest.mark.parametrize(("mode", "pick"), [("advantage", max), ("disadvantage", min)])
+def test_advantage_keeps_one_die_and_logs_both(mode, pick) -> None:
+    seen = set()
+    for seed in range(40):
+        rolls = _two_d20(seed)
+        res = resolve_check(FIGHTER, "athletics", "medium", roll_mode=mode, rng=random.Random(seed))
+        assert res.natural_rolls == rolls
+        assert res.natural == pick(rolls)
+        assert res.total == res.natural + 5 and res.roll_expression.startswith("2d20kh1" if mode == "advantage" else "2d20kl1")
+        assert res.dice_log[0]["rolls"] == rolls  # both engine faces, in the order rolled
+        assert res.dice_log[0]["kept"] == res.natural and res.dice_log[0]["roll_mode"] == mode
+        assert res.success is (res.total >= 15)
+        assert f"{mode}: d20 rolled {rolls[0]} and {rolls[1]}" in res.describe()
+        seen.add(res.natural)
+    assert len(seen) > 3  # the rolls really vary; nothing is pinned
+
+
+def test_cancelled_advantage_is_an_ordinary_roll() -> None:
+    cancelled = combine_roll_modes("advantage", "disadvantage")
+    for seed in range(10):
+        plain = resolve_check(FIGHTER, "athletics", "medium", rng=random.Random(seed))
+        same = resolve_check(FIGHTER, "athletics", "medium", roll_mode=cancelled, rng=random.Random(seed))
+        assert (same.roll_expression, same.total, same.natural) == (
+            plain.roll_expression,
+            plain.total,
+            plain.natural,
+        )
+        assert same.natural_rolls == [plain.natural] and len(same.dice_log[0]["rolls"]) == 1
+
+
+def test_natural_twenty_and_one_under_advantage_and_disadvantage() -> None:
+    # Advantage: a 20 on either die is the kept face, so it is a critical hit.
+    crit = next(
+        seed for seed in range(500)
+        if 20 in _two_d20(seed) and max(_two_d20(seed)) == 20
+    )  # fmt: skip
+    hit = resolve_attack(FIGHTER, 30, roll_mode="advantage", rng=random.Random(crit))
+    assert hit.natural == 20 and hit.critical and hit.success
+    # Disadvantage: a 20 on only one die is not kept, so there is no critical hit.
+    no_crit = next(
+        seed for seed in range(500)
+        if 20 in _two_d20(seed) and min(_two_d20(seed)) < 20
+    )  # fmt: skip
+    miss = resolve_attack(FIGHTER, 2, roll_mode="disadvantage", rng=random.Random(no_crit))
+    assert miss.natural < 20 and not miss.critical
+    # Disadvantage: a 1 on either die is kept, so it is an automatic miss.
+    fumble = next(
+        seed for seed in range(500)
+        if 1 in _two_d20(seed) and max(_two_d20(seed)) > 1
+    )  # fmt: skip
+    res = resolve_attack(FIGHTER, 2, roll_mode="disadvantage", rng=random.Random(fumble))
+    assert res.natural == 1 and res.fumble and not res.success
+
+
+def test_attack_vs_unconscious_target_source_gives_advantage() -> None:
+    mode = roll_mode_for_sources([RollModeSource.TARGET_UNCONSCIOUS])
+    res = resolve_attack(FIGHTER, 12, roll_mode=mode, rng=random.Random(3))
+    assert res.roll_mode == "advantage" and res.roll_expression == "2d20kh1+5"
+
+
+# --- contested checks (EDG-024) -------------------------------------------------------------
+
+
+def test_contest_kinds_exclude_attacks_saves_and_tools() -> None:
+    assert CONTEST_KINDS == {"skill", "ability"}
+    with pytest.raises(ValueError):
+        resolve_contest(FIGHTER, "athletics", FIGHTER, "attack", rng=random.Random(0))
+
+
+def test_contest_winner_follows_totals_and_logs_both_dice() -> None:
+    # Fighter athletics +5 against acrobatics +1 (DEX 12, not proficient).
+    winners = set()
+    for seed in range(200):
+        r1, r2 = _two_d20(seed)[0], _two_d20(seed)[1]
+        contest = resolve_contest(
+            FIGHTER, "athletics", FIGHTER, "acrobatics", rng=random.Random(seed)
+        )
+        assert contest is not None
+        first_total, second_total = r1 + 5, r2 + 1
+        assert contest.first.total == first_total and contest.second.total == second_total
+        if first_total == second_total:
+            assert contest.winner is None  # tie: the situation stays as it was
+        else:
+            assert contest.winner == ("first" if first_total > second_total else "second")
+        assert [d["rolls"] for d in contest.dice_log] == [[r1], [r2]]
+        winners.add(contest.winner)
+    assert winners == {"first", "second", None}
+
+
+def test_contest_with_missing_check_rolls_nothing() -> None:
+    rng = random.Random(4)
+    before = rng.getstate()
+    assert resolve_contest(FIGHTER, "athletics", FIGHTER, None, rng=rng) is None
+    assert rng.getstate() == before

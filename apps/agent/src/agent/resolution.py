@@ -24,7 +24,8 @@ import random
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from enum import StrEnum
+from typing import Any, Literal
 
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagUpdate
 from tools.dice import DiceOutcome, parse_dice, roll, try_roll
@@ -97,6 +98,25 @@ CLASS_SKILLS = {
     "artificer": ("arcana", "investigation"),
 }
 
+# Weapon proficiency by class (PHB). "simple" and "martial" stand for whole categories; other
+# entries are weapon names in token form ("hand_crossbow"). Added to any listed proficiencies.
+CLASS_WEAPONS = {
+    "barbarian": frozenset({"simple", "martial"}),
+    "bard": frozenset({"simple", "hand_crossbow", "longsword", "rapier", "shortsword"}),
+    "cleric": frozenset({"simple"}),
+    "druid": frozenset({"club", "dagger", "dart", "javelin", "mace", "quarterstaff", "scimitar",
+                        "sickle", "sling", "spear"}),  # fmt: skip
+    "fighter": frozenset({"simple", "martial"}),
+    "monk": frozenset({"simple", "shortsword"}),
+    "paladin": frozenset({"simple", "martial"}),
+    "ranger": frozenset({"simple", "martial"}),
+    "rogue": frozenset({"simple", "hand_crossbow", "longsword", "rapier", "shortsword"}),
+    "sorcerer": frozenset({"dagger", "dart", "sling", "quarterstaff", "light_crossbow"}),
+    "warlock": frozenset({"simple"}),
+    "wizard": frozenset({"dagger", "dart", "sling", "quarterstaff", "light_crossbow"}),
+    "artificer": frozenset({"simple"}),
+}  # fmt: skip
+
 CASTING_ABILITY = {
     "wizard": "INT", "artificer": "INT", "cleric": "WIS", "druid": "WIS", "ranger": "WIS",
     "bard": "CHA", "sorcerer": "CHA", "warlock": "CHA", "paladin": "CHA",
@@ -114,12 +134,15 @@ class Weapon:
     dice: str
     finesse: bool = False
     ranged: bool = False
+    simple: bool = False  # PHB simple weapon; everything else in the table is martial
 
 
 _WEAPONS = [
-    Weapon("dagger", "1d4", finesse=True), Weapon("club", "1d4"), Weapon("quarterstaff", "1d6"),
-    Weapon("mace", "1d6"), Weapon("spear", "1d6"), Weapon("handaxe", "1d6"),
-    Weapon("javelin", "1d6"), Weapon("light hammer", "1d4"), Weapon("sickle", "1d4"),
+    Weapon("dagger", "1d4", finesse=True, simple=True), Weapon("club", "1d4", simple=True),
+    Weapon("quarterstaff", "1d6", simple=True), Weapon("mace", "1d6", simple=True),
+    Weapon("spear", "1d6", simple=True), Weapon("handaxe", "1d6", simple=True),
+    Weapon("javelin", "1d6", simple=True), Weapon("light hammer", "1d4", simple=True),
+    Weapon("sickle", "1d4", simple=True),
     Weapon("shortsword", "1d6", finesse=True), Weapon("scimitar", "1d6", finesse=True),
     Weapon("rapier", "1d8", finesse=True), Weapon("whip", "1d4", finesse=True),
     Weapon("longsword", "1d8"), Weapon("battleaxe", "1d8"), Weapon("warhammer", "1d8"),
@@ -127,10 +150,13 @@ _WEAPONS = [
     Weapon("war pick", "1d8"), Weapon("greatsword", "2d6"), Weapon("greataxe", "1d12"),
     Weapon("maul", "2d6"), Weapon("glaive", "1d10"), Weapon("halberd", "1d10"),
     Weapon("pike", "1d10"), Weapon("lance", "1d12"),
-    Weapon("shortbow", "1d6", ranged=True), Weapon("longbow", "1d8", ranged=True),
+    Weapon("shortbow", "1d6", ranged=True, simple=True),
+    Weapon("longbow", "1d8", ranged=True),
     Weapon("hand crossbow", "1d6", ranged=True), Weapon("heavy crossbow", "1d10", ranged=True),
-    Weapon("light crossbow", "1d8", ranged=True), Weapon("crossbow", "1d8", ranged=True),
-    Weapon("sling", "1d4", ranged=True), Weapon("dart", "1d4", finesse=True, ranged=True),
+    Weapon("light crossbow", "1d8", ranged=True, simple=True),
+    Weapon("crossbow", "1d8", ranged=True),
+    Weapon("sling", "1d4", ranged=True, simple=True),
+    Weapon("dart", "1d4", finesse=True, ranged=True, simple=True),
 ]  # fmt: skip
 # Longest names first so "light crossbow" wins over "crossbow".
 _WEAPONS_BY_LEN = sorted(_WEAPONS, key=lambda w: len(w.name), reverse=True)
@@ -229,7 +255,10 @@ def _listed_proficiencies(character: dict | None) -> set[str]:
     stats = (character or {}).get("stats") or {}
     out: set[str] = set()
     if isinstance(stats, dict):
-        for key in ("proficiencies", "skills", "skill_proficiencies", "tool_proficiencies"):
+        for key in (
+            "proficiencies", "skills", "skill_proficiencies", "tool_proficiencies",
+            "weapon_proficiencies",
+        ):  # fmt: skip
             val = stats.get(key)
             if isinstance(val, list):
                 out |= {_norm_token(v) for v in val}
@@ -243,6 +272,26 @@ def skill_proficiencies(character: dict | None) -> set[str]:
     if listed:
         return listed
     return set(CLASS_SKILLS.get(character_class(character), ()))
+
+
+def weapon_proficient(character: dict | None, weapon: Weapon) -> bool:
+    """True when the class or sheet makes this weapon (by name or category) proficient.
+
+    Unarmed strikes and unrecognised weapons resolve to the generic weapon, which keeps the
+    proficiency bonus as before; a recognised martial weapon without a grant gets none.
+    """
+    if weapon is _DEFAULT_WEAPON:
+        return True
+    cls = character_class(character)
+    listed = _listed_proficiencies(character)
+    if cls not in CLASS_WEAPONS:
+        return True  # homebrew/unknown class: no class table to judge by, never invent a penalty
+    grants = set(CLASS_WEAPONS.get(cls, ()))
+    for token in listed:
+        grants.add(token[: -len("_weapons")] if token.endswith("_weapons") else token)
+    if "simple" in grants and weapon.simple:
+        return True
+    return "martial" in grants or _norm_token(weapon.name) in grants
 
 
 def save_proficiencies(character: dict | None) -> set[str]:
@@ -316,6 +365,66 @@ def has_tool(character: dict | None, tool: str) -> bool:
 # --------------------------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------------------------
+# Roll modes: advantage and disadvantage (EDG-024)
+# --------------------------------------------------------------------------------------------
+
+RollMode = Literal["normal", "advantage", "disadvantage"]
+ROLL_MODES: tuple[str, ...] = ("normal", "advantage", "disadvantage")
+
+
+class RollModeSource(StrEnum):
+    """Engine-owned reasons that change a d20 roll. Only engine state may name one.
+
+    A player's claim, a parser proposal or a model's narration is never a source; those claims
+    receive a narrative ruling. Callers decide applicability (for example, attack rolls against
+    a target) from state the engine owns, then pass the sources through `roll_mode_for_sources`.
+    """
+
+    # Attack rolls against an unconscious creature have advantage (PHB, conditions and combat).
+    TARGET_UNCONSCIOUS = "target_unconscious"
+
+
+ROLL_MODE_BY_SOURCE: dict[RollModeSource, RollMode] = {
+    RollModeSource.TARGET_UNCONSCIOUS: "advantage",
+}
+
+
+def validate_roll_mode(mode: Any) -> RollMode:
+    """Return `mode` when it is one of ROLL_MODES; anything else is a programming error."""
+    if mode is None:
+        return "normal"
+    if isinstance(mode, str) and mode in ROLL_MODES:
+        return mode  # type: ignore[return-value]
+    raise ValueError(f"Unknown roll mode: {mode!r}. Use one of {', '.join(ROLL_MODES)}.")
+
+
+def combine_roll_modes(*modes: Any) -> RollMode:
+    """Combine roll modes per 5e: any advantage with any disadvantage cancels to normal.
+
+    Several sources of the same kind do not stack: one advantage source is as good as three.
+    """
+    kinds = {validate_roll_mode(m) for m in modes}
+    has_adv, has_dis = "advantage" in kinds, "disadvantage" in kinds
+    if has_adv and not has_dis:
+        return "advantage"
+    if has_dis and not has_adv:
+        return "disadvantage"
+    return "normal"
+
+
+def roll_mode_for_sources(sources: Iterable[Any]) -> RollMode:
+    """Map engine-owned sources to a roll mode; an unknown source name is rejected."""
+    modes: list[RollMode] = []
+    for source in sources:
+        try:
+            key = RollModeSource(source)
+        except ValueError as exc:
+            raise ValueError(f"Unknown roll mode source: {source!r}") from exc
+        modes.append(ROLL_MODE_BY_SOURCE[key])
+    return combine_roll_modes(*modes)
+
+
 @dataclass
 class CheckSpec:
     check: str  # normalised name, e.g. "athletics", "dex_save", "attack"
@@ -335,13 +444,15 @@ class CheckResult:
     dc: int
     against: str  # "DC" | "AC"
     roll_expression: str
-    natural: int
+    natural: int  # the d20 face that was kept (the higher or lower under advantage/disadvantage)
     total: int
     success: bool
     critical: bool = False
     fumble: bool = False
     dice_log: list[dict] = field(default_factory=list)
     weapon: Weapon | None = None
+    roll_mode: str = "normal"
+    natural_rolls: list[int] = field(default_factory=list)  # every d20 face rolled, in order
 
     def describe(self) -> str:
         verdict = "success" if self.success else "failure"
@@ -350,8 +461,14 @@ class CheckResult:
         elif self.fumble and self.kind in ("attack", "spell_attack"):
             verdict = "automatic miss (natural 1)"
         label = self.check.replace("_", " ")
+        if self.roll_mode == "normal":
+            face = f"d20 rolled {self.natural}"
+        else:
+            both = " and ".join(str(n) for n in self.natural_rolls)
+            kept = "higher" if self.roll_mode == "advantage" else "lower"
+            face = f"{self.roll_mode}: d20 rolled {both}, kept the {kept} {self.natural}"
         return (
-            f"{label}: {self.roll_expression} = {self.total} (d20 rolled {self.natural}) "
+            f"{label}: {self.roll_expression} = {self.total} ({face}) "
             f"vs {self.against} {self.dc} -> {verdict}"
         )
 
@@ -466,8 +583,14 @@ def check_spec(character: dict | None, check: str | None, *, hint: str = "") -> 
     if kind == "attack":
         weapon = choose_weapon(character, hint, prefer_ranged="ranged" in _norm_token(check or ""))
         ability = _attack_ability(character, weapon)
+        proficient = weapon_proficient(character, weapon)
         return CheckSpec(
-            name, kind, ability, ability_modifier(character, ability) + prof, True, weapon=weapon
+            name,
+            kind,
+            ability,
+            ability_modifier(character, ability) + (prof if proficient else 0),
+            proficient,
+            weapon=weapon,
         )
     if kind == "spell_attack":
         ability = CASTING_ABILITY.get(cls)
@@ -496,6 +619,35 @@ def d20_expression(modifier: int) -> str:
     return f"1d20{modifier:+d}"
 
 
+def _d20_roll(
+    spec: CheckSpec, mode: RollMode, rng: random.Random | None
+) -> tuple[int, int, str, dict]:
+    """Roll the d20 for `spec` in `mode`. Returns (kept face, total, expression, log entry).
+
+    Advantage and disadvantage roll two engine dice (`2d20`) and keep the higher or lower; both
+    faces are logged, in the order rolled, so the roll can be replayed.
+    """
+    if mode == "normal":
+        expr = d20_expression(spec.modifier)
+        outcome = roll(expr, rng)
+        return outcome.rolls[0], outcome.total, expr, outcome.to_log(f"{spec.check} check")
+    pair = roll("2d20", rng)
+    keep = max if mode == "advantage" else min
+    kept = keep(pair.rolls)
+    suffix = "kh1" if mode == "advantage" else "kl1"
+    expr = f"2d20{suffix}{spec.modifier:+d}" if spec.modifier else f"2d20{suffix}"
+    log = {
+        "expression": f"2d20{spec.modifier:+d}" if spec.modifier else "2d20",
+        "rolls": list(pair.rolls),
+        "modifier": spec.modifier,
+        "total": kept + spec.modifier,
+        "kept": kept,
+        "roll_mode": mode,
+        "purpose": f"{spec.check} check",
+    }
+    return kept, kept + spec.modifier, expr, log
+
+
 def dc_for(difficulty: str | None) -> int:
     return DIFFICULTY_DC.get(
         str(difficulty or DEFAULT_DIFFICULTY), DIFFICULTY_DC[DEFAULT_DIFFICULTY]
@@ -511,15 +663,19 @@ def resolve_check(
     against: str = "DC",
     hint: str = "",
     rng: random.Random | None = None,
+    roll_mode: RollMode = "normal",
 ) -> CheckResult | None:
-    """Roll `check` for `character` against a DC (or AC). None when no check is needed."""
+    """Roll `check` for `character` against a DC (or AC). None when no check is needed.
+
+    `roll_mode` comes from engine-owned sources only (see `roll_mode_for_sources`).
+    """
     spec = check_spec(character, check, hint=hint)
     if spec is None:
         return None
+    mode = validate_roll_mode(roll_mode)
     target = dc if dc is not None else dc_for(difficulty)
-    expr = d20_expression(spec.modifier)
-    outcome = roll(expr, rng)
-    natural = outcome.rolls[0]
+    natural, total, expr, log = _d20_roll(spec, mode, rng)
+    faces = [natural] if mode == "normal" else list(log["rolls"])
     is_attack = spec.kind in ("attack", "spell_attack")
     critical = is_attack and natural == 20
     fumble = is_attack and natural == 1
@@ -528,7 +684,7 @@ def resolve_check(
     elif fumble:
         success = False
     else:
-        success = outcome.total >= target
+        success = total >= target
     return CheckResult(
         check=spec.check,
         kind=spec.kind,
@@ -538,12 +694,14 @@ def resolve_check(
         against=against,
         roll_expression=expr,
         natural=natural,
-        total=outcome.total,
+        total=total,
         success=success,
         critical=critical,
         fumble=fumble,
-        dice_log=[outcome.to_log(f"{spec.check} check")],
+        dice_log=[log],
         weapon=spec.weapon,
+        roll_mode=mode,
+        natural_rolls=faces,
     )
 
 
@@ -554,6 +712,7 @@ def resolve_attack(
     spell: bool = False,
     hint: str = "",
     rng: random.Random | None = None,
+    roll_mode: RollMode = "normal",
 ) -> CheckResult:
     ranged = bool(re.search(r"\b(shoot|shoots|fire|fires|loose|looses)\b", hint, re.IGNORECASE))
     result = resolve_check(
@@ -563,9 +722,73 @@ def resolve_attack(
         against="AC",
         hint=hint,
         rng=rng,
+        roll_mode=roll_mode,
     )
     assert result is not None
     return result
+
+
+# Contested checks (EDG-024). Only skill and ability checks take part (e.g. Athletics vs
+# Athletics or Acrobatics); attacks, saves and tools are not contests in the supported subset.
+CONTEST_KINDS = frozenset({"skill", "ability"})
+
+
+@dataclass
+class ContestResult:
+    first: CheckResult
+    second: CheckResult
+    winner: str | None  # "first" | "second"; None for a tie
+
+    def describe(self) -> str:
+        outcome = {
+            "first": "first wins",
+            "second": "second wins",
+            None: "tie: the situation stays as it was",
+        }[self.winner]
+        return (
+            f"contest: {self.first.check.replace('_', ' ')} {self.first.total} vs "
+            f"{self.second.check.replace('_', ' ')} {self.second.total} -> {outcome}"
+        )
+
+    @property
+    def dice_log(self) -> list[dict]:
+        return [*self.first.dice_log, *self.second.dice_log]
+
+
+def resolve_contest(
+    first_character: dict | None,
+    first_check: str | None,
+    second_character: dict | None,
+    second_check: str | None,
+    *,
+    first_roll_mode: RollMode = "normal",
+    second_roll_mode: RollMode = "normal",
+    rng: random.Random | None = None,
+) -> ContestResult | None:
+    """Opposed check: each side rolls its own d20 modifier and the higher total wins.
+
+    Both sides roll from the same engine RNG, first side first, so a seeded turn replays. A tie
+    has no winner: under the 5e rules a tied contest leaves the situation as it was (the
+    defender does not win ties). None when either side has no check to roll.
+    """
+    for character, check in ((first_character, first_check), (second_character, second_check)):
+        spec = check_spec(character, check)
+        if spec is None:
+            return None  # no check to roll: nothing is rolled for either side
+        if spec.kind not in CONTEST_KINDS:
+            raise ValueError(f"{spec.check!r} ({spec.kind}) is not a supported contest check")
+    first = resolve_check(
+        first_character, first_check, dc=0, against="contest", rng=rng, roll_mode=first_roll_mode
+    )
+    second = resolve_check(
+        second_character, second_check, dc=0, against="contest", rng=rng, roll_mode=second_roll_mode
+    )
+    assert first is not None and second is not None
+    if first.total == second.total:
+        winner = None
+    else:
+        winner = "first" if first.total > second.total else "second"
+    return ContestResult(first=first, second=second, winner=winner)
 
 
 def _double_dice(expr: str) -> str:

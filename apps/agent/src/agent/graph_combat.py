@@ -78,7 +78,12 @@ from agent.resolution import (
 )
 from agent.spells import CastPlan, cast_request, narrate, resolve_spell
 from agent.state import AgentState
-from agent.supported_rules import actions_for_state, has_declared_spell, ruling_lines
+from agent.supported_rules import (
+    actions_for_state,
+    engine_roll_mode,
+    has_declared_spell,
+    ruling_lines,
+)
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference, reference_matches
 from tools.dice import parse_dice, roll
@@ -885,6 +890,7 @@ async def combat_round_node(state: AgentState) -> dict:
         "messages": list(narr_updates.get("messages", state.get("messages", []))),
         "narration": narration,
         "adjudication_result": adj,
+        "engine_roll_mode": engine_roll_mode(state),
         "rules_context": state.get("rules_context", []),
         "adventure_context": state.get("adventure_context", []),
     }

@@ -159,6 +159,37 @@ describe("roll card text", () => {
     expect(p && rollSummary(p)).toBe("Longsword attack · 1d20+5 = 25 (nat 20) vs AC 13 → Success");
   });
 
+  it("shows both d20 faces when advantage applied and the kept face", () => {
+    const p = rollParts({
+      success: true,
+      damage: null,
+      mechanical_summary: "",
+      dice_result: 22,
+      roll_expression: "2d20kh1+5",
+      dc: 15,
+      natural_roll: 17,
+      check: "Athletics",
+      dice_log: [
+        { expression: "2d20+5", rolls: [4, 17], modifier: 5, total: 22, roll_mode: "advantage", kept: 17 },
+      ],
+    });
+    expect(p && rollSummary(p)).toBe("Athletics · 2d20kh1+5 [4, 17] = 22 vs DC 15 → Success");
+  });
+
+  it("does not show faces for a plain roll or an unrelated log entry", () => {
+    const p = rollParts({
+      success: false,
+      damage: null,
+      mechanical_summary: "",
+      dice_result: 9,
+      roll_expression: "1d20+5",
+      dc: 15,
+      check: "Athletics",
+      dice_log: [{ expression: "1d8", rolls: [4, 5], modifier: 0, total: 9, purpose: "damage" }],
+    });
+    expect(p && rollSummary(p)).toBe("Athletics · 1d20+5 = 9 vs DC 15 → Failure");
+  });
+
   it("is hidden (null) when no dice were rolled", () => {
     expect(rollParts({ success: false, damage: null, mechanical_summary: "", dice_result: null })).toBeNull();
   });
