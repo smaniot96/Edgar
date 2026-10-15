@@ -103,8 +103,11 @@ def test_parser_planner_and_narrator_get_all_uncovered_messages_and_durable_fact
     import asyncio
 
     asyncio.run(input_parser_node(state))
+    assert "authoritative over conflicting older prose" in fake_llm_schema.calls[-1][1][0].content
     parser_text = fake_llm_schema.calls[-1][1][1].content
-    planner_text = build_adjudicator_prompt(state, None)[1]["content"]
+    planner_prompt = build_adjudicator_prompt(state, None)
+    assert "authoritative over conflicting" in planner_prompt[0]["content"]
+    planner_text = planner_prompt[1]["content"]
     narrator_prompt = build_narrator_prompt(state)
     narrator_text = narrator_prompt[-1].content
     assert "PRIVATE-COMBAT-SOURCE-BINDING" not in parser_text
