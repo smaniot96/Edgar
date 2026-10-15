@@ -67,11 +67,24 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "d20 plus the ability modifier, plus the proficiency bonus when the sheet (or the "
             "class default) makes the skill, save or tool proficient, against a DC of 10 (easy), "
-            "15 (medium, default), 20 (hard) or 25 (very hard). Advantage and disadvantage are "
-            "not applied."
+            "15 (medium, default), 20 (hard) or 25 (very hard). Advantage and disadvantage apply "
+            "only from engine-owned sources (see advantage_disadvantage)."
         ),
         implementation="agent.resolution:resolve_check",
         test="tests/agent/test_supported_rules.py::test_supported_d20_checks_use_dc_tiers",
+    ),
+    Mechanic(
+        id="advantage_disadvantage",
+        title="Advantage and disadvantage",
+        scope=(
+            "A check or attack rolls two engine d20s and keeps the higher (advantage) or the "
+            "lower (disadvantage); both faces are logged. Advantage with disadvantage cancels to "
+            "a normal roll. A mode comes only from the engine's typed sources (currently an attack "
+            "against an unconscious target has advantage). A player's or the model's claim of "
+            "advantage is never a source and is not applied."
+        ),
+        implementation="agent.resolution:resolve_check",
+        test="tests/agent/test_supported_rules.py::test_supported_advantage_and_disadvantage",
     ),
     Mechanic(
         id="modifiers_and_proficiency",
@@ -92,7 +105,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "d20 plus attack ability (STR, or DEX for finesse and ranged weapons) plus "
             "proficiency against target AC. A natural 20 always hits and doubles the weapon's "
             "dice; a natural 1 always misses. Only weapons in the engine table are recognised "
-            "(others use a generic d8); every weapon attack is treated as proficient."
+            "(others use a generic d8). The proficiency bonus is added only when the class or "
+            "sheet makes the weapon, or its simple or martial category, proficient; unarmed and "
+            "unrecognised attacks keep it."
         ),
         implementation="agent.resolution:resolve_attack",
         test="tests/agent/test_supported_rules.py::test_supported_weapon_attack_crit_and_fumble",
@@ -203,12 +218,6 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
 )
 
 UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
-    UnsupportedMechanic(
-        id="advantage_disadvantage",
-        title="Advantage and disadvantage",
-        boundary="Rolls use the plain d20 and the sheet modifier; no advantage is applied.",
-        owner="EDG-024",
-    ),
     UnsupportedMechanic(
         id="contested_maneuvers",
         title="Grapple, shove, pin, restrain, trip and knock prone",
@@ -342,8 +351,8 @@ _RULINGS = {
         "incapacitation or saving-throw change is applied."
     ),
     ADVANTAGE: (
-        "Narrative ruling: advantage and disadvantage are not applied. Rolls use the plain d20 "
-        "and the sheet modifier."
+        "Narrative ruling: advantage was not applied: no supported source applies here, so the "
+        "roll uses the plain d20 and the sheet modifier."
     ),
     ACTION_ECONOMY: (
         "Narrative ruling: action economy is not tracked. Bonus actions, reactions, Dodge, Dash, "
@@ -492,13 +501,24 @@ def _parsed_feature(parsed: Any) -> str | None:
     return feature[:60]
 
 
+ENGINE_ROLL_MODE_KEY = "engine_roll_mode"
+
+
+def engine_roll_mode(state: dict[str, Any] | None) -> str:
+    """The roll mode the engine applied this turn ("normal" when none or unknown)."""
+    mode = (state or {}).get(ENGINE_ROLL_MODE_KEY)
+    return mode if mode in ("advantage", "disadvantage") else "normal"
+
+
 def classify_unsupported_actions(
-    player_input: str | None, parsed: Any = None
+    player_input: str | None, parsed: Any = None, *, engine_roll_mode: str = "normal"
 ) -> tuple[UnsupportedAction, ...]:
     """Deterministic classification of the declared action against the unsupported list.
 
     Returns at most one entry per kind, in a stable order. Text is matched in English only;
-    a spell attack proposed by the parser is always classified as a declared spell.
+    a spell attack proposed by the parser is always classified as a declared spell. When the
+    engine applied advantage or disadvantage this turn, an advantage wording describes a real
+    effect and is not an unsupported action.
     """
     text = str(player_input or "")
     found: dict[str, UnsupportedAction] = {}
@@ -508,6 +528,8 @@ def classify_unsupported_actions(
     if feature:
         found.setdefault(FEATURE, UnsupportedAction(FEATURE, feature.lower()))
     for kind, pattern in _TEXT_PATTERNS:
+        if kind == ADVANTAGE and engine_roll_mode != "normal":
+            continue
         match = pattern.search(text)
         if match and kind not in found:
             found[kind] = UnsupportedAction(kind, match.group(0).lower()[:60])
@@ -515,7 +537,11 @@ def classify_unsupported_actions(
 
 
 def actions_for_state(state: dict[str, Any]) -> tuple[UnsupportedAction, ...]:
-    return classify_unsupported_actions(state.get("player_input"), state.get("parsed_input"))
+    return classify_unsupported_actions(
+        state.get("player_input"),
+        state.get("parsed_input"),
+        engine_roll_mode=engine_roll_mode(state),
+    )
 
 
 def has_declared_spell(actions: tuple[UnsupportedAction, ...]) -> bool:
@@ -555,19 +581,29 @@ def boundary_prompt_block(actions: tuple[UnsupportedAction, ...]) -> str | None:
 # --------------------------------------------------------------------------------------------
 
 
-def _claim_pattern(actions: tuple[UnsupportedAction, ...]) -> re.Pattern[str] | None:
+def _claim_pattern(
+    actions: tuple[UnsupportedAction, ...], *, engine_roll_mode: str = "normal"
+) -> re.Pattern[str] | None:
     """Claims of every unsupported mechanic, once any unsupported action is declared.
 
     The union is deliberate: a fake or confused provider may describe a different unsupported
     effect than the one the player declared (a spell turn narrating a pin, say), and neither the
-    narrator nor a flag can be trusted to name its own mechanic.
+    narrator nor a flag can be trusted to name its own mechanic. The advantage claim is left out
+    when the engine applied a mode this turn, because that wording then describes a real roll.
     """
     if not actions:
         return None
-    return re.compile("|".join(f"(?:{p})" for p in _CLAIM_WORDS.values()), re.IGNORECASE)
+    patterns = [
+        p
+        for kind, p in _CLAIM_WORDS.items()
+        if not (kind == ADVANTAGE and engine_roll_mode != "normal")
+    ]
+    return re.compile("|".join(f"(?:{p})" for p in patterns), re.IGNORECASE)
 
 
-def apply_adjudication_boundary(adj: Any, actions: tuple[UnsupportedAction, ...]) -> None:
+def apply_adjudication_boundary(
+    adj: Any, actions: tuple[UnsupportedAction, ...], *, engine_roll_mode: str = "normal"
+) -> None:
     """Remove LLM-proposed effects that claim an unsupported mechanic. Mutates `adj`.
 
     Conditions are never stored for an unsupported turn. Damage is removed for spell, feature and
@@ -586,7 +622,7 @@ def apply_adjudication_boundary(adj: Any, actions: tuple[UnsupportedAction, ...]
             cu.damage_dice = None
     if kinds & {SPELL, FEATURE, MANEUVER}:
         adj.damage = None
-    claim = _claim_pattern(actions)
+    claim = _claim_pattern(actions, engine_roll_mode=engine_roll_mode)
     if claim is not None:
         adj.flags_set = [
             fu
@@ -609,7 +645,9 @@ def _strip_claim_sentences(text: str, claim: re.Pattern[str] | None) -> str:
     return "\n\n".join(kept_lines).strip()
 
 
-def apply_narration_boundary(narration: str, actions: tuple[UnsupportedAction, ...]) -> str:
+def apply_narration_boundary(
+    narration: str, actions: tuple[UnsupportedAction, ...], *, engine_roll_mode: str = "normal"
+) -> str:
     """Drop narration sentences that claim an unsupported effect and state the ruling.
 
     Line structure is kept. When any unsupported action was declared, the ruling is appended, so
@@ -617,7 +655,9 @@ def apply_narration_boundary(narration: str, actions: tuple[UnsupportedAction, .
     """
     if not actions:
         return narration
-    body = _strip_claim_sentences(narration, _claim_pattern(actions))
+    body = _strip_claim_sentences(
+        narration, _claim_pattern(actions, engine_roll_mode=engine_roll_mode)
+    )
     rulings = " ".join(ruling_lines(actions))
     if not body:
         return rulings
