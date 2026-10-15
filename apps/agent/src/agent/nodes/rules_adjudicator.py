@@ -355,7 +355,7 @@ async def adjudicate(
             result.accepted_story_effects = []
             result.story_effects = []
             result.scene_id = state.get("current_scene_id")
-            result.success = False
+            result.success = check_result.success if check_result else False
             state["story_reveal_context"] = []
             state["authorized_policy_effect_keys"] = []
             state["policy_reveal_authorizations"] = []

@@ -258,3 +258,17 @@ async def test_public_reading_uses_automatic_policy_without_model_or_roll(fake_l
     assert len(result.accepted_story_effects) == 1
     assert result.accepted_story_effects[0].player_text == state["adventure_context"][0]["text"]
     assert fake_llm_schema.calls == []
+
+
+@pytest.mark.asyncio
+async def test_rejected_consequences_preserve_the_engine_check_verdict(
+    fake_llm_schema, monkeypatch
+):
+    monkeypatch.setattr(
+        "agent.nodes.rules_adjudicator.validate_story_effects", lambda result, state: result
+    )
+    with use_rng(random.Random(0)):
+        out = await rules_adjudicator_node(_policy_state())
+    result = out["adjudication_result"]
+    assert out["policy_rejection"] and result.accepted_story_effects == []
+    assert result.dc == 13 and result.dice_result >= 13 and result.success
