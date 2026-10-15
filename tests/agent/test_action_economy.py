@@ -28,6 +28,7 @@ from agent.models.parsed_input import ParsedInput
 from agent.supported_rules import (
     SUPPORTED_MECHANICS,
     UNSUPPORTED_MECHANICS,
+    EngineApplied,
     apply_narration_boundary,
     classify_unsupported_actions,
     contract_payload,
@@ -180,16 +181,16 @@ def test_action_economy_moves_from_unsupported_to_supported() -> None:
     ],
 )
 def test_executed_economy_is_not_unsupported(text, effects, kinds) -> None:
-    got = classify_unsupported_actions(text, engine_effects=effects)
+    got = classify_unsupported_actions(text, applied=EngineApplied(effects=effects))
     assert [a.kind for a in got] == kinds
 
 
 def test_executed_dodge_and_bonus_narration_survives_the_boundary() -> None:
     actions = classify_unsupported_actions(
-        "I dodge and take the dash action", engine_effects=("dodge",)
+        "I dodge and take the dash action", applied=EngineApplied(effects=("dodge",))
     )
     narration = "You dodge the blow. You dodge aside again. The goblin lunges and misses."
-    kept = apply_narration_boundary(narration, actions, engine_effects=("dodge",))
+    kept = apply_narration_boundary(narration, actions, applied=EngineApplied(effects=("dodge",)))
     assert "You dodge the blow. You dodge aside again." in kept
     # An unexecuted claim of the same kind is still struck.
     stripped = apply_narration_boundary(

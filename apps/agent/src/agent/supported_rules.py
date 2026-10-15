@@ -19,6 +19,13 @@ Runtime enforcement uses the same vocabulary:
   * `apply_narration_boundary` removes narration sentences that claim an unsupported effect and
     appends the ruling, so a fake or misbehaving provider cannot present one as executed.
 
+The engine-executed facts of a turn travel as one `EngineApplied` value, built once from the
+state by `engine_applied_for_state`. Adding a new engine-executed fact means:
+  1. a typed effect: the combat round records its id in `engine_effects`, and its claim is
+     exempted where it is matched (`_claim_words`, `_claim_pattern`, `_executed_economy_phrase`);
+     or a new fact: add one field to `EngineApplied` and read it in `engine_applied_for_state`;
+  2. nothing else: do not add a keyword argument to the classification or boundary functions.
+
 Engine-owned dice and numbers are unchanged: this module never rolls and never sets a number.
 """
 
@@ -779,10 +786,10 @@ def parsed_feature_name(parsed: Any) -> str | None:
     return name or None
 
 
-def _engine_applied_maneuver(text: str, engine_effects: tuple[str, ...]) -> bool:
+def _engine_applied_maneuver(text: str, applied: EngineApplied) -> bool:
     """True when the declared maneuver is a supported one whose effect the engine applied."""
     maneuver = classify_combat_maneuver(text)
-    return maneuver is not None and maneuver.kind in engine_effects
+    return maneuver is not None and maneuver.kind in applied.effects
 
 
 # Spell conditions the executed spell records on a foe; when the engine recorded none, the narrated
@@ -792,10 +799,36 @@ _CONDITION_RECORDED = frozenset({"blinded"})
 ENGINE_ROLL_MODE_KEY = "engine_roll_mode"
 
 
-def engine_roll_mode(state: dict[str, Any] | None) -> str:
-    """The roll mode the engine applied this turn ("normal" when none or unknown)."""
-    mode = (state or {}).get(ENGINE_ROLL_MODE_KEY)
-    return mode if mode in ("advantage", "disadvantage") else "normal"
+@dataclass(frozen=True)
+class EngineApplied:
+    """What the engine really executed this turn. The boundary reads this, never LLM text.
+
+    `roll_mode` is the advantage or disadvantage the engine applied ("normal" when none).
+    `effects` are the typed effect ids the combat round recorded this turn. `executed_spell` is
+    True when a catalog spell is executed (no refusal). See the module docstring for how to add one.
+    """
+
+    roll_mode: str = "normal"
+    effects: tuple[str, ...] = ()
+    executed_spell: bool = False
+
+
+def engine_applied_for_state(state: dict[str, Any] | None) -> EngineApplied:
+    """The engine-applied facts recorded in this turn's state (missing or unknown: none).
+
+    `engine_effects` is recorded by the combat round; the executed spell is derived from the
+    player's cast request, which the engine executes unless the character cannot cast it.
+    """
+    state = state or {}
+    mode = state.get(ENGINE_ROLL_MODE_KEY)
+    request = cast_request(
+        state.get("player_input"), state.get("parsed_input"), state.get("character")
+    )
+    return EngineApplied(
+        roll_mode=mode if mode in ("advantage", "disadvantage") else "normal",
+        effects=tuple(str(kind) for kind in (state.get("engine_effects") or ())),
+        executed_spell=request is not None and request[2] is None,
+    )
 
 
 def classify_unsupported_actions(
@@ -803,8 +836,7 @@ def classify_unsupported_actions(
     parsed: Any = None,
     character: dict | None = None,
     *,
-    engine_roll_mode: str = "normal",
-    engine_effects: tuple[str, ...] = (),
+    applied: EngineApplied = EngineApplied(),
 ) -> tuple[UnsupportedAction, ...]:
     """Deterministic classification of the declared action against the unsupported list.
 
@@ -812,12 +844,13 @@ def classify_unsupported_actions(
     A declared catalog spell that the character can cast is executed by the engine and is not
     listed; a catalog spell that is refused (no access, no slot) is listed with that refusal as
     its ruling. Any other declared spell, and a spell attack proposed by the parser, is listed.
-    When the engine applied advantage or disadvantage this turn, an advantage wording describes a
-    real effect and is not an unsupported action. `engine_effects` are the typed effects the
-    engine applied this turn (EDG-021): a supported maneuver that really applied one is not
-    unsupported, so its narration is not stripped.
+    When the engine applied advantage or disadvantage this turn (`applied.roll_mode`), an advantage
+    wording describes a real effect and is not an unsupported action. `applied.effects` are the
+    typed effects the engine applied this turn (EDG-021): a supported maneuver that really applied
+    one is not unsupported, so its narration is not stripped.
     """
     text = str(player_input or "")
+    effects = applied.effects
     found: dict[str, UnsupportedAction] = {}
     request = cast_request(text, parsed, character)
     if request is not None:
@@ -826,7 +859,7 @@ def classify_unsupported_actions(
             found[SPELL] = UnsupportedAction(
                 SPELL, spell.name.lower(), f"Narrative ruling: {refusal}"
             )
-        elif spell.condition in _CONDITION_RECORDED and spell.condition not in engine_effects:
+        elif spell.condition in _CONDITION_RECORDED and spell.condition not in effects:
             # The executed spell recorded no condition (the save succeeded, or no foe was in the
             # fight): a narrated blindness would be a claim without an engine effect, so it is ruled on.
             found[CONDITION] = UnsupportedAction(
@@ -840,8 +873,8 @@ def classify_unsupported_actions(
     # Implemented class features (EDG-145) the engine executed this turn are not declared. Any
     # other declared one (refused, or not applied this turn) gets its own ruling.
     class_features = requested_features(text, parsed_feature_name(parsed))
-    phrases = [f.replace("_", " ") for f in class_features if f not in engine_effects]
-    rulings = [feature_ruling(f, character) for f in class_features if f not in engine_effects]
+    phrases = [f.replace("_", " ") for f in class_features if f not in effects]
+    rulings = [feature_ruling(f, character) for f in class_features if f not in effects]
     unsupported = _UNSUPPORTED_FEATURE.search(text)
     feature = unsupported.group(0) if unsupported else _parsed_feature(parsed)
     if feature:
@@ -859,9 +892,9 @@ def classify_unsupported_actions(
             and not _UNCOVERED_SPELL.search(text)
         ):
             continue  # the executed catalog spell; its casting words are not a declared spell
-        if kind == ADVANTAGE and engine_roll_mode != "normal":
+        if kind == ADVANTAGE and applied.roll_mode != "normal":
             continue
-        if kind == CONDITION and "blinded" in engine_effects:
+        if kind == CONDITION and "blinded" in effects:
             pattern = _TEXT_CONDITION_OTHER  # the engine blinded a foe: that word is not a claim
         if kind in found:
             continue
@@ -869,20 +902,20 @@ def classify_unsupported_actions(
             (
                 m
                 for m in pattern.finditer(text)
-                if not _executed_economy_phrase(kind, m.group(0), engine_effects, text)
+                if not _executed_economy_phrase(kind, m.group(0), applied, text)
             ),
             None,
         )
         if not match:
             continue
-        if kind == MANEUVER and _engine_applied_maneuver(text, engine_effects):
+        if kind == MANEUVER and _engine_applied_maneuver(text, applied):
             continue
         found[kind] = UnsupportedAction(kind, match.group(0).lower()[:60])
     return tuple(found[kind] for kind in _KIND_ORDER if kind in found)
 
 
 def _executed_economy_phrase(
-    kind: str, phrase: str, engine_effects: tuple[str, ...], text: str = ""
+    kind: str, phrase: str, applied: EngineApplied, text: str = ""
 ) -> bool:
     """True when the phrase names an action economy slot the engine executed this turn.
 
@@ -894,9 +927,9 @@ def _executed_economy_phrase(
     if kind != ACTION_ECONOMY:
         return False
     word = phrase.lower()
-    if "dodge" in engine_effects and word.startswith("dodg"):
+    if "dodge" in applied.effects and word.startswith("dodg"):
         return True
-    if "bonus_action" in engine_effects and word.startswith("bonus"):
+    if "bonus_action" in applied.effects and word.startswith("bonus"):
         return bool(_EXECUTED_BONUS_SPELL_OR_FEATURE.search(text))
     return False
 
@@ -904,27 +937,13 @@ def _executed_economy_phrase(
 _EXECUTED_BONUS_SPELL_OR_FEATURE = re.compile(r"second\s+wind|healing\s+word", re.IGNORECASE)
 
 
-def engine_effects_for_state(state: dict[str, Any]) -> tuple[str, ...]:
-    """Typed effects the engine applied in this turn, as recorded by the combat round."""
-    return tuple(str(kind) for kind in (state.get("engine_effects") or ()))
-
-
 def actions_for_state(state: dict[str, Any]) -> tuple[UnsupportedAction, ...]:
     return classify_unsupported_actions(
         state.get("player_input"),
         state.get("parsed_input"),
         state.get("character"),
-        engine_roll_mode=engine_roll_mode(state),
-        engine_effects=engine_effects_for_state(state),
+        applied=engine_applied_for_state(state),
     )
-
-
-def executed_spell_for_state(state: dict[str, Any]) -> bool:
-    """True when this turn casts a catalog spell the engine executes (no refusal)."""
-    request = cast_request(
-        state.get("player_input"), state.get("parsed_input"), state.get("character")
-    )
-    return request is not None and request[2] is None
 
 
 def has_declared_spell(actions: tuple[UnsupportedAction, ...]) -> bool:
@@ -964,13 +983,13 @@ def boundary_prompt_block(actions: tuple[UnsupportedAction, ...]) -> str | None:
 # --------------------------------------------------------------------------------------------
 
 
-def _claim_words(engine_effects: tuple[str, ...]) -> dict[str, str]:
+def _claim_words(applied: EngineApplied) -> dict[str, str]:
     """The claim vocabulary, minus the action economy phrases the engine executed this turn."""
     words = dict(_CLAIM_WORDS)
     executed = [
         claim
         for effect, claim in (("dodge", _DODGE_CLAIM), ("bonus_action", _BONUS_ACTION_CLAIM))
-        if effect in engine_effects
+        if effect in applied.effects
     ]
     if executed:
         # Only the claims the engine did not execute remain (Dash, Disengage, opportunity attacks).
@@ -981,11 +1000,7 @@ def _claim_words(engine_effects: tuple[str, ...]) -> dict[str, str]:
 
 
 def _claim_pattern(
-    actions: tuple[UnsupportedAction, ...],
-    *,
-    engine_roll_mode: str = "normal",
-    executed_spell: bool = False,
-    engine_effects: tuple[str, ...] = (),
+    actions: tuple[UnsupportedAction, ...], applied: EngineApplied = EngineApplied()
 ) -> re.Pattern[str] | None:
     """Claims of every unsupported mechanic, once any unsupported action is declared.
 
@@ -994,25 +1009,25 @@ def _claim_pattern(
     narrator nor a flag can be trusted to name its own mechanic. Three exceptions describe engine
     facts: a catalog spell the engine executed (its name, dice and slots), an advantage or
     disadvantage the engine applied this turn, a restraint or prone effect really applied, and an
-    implemented class feature the engine executed (`engine_effects`, EDG-145); those claims are not
-    applied to that turn's text.
+    implemented class feature the engine executed (`applied.effects`, EDG-145); those claims are
+    not applied to that turn's text.
     """
     if not actions:
         return None
-    maneuver_applied = bool({"restrained", "prone"} & set(engine_effects))
+    maneuver_applied = bool({"restrained", "prone"} & set(applied.effects))
     patterns = []
-    for kind, p in _claim_words(engine_effects).items():
-        if executed_spell and kind == SPELL:
+    for kind, p in _claim_words(applied).items():
+        if applied.executed_spell and kind == SPELL:
             continue
-        if kind == ADVANTAGE and engine_roll_mode != "normal":
+        if kind == ADVANTAGE and applied.roll_mode != "normal":
             continue
         if kind == MANEUVER and maneuver_applied:
             continue
-        if kind == CONDITION and "blinded" in engine_effects:
+        if kind == CONDITION and "blinded" in applied.effects:
             p = _OTHER_CONDITION_CLAIMS  # the engine's blinded is real; other conditions still ruled
         patterns.append(p)
     # An implemented class feature is a claim only while the engine has not executed it this turn.
-    executed = set(engine_effects) & FEATURE_EFFECTS
+    executed = set(applied.effects) & FEATURE_EFFECTS
     patterns += [NARRATION_CLAIMS[f] for f in IMPLEMENTED_FEATURES if f not in executed]
     if not patterns:
         return None
@@ -1023,16 +1038,14 @@ def apply_adjudication_boundary(
     adj: Any,
     actions: tuple[UnsupportedAction, ...],
     *,
-    engine_roll_mode: str = "normal",
-    executed_spell: bool = False,
-    engine_effects: tuple[str, ...] = (),
+    applied: EngineApplied = EngineApplied(),
 ) -> None:
     """Remove LLM-proposed effects that claim an unsupported mechanic. Mutates `adj`.
 
     Conditions are never stored for an unsupported turn. Damage is removed for spell, feature and
     maneuver turns because the engine has no verified effect for them. Flags whose key or value
     claims an unsupported effect are dropped. The ruling is stated in the mechanical summary.
-    `executed_spell` marks a turn whose catalog spell the engine executes (see `_claim_pattern`).
+    `applied` holds the facts the engine executed this turn (see `_claim_pattern`).
     """
     if not actions:
         return
@@ -1046,12 +1059,7 @@ def apply_adjudication_boundary(
             cu.damage_dice = None
     if kinds & {SPELL, FEATURE, MANEUVER}:
         adj.damage = None
-    claim = _claim_pattern(
-        actions,
-        engine_roll_mode=engine_roll_mode,
-        executed_spell=executed_spell,
-        engine_effects=engine_effects,
-    )
+    claim = _claim_pattern(actions, applied)
     if claim is not None:
         adj.flags_set = [
             fu
@@ -1078,9 +1086,7 @@ def apply_narration_boundary(
     narration: str,
     actions: tuple[UnsupportedAction, ...],
     *,
-    engine_roll_mode: str = "normal",
-    executed_spell: bool = False,
-    engine_effects: tuple[str, ...] = (),
+    applied: EngineApplied = EngineApplied(),
 ) -> str:
     """Drop narration sentences that claim an unsupported effect and state the ruling.
 
@@ -1089,15 +1095,7 @@ def apply_narration_boundary(
     """
     if not actions:
         return narration
-    body = _strip_claim_sentences(
-        narration,
-        _claim_pattern(
-            actions,
-            engine_roll_mode=engine_roll_mode,
-            executed_spell=executed_spell,
-            engine_effects=engine_effects,
-        ),
-    )
+    body = _strip_claim_sentences(narration, _claim_pattern(actions, applied))
     rulings = " ".join(ruling_lines(actions))
     if not body:
         return rulings

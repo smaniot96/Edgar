@@ -29,6 +29,7 @@ import json
 import re
 import time
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 import structlog
@@ -48,8 +49,7 @@ from agent.nodes.narrator import (
 from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
-    engine_roll_mode,
-    executed_spell_for_state,
+    engine_applied_for_state,
 )
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
@@ -608,11 +608,12 @@ async def stream_session_turn(
             log.exception("turn_narrator_failed", session_id=session_id)
             yield sse_event("error", error_body("llm_unavailable"))
             return
+        # This streamed path has never passed the engine's typed effects to the narration boundary
+        # (the sync narrator does). Preserved unchanged by the EngineApplied refactor; a follow-up.
         narration = apply_narration_boundary(
             message_text(response),
             actions,
-            engine_roll_mode=engine_roll_mode(state),
-            executed_spell=executed_spell_for_state(state),
+            applied=replace(engine_applied_for_state(state), effects=()),
         )
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})

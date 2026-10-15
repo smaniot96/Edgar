@@ -25,6 +25,7 @@ from agent.monster_stats import MonsterStats
 from agent.nodes.rules_adjudicator import rules_adjudicator_node
 from agent.spells import CATALOG, cast_request, plan_cast, resolve_spell
 from agent.supported_rules import (
+    EngineApplied,
     apply_narration_boundary,
     classify_unsupported_actions,
 )
@@ -421,17 +422,23 @@ def test_narrated_blindness_survives_only_when_the_engine_blinded_the_foe() -> N
     assert "The goblin is blinded" not in cleaned and "What do you do next?" in cleaned
     assert "recorded no blinded condition" in cleaned
 
-    recorded = classify_unsupported_actions(text, character=CLERIC_3, engine_effects=("blinded",))
+    recorded = classify_unsupported_actions(
+        text, character=CLERIC_3, applied=EngineApplied(effects=("blinded",))
+    )
     assert recorded == ()
     assert apply_narration_boundary(narration, recorded) == narration
 
 
 def test_other_conditions_are_still_ruled_when_the_engine_blinded_a_foe() -> None:
     text = "I cast Blindness/Deafness at the goblin and try to frighten it"
-    actions = classify_unsupported_actions(text, character=CLERIC_3, engine_effects=("blinded",))
+    actions = classify_unsupported_actions(
+        text, character=CLERIC_3, applied=EngineApplied(effects=("blinded",))
+    )
     assert [a.kind for a in actions] == ["condition"]
     narration = "The goblin is blinded. It is frightened now."
-    cleaned = apply_narration_boundary(narration, actions, engine_effects=("blinded",))
+    cleaned = apply_narration_boundary(
+        narration, actions, applied=EngineApplied(effects=("blinded",))
+    )
     assert "The goblin is blinded." in cleaned
     assert "frightened" not in cleaned and "Narrative ruling" in cleaned
 

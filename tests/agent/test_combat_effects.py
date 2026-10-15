@@ -23,6 +23,7 @@ from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
 from agent.nodes.narrator import build_narrator_prompt
 from agent.supported_rules import (
+    EngineApplied,
     apply_narration_boundary,
     classify_unsupported_actions,
 )
@@ -479,10 +480,10 @@ async def test_narrator_prompt_carries_the_restraint_from_the_engine(
 def test_classifier_keeps_unsupported_maneuvers_and_drops_only_applied_ones() -> None:
     text = "I pin the goblin to the floor"
     assert [a.kind for a in classify_unsupported_actions(text)] == ["maneuver"]
-    applied = classify_unsupported_actions(text, engine_effects=("restrained",))
+    applied = classify_unsupported_actions(text, applied=EngineApplied(effects=("restrained",)))
     assert applied == ()
     shove_away = classify_unsupported_actions(
-        "I shove the goblin away", engine_effects=("restrained",)
+        "I shove the goblin away", applied=EngineApplied(effects=("restrained",))
     )
     assert [a.kind for a in shove_away] == ["maneuver"]
 
@@ -493,5 +494,7 @@ def test_sanitizer_strips_only_claims_the_engine_did_not_apply() -> None:
     cleaned = apply_narration_boundary(narration, unapplied)
     assert "pinned" not in cleaned and "What now?" in cleaned
     assert "Narrative ruling" in cleaned
-    applied = classify_unsupported_actions("I pin the goblin", engine_effects=("restrained",))
+    applied = classify_unsupported_actions(
+        "I pin the goblin", applied=EngineApplied(effects=("restrained",))
+    )
     assert apply_narration_boundary(narration, applied) == narration
