@@ -26,6 +26,7 @@ from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
     boundary_prompt_block,
+    engine_effects_for_state,
     engine_roll_mode,
 )
 from db.vector.retrieval import rule_policy
@@ -195,6 +196,7 @@ async def narrator_node(state: AgentState) -> dict:
         narration = apply_narration_boundary(
             message_text(response),
             actions_for_state(state),
+            engine_effects=engine_effects_for_state(state),
             engine_roll_mode=engine_roll_mode(state),
         )
 
