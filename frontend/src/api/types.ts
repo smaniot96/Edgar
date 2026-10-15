@@ -311,6 +311,8 @@ export interface CombatState {
   ended: boolean;
   outcome: CombatOutcome;
   second_wind_used?: boolean;
+  /** Fighter Second Wind uses left on the sheet (additive). */
+  second_wind_uses_remaining?: number | null;
   initiative_order?: string[];
   initiative?: InitiativeEntry[] | null;
   /** Index into the initiative order of whose turn it is (if provided). */
@@ -372,6 +374,8 @@ export interface TurnCharacter {
   character_class?: string;
   stats?: Record<string, unknown> | null;
   inventory?: Record<string, unknown> | null;
+  /** Fighter Second Wind resource (additive; present for fighters). */
+  second_wind?: { uses_remaining: number; uses_max: number } | null;
 }
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */

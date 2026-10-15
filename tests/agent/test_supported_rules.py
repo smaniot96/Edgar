@@ -32,8 +32,12 @@ from agent.resolution import (
     resolve_check,
     roll_attack_damage,
     roll_mode_for_sources,
+    second_wind_after_rest,
+    second_wind_remaining,
+    second_wind_status,
 )
 from agent.supported_rules import (
+    SOLO_ADAPTATIONS,
     SUPPORTED_MECHANICS,
     UNSUPPORTED_MECHANICS,
     apply_narration_boundary,
@@ -261,42 +265,190 @@ async def test_supported_combat_round_victory(fake_llm_schema, fake_retrieval) -
     assert victories > 0
 
 
+def _sheet(*, remaining: int | None = None, **extra) -> dict:
+    """A level-1 fighter sheet, optionally carrying the persisted Second Wind resource."""
+    stats = dict(FIGHTER["stats"])
+    if remaining is not None:
+        stats["second_wind"] = {"uses_remaining": remaining}
+    return {**FIGHTER, "hp_current": 5, "stats": stats, **extra}
+
+
+def _second_wind_hits(dice_log: list[dict]) -> list[dict]:
+    return [d for d in dice_log if d.get("purpose") == "second wind"]
+
+
 @pytest.mark.asyncio
-async def test_supported_second_wind_once_per_encounter(fake_llm_schema, fake_retrieval) -> None:
+async def test_supported_second_wind_uses_and_rest_recovery(
+    fake_llm_schema, fake_retrieval
+) -> None:
     from agent.graph_combat import combat_round_node
 
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
-    rallies = 0
+    # The ogre acts after the hero and cannot hit AC 30 (only a natural 20 can), so HP is ours.
+    safe_foe = {"attack_bonus": -20}
+
+    # Use: one engine roll of 1d10+1, healing, and the sheet count is written as spent.
+    state = _combat_state(
+        [_player(hp=5, ac=30, init=20), _enemy("Ogre", hp=30, ac=12, init=1, **safe_foe)],
+        "I use Second Wind",
+        parsed=ParsedInput(intent="combat"),
+    )
+    state["character"] = _sheet(remaining=1)
+    with use_rng(random.Random(4)):
+        out = await combat_round_node(state)
+    adj = out["adjudication_result"]
+    spent = _second_wind_hits(adj.dice_log)
+    assert len(spent) == 1 and spent[0]["expression"] == "1d10+1"
+    hero = next(c for c in out["combat_state"]["combatants"] if c.get("is_player"))
+    assert hero["hp_current"] == min(12, 5 + spent[0]["total"])
+    assert adj.character_update.second_wind_uses_remaining == 0
+    assert out["combat_state"]["second_wind_uses_remaining"] == 0
+    assert out["combat_state"]["second_wind_used"] is True
+
+    # Exhausted on the sheet: a new encounter (fresh combatants) still refuses without a roll.
+    spent_state = _combat_state(
+        [_player(hp=5, ac=30, init=20), _enemy("Ogre", hp=30, ac=12, init=1, **safe_foe)],
+        "I use Second Wind",
+        parsed=ParsedInput(intent="combat"),
+    )
+    spent_state["character"] = _sheet(remaining=0)
+    out = await combat_round_node(spent_state)
+    adj = out["adjudication_result"]
+    assert not _second_wind_hits(adj.dice_log)
+    assert "has already used Second Wind" in adj.mechanical_summary
+    assert adj.character_update.second_wind_uses_remaining is None  # nothing new to persist
+    assert out["combat_state"]["second_wind_uses_remaining"] == 0
+
+    # Out of combat the same use is an engine effect, and a refused one rolls nothing.
+    adj = AdjudicationResult(success=True)
+    enforce_side_effects(
+        adj,
+        character=_sheet(remaining=1),
+        check_result=None,
+        player_input="I use Second Wind",
+        rng=random.Random(9),
+    )
+    healed = [d for d in adj.dice_log if d.get("purpose") == "healing (second_wind)"]
+    assert len(healed) == 1 and adj.character_update.second_wind_uses_remaining == 0
+    assert adj.character_update.hp_delta == healed[0]["total"]
+    adj = AdjudicationResult(success=True)
+    enforce_side_effects(
+        adj,
+        character=_sheet(remaining=0),
+        check_result=None,
+        player_input="I use Second Wind",
+        rng=random.Random(9),
+    )
+    assert not adj.dice_log and adj.character_update is None
+    assert "has already used Second Wind" in adj.mechanical_summary
+
+    # Recovery: a short or a long rest restores the single use; a full sheet is not rewritten.
+    for rest in ("I take a short rest", "I take a long rest"):
+        adj = AdjudicationResult(success=True)
+        enforce_side_effects(
+            adj,
+            character=_sheet(remaining=0),
+            check_result=None,
+            player_input=rest,
+            rng=random.Random(2),
+        )
+        assert adj.character_update.second_wind_uses_remaining == 1
+        assert adj.character_update.hp_delta and adj.character_update.hp_delta > 0
+        adj = AdjudicationResult(success=True)
+        enforce_side_effects(
+            adj,
+            character=_sheet(remaining=1),
+            check_result=None,
+            player_input=rest,
+            rng=random.Random(2),
+        )
+        assert adj.character_update.second_wind_uses_remaining is None
+
+
+@pytest.mark.asyncio
+async def test_second_wind_never_triggers_at_zero_hp_by_default(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    from agent.graph_combat import combat_round_node
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
     for seed in range(40):
-        # The ogre acts before the hero, has a hit that always exceeds 3 HP, and the hero's AC is 1.
+        # The ogre acts before the hero and always hits; a blow that drops the hero to 0 HP.
         ogre = _enemy("Ogre", hp=30, ac=12, init=20, dmg="1d6+6")
         state = _combat_state(
             [_player(hp=3, ac=1, init=1), ogre],
             "I keep fighting the ogre",
             parsed=ParsedInput(intent="combat", check="attack", target="ogre"),
         )
-        state["character"] = {**FIGHTER, "hp_current": 3}
+        state["character"] = {**_sheet(remaining=1), "hp_current": 3}
         with use_rng(random.Random(seed)):
             out = await combat_round_node(state)
-        sw = [d for d in out["adjudication_result"].dice_log if d.get("purpose") == "second wind"]
+        adj = out["adjudication_result"]
+        assert not _second_wind_hits(adj.dice_log)
+        assert adj.character_update.second_wind_uses_remaining is None
+        assert out["combat_state"]["second_wind_uses_remaining"] == 1
+        hero = next(c for c in out["combat_state"]["combatants"] if c.get("is_player"))
+        if "Ogre hits" in adj.mechanical_summary:
+            assert hero["hp_current"] <= 1  # a blow of 7+ drops the hero: subdued at 1, no rally
+        else:
+            assert hero["hp_current"] == 3  # a natural-1 miss leaves the hero untouched
+
+
+@pytest.mark.asyncio
+async def test_second_wind_auto_rally_is_an_explicit_off_by_default_mode(
+    monkeypatch, fake_llm_schema, fake_retrieval
+) -> None:
+    from agent import graph_combat
+    from agent.graph_combat import combat_round_node
+
+    monkeypatch.setattr(graph_combat, "SECOND_WIND_AUTO_AT_ZERO_HP", True)
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    rallies = 0
+    for seed in range(40):
+        ogre = _enemy("Ogre", hp=30, ac=12, init=20, dmg="1d6+6")
+        state = _combat_state(
+            [_player(hp=3, ac=1, init=1), ogre],
+            "I keep fighting the ogre",
+            parsed=ParsedInput(intent="combat", check="attack", target="ogre"),
+        )
+        state["character"] = {**_sheet(remaining=1), "hp_current": 3}
+        with use_rng(random.Random(seed)):
+            out = await combat_round_node(state)
+        sw = _second_wind_hits(out["adjudication_result"].dice_log)
         assert len(sw) <= 1
         if sw:
             rallies += 1
-            assert out["combat_state"]["second_wind_used"] is True
-            hero = next(c for c in out["combat_state"]["combatants"] if c.get("is_player"))
-            assert hero["hp_current"] >= 1  # the rally keeps the hero in the fight
+            assert out["combat_state"]["second_wind_uses_remaining"] == 0
+            assert out["adjudication_result"].character_update.second_wind_uses_remaining == 0
     assert rallies > 0
 
-    # Once spent, a second explicit use does not roll again.
-    spent = _combat_state(
-        [_player(hp=3, ac=1, init=20, second_wind_used=True), _enemy("Ogre", hp=30, ac=12, init=1)],
-        "I use Second Wind",
-        parsed=ParsedInput(intent="combat"),
-    )
-    spent["character"] = {**FIGHTER, "hp_current": 3}
-    out = await combat_round_node(spent)
-    assert not [d for d in out["adjudication_result"].dice_log if d.get("purpose") == "second wind"]
-    assert "already used Second Wind" in out["adjudication_result"].mechanical_summary
+
+def test_second_wind_legacy_sheet_derives_full_uses_and_clamps() -> None:
+    assert second_wind_remaining(FIGHTER) == 1  # no key written: the full use is available
+    assert second_wind_remaining(_sheet(remaining=0)) == 0
+    assert second_wind_remaining(_sheet(remaining=7)) == 1
+    malformed = {**FIGHTER, "stats": {**FIGHTER["stats"], "second_wind": "spent"}}
+    assert second_wind_remaining(malformed) == 1
+    assert second_wind_remaining(WIZARD) == 0
+    assert second_wind_status(FIGHTER) == {"uses_remaining": 1, "uses_max": 1}
+    assert second_wind_status(WIZARD) is None
+    assert second_wind_after_rest(WIZARD, "long") is None
+    assert second_wind_after_rest(_sheet(remaining=0), "short") == 1
+    assert second_wind_after_rest(_sheet(remaining=0), None) is None
+
+
+def test_second_wind_contract_matches_the_rule() -> None:
+    entry = next(m for m in SUPPORTED_MECHANICS if m.id == "second_wind")
+    text = f"{entry.title} {entry.scope}".lower()
+    assert "once per encounter" not in text and "encounter-based" not in text
+    assert "automatically" not in text and "rallies" not in text
+    assert "one use" in text and "short or long rest" in text and "2024" in text
+    assert "second_wind_recharge" not in {m.id for m in UNSUPPORTED_MECHANICS}
+    assert "Second Wind" not in " ".join(SOLO_ADAPTATIONS)
+    assert "Fighter Second Wind (one use" in scope_notice()
+    # Declaring Second Wind is not a claimed effect: the boundary leaves the engine's narration.
+    text = "You dig deep and Second Wind steadies you for 7 HP."
+    assert apply_narration_boundary(text, classify_unsupported_actions("I use Second Wind")) == text
 
 
 def test_supported_hazard_damage_needs_failed_check() -> None:
