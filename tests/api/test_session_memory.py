@@ -76,6 +76,18 @@ async def _selected(factory, sid):
         return await memory.load_memory_summary(db, sid)
 
 
+async def _assert_context(factory, sid, through, stop):
+    async with factory() as db:
+        summary, messages = await memory.load_session_context(db, sid)
+    expected_summary = " ".join(f"n{i}" for i in range(1, through + 1)) or None
+    assert summary == expected_summary
+    assert [(m.type, m.content) for m in messages] == [
+        pair
+        for i in range(through + 1, stop)
+        for pair in (("human", f"p{i}"), ("ai", f"n{i}"))
+    ]
+
+
 @pytest.mark.parametrize("boundary", [4, None])
 async def test_prompt_context_includes_every_uncovered_event_without_clipping(
     memory_db, boundary
@@ -146,12 +158,14 @@ async def test_overlapping_jobs_preserve_max_coverage_and_exact_inputs(
     try:
         await _wait(entered[0])
         assert engine.pool.checkedout() == 0
+        await _assert_context(factory, sid, 0, 26)
         # A second session can read/write with the only connection during generation.
         await _narrations(factory, other_sid, 101, 102)
         narration_ids += await _narrations(factory, sid, 26, 31)
         newer = asyncio.create_task(memory.maybe_update_memory_summary(sid))
         await _wait(entered[1])
         assert engine.pool.checkedout() == 0
+        await _assert_context(factory, sid, 0, 31)
         first, second = (0, 1) if first_to_finish == "older" else (1, 0)
         tasks = [older, newer]
         released[first].set()
@@ -159,11 +173,13 @@ async def test_overlapping_jobs_preserve_max_coverage_and_exact_inputs(
         assert (await _rows(factory, sid))[-1].payload["through_event_id"] == narration_ids[
             14 if first == 0 else 19
         ]
+        await _assert_context(factory, sid, 15 if first == 0 else 20, 31)
         released[second].set()
         await asyncio.wait_for(tasks[second], timeout=5)
         summaries = await _rows(factory, sid)
         assert summaries[-1].payload["through_event_id"] == narration_ids[19]
         assert await _selected(factory, sid) == " ".join(f"n{i}" for i in range(1, 21))
+        await _assert_context(factory, sid, 20, 31)
         if first_to_finish == "older":
             assert len(calls) == 3
             assert calls[2][0] == " ".join(f"n{i}" for i in range(1, 16))
