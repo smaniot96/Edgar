@@ -11,6 +11,7 @@ interface JournalState {
   loading: boolean;
   error: unknown;
   stale: boolean;
+  settledRevision: number;
 }
 
 const EMPTY: JournalState = {
@@ -19,6 +20,7 @@ const EMPTY: JournalState = {
   loading: false,
   error: null,
   stale: false,
+  settledRevision: 0,
 };
 
 /** Loads the selected session journal and retains its last good snapshot during refresh failures. */
@@ -27,17 +29,20 @@ export function useJournal(sessionId: number | null) {
   const [attempt, setAttempt] = useState(0);
   const activeSessionId = useRef<number | null>(null);
   const lastGood = useRef<JournalRead | null>(null);
+  const settledRevision = useRef(0);
 
   useEffect(() => {
     if (sessionId === null || !Number.isSafeInteger(sessionId) || sessionId < 1) {
       activeSessionId.current = null;
       lastGood.current = null;
+      settledRevision.current = 0;
       return;
     }
 
     if (activeSessionId.current !== sessionId) {
       activeSessionId.current = sessionId;
       lastGood.current = null;
+      settledRevision.current = 0;
     }
     const retainedData = lastGood.current;
     const controller = new AbortController();
@@ -47,6 +52,7 @@ export function useJournal(sessionId: number | null) {
       loading: true,
       error: null,
       stale: retainedData !== null,
+      settledRevision: settledRevision.current,
     });
 
     void apiFetch(`/api/sessions/${sessionId}/journal`, { signal: controller.signal })
@@ -55,16 +61,19 @@ export function useJournal(sessionId: number | null) {
         (data) => {
           if (controller.signal.aborted || activeSessionId.current !== sessionId) return;
           lastGood.current = data;
-          setState({ sessionId, data, loading: false, error: null, stale: false });
+          settledRevision.current += 1;
+          setState({ sessionId, data, loading: false, error: null, stale: false, settledRevision: settledRevision.current });
         },
         (error: unknown) => {
           if (controller.signal.aborted || activeSessionId.current !== sessionId) return;
+          settledRevision.current += 1;
           setState({
             sessionId,
             data: retainedData,
             loading: false,
             error,
             stale: retainedData !== null,
+            settledRevision: settledRevision.current,
           });
         },
       );
@@ -78,6 +87,7 @@ export function useJournal(sessionId: number | null) {
     loading: sessionId !== null && (!currentSession || state.loading),
     error: currentSession ? state.error : null,
     stale: currentSession && state.stale,
+    settledRevision: currentSession ? state.settledRevision : 0,
     refresh,
   };
 }

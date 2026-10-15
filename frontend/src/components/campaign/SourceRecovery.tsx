@@ -18,6 +18,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
   const processing = sources.some((s) => s.status === "processing" || isJobActive(s.job));
   const failedJob = sources.some((s) => s.job && ["interrupted", "failed", "cancelled"].includes(s.job.state));
   const resumableGeneration = sources.some((s) => s.job?.kind === "generation" && s.job.retryable);
+  const healthyHomebrew = campaign.source_mode === "homebrew" && campaign.play_allowed !== false && !processing && !failedJob;
   const needsPdfUpload = sources.some((s) =>
     ["missing", "empty", "partial", "failed"].includes(s.status) &&
     !(s.job?.kind === "generation" && s.job.retryable),
@@ -43,6 +44,48 @@ export function SourceRecovery({ campaign, onUpdated }: {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (healthyHomebrew) {
+    return (
+      <section aria-label="Homebrew source status" className="mx-3 my-2 shrink-0 rounded-control border border-line bg-surface/60 px-3 py-2 text-sm sm:mx-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="font-medium text-ink">Homebrew play selected</p>
+          <p className="text-ink-muted">The DM is improvising from your saved story.</p>
+          {sources.length > 0 && sources.every((source) => source.status === "ready") ? (
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(() => setCampaignSourceMode(campaign.id, "module"))}>Return to module play</Button>
+          ) : null}
+        </div>
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs font-medium text-ink-muted">Source recovery options</summary>
+          <div className="mt-2 space-y-3 border-t border-line pt-2">
+            <p className="text-xs text-ink-muted">You can keep playing in homebrew mode while recovering the bound sources. Module play resumes when every source is ready.</p>
+            {sources.length === 0 ? <p className="text-xs text-ink-muted">No adventure source is bound to this campaign.</p> : null}
+            {sources.map((source) => (
+              <div key={source.slug} className="space-y-1 border-t border-line pt-2 text-xs">
+                <p className="font-medium text-ink">{source.title} — {source.status}</p>
+                {source.message ? <p className="text-ink-muted">{source.message}</p> : null}
+                {source.status !== "ready" && source.job?.kind !== "generation" ? (
+                  <label className="block space-y-1">
+                    <span className="block text-ink-muted">Recover with a PDF</span>
+                    <input aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0];
+                        event.currentTarget.value = "";
+                        if (file) void run(() => recoverCampaignSource(campaign.id, source.slug, file));
+                      }} />
+                  </label>
+                ) : null}
+                {source.status !== "ready" && source.source_pdf_available && !source.job ? (
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(() => retryAdventure(source.slug))}>Retry retained PDF</Button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </details>
+        <ErrorNotice error={error} />
+      </section>
+    );
   }
 
   return (

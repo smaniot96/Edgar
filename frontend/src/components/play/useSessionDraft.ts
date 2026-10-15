@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface SessionDraft {
   text: string;
@@ -34,46 +34,42 @@ function readDraft(sessionId: number): SessionDraft {
 /** Persists an unsent action by session, and clears it only for the revision a server acknowledged. */
 export function useSessionDraft(sessionId: number) {
   const [draft, setDraft] = useState<SessionDraft>(() => readDraft(sessionId));
+  const draftRef = useRef(draft);
 
-  useEffect(() => {
+  const save = useCallback((value: SessionDraft) => {
+    draftRef.current = value;
+    setDraft(value);
     try {
-      if (draft.text || draft.pendingRequest) localStorage.setItem(storageKey(sessionId), JSON.stringify(draft));
+      if (value.text || value.pendingRequest) localStorage.setItem(storageKey(sessionId), JSON.stringify(value));
       else localStorage.removeItem(storageKey(sessionId));
     } catch {
       /* Draft persistence is best-effort when browser storage is unavailable. */
     }
-  }, [sessionId, draft]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   const edit = useCallback((text: string) => {
-    setDraft((current) => ({ ...current, text, revision: current.revision + 1 }));
-  }, []);
+    const current = draftRef.current;
+    save({ ...current, text, revision: current.revision + 1 });
+  }, [save]);
 
   const clearIfRevision = useCallback((revision: number | undefined) => {
     if (revision == null) return;
-    setDraft((current) => current.revision === revision
-      ? { ...current, text: "", revision: current.revision + 1 }
-      : current);
-  }, []);
+    const current = draftRef.current;
+    if (current.revision === revision) save({ ...current, text: "", revision: current.revision + 1 });
+  }, [save]);
 
   const beginRequest = useCallback((request: NonNullable<SessionDraft["pendingRequest"]>) => {
-    setDraft((current) => {
-      const next = { ...current, pendingRequest: request };
-      try { localStorage.setItem(storageKey(sessionId), JSON.stringify(next)); } catch { /* best effort */ }
-      return next;
-    });
-  }, [sessionId]);
+    save({ ...draftRef.current, pendingRequest: request });
+  }, [save]);
 
   const clearRequest = useCallback((requestId: string) => {
-    setDraft((current) => {
-      if (current.pendingRequest?.requestId !== requestId) return current;
-      const next = { ...current, pendingRequest: null };
-      try {
-        if (next.text) localStorage.setItem(storageKey(sessionId), JSON.stringify(next));
-        else localStorage.removeItem(storageKey(sessionId));
-      } catch { /* best effort */ }
-      return next;
-    });
-  }, [sessionId]);
+    const current = draftRef.current;
+    if (current.pendingRequest?.requestId === requestId) save({ ...current, pendingRequest: null });
+  }, [save]);
 
   return { draft: draft.text, revision: draft.revision, edit, clearIfRevision, pendingRequest: draft.pendingRequest, beginRequest, clearRequest };
 }

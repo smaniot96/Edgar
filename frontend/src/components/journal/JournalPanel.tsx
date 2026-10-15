@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import { apiBase } from "../../api/client";
 import { Pill } from "../../components/Pill";
 import { Button } from "../../components/ui/Button";
@@ -38,12 +40,14 @@ function statusLabel(status: JournalEntry["status"]): string {
 }
 
 function EntryCard({
+  id,
   entry,
   selected,
   onSelect,
   onOpenHistory,
   onSelectRelated,
 }: {
+  id: string;
   entry: JournalEntry;
   selected: boolean;
   onSelect: () => void;
@@ -52,6 +56,7 @@ function EntryCard({
 }) {
   return (
     <article
+      id={id}
       aria-current={selected ? "true" : undefined}
       className={`rounded-control border bg-surface p-3 ${selected ? "border-ember-500 ring-1 ring-ember-500/40" : "border-line"}`}
     >
@@ -182,6 +187,14 @@ export function JournalPanel({
     ].filter(Boolean).join(" ").toLocaleLowerCase().includes(normalizedQuery);
   });
 
+  useEffect(() => {
+    if (!selectedEntryId || !entries.some((entry) => entry.id === selectedEntryId)) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`journal-entry-${selectedEntryId}`)?.scrollIntoView?.({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedEntryId, entries]);
+
   return (
     <section aria-labelledby="journal-heading" className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -257,6 +270,7 @@ export function JournalPanel({
         {entries.map((entry) => (
           <EntryCard
             key={entry.id}
+            id={`journal-entry-${entry.id}`}
             entry={entry}
             selected={selectedEntryId === entry.id}
             onSelect={() => onSelectedEntryChange(selectedEntryId === entry.id ? null : entry.id)}

@@ -1,9 +1,11 @@
-import { useEffect } from "react";
+import { useRef } from "react";
 
 import { cn } from "../../lib/cn";
 import { abilityModifier, formatModifier, type SheetCharacter } from "./gameState";
 import { HpBar } from "../ui/HpBar";
 import { ResourceCounters } from "./ResourceCounters";
+import { useModalFocus } from "./useModalFocus";
+import { useNarrowViewport } from "./useNarrowViewport";
 
 function SectionTitle({ children }: { children: string }) {
   return (
@@ -21,19 +23,19 @@ export function CharacterSheet({
   character,
   open,
   onClose,
+  readableItems,
+  onReadItem,
 }: {
   character: SheetCharacter | null;
   open: boolean;
   onClose: () => void;
+  /** Case-folded inventory name to the exact journal clue entry id. */
+  readableItems?: ReadonlyMap<string, string>;
+  onReadItem?: (entryId: string) => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const narrow = useNarrowViewport();
+  const sheetRef = useRef<HTMLElement | null>(null);
+  useModalFocus(open && !!character, narrow, onClose, sheetRef);
 
   if (!open || !character) return null;
   const c = character;
@@ -46,8 +48,12 @@ export function CharacterSheet({
         className="fixed inset-0 z-30 bg-black/50 lg:hidden"
       />
       <aside
+        ref={sheetRef}
         id="character-sheet"
         aria-label="Character sheet"
+        role={narrow ? "dialog" : undefined}
+        aria-modal={narrow ? true : undefined}
+        tabIndex={narrow ? -1 : undefined}
         className={cn(
           "fixed inset-y-0 right-0 z-40 flex w-[min(20rem,88vw)] flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60",
           "lg:static lg:z-auto lg:w-72 lg:shadow-none",
@@ -148,8 +154,17 @@ export function CharacterSheet({
                     <dd>
                       <ul className="space-y-0.5 text-ink">
                         {g.items.map((it, i) => (
-                          <li key={`${it}-${i}`} className="before:mr-1.5 before:text-ember-600/70 before:content-['•']">
-                            {it}
+                        <li key={`${it}-${i}`} className="flex items-center gap-2 before:text-ember-600/70 before:content-['•']">
+                          <span className="min-w-0 flex-1">{it}</span>
+                          {readableItems?.get(it.trim().toLocaleLowerCase()) && onReadItem ? (
+                            <button
+                              type="button"
+                              className="shrink-0 text-xs font-medium text-ember-700 underline decoration-ember-400 underline-offset-2 hover:text-ember-900"
+                              onClick={() => onReadItem(readableItems.get(it.trim().toLocaleLowerCase())!)}
+                            >
+                              Read
+                            </button>
+                          ) : null}
                           </li>
                         ))}
                       </ul>

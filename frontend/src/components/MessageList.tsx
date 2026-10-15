@@ -262,6 +262,8 @@ export function MessageList({
   layoutKey,
   storageKey,
   restoreReady = true,
+  openEventId,
+  onHistoryOpened,
   onQuickReply,
 }: {
   messages: Line[];
@@ -275,6 +277,9 @@ export function MessageList({
   storageKey?: string;
   /** Wait until the boot transcript is seeded before applying the saved anchor. */
   restoreReady?: boolean;
+  /** Stable narration anchor selected from the verified journal. */
+  openEventId?: number | null;
+  onHistoryOpened?: (eventId: number) => void;
   /** Send a canned reply (e.g. confirming the end of the adventure). Omit to hide such prompts. */
   onQuickReply?: (text: string) => void;
 }) {
@@ -354,6 +359,25 @@ export function MessageList({
     const anchor = findAnchor();
     if (anchor) storeAnchor(anchor);
   }, [findAnchor, storeAnchor]);
+
+  const openHistory = useCallback((eventId: number) => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const target = document.getElementById(`story-event-${eventId}`);
+    if (!target || !scroller.contains(target)) return;
+    scroller.scrollTop += target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 12;
+    target.focus({ preventScroll: true });
+    nearBottomRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= STICKY_THRESHOLD;
+    setShowJump(!nearBottomRef.current);
+    const anchor = findAnchor();
+    if (anchor) storeAnchor(anchor);
+  }, [findAnchor, storeAnchor]);
+
+  useLayoutEffect(() => {
+    if (openEventId == null) return;
+    openHistory(openEventId);
+    onHistoryOpened?.(openEventId);
+  }, [openEventId, openHistory, onHistoryOpened]);
 
   // Restore a session's last visible line after route navigation or a full reload.
   useLayoutEffect(() => {
