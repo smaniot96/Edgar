@@ -47,12 +47,14 @@ export function SourceRecovery({ campaign, onUpdated }: {
 
   return (
     <section aria-label="Campaign source recovery" className="m-3 space-y-3 rounded-card border border-warning bg-surface-sunken p-4 text-sm">
-      <h2 className="font-semibold">{campaign.source_mode === "homebrew" ? "Homebrew play selected" : processing && !campaign.retrieval_degraded ? "Source preparation in progress" : campaign.retrieval_degraded ? "Adventure sources need recovery" : "Adventure source update needs attention"}</h2>
+      <h2 className="font-semibold">{campaign.source_mode === "homebrew" ? "Homebrew play selected" : processing ? "Source preparation in progress" : campaign.retrieval_degraded ? "Adventure sources need recovery" : "Adventure source update needs attention"}</h2>
       <p className="text-ink-muted">
         {campaign.source_mode === "homebrew"
           ? "The DM is improvising from your saved story. Your original source bindings are preserved for recovery."
           : campaign.retrieval_degraded
-            ? resumableGeneration && needsPdfUpload
+            ? processing
+              ? "Module play is paused while sources are being prepared. Follow their progress below, or choose homebrew play."
+              : resumableGeneration && needsPdfUpload
               ? "Module play is paused until every bound source is usable. Resume saved generation where available and provide a PDF for other sources that need recovery, or choose homebrew play."
               : resumableGeneration
                 ? "Module play is paused until the generated source is ready. Resume its saved preparation below, or choose homebrew play."

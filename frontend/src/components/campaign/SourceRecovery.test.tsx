@@ -119,4 +119,12 @@ it("offers saved generation recovery without presenting PDF upload as required",
   expect(container.textContent).toContain("Resume saved chapters");
   expect(container.textContent).not.toContain("Recover your source PDF");
   expect(container.querySelector('input[type="file"]')).toBeNull();
+
+  const running: CampaignRead = {
+    ...failed,
+    sources: [{ ...failed.sources![0], status: "processing", job: { ...failed.sources![0].job!, state: "running", retryable: false } }],
+  };
+  await act(() => root.render(<SourceRecovery campaign={running} onUpdated={vi.fn()} />));
+  expect(container.textContent).toContain("Follow their progress below");
+  expect(container.textContent).not.toContain("Recover your source PDF");
 });
