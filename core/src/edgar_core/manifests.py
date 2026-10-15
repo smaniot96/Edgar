@@ -97,6 +97,7 @@ class StoryDefinition(Record):
     statuses: list[str] = Field(default_factory=lambda: ["active", "completed"])
     reveal_on: Literal["success", "always"] = "success"
     clock_max: int | None = Field(default=None, ge=1, le=1000)
+    operations: list[Identifier] = Field(default_factory=list)
     consumable: bool = False
     portable: bool = True
     initial_owner: str | None = Field(default=None, max_length=200)

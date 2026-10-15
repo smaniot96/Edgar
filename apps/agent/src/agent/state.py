@@ -14,6 +14,9 @@ from agent.models.parsed_input import ParsedInput
 
 class AgentState(TypedDict, total=False):
     # Inputs from the API
+    story_state: dict  # Serialized edgar_core.story.StoryState; committed session facts only
+    turn_id: str  # Server-generated per-turn provenance identity
+    turn_snapshot: dict  # Initial position/active character used for atomic stale-state checks
     player_input: str
     session_id: int
     campaign_id: int

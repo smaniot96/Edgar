@@ -47,11 +47,13 @@ class StoryEffect(StoryRecord):
     player_text: str | None = Field(default=None, max_length=12000)
     quantity: int | None = Field(default=None, ge=0, le=1000)
     destination: str | None = Field(default=None, max_length=200)
+    operation: Identifier | None = None
 
 
 class AcceptedStoryEffect(StoryEffect):
     effect_id: Digest
     turn_id: str = Field(min_length=1, max_length=100)
+    display_name: str = Field(default="", max_length=200)
     # Full existing citation records, copied by the validator, never model supplied.
     source_refs: list[dict] = Field(default_factory=list)
 
@@ -73,11 +75,11 @@ def story_target_id(target: StoryRef) -> str:
 
 
 def accept_story_effect(
-    effect: StoryEffect, *, turn_id: str, source_refs: list[dict]
+    effect: StoryEffect, *, turn_id: str, source_refs: list[dict], display_name: str = ""
 ) -> AcceptedStoryEffect:
     """Seal a previously validated effect; identity deduplicates exact replays across turns."""
     body = effect.model_dump()
     effect_id = hashlib.sha256(
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return AcceptedStoryEffect(**body, effect_id=effect_id, turn_id=turn_id, source_refs=source_refs)
+    return AcceptedStoryEffect(**body, effect_id=effect_id, turn_id=turn_id, source_refs=source_refs, display_name=display_name)

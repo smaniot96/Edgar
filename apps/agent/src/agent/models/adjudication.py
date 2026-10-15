@@ -22,6 +22,8 @@ Keep field names stable: changing them silently breaks the LLM's structured outp
 from pydantic import BaseModel, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
+from edgar_core.story import AcceptedStoryEffect, StoryEffect
+
 
 class CharacterUpdate(BaseModel):
     hp_delta: int | None = None  # negative for damage, positive for healing; clamped to [0, hp_max]
@@ -59,6 +61,9 @@ class AdjudicationResult(BaseModel):
     )
     citations: SkipJsonSchema[list[dict]] = Field(default_factory=list)
 
+    story_effects: list[StoryEffect] = Field(default_factory=list)
+    accepted_story_effects: SkipJsonSchema[list[AcceptedStoryEffect]] = Field(default_factory=list)
+
     # Side effects (see module docstring).
     character_update: CharacterUpdate | None = None
     flags_set: list[FlagUpdate] = Field(default_factory=list)
@@ -77,6 +82,8 @@ class AdjudicationResult(BaseModel):
     completion_status: SkipJsonSchema[str | None] = None
 
     @field_validator(
+        "story_effects",
+        "accepted_story_effects",
         "flags_set",
         "flags_cleared",
         "conditions",
