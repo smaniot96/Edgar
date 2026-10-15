@@ -1,18 +1,41 @@
 import type { AdjudicationResult } from "../../api/types";
 import { cn } from "../../lib/cn";
-import { rollParts, rollSummary } from "./rollText";
+import { healingRolls, rollParts, rollSummary, type HealingRoll } from "./rollText";
+
+const CONTAINER =
+  "inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-strong/80 bg-surface/80 px-2.5 py-1 text-xs text-ink";
+
+/** A healing dice roll: the dice and total only; applied HP is shown by the sheet, not claimed here. */
+function HealingPill({ roll }: { roll: HealingRoll }) {
+  return (
+    <span className="rounded border border-success/40 px-1.5 py-px font-mono text-success">
+      {roll.label} · {roll.expression}
+      {roll.rolls.length ? ` [${roll.rolls.join(", ")}]` : ""} = {roll.total} healing
+    </span>
+  );
+}
 
 /**
  * Compact dice card shown above the narration it explains:
- * "Athletics · d20+3 = 17 vs DC 15 → Success · 6 dmg". Renders nothing when no dice were rolled.
+ * "Athletics · d20+3 = 17 vs DC 15 → Success · 6 dmg". Healing dice (Second Wind, spell or item
+ * healing) follow as their own pills. Renders nothing when no dice were rolled.
  */
 export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }) {
   const p = rollParts(adj);
-  if (!p) return null;
+  const heals = healingRolls(adj);
+  if (!p && !heals.length) return null;
+  const healPills = heals.map((h, i) => <HealingPill key={`${h.label}-${i}`} roll={h} />);
+  if (!p) {
+    return (
+      <div className={CONTAINER} title={adj?.mechanical_summary || undefined}>
+        {healPills}
+      </div>
+    );
+  }
   const conditions = (adj?.conditions ?? []).filter(Boolean);
   return (
     <div
-      className="inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-strong/80 bg-surface/80 px-2.5 py-1 text-xs text-ink"
+      className={CONTAINER}
       aria-label={rollSummary(p)}
       title={adj?.mechanical_summary || undefined}
     >
@@ -63,6 +86,7 @@ export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }
           {c}
         </span>
       ))}
+      {healPills}
     </div>
   );
 }

@@ -9,6 +9,28 @@ AdventureStatus = Literal[
 ]
 
 
+class AdventureJobRead(BaseModel):
+    """Safe scalar job state; never includes outline, chapter, or manuscript content."""
+
+    version: Literal[1] = 1
+    job_id: str
+    kind: Literal["generation", "ingestion"]
+    state: Literal[
+        "queued", "running", "interrupted", "failed", "completed", "cancel_requested", "cancelled"
+    ]
+    stage: str
+    completed_chapters: int = 0
+    total_chapters: int | None = None
+    checkpoint_available: bool = False
+    retryable: bool = False
+    retained_work: Literal[
+        "none", "outline_and_chapters", "complete_manuscript", "source_pdf", "inspected_extraction", "published"
+    ] = "none"
+    action_label: str | None = None
+    explanation: str | None = None
+    source_version: str | None = None
+
+
 class AdventureRead(BaseModel):
     slug: str
     title: str
@@ -30,6 +52,7 @@ class AdventureRead(BaseModel):
     extraction_preview_current: bool = False
     ingestion: dict | None = None
     can_retry: bool = False
+    job: AdventureJobRead | None = None
 
 
 class AdventureUpdate(BaseModel):

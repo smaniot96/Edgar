@@ -22,6 +22,7 @@ export interface SourceRead {
   extraction_preview_available?: boolean;
   extraction_preview_current?: boolean;
   ingestion?: IngestionSummary | null;
+  job?: AdventureJobRead | null;
 }
 
 export interface IngestionSummary {
@@ -35,6 +36,22 @@ export interface IngestionSummary {
   warning_count: number;
   review_note: string;
   issues: { code: string; page?: number; message: string }[];
+}
+
+export interface AdventureJobRead {
+  version: 1;
+  job_id: string;
+  kind: "generation" | "ingestion";
+  state: "queued" | "running" | "interrupted" | "failed" | "completed" | "cancel_requested" | "cancelled";
+  stage: string;
+  completed_chapters: number;
+  total_chapters: number | null;
+  checkpoint_available: boolean;
+  retryable: boolean;
+  retained_work: "none" | "outline_and_chapters" | "complete_manuscript" | "source_pdf" | "inspected_extraction" | "published";
+  action_label: string | null;
+  explanation: string | null;
+  source_version: string | null;
 }
 
 export interface ExtractionPreview extends IngestionSummary {
@@ -71,6 +88,7 @@ export interface AdventureRead {
   created_at?: string | null;
   source_pdf_available?: boolean;
   can_retry?: boolean;
+  job?: AdventureJobRead | null;
   failure_code?: string | null;
   extraction_preview_available?: boolean;
   extraction_preview_current?: boolean;
@@ -201,6 +219,10 @@ export interface CharacterAssignmentHistoryRead {
   assigned_at: string;
   ended_at: string | null;
   status: string;
+  /** Derived Second Wind resource (EDG-034); absent for non-fighters and legacy payloads. */
+  second_wind?: SecondWindState | null;
+  /** Derived spell slots per level, keyed by level as a string (casters only). */
+  spell_slots?: Record<string, SpellSlotState> | null;
 }
 
 /** Per-turn adjudication frame from the SSE/turn contract. */
@@ -258,6 +280,25 @@ export interface AdjudicationResult {
   scene_id?: string | null;
 }
 
+/** Engine-owned Second Wind counter (read-only view of the sheet resource). */
+export interface SecondWindState {
+  uses_remaining: number;
+  uses_max: number;
+}
+
+/** Engine-owned spell slot counter for one spell level. */
+export interface SpellSlotState {
+  total: number;
+  remaining: number;
+}
+
+/** Supported combat effect on a combatant (EDG-021). Only the engine list is mechanical. */
+export interface CombatEffect {
+  kind: string;
+  source?: string | null;
+  applied_round?: number | null;
+}
+
 export interface Combatant {
   name: string;
   display_name?: string | null;
@@ -271,6 +312,7 @@ export interface Combatant {
   /** Combat disposition from the engine: active, unconscious, captured, dead or defeated. */
   disposition?: string | null;
   can_act?: boolean | null;
+  effects?: CombatEffect[] | null;
 }
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | null;
@@ -286,6 +328,7 @@ export interface InitiativeEntry {
   alive?: boolean;
   disposition?: string | null;
   can_act?: boolean | null;
+  effects?: CombatEffect[] | null;
 }
 
 export interface CombatState {
@@ -293,6 +336,8 @@ export interface CombatState {
   ended: boolean;
   outcome: CombatOutcome;
   second_wind_used?: boolean;
+  /** Fighter Second Wind uses left on the sheet (additive). */
+  second_wind_uses_remaining?: number | null;
   initiative_order?: string[];
   initiative?: InitiativeEntry[] | null;
   /** Index into the initiative order of whose turn it is (if provided). */
@@ -354,6 +399,10 @@ export interface TurnCharacter {
   character_class?: string;
   stats?: Record<string, unknown> | null;
   inventory?: Record<string, unknown> | null;
+  /** Fighter Second Wind resource (additive; present for fighters). */
+  second_wind?: SecondWindState | null;
+  /** Derived spell slots per level (casters only; additive). */
+  spell_slots?: Record<string, SpellSlotState> | null;
 }
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */

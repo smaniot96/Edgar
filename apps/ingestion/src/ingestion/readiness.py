@@ -6,36 +6,136 @@ atomic index promotion. Reports and Markdown contain local source text and stay 
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
+from typing import Literal, NotRequired, Protocol, TypedDict
 
+from edgar_core.sources import SourceEdition
 from ingestion.quality import diagnostic_message
 
-if TYPE_CHECKING:
-    from ingestion.extract import Extraction
-
 REPORT_VERSION = 1
+SampleKind = Literal["text", "stat", "scene_candidate"]
+
+
+class ExtractionPage(Protocol):
+    """The page evidence needed to decide whether an extraction can be indexed."""
+
+    @property
+    def page(self) -> int: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def method(self) -> str: ...
+
+    @property
+    def warnings(self) -> Sequence[str]: ...
+
+    def errors(self) -> list[str]: ...
+
+
+class ExtractionForReadiness(Protocol):
+    """Structural contract shared by PDF and generated manuscript extraction."""
+
+    @property
+    def page_count(self) -> int: ...
+
+    @property
+    def pages(self) -> Sequence[ExtractionPage]: ...
+
+    @property
+    def rules_edition(self) -> SourceEdition: ...
+
+    @property
+    def source_sha256(self) -> str: ...
+
+    def text_pages(self) -> list[tuple[int, str]]: ...
+
+    def text_sha256(self) -> str: ...
+
+
+class ReadinessIssue(TypedDict):
+    code: str
+    message: str
+    detail_code: NotRequired[str]
+    page: NotRequired[int]
+
+
+class ReadinessChunk(TypedDict):
+    page: int
+    text: str
+    source_pages: NotRequired[list[int]]
+    stat_block: NotRequired[bool]
+    page_end: NotRequired[int]
+    section: NotRequired[str]
+    source_sha256: NotRequired[str]
+    extraction_sha256: NotRequired[str]
+    rules_edition: NotRequired[SourceEdition]
+
+
+class ReadinessPreview(TypedDict, total=False):
+    kind: SampleKind
+    page: int
+    page_end: int
+    section: str | None
+    text: str
+
+
+class ReadinessReport(TypedDict):
+    report_version: int
+    source_kind: Literal["pdf", "generated", "text"]
+    rules_edition: SourceEdition
+    source_sha256: str
+    extraction_sha256: str
+    page_count: int
+    required_pages: list[int]
+    covered_pages: list[int]
+    chunk_count: int
+    quality_passed: bool
+    warning_count: int
+    review_note: str
+    issues: list[ReadinessIssue]
+    previews: list[ReadinessPreview]
+    scene_preview_reviewed: Literal[False]
+    index_version: NotRequired[str]
+
+
+class ReadinessSummary(TypedDict):
+    report_version: int
+    source_kind: Literal["pdf", "generated", "text"]
+    rules_edition: SourceEdition
+    source_sha256: str
+    extraction_sha256: str
+    page_count: int
+    required_pages: list[int]
+    chunk_count: int
+    quality_passed: bool
+    issues: list[ReadinessIssue]
+    warning_count: int
+    review_note: str
+    index_version: NotRequired[str]
 
 
 class IngestionRejected(ValueError):
     """A safe, actionable failure whose extraction report remains inspectable."""
 
-    def __init__(self, code: str, message: str, report: dict):
+    def __init__(self, code: str, message: str, report: ReadinessReport):
         super().__init__(message)
         self.code = code
         self.report = report
 
 
 def prepare_report(
-    extraction: Extraction,
+    extraction: ExtractionForReadiness,
     *,
-    source_kind: str,
-    chunks: list[dict],
-    extra_issues: list[dict] | None = None,
-) -> dict:
+    source_kind: Literal["pdf", "generated", "text"],
+    chunks: Sequence[ReadinessChunk],
+    extra_issues: Sequence[ReadinessIssue] | None = None,
+) -> ReadinessReport:
     """Describe the exact extraction and chunk coverage, including rejected output."""
     pages = extraction.text_pages()
     page_count = extraction.page_count
-    issues = list(extra_issues or [])
+    issues: list[ReadinessIssue] = list(extra_issues or [])
     numbers = [n for n, _ in pages]
     if (
         (source_kind in ("pdf", "generated") and numbers != list(range(1, page_count + 1)))
@@ -81,15 +181,16 @@ def prepare_report(
                     "message": "A source page produced no text. Inspect OCR and retry with a readable PDF.",
                 }
             )
-    samples = []
-    for kind, candidate in (
+    samples: list[ReadinessPreview] = []
+    samples_to_preview: tuple[tuple[SampleKind, ReadinessChunk | None], ...] = (
         ("text", next((c for c in chunks if not c.get("stat_block")), None)),
         ("stat", next((c for c in chunks if c.get("stat_block")), None)),
         (
             "scene_candidate",
             next((c for c in chunks if c.get("section") and not c.get("stat_block")), None),
         ),
-    ):
+    )
+    for kind, candidate in samples_to_preview:
         if candidate is not None:
             samples.append(
                 {
@@ -119,31 +220,28 @@ def prepare_report(
     }
 
 
-def report_summary(report: dict) -> dict:
+def report_summary(report: ReadinessReport) -> ReadinessSummary:
     """Small metadata record used for uncached live source verification."""
-    summary = {
-        key: report[key]
-        for key in (
-            "report_version",
-            "source_kind",
-            "rules_edition",
-            "source_sha256",
-            "extraction_sha256",
-            "page_count",
-            "required_pages",
-            "chunk_count",
-            "quality_passed",
-            "issues",
-            "warning_count",
-            "review_note",
-        )
+    summary: ReadinessSummary = {
+        "report_version": report["report_version"],
+        "source_kind": report["source_kind"],
+        "rules_edition": report["rules_edition"],
+        "source_sha256": report["source_sha256"],
+        "extraction_sha256": report["extraction_sha256"],
+        "page_count": report["page_count"],
+        "required_pages": report["required_pages"],
+        "chunk_count": report["chunk_count"],
+        "quality_passed": report["quality_passed"],
+        "issues": report["issues"],
+        "warning_count": report["warning_count"],
+        "review_note": report["review_note"],
     }
     if report.get("index_version"):
         summary["index_version"] = report["index_version"]
     return summary
 
 
-def require_ready(report: dict) -> None:
+def require_ready(report: ReadinessReport) -> None:
     if not report["quality_passed"]:
         first = report["issues"][0]
         where = f" on page {first['page']}" if first.get("page") else ""
@@ -154,7 +252,7 @@ def require_ready(report: dict) -> None:
         )
 
 
-def stamp_chunks(chunks: list[dict], report: dict) -> None:
+def stamp_chunks(chunks: Sequence[ReadinessChunk], report: ReadinessReport) -> None:
     for chunk in chunks:
         chunk["source_sha256"] = report["source_sha256"]
         chunk["extraction_sha256"] = report["extraction_sha256"]

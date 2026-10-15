@@ -10,7 +10,7 @@ import fcntl
 import json
 import re
 import shutil
-import tempfile
+import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +31,7 @@ from edgar_core.sources import SourceEdition
 
 from ..schemas.adventure import (
     AdventureGenerateRequest,
+    AdventureJobRead,
     AdventureRead,
     AdventureRetryRequest,
     AdventureUpdate,
@@ -42,6 +43,7 @@ from ..services.adventures_meta import (
     load_meta as load_adventure_metadata,
     meta_path as _metadata_path,
     metadata_slugs,
+    new_job,
     reserve_meta,
     save_meta as _save_adventure_metadata,
 )
@@ -92,6 +94,7 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
 
     source = source_read(slug)
     status = source.status
+    job_read = source.job
     return AdventureRead(
         slug=slug,
         title=meta.get("title") or slug.replace("_", " ").title(),
@@ -111,7 +114,13 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
         extraction_preview_available=source.extraction_preview_available,
         extraction_preview_current=source.extraction_preview_current,
         ingestion=source.ingestion,
-        can_retry=source.source_pdf_available or (meta.get("generation") or {}).get("kind") == "ai",
+        can_retry=(
+            job_read.retryable
+            if job_read is not None
+            else source.source_pdf_available
+            or (meta.get("generation") or {}).get("kind") == "ai"
+        ),
+        job=job_read,
     )
 
 
@@ -140,14 +149,28 @@ def get_adventure(slug: str):
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
 
 
-def _extraction_path(slug: str, name: str) -> Path:
+def _extraction_path(
+    slug: str, name: str, *, candidate_attempt_id: str | None = None
+) -> Path:
     from ..services.campaign_sources import validate_binding
 
     validate_binding(slug)
     from ..services.adventures_meta import attempt_dir
     from ..services.campaign_sources import active_metadata
 
-    meta = active_metadata(slug)
+    raw_meta = load_adventure_metadata(slug)
+    if candidate_attempt_id is None:
+        job = raw_meta.get("job") or {}
+        candidate_attempt_id = job.get("retained_source_attempt_id")
+        # PDF recovery inspects the candidate before retry. Generated replacements keep
+        # the accepted extraction visible while their private checkpoint is recoverable.
+        if candidate_attempt_id is None and job.get("kind") == "ingestion":
+            candidate_attempt_id = job.get("attempt_id")
+    if isinstance(candidate_attempt_id, str):
+        candidate = attempt_dir(slug, candidate_attempt_id) / name
+        if candidate.is_file():
+            return candidate
+    meta = active_metadata(slug, raw_meta)
     token = meta.get("artifact_attempt")
     staged = attempt_dir(slug, token) / name if token else None
     path = staged if staged is not None and staged.is_file() else _ADVENTURES_DIR / slug / name
@@ -243,17 +266,28 @@ def _preview_source_current(slug: str, data: dict) -> bool:
     from ingestion.artifacts import source_digest
 
     readiness = data.get("readiness") or {}
+    from ..services.adventures_meta import candidate_pdf_path, source_pdf_path
     from ..services.campaign_sources import active_metadata
 
+    if readiness.get("source_kind", "pdf") == "pdf":
+        try:
+            raw = load_adventure_metadata(slug)
+            job = raw.get("job") or {}
+            candidate_id = job.get("retained_source_attempt_id") or job.get("attempt_id")
+            candidate = candidate_pdf_path(slug, candidate_id) if isinstance(candidate_id, str) else None
+            if candidate is not None and candidate.is_file():
+                return source_digest(candidate) == data.get("source_sha256")
+            meta = active_metadata(slug, raw)
+            expected = (meta.get("ingestion") or {}).get("source_sha256")
+            if expected and expected != data.get("source_sha256"):
+                return False
+            return source_digest(source_pdf_path(slug, meta)) == data.get("source_sha256")
+        except OSError:
+            return False
     meta = active_metadata(slug)
     expected = (meta.get("ingestion") or {}).get("source_sha256")
     if expected and expected != data.get("source_sha256"):
         return False
-    if readiness.get("source_kind", "pdf") == "pdf":
-        try:
-            return source_digest(_PDF_DIR / f"{slug}.pdf") == data.get("source_sha256")
-        except OSError:
-            return False
     return readiness.get("source_kind") == "generated"
 
 
@@ -264,6 +298,7 @@ def _ingest_adventure(
     reviewed_identity: tuple[str, str] | None = None,
     *,
     attempt_id: str | None = None,
+    source_filename: str | None = None,
 ) -> None:
     """Background worker: embed the PDF and flip the adventure's status to ready/failed."""
     # Imported here so the API process only pays the ingestion import cost on first upload.
@@ -275,13 +310,31 @@ def _ingest_adventure(
 
     token = attempt_id or store.begin_attempt(slug)
     report = {}
+    store.ensure_job(slug, token, kind="ingestion", stage="extracting")
+    publication_attempt = 0
 
     def prepared(value: dict) -> None:
         report.update(value)
+        store.update_job(
+            slug,
+            token,
+            retained_work=("inspected_extraction" if reviewed_extraction else "source_pdf"),
+            source_version=value.get("index_version"),
+        )
         store.prepare_attempt(slug, token, value)
+
+    def publication_guard():
+        nonlocal publication_attempt
+        publication_attempt += 1
+        return store.publication_guard(
+            slug,
+            token,
+            stage="embedding" if publication_attempt == 1 else "publishing",
+        )
 
     structlog.contextvars.bind_contextvars(adventure_slug=slug)
     try:
+        store.check_job_running(slug, token)
         n = run_pipeline(
             pdf_path=pdf_path,
             collection_name=slug,
@@ -292,14 +345,17 @@ def _ingest_adventure(
             reviewed_extraction=reviewed_extraction,
             reviewed_identity=reviewed_identity,
             rules_edition=load_adventure_metadata(slug).get("rules_edition", "unspecified"),
-            publication_guard=lambda: store.attempt_guard(slug, token),
+            publication_guard=publication_guard,
         )
         meta = load_adventure_metadata(slug)
         from ..services.campaign_sources import inspect_ingestion_source
 
-        coverage = inspect_ingestion_source(
-            slug, {**meta, "chunks": n, "ingestion": report_summary(report)}
-        )
+        coverage_meta = {**meta, "chunks": n, "ingestion": report_summary(report)}
+        if store.candidate_pdf_path(slug, token).is_file():
+            # Validate the activated candidate against its immutable PDF. The canonical
+            # PDF still belongs to the previous source until successful finalization.
+            coverage_meta["source_pdf_attempt_id"] = token
+        coverage = inspect_ingestion_source(slug, coverage_meta)
         ready = n > 0 and report.get("quality_passed") and coverage["status"] == "ready"
         store.finish_attempt(
             slug,
@@ -311,10 +367,14 @@ def _ingest_adventure(
                 "error": None
                 if ready
                 else "The index does not match the validated extraction. Inspect the preview and retry source recovery.",
+                **({"source_filename": source_filename} if source_filename else {}),
             },
             success=bool(ready),
         )
         log.info("adventure_ingested", slug=slug, chunks=n)
+    except store.JobCancelled:
+        store.cancel_attempt(slug, token)
+        log.info("adventure_ingest_cancelled", slug=slug)
     except SupersededIngestion:
         log.info("adventure_ingest_superseded", slug=slug)
     except IngestionRejected as exc:
@@ -411,6 +471,7 @@ async def upload_adventure(
             "error": None,
             "source_filename": filename,
             "created_at": datetime.now(UTC).isoformat(),
+            "job": new_job("ingestion", "queued", retained_work="source_pdf"),
         },
     )
 
@@ -436,7 +497,7 @@ async def upload_adventure(
 
     from ..services.adventures_meta import begin_attempt
 
-    token = begin_attempt(slug)
+    token = begin_attempt(slug, job_attempt=True, job_kind="ingestion")
     background.add_task(_ingest_adventure, slug, str(pdf_path), attempt_id=token)
     log.info("adventure_upload_accepted", slug=slug, filename=filename, bytes=size)
     return AdventureUploadResponse(slug=slug, title=desired_title, status="processing")
@@ -471,11 +532,18 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
                 "theme": body.theme,
                 "title_hint": title_hint,
             },
+            "job": new_job(
+                "generation",
+                "queued",
+                total_chapters={"small": 3, "medium": 6, "large": 12, "gigantic": 24}.get(
+                    body.size, 6
+                ),
+            ),
         },
     )
     from ..services.adventures_meta import begin_attempt
 
-    token = begin_attempt(slug)
+    token = begin_attempt(slug, job_attempt=True, job_kind="generation")
     background.add_task(
         build_generated_campaign, slug, title_hint, body.theme or "", body.size, attempt_id=token
     )
@@ -527,9 +595,14 @@ def _retry_adventure(
         raise HTTPException(status_code=404, detail="Adventure not found")
     from ..services.campaign_sources import source_read
 
+    job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
+    recoverable_job = bool(job.get("retryable")) and job.get("state") in (
+        "interrupted", "failed", "cancelled"
+    )
     if meta.get("status") == "processing" or (
         source_read(slug).status not in ("failed", "missing", "empty", "partial")
         and (meta.get("last_attempt") or {}).get("status") != "failed"
+        and not recoverable_job
     ):
         raise HTTPException(
             status_code=409, detail="Only unusable adventure sources can be retried."
@@ -537,6 +610,12 @@ def _retry_adventure(
 
     title = meta.get("title") or slug.replace("_", " ").title()
     generation = meta.get("generation") or {}
+    retained_candidate = job.get("retained_source_attempt_id")
+    retained_candidate_path = (
+        _ADVENTURES_DIR / slug / ".attempts" / retained_candidate / f"{slug}.pdf"
+        if isinstance(retained_candidate, str)
+        else None
+    )
     pdf_path = _PDF_DIR / f"{slug}.pdf"
     reviewed_identity = None
     if body is not None and (body.reviewed_source_sha256 or body.reviewed_extraction_sha256):
@@ -545,7 +624,10 @@ def _retry_adventure(
                 status_code=422,
                 detail="Both inspected source and extraction identities are required.",
             )
-        if generation.get("kind") == "ai" or not pdf_path.is_file():
+        if generation.get("kind") == "ai" or not (
+            pdf_path.is_file()
+            or (retained_candidate_path is not None and retained_candidate_path.is_file())
+        ):
             raise HTTPException(
                 status_code=409,
                 detail="An inspected PDF preview is required for this recovery action.",
@@ -561,6 +643,11 @@ def _retry_adventure(
                 status_code=409,
                 detail="The inspected extraction changed or failed quality checks. Inspect the current preview again.",
             )
+    if job.get("checkpoint_corrupt"):
+        raise HTTPException(
+            status_code=409,
+            detail="Saved generation progress is unreadable. Create a new campaign to generate again.",
+        )
     if generation.get("kind") == "ai":
         from ..services.campaign_generator import build_generated_campaign
 
@@ -571,27 +658,92 @@ def _retry_adventure(
             generation.get("theme") or "",
             generation.get("size") or "medium",
         )
+    elif retained_candidate_path and retained_candidate_path.is_file():
+        task_args = (
+            _ingest_adventure,
+            slug,
+            str(retained_candidate_path),
+            *(
+                (
+                    str(
+                        _extraction_path(
+                            slug,
+                            f"{slug}.extraction.json",
+                            candidate_attempt_id=retained_candidate,
+                        )
+                    ),
+                    reviewed_identity,
+                )
+                if reviewed_identity is not None
+                else ()
+            ),
+        )
     elif pdf_path.is_file():
         task_args = (
-            (
-                _ingest_adventure,
-                slug,
-                str(pdf_path),
-                str(_extraction_path(slug, f"{slug}.extraction.json")),
-                reviewed_identity,
-            )
-            if reviewed_identity is not None
-            else (_ingest_adventure, slug, str(pdf_path))
+            _ingest_adventure,
+            slug,
+            str(pdf_path),
+            *(
+                (str(_extraction_path(slug, f"{slug}.extraction.json")), reviewed_identity)
+                if reviewed_identity is not None
+                else ()
+            ),
         )
     else:
         raise HTTPException(status_code=410, detail="The source PDF is gone; upload it again.")
 
     from ..services.adventures_meta import begin_attempt
 
-    token = begin_attempt(slug)
+    token = begin_attempt(
+        slug,
+        job_attempt=True,
+        job_kind="generation" if generation.get("kind") == "ai" else "ingestion",
+    )
+    if retained_candidate_path and retained_candidate_path.is_file() and generation.get("kind") != "ai":
+        from ..services.adventures_meta import stage_attempt_pdf
+
+        candidate_path = stage_attempt_pdf(
+            slug,
+            token,
+            retained_candidate_path,
+            job.get("retained_source_filename"),
+        )
+        task_args = (
+            _ingest_adventure,
+            slug,
+            str(candidate_path),
+            *(
+                (
+                    str(
+                        _extraction_path(
+                            slug,
+                            f"{slug}.extraction.json",
+                            candidate_attempt_id=retained_candidate,
+                        )
+                    ),
+                    reviewed_identity,
+                )
+                if reviewed_identity is not None
+                else ()
+            ),
+        )
     background.add_task(*task_args, attempt_id=token)
     log.info("adventure_retry_accepted", slug=slug)
     return AdventureUploadResponse(slug=slug, title=title, status="processing")
+
+
+@router.post("/adventures/{slug}/cancel", response_model=AdventureJobRead)
+def cancel_adventure(slug: str):
+    from ..services.adventures_meta import request_job_cancel
+    from ..services.campaign_sources import safe_job_read, validate_binding
+
+    validate_binding(slug)
+    with _source_lock(slug):
+        try:
+            request_job_cancel(slug)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return safe_job_read(load_adventure_metadata(slug), slug)
 
 
 @router.patch("/adventures/{slug}", response_model=AdventureRead)
@@ -677,10 +829,9 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
                     status_code=409,
                     detail="This source cannot be re-uploaded in its current state.",
                 )
-            _PDF_DIR.mkdir(parents=True, exist_ok=True)
-            pdf_path = _PDF_DIR / f"{slug}.pdf"
-            with tempfile.NamedTemporaryFile(dir=_PDF_DIR, suffix=".pdf", delete=False) as staged:
-                staged_path = Path(staged.name)
+            upload_dir = _ADVENTURES_DIR / slug / ".attempts" / f"upload-{uuid.uuid4().hex}"
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            staged_path = upload_dir / "source.pdf"
             try:
                 size = _copy_capped(file.file, staged_path, _MAX_UPLOAD_BYTES)
                 if size <= 0:
@@ -688,28 +839,31 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
                         status_code=400 if size == 0 else 413,
                         detail="Uploaded PDF is empty or exceeds 64 MB.",
                     )
-                staged_path.replace(pdf_path)
+                from ..services.adventures_meta import begin_attempt, stage_attempt_pdf
+
+                token = begin_attempt(
+                    slug, job_attempt=True, job_kind="ingestion", reset_job=True
+                )
+                candidate = stage_attempt_pdf(slug, token, staged_path, filename)
+                meta = load_adventure_metadata(slug)
+                meta.update(title=source.title, chunks=None, error=None, failure_code=None)
+                # A supplied PDF changes recovery provenance to upload, not AI generation.
+                meta.pop("generation", None)
+                _save_adventure_metadata(slug, meta)
+                return candidate, source.title, token
+            except BaseException:
+                shutil.rmtree(upload_dir, ignore_errors=True)
+                raise
             finally:
-                staged_path.unlink(missing_ok=True)
-            meta = load_adventure_metadata(slug)
-            meta.update(
-                {
-                    "title": source.title,
-                    "status": "processing",
-                    "chunks": None,
-                    "error": None,
-                    "failure_code": None,
-                    "source_filename": filename,
-                }
-            )
-            # A supplied PDF changes recovery provenance to upload, not AI generation.
-            meta.pop("generation", None)
-            _save_adventure_metadata(slug, meta)
-            return pdf_path, source.title
+                # The durable attempt copy is private to the job; discard upload staging.
+                shutil.rmtree(upload_dir, ignore_errors=True)
 
-    pdf_path, title = await run_in_threadpool(accept)
-    from ..services.adventures_meta import begin_attempt
-
-    token = begin_attempt(slug)
-    background.add_task(_ingest_adventure, slug, str(pdf_path), attempt_id=token)
+    candidate_path, title, token = await run_in_threadpool(accept)
+    background.add_task(
+        _ingest_adventure,
+        slug,
+        str(candidate_path),
+        attempt_id=token,
+        source_filename=filename,
+    )
     return AdventureUploadResponse(slug=slug, title=title, status="processing")
