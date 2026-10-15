@@ -176,10 +176,10 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     });
     const removed = [...pendingFeedback.before.keys()].filter((id) => !journal.data!.entries.some((entry) => entry.id === id));
     if (!changed.length && !removed.length) return;
-    const titles = changed.slice(0, 2).map((entry) => entry.title);
+    const titles = [...changed.map((entry) => entry.title), ...removed.map(() => "an entry")].slice(0, 2);
     const suffix = changed.length + removed.length > titles.length ? ` and ${changed.length + removed.length - titles.length} more` : "";
     setJournalFeedbackEntryId(changed[0]?.id ?? null);
-    setJournalFeedback(`Journal updated: ${[...titles, ...removed.map(() => "an entry")].slice(0, 2).join(", ")}${suffix}.`);
+    setJournalFeedback(`Journal updated: ${titles.join(", ")}${suffix}.`);
   }, [journal.data, journal.error, journal.loading, journal.settledRevision]);
 
   // History seeding depends only on boot, so changing source readiness preserves live chat.
