@@ -272,7 +272,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const clueEntriesByTitle = new Map<string, string[]>();
   for (const entry of journal.data?.entries ?? []) {
     if (entry.category !== "clue" || !entry.text?.trim()) continue;
-    const key = entry.title.trim().toLocaleLowerCase();
+    const key = entry.title;
     clueEntriesByTitle.set(key, [...(clueEntriesByTitle.get(key) ?? []), entry.id]);
   }
   const readableItems = new Map([...clueEntriesByTitle.entries()]
@@ -347,7 +347,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                   canRetry={!busy}
                   layoutKey={activeTool ?? "none"}
                   storageKey={`edgar_play_anchor:v1:${sessionId}`}
-                  restoreReady={!game.loading && !!boot}
+                  restoreReady={!game.loading && !!boot && turn.state.historyReady}
                   openEventId={openEventId}
                   onHistoryOpened={clearOpenedHistory}
                   onQuickReply={campaignComplete || game.campaign?.play_allowed === false ? undefined : handleQuickReply}

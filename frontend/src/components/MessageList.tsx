@@ -351,6 +351,7 @@ export function MessageList({
   }, []);
 
   const onScroll = useCallback(() => {
+    if (!restoreReady) return;
     const el = scrollRef.current;
     if (!el) return;
     const near = el.scrollHeight - el.scrollTop - el.clientHeight <= STICKY_THRESHOLD;
@@ -358,7 +359,7 @@ export function MessageList({
     setShowJump(!near);
     const anchor = findAnchor();
     if (anchor) storeAnchor(anchor);
-  }, [findAnchor, storeAnchor]);
+  }, [findAnchor, storeAnchor, restoreReady]);
 
   const openHistory = useCallback((eventId: number) => {
     const scroller = scrollRef.current;
@@ -409,6 +410,7 @@ export function MessageList({
   const pendingText = pending?.text;
   const pendingStage = pending?.stage;
   useLayoutEffect(() => {
+    if (!restoreReady) return;
     const el = scrollRef.current;
     if (!el) return;
     if (nearBottomRef.current) {
@@ -418,7 +420,7 @@ export function MessageList({
     } else if (el.scrollHeight - el.scrollTop - el.clientHeight > STICKY_THRESHOLD) {
       setShowJump(true);
     }
-  }, [messages, pendingText, pendingStage, findAnchor, storeAnchor]);
+  }, [messages, pendingText, pendingStage, findAnchor, storeAnchor, restoreReady]);
 
   // Preserve a stable visible line when the side tool changes width or the viewport resizes.
   useEffect(() => {

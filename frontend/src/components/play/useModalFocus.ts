@@ -60,7 +60,9 @@ export function useModalFocus(
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       if (focusFrame !== null) cancelAnimationFrame(focusFrame);
-      if (modal && previous?.isConnected) previous.focus();
+      // A narration link may have deliberately moved focus outside the closing tool.
+      const current = document.activeElement;
+      if (modal && previous?.isConnected && (!current || current === document.body || container?.contains(current))) previous.focus();
     };
   }, [open, modal, onClose, containerRef]);
 }

@@ -79,6 +79,8 @@ export interface PendingTurn {
 }
 
 export interface TurnState {
+  /** Boot transcript has reached this reducer, so reading anchors may be restored. */
+  historyReady: boolean;
   lines: Line[];
   pending: PendingTurn | null;
   /** Latest message for the screen-reader status region (completed narration / errors). */
@@ -111,7 +113,7 @@ export type TurnAction =
   /** Remove every line produced by a (failed) turn, e.g. before retrying it. */
   | { type: "clearTurn"; turnId: string };
 
-export const initialTurnState: TurnState = { lines: [], pending: null, announcement: "" };
+export const initialTurnState: TurnState = { lines: [], pending: null, announcement: "", historyReady: false };
 
 export function linesFromHistory(msgs: ChatMessageRead[]): Line[] {
   return msgs.map((m, i) => {
@@ -138,7 +140,7 @@ const CAMPAIGN_ENDED_TEXT = "This campaign has ended. The adventure is complete.
 export function turnReducer(state: TurnState, action: TurnAction): TurnState {
   switch (action.type) {
     case "reset":
-      return { ...initialTurnState, lines: action.lines };
+      return { ...initialTurnState, lines: action.lines, historyReady: true };
     case "append":
       return { ...state, lines: [...state.lines, action.line] };
     case "recover":
@@ -244,11 +246,12 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         combatOutcome: r.combat_state?.ended ? r.combat_state.outcome : undefined,
         isTurn: true,
       };
-      return { lines: [...state.lines, line], pending: null, announcement: content };
+      return { ...state, lines: [...state.lines, line], pending: null, announcement: content };
     }
     case "fail": {
       if (action.reason === "ended") {
         return {
+          ...state,
           lines: [
             ...state.lines.filter((l) => l.turnId !== p.turnId),
             { id: `${p.turnId}:notice`, role: "notice", content: CAMPAIGN_ENDED_TEXT },
@@ -284,7 +287,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         draftRevision: p.draftRevision,
         uncertain: action.uncertain,
       });
-      return { lines, pending: null, announcement: action.message };
+      return { ...state, lines, pending: null, announcement: action.message };
     }
   }
   return state;

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 import { apiBase } from "../../api/client";
 import { Pill } from "../../components/Pill";
@@ -174,7 +174,7 @@ export function JournalPanel({
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const exportHref = data ? `${apiBase}/api/sessions/${data.session_id}/journal/export${suffix}` : "#";
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const entries = (data?.entries ?? []).filter((entry) => {
+  const entries = useMemo(() => (data?.entries ?? []).filter((entry) => {
     if (category !== "all" && entry.category !== category) return false;
     if (!normalizedQuery) return true;
     return [
@@ -185,7 +185,7 @@ export function JournalPanel({
       entry.origin.actor,
       entry.origin.citation,
     ].filter(Boolean).join(" ").toLocaleLowerCase().includes(normalizedQuery);
-  });
+  }), [data, category, normalizedQuery]);
 
   useEffect(() => {
     if (!selectedEntryId || !entries.some((entry) => entry.id === selectedEntryId)) return;

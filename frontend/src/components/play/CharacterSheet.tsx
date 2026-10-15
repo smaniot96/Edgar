@@ -29,7 +29,7 @@ export function CharacterSheet({
   character: SheetCharacter | null;
   open: boolean;
   onClose: () => void;
-  /** Case-folded inventory name to the exact journal clue entry id. */
+  /** Exact inventory name to the exact journal clue entry id. */
   readableItems?: ReadonlyMap<string, string>;
   onReadItem?: (entryId: string) => void;
 }) {
@@ -156,11 +156,11 @@ export function CharacterSheet({
                         {g.items.map((it, i) => (
                         <li key={`${it}-${i}`} className="flex items-center gap-2 before:text-ember-600/70 before:content-['•']">
                           <span className="min-w-0 flex-1">{it}</span>
-                          {readableItems?.get(it.trim().toLocaleLowerCase()) && onReadItem ? (
+                          {readableItems?.get(it) && onReadItem ? (
                             <button
                               type="button"
                               className="shrink-0 text-xs font-medium text-ember-700 underline decoration-ember-400 underline-offset-2 hover:text-ember-900"
-                              onClick={() => onReadItem(readableItems.get(it.trim().toLocaleLowerCase())!)}
+                              onClick={() => onReadItem(readableItems.get(it)!)}
                             >
                               Read
                             </button>
