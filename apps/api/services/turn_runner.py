@@ -36,7 +36,7 @@ from sqlalchemy import select
 
 import db.postgres.session as db_session_module
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
-from agent.combatants import can_act, disposition_of
+from agent.combatants import can_act, concentration_of, disposition_of
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
 from agent.nodes.narrator import (
@@ -449,7 +449,15 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         # Additive (EDG-044): what the hero's last turn spent (action, bonus action, Dodge).
         "economy": combat_state.get("economy"),
         "raging": bool(combat_state.get("raging", False)),
+        # Additive (EDG-043): the spell the hero is concentrating on, or None.
+        "concentration": _concentration_spell(combat_state),
     }
+
+
+def _concentration_spell(combat_state: dict[str, Any]) -> str | None:
+    player = next((c for c in combat_state.get("combatants") or [] if c.get("is_player")), None)
+    concentration = concentration_of(player) if player is not None else None
+    return str(concentration["spell"]) if concentration else None
 
 
 def _truncate_ctx(items: Any, n: int = 8, width: int = 320) -> list[dict[str, Any]]:

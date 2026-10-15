@@ -54,8 +54,13 @@ evidence (the hit die rolled, HP regained, Hit Dice left) as `rest` in the roll 
 Action Surge and Rage are persisted per feature in `stats["class_features"]`, and a Rage flag lasts
 only for its encounter (`raging` in the combat state); a combat maneuver the engine actually
 applied (a won grapple, restraint or shove prone) and a spell condition it recorded (a foe blinded by
-Blindness/Deafness, or marked by Guiding Bolt) are recorded in the combatant's `effects` and are not
-stripped from the narration. A foe's position band and spent reaction are stored on its combatant row (`band`, `reaction_used`, additive; a row without `band` reads as melee and is not rewritten), and a Dash or Disengage the hero takes is recorded in the turn's `economy`. The scope is also summarised in the rules and narrator prompts.
+Blindness/Deafness, marked by Guiding Bolt, or paralyzed by Hold Person), and a monster rider's poison
+on the hero, are recorded in the combatant's `effects` and are not stripped from the narration. The
+hero's concentration is the `concentration` field of the combat payload and of the combatant row. A
+foe's position band and spent reaction are stored on its combatant row (`band`, `reaction_used`,
+additive; a row without `band` reads as melee and is not rewritten), and a Dash or Disengage the hero
+takes is recorded in the turn's `economy`. The scope is also summarised in the rules and narrator
+prompts.
 
 ## Health
 

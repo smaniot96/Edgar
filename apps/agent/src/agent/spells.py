@@ -11,7 +11,7 @@ Kinds:
   save       the target's saving throw against the caster's spell save DC; damage on a failed save only
   heal       restores dice plus the spellcasting ability modifier to the caster
   condition  the target's saving throw against the spell save DC; no damage, and the spell's
-             condition applies on a failed save (Blindness/Deafness)
+             condition applies on a failed save (Blindness/Deafness, Hold Person)
 
 A spell with `condition` set applies it on a hit (attack) or a failed save (condition). Its
 duration and the condition itself are recorded by `agent.conditions`, never by the parser.
@@ -25,10 +25,11 @@ the totals are derived from class and level, and a long rest clears the expended
 Casting time: `action` is "action" (the default) or "bonus_action" (Healing Word). A bonus-action
 spell uses the turn's bonus action slot (agent.action_economy), so the same turn may also attack.
 
-Deliberately absent: concentration spells (no concentration tracking exists), Burning Hands (an
-area effect) and Hold Person (concentration, humanoid-only). Blindness/Deafness is cast here as
-blindness only, at one target: a declaration that names deafness alone is refused, and the upcast
-extra targets are not modelled. Healing Word heals only its caster, as Cure Wounds does; a creature
+Concentration (Hold Person) is held by the caster and ends with the spell (`agent.conditions`). A
+humanoid-only spell is refused, with no slot spent, unless the target's record gives a humanoid type.
+Deliberately absent: Burning Hands (an area effect). Blindness/Deafness is cast here as blindness
+only, at one target: a declaration that names deafness alone is refused, and the upcast extra targets
+are not modelled. Hold Person is cast at one humanoid only; its upcast extra targets are not modelled. Healing Word heals only its caster, as Cure Wounds does; a creature
 other than the hero is not a target. A spell is added here only with its effect, cost and
 targeting implemented.
 """
@@ -72,6 +73,8 @@ class SpellSpec:
     duration_rounds: int = 0  # rounds the condition lasts, counting the round it is applied
     aliases: tuple[str, ...] = ()  # other names the player may use for the spell
     action: str = ACTION  # the turn slot the cast uses: ACTION or BONUS_ACTION
+    concentration: bool = False  # the caster must concentrate; a second such spell ends this one
+    humanoid_only: bool = False  # the target must be a humanoid (its record's type line)
     source: str = ""
 
 
@@ -153,6 +156,24 @@ CATALOG: tuple[SpellSpec, ...] = (
         source=(
             f"{_PHB}, Blindness/Deafness: the target makes a Constitution save or is blinded for one "
             "minute, and repeats the save at the end of each of its turns"
+        ),
+    ),
+    SpellSpec(
+        name="Hold Person",
+        level=2,
+        kind="condition",
+        dice=0,  # no damage dice: the spell's effect is the condition
+        die=0,
+        damage_type=None,
+        classes=("bard", "cleric", "sorcerer", "wizard"),
+        save_ability="WIS",
+        condition="paralyzed",
+        duration_rounds=10,
+        concentration=True,
+        humanoid_only=True,
+        source=(
+            f"{_PHB}, Hold Person: a humanoid you can see makes a Wisdom save or is paralyzed for up to "
+            "one minute (concentration); it repeats the save at the end of each of its turns"
         ),
     ),
     SpellSpec(
