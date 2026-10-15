@@ -333,3 +333,44 @@ def test_marked_optional_evidence_cannot_enter_ruling_or_narration_from_stale_st
     state = {"rules_context": [variant], "rules_edition": "2014"}
     assert ra._rules_context(state) == []
     assert narrator_context(state) == ([], [])
+
+
+def test_optional_exact_heading_does_not_hide_core_lexical_fallback(corpus, monkeypatch):
+    # Only the variant has exact metadata; a legacy core paragraph still supplies the rule.
+    core = corpus.retrieve(BOOK, [5])[0].payload
+    corpus.upsert(
+        BOOK,
+        [
+            PointStruct(
+                id=5,
+                vector=[0.05, 1.0, 0.0],
+                payload={
+                    **core,
+                    "section": "Recovering",
+                    "heading_path": "PHB > Recovering",
+                    "text": "Recovering\nA Short Rest lasts at least 1 hour, allowing Hit Dice recovery.",
+                },
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        retrieval, "embed_query", lambda _: (_ for _ in ()).throw(ConnectionError())
+    )
+    hits = retrieval.search_rules_context(
+        "Short Rest rules", references=["Short Rest"], rules_edition="2014", client=corpus
+    )
+    assert len(hits) == 1
+    assert hits[0]["section"] == "Recovering" and hits[0]["rule_policy"] == "core"
+    assert hits[0]["retrieval_method"] == "lexical"
+
+
+def test_independent_queries_preserve_distinct_citations(monkeypatch):
+    chunks = [
+        {"source": "PHB", "text": "Shared rule wording", "page": page, "rules_edition": "2014"}
+        for page in (10, 20)
+    ]
+    monkeypatch.setattr(wr, "search_rules_context", lambda *a, **kw: chunks)
+    hits, degraded = wr._search_rule_queries(
+        [{"query": "feature", "references": ["feature"]}], client=None, rules_edition="2014"
+    )
+    assert [c["page"] for c in hits] == [10, 20] and not degraded

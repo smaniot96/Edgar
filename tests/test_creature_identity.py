@@ -388,3 +388,16 @@ def test_transport_failure_is_not_an_empty_resolved_result(index, monkeypatch):
     )
     with pytest.raises(RetrievalError, match="Exact creature retrieval failed"):
         retrieve_monster("Goblin", client=index)
+
+
+def test_ingestion_payload_stamps_exact_creature_identity_and_preserves_rule_policy():
+    from ingestion.embed import _chunk_payload
+
+    chunk = {**stat("Adult Red Dragon"), "index": 0, "rule_policy": "optional"}
+    chunk.pop("creature_name")
+    chunk.pop("creature_key")
+    payload = _chunk_payload(chunk)
+    assert payload["creature_name"] == "Adult Red Dragon"
+    assert payload["creature_key"] == "adult red dragon"
+    assert payload["rule_policy"] == "optional"
+    assert payload["source_sha256"] == chunk["source_sha256"]

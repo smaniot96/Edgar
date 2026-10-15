@@ -15,6 +15,7 @@ from db.vector.references import normalize_reference
 from db.vector.retrieval import RetrievalError, retrieve_active_scene
 from db.vector.source_status import inspect_source
 from edgar_core.manifests import ManifestError
+from edgar_core.sources import source_citation
 
 log = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ def _search_rule_queries(queries: list[dict], *, client, rules_edition: str) -> 
         for bucket in buckets:
             if rank < len(bucket):
                 chunk = bucket[rank]
-                identity = (chunk.get("source"), chunk.get("rules_edition"), chunk.get("text"))
+                identity = source_citation(chunk, rules_edition)["reference_id"]
                 if identity not in seen:
                     merged.append(chunk)
                     seen.add(identity)

@@ -37,6 +37,7 @@ from qdrant_client.models import (
 
 from db.vector import ensure_collection, get_embeddings, get_qdrant_client
 from db.vector.collections import is_rules_collection
+from db.vector.creatures import creature_payload_fields
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.versions import (
     SupersededIngestion,
@@ -246,6 +247,7 @@ def _chunk_payload(c: dict) -> dict:
         "chapter",
         "heading_path",
         "stat_block",
+        "rule_policy",
         "rules_edition",
         "manifest_sha256",
         "passage_id",
@@ -261,6 +263,7 @@ def _chunk_payload(c: dict) -> dict:
     ):
         if c.get(key) is not None:
             payload[key] = c[key]
+    payload.update(creature_payload_fields(c))
     return payload
 
 

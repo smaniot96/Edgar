@@ -182,7 +182,11 @@ def search_rules_context(
     q = _client(client)
     if refs:
         for name in _existing_only(q, names):
-            hits.extend(_lookup_rule_candidates(q, name, refs, rules_edition))
+            hits.extend(
+                _lookup_rule_candidates(
+                    q, name, refs, rules_edition, include_optional=include_optional
+                )
+            )
     if vector_error is not None and not hits:
         raise RetrievalError(
             "Vector retrieval failed and no exact rule evidence was available."
@@ -298,7 +302,9 @@ def _scroll_rule_candidates(q: Any, collection: str, query_filter: Filter, *, li
     ]
 
 
-def _lookup_rule_candidates(q: Any, collection: str, refs: list[str], edition: str | None) -> list:
+def _lookup_rule_candidates(
+    q: Any, collection: str, refs: list[str], edition: str | None, *, include_optional: bool = False
+) -> list:
     if not hasattr(q, "scroll"):
         return []  # Older injected clients may expose vector search only.
     edition_filter = _edition_filter(edition)
@@ -313,7 +319,10 @@ def _lookup_rule_candidates(q: Any, collection: str, refs: list[str], edition: s
         )
         candidates = _scroll_rule_candidates(q, collection, exact_filter, limit=16)
         # Exact metadata avoids a common name being drowned out by incidental mentions.
-        if not any(_rule_reference_match(c, refs) == 2 for c in candidates):
+        if not any(
+            _rule_reference_match(c, refs) == 2 and (include_optional or rule_policy(c) == "core")
+            for c in candidates
+        ):
             lexical_filter = Filter(
                 must=[edition_filter] if edition_filter else None,
                 should=[FieldCondition(key="text", match=MatchText(text=ref)) for ref in refs],
