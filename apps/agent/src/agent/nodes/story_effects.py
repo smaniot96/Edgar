@@ -440,21 +440,41 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         ):
             continue
         previous = [f for f in facts if f.kind == proposal.kind and f.target == proposal.target]
-        if previous and previous[-1].status in {
-            "completed",
-            "failed",
-            "fulfilled",
-            "broken",
-            "consumed",
-        }:
+        if (
+            proposal.kind != "clock"
+            and previous
+            and previous[-1].status
+            in {
+                "completed",
+                "failed",
+                "fulfilled",
+                "broken",
+                "consumed",
+            }
+        ):
             continue
+        disclosure = None
         if proposal.kind == "clock":
             maximum = candidate.get("clock_max")
             prior = max((f.quantity or 0 for f in previous), default=0)
+            disclosure = _clock_disclosure(candidate, state)
+            prior_disclosure = previous[-1].clock_disclosure if previous else None
+            if prior_disclosure:
+                # Once learned, a quantity/limit/outcome does not become secret again.
+                disclosure = ClockDisclosure(
+                    current=prior_disclosure.current or bool(disclosure and disclosure.current),
+                    maximum=prior_disclosure.maximum
+                    or (disclosure.maximum if disclosure else None),
+                    completion=prior_disclosure.completion
+                    or bool(disclosure and disclosure.completion),
+                )
+            old_visibility = prior_disclosure or ClockDisclosure()
+            new_visibility = disclosure or ClockDisclosure()
             if (
                 maximum is None
                 or proposal.quantity is None
-                or not prior < proposal.quantity <= maximum
+                or not prior <= proposal.quantity <= maximum
+                or (prior == proposal.quantity and old_visibility == new_visibility)
                 or (proposal.status == "completed") != (proposal.quantity == maximum)
             ):
                 continue
@@ -507,9 +527,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             knowledge_kind="hint"
             if proposal.kind == "discover" and candidate.get("entity_kind") == "hint"
             else None,
-            clock_disclosure=_clock_disclosure(candidate, state)
-            if proposal.kind == "clock"
-            else None,
+            clock_disclosure=disclosure,
             related_object=proposal.target.model_copy(
                 update={"kind": "object", "canonical_id": candidate["object_id"]}
             )

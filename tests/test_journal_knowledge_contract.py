@@ -359,3 +359,28 @@ async def test_opening_seed_commit_reload_retry_and_direct_player_api(
     assert (await api_client.get(f"/api/sessions/{session.id}/journal?q=betrays")).json()[
         "entries"
     ] == []
+
+
+def test_clock_can_reveal_a_value_without_advancing_and_earned_disclosure_survives():
+    from edgar_core.story import StoryFact, story_target_id
+
+    manifest, chunks, state = reviewed_contract(
+        clock_reveal={"current_requires": {"scale": "discovered"}}
+    )
+    effect = proposal(manifest, chunks, "clock", "clock", "water", "completed", "clock", 5)
+    hidden = accepted(state, effect)[0]
+    state["story_state"]["facts"] = [
+        StoryFact(**hidden.model_dump(), fact_id=story_target_id(hidden.target)).model_dump()
+    ]
+    assert accepted(state, effect) == []
+    state["turn_id"] = "turn-2"
+    state["world_flags"] = {"scale": "discovered"}
+    revealed = accepted(state, effect)[0]
+    assert player_story_effect(revealed)["quantity"] == 5
+    assert player_story_effect(revealed)["clock_maximum"] is None
+    assert player_story_effect(revealed)["status"] == "advanced"
+    state["story_state"]["facts"].append(
+        StoryFact(**revealed.model_dump(), fact_id=story_target_id(hidden.target)).model_dump()
+    )
+    state["world_flags"] = {}
+    assert accepted(state, effect) == []
