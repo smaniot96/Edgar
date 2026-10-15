@@ -14,6 +14,11 @@ class TurnRequest(BaseModel):
     """Request body for POST /sessions/{session_id}/turn."""
 
     message: str = Field(..., min_length=1, max_length=2000)
+    # Optional for legacy clients. A retry keeps this identity so a lost acknowledgment
+    # cannot spend a second model turn or apply the committed action twice.
+    request_id: str | None = Field(
+        default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    )
     # Developer mode: when true, the stream also emits a `debug` SSE frame (intent, retrieved
     # RAG chunks, full combat internals incl. enemy stats, stage timings, model). Honoured only
     # when the server runs with EDGAR_DEBUG=1; otherwise silently forced off.
