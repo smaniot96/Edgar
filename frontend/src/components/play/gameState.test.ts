@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CharacterAssignmentHistoryRead, CharacterRead } from "../../api/types";
 import {
   economyLine,
+  hitDiceFrom,
   mechanicalEffects,
   mergeTurnCharacter,
   orderCombatants,
@@ -221,3 +222,28 @@ describe("combat economy (EDG-044)", () => {
     ]);
   });
 });
+describe("Hit Dice on the sheet (EDG-026)", () => {
+  const assignment: CharacterAssignmentHistoryRead = {
+    id: 9, campaign_id: 3, campaign_title: "Quay", hp_current: 5, hp_max: 12,
+    stats: { hit_dice: { spent: 1 } }, inventory: {}, hit_dice: { remaining: 0, total: 1, die: "d10" },
+    assigned_at: "2026-10-01", ended_at: null, status: "active",
+  };
+
+  it("reads the server's view from the assignment and the turn payload", () => {
+    const sheet = sheetFromLibrary(eda, assignment);
+    expect(sheet.hitDice).toEqual({ remaining: 0, total: 1, die: "d10" });
+    expect(sheetFromLibrary(eda).hitDice).toBeNull();
+    expect(mergeTurnCharacter(sheet, { hit_dice: { remaining: 1, total: 1, die: "d10" } }).hitDice).toEqual({
+      remaining: 1, total: 1, die: "d10",
+    });
+    // A turn payload without the field keeps the last known dice.
+    expect(mergeTurnCharacter(sheet, { hp_current: 3 }).hitDice).toEqual({ remaining: 0, total: 1, die: "d10" });
+  });
+
+  it("ignores a malformed Hit Dice view rather than showing it", () => {
+    expect(hitDiceFrom({ remaining: "two", total: 2, die: "d8" })).toBeNull();
+    expect(hitDiceFrom({ remaining: 1, total: 2 })).toBeNull();
+    expect(hitDiceFrom(null)).toBeNull();
+  });
+});
+

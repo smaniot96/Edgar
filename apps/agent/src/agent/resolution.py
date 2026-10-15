@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
-from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagUpdate
+from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagUpdate, RestRecord
 from tools.dice import DiceOutcome, parse_dice, roll, try_roll
 
 log = logging.getLogger(__name__)
@@ -803,13 +803,17 @@ def roll_attack_damage(
     *,
     hint: str = "",
     rng: random.Random | None = None,
+    bonus: int = 0,
 ) -> tuple[int, DiceOutcome]:
-    """Weapon (or cantrip) damage for a hit; dice doubled on a critical."""
+    """Weapon (or cantrip) damage for a hit; dice doubled on a critical.
+
+    `bonus` is a flat engine-owned modifier (a class feature such as Rage); it is not doubled.
+    """
     if attack.kind == "spell_attack":
         # Spell damage is a catalog effect (agent.spells); a class-die stand-in is never rolled.
         raise ValueError("spell attacks take their damage from agent.spells.resolve_spell")
     weapon = attack.weapon or choose_weapon(character, hint)
-    mod = ability_modifier(character, _attack_ability(character, weapon))
+    mod = ability_modifier(character, _attack_ability(character, weapon)) + bonus
     expr = f"{weapon.dice}{mod:+d}" if mod else weapon.dice
     if attack.critical:
         expr = _double_dice(expr)
@@ -982,12 +986,94 @@ def heal_from_rest(
     if kind == "long":
         return HealResult(amount=max(0, hp_max - hp_cur), source="long_rest")
     if kind == "short":
-        die = HIT_DIE.get(character_class(character), 8)
+        if hit_dice_remaining(character) <= 0:
+            # Refused without a roll: no Hit Die is left until a long rest.
+            return None
+        die = hit_die_sides(character)
         con = ability_modifier(character, "CON")
         expr = f"1d{die}{con:+d}" if con else f"1d{die}"
         outcome = roll(expr, rng)
         return HealResult(amount=max(1, outcome.total), source="short_rest", dice=outcome)
     return None
+
+
+# --------------------------------------------------------------------------------------------
+# Hit Dice (EDG-026): a persisted sheet resource spent by short rests
+# --------------------------------------------------------------------------------------------
+# Rule (2014 PHB): a short rest spends Hit Dice one at a time; each rolls the class die plus CON
+# (minimum 1 HP). A long rest regains half the character's level in spent Hit Dice (minimum one).
+# Total = character level. Spent count lives in CharacterAssignment.stats["hit_dice"] as
+# {"spent": n} (a JSONB key, no migration); a sheet without the key has none spent. 2024 campaigns
+# follow the same rule in this engine. A short rest spends one die: a declared count is not parsed.
+
+HIT_DICE_KEY = "hit_dice"
+HIT_DICE_REFUSAL = "{hero} has no Hit Dice left until a long rest. No healing is rolled."
+
+
+def hit_die_sides(character: dict | None) -> int:
+    return HIT_DIE.get(character_class(character), 8)
+
+
+def hit_dice_total(character: dict | None) -> int:
+    return max(1, int((character or {}).get("level") or 1))
+
+
+def hit_dice_spent(character: dict | None) -> int:
+    """Spent Hit Dice on the sheet, clamped to the total. Missing or malformed means none spent."""
+    stats = (character or {}).get("stats")
+    entry = stats.get(HIT_DICE_KEY) if isinstance(stats, dict) else None
+    spent = entry.get("spent") if isinstance(entry, dict) else None
+    if not isinstance(spent, int) or isinstance(spent, bool):
+        return 0
+    return max(0, min(hit_dice_total(character), spent))
+
+
+def hit_dice_remaining(character: dict | None) -> int:
+    return hit_dice_total(character) - hit_dice_spent(character)
+
+
+def hit_dice_status(character: dict | None) -> dict[str, Any]:
+    """Public view of the resource for every class: remaining, total and the die type."""
+    return {
+        "remaining": hit_dice_remaining(character),
+        "total": hit_dice_total(character),
+        "die": f"d{hit_die_sides(character)}",
+    }
+
+
+def hit_dice_recovered_by_long_rest(character: dict | None) -> int:
+    return max(1, hit_dice_total(character) // 2)
+
+
+def hit_dice_after_long_rest(character: dict | None) -> int | None:
+    """Spent Hit Dice after a long rest, or None when the rest leaves them unchanged."""
+    spent = hit_dice_spent(character)
+    after = max(0, spent - hit_dice_recovered_by_long_rest(character))
+    return after if after != spent else None
+
+
+def build_rest_record(
+    character: dict | None, kind: str, heal: HealResult | None, spent_after: int | None
+) -> RestRecord:
+    """Evidence for the turn. `spent_after` is the engine's new spent count, None if unchanged."""
+    hp_cur = int(character.get("hp_current") or 0) if character else 0
+    hp_max = int((character or {}).get("hp_max") or hp_cur)
+    total = hit_dice_total(character)
+    spent = hit_dice_spent(character) if spent_after is None else spent_after
+    healed = min(heal.amount, max(0, hp_max - hp_cur)) if heal is not None else 0
+    rolled = heal is not None and kind == "short" and heal.dice is not None
+    recovered = (hit_dice_spent(character) - spent) if kind == "long" else None
+    return RestRecord(
+        kind=kind,
+        refused=kind == "short" and heal is None,
+        expression=heal.dice.expression if rolled else None,
+        rolled=heal.dice.total if rolled else None,
+        healed=max(0, healed),
+        die=f"d{hit_die_sides(character)}",
+        hit_dice_remaining=total - spent,
+        hit_dice_total=total,
+        hit_dice_recovered=recovered,
+    )
 
 
 # --------------------------------------------------------------------------------------------
@@ -1000,8 +1086,10 @@ def heal_from_rest(
 # rules corpus, so its scaling is not implemented (see the contract entry).
 
 SECOND_WIND_KEY = "second_wind"
+# Class feature uses (EDG-145), one nested entry per feature: agent.class_features.
+CLASS_FEATURES_KEY = "class_features"
 # Sheet `stats` keys written only by the engine; a manual sheet edit must not overwrite them.
-ENGINE_STATS_KEYS = (SECOND_WIND_KEY, "spell_slots_expended")
+ENGINE_STATS_KEYS = (SECOND_WIND_KEY, HIT_DICE_KEY, CLASS_FEATURES_KEY, "spell_slots_expended")
 SECOND_WIND_REFUSAL = (
     "{hero} has already used Second Wind and has no uses left until a short or long rest. "
     "No healing is rolled."
@@ -1271,12 +1359,17 @@ def enforce_side_effects(
     adj.conditions = normalise_conditions(adj.conditions)
     context_text = " ".join(str(c.get("text", "")) for c in (adventure_context or []))
     items = inventory_items(character)
+    # Rest evidence is engine-built only: a model-proposed record is never shown.
+    adj.rest_record = None
 
     cu = adj.character_update
     if cu is not None:
         # Second Wind uses are engine-owned: a model-proposed count is never persisted.
         cu.second_wind_uses_remaining = None
-        # Spell slots are an engine ledger (agent.spells): a model proposal never sets them.
+        # Class feature uses (EDG-145), Hit Dice spent (EDG-026) and spell slots (agent.spells)
+        # are engine-owned ledgers: a model proposal never sets them.
+        cu.class_feature_uses = None
+        cu.hit_dice_spent = None
         cu.spell_slots_expended = None
         cu.add_conditions = normalise_conditions(cu.add_conditions)
         cu.remove_conditions = normalise_conditions(cu.remove_conditions)
@@ -1330,7 +1423,11 @@ def enforce_side_effects(
 
         heal: HealResult | None = None
         sw_remaining: int | None = None
+        cf_restored: dict[str, int] | None = None
         sw_refusal = ""
+        hit_dice_next: int | None = None  # engine-owned spent count to persist, when it changes
+        hit_dice_refusal = ""
+        rest_record: RestRecord | None = None
         item = find_healing_consumable(
             character, parsed=parsed, player_input=player_input, proposed_removals=proposed_removals
         )
@@ -1341,6 +1438,20 @@ def enforce_side_effects(
             if rest:
                 heal = heal_from_rest(character, rest, rng)
                 sw_remaining = second_wind_after_rest(character, rest)
+                # Class feature recovery (EDG-145). Local import: agent.class_features imports this module.
+                from agent.class_features import class_feature_after_rest
+
+                cf_restored = class_feature_after_rest(character, rest)
+                if character:  # Hit Dice belong to a sheet; a rest without one has none to spend
+                    hero = character.get("name") or "The hero"
+                    if rest == "long":
+                        hit_dice_next = hit_dice_after_long_rest(character)
+                    elif heal is not None:
+                        # A short rest spends one Hit Die, and the roll is the engine's record of it.
+                        hit_dice_next = hit_dice_spent(character) + 1
+                    else:
+                        hit_dice_refusal = HIT_DICE_REFUSAL.format(hero=hero)
+                    rest_record = build_rest_record(character, rest, heal, hit_dice_next)
             elif declares_second_wind(player_input) and is_fighter(character):
                 # Out of combat the player's Second Wind is an engine use, spent or refused.
                 heal = spend_second_wind(character, rng=rng)
@@ -1350,9 +1461,20 @@ def enforce_side_effects(
                 else:
                     sw_remaining = second_wind_remaining(character) - 1
         if heal is not None and heal.amount > 0:
-            hp_delta += heal.amount
+            # A rest heals only the HP the character is missing; the dice are still spent.
+            hp_delta += rest_record.healed if rest_record is not None else heal.amount
             if heal.dice is not None:
-                adj.dice_log = [*adj.dice_log, heal.dice.to_log(f"healing ({heal.source})")]
+                purpose = (
+                    "short rest hit die" if rest_record is not None else f"healing ({heal.source})"
+                )
+                adj.dice_log = [*adj.dice_log, heal.dice.to_log(purpose)]
+        if rest_record is not None:
+            adj.rest_record = rest_record
+        if hit_dice_next is not None:
+            if cu is None:
+                cu = CharacterUpdate()
+                adj.character_update = cu
+            cu.hit_dice_spent = hit_dice_next
         if heal is not None and heal.item:
             if cu is None:
                 cu = CharacterUpdate()
@@ -1364,8 +1486,14 @@ def enforce_side_effects(
                 cu = CharacterUpdate()
                 adj.character_update = cu
             cu.second_wind_uses_remaining = sw_remaining
-        if sw_refusal:
-            adj.mechanical_summary = " ".join(x for x in (sw_refusal, adj.mechanical_summary) if x)
+        if cf_restored:
+            if cu is None:
+                cu = CharacterUpdate()
+                adj.character_update = cu
+            cu.class_feature_uses = cf_restored
+        if sw_refusal or hit_dice_refusal:
+            refusals = " ".join(x for x in (sw_refusal, hit_dice_refusal) if x)
+            adj.mechanical_summary = " ".join(x for x in (refusals, adj.mechanical_summary) if x)
         if cu is None and hp_delta:
             cu = CharacterUpdate()
             adj.character_update = cu

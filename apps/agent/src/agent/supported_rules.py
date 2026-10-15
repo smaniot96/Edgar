@@ -31,6 +31,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent.class_features import (
+    FEATURE_EFFECTS,
+    IMPLEMENTED_FEATURES,
+    NARRATION_CLAIMS,
+    requested_features,
+    ruling as feature_ruling,
+)
 from agent.combatants import classify_combat_maneuver
 from agent.resolution import normalise_check
 from agent.spells import CATALOG, cast_request
@@ -164,6 +171,51 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         test="tests/agent/test_supported_rules.py::test_supported_second_wind_uses_and_rest_recovery",
     ),
     Mechanic(
+        id="class_feature_action_surge",
+        title="Fighter Action Surge (one more attack, restored by rests)",
+        scope=(
+            "Fighter level 2 and up; one use, or two from level 17. Declared with an attack on a foe "
+            "in combat, a use adds one more weapon attack against that foe in the same round, with its "
+            "own engine roll and damage. A request with no use left, or with no attack, is refused "
+            "without a roll and spends nothing. Uses are stored on the character sheet, and a short or "
+            "long rest restores them. Outside combat it has no effect."
+        ),
+        implementation="agent.class_features:spend_use",
+        test="tests/agent/test_class_features.py::test_action_surge_adds_one_attack_and_recharges",
+    ),
+    Mechanic(
+        id="class_feature_sneak_attack",
+        title="Rogue Sneak Attack (once per turn, with engine advantage)",
+        scope=(
+            "Rogue. A hit with a finesse or ranged weapon, on an attack that has advantage from an "
+            "engine source (see advantage_disadvantage), adds 1d6 per two rogue levels, rounded up, "
+            "once per turn. A critical hit doubles these dice. The ally-adjacent condition is not "
+            "tracked, so an attack without advantage gets no Sneak Attack. It has no uses to restore."
+        ),
+        implementation="agent.class_features:sneak_attack_roll",
+        test=(
+            "tests/agent/test_class_features.py::"
+            "test_sneak_attack_needs_engine_advantage_and_finesse_or_ranged"
+        ),
+    ),
+    Mechanic(
+        id="class_feature_rage",
+        title="Barbarian Rage (damage bonus; uses restored by a long rest)",
+        scope=(
+            "Barbarian. Uses per long rest: 2 at level 1, 3 at level 3, 4 at level 6, 5 at level 12 and "
+            "6 at level 17. Declared in combat, rage starts without using the round's attack (bonus "
+            "actions are not tracked) and adds +2 damage, or +3 from level 9 and +4 from level 16, to each "
+            "hit with a melee weapon attack that uses Strength. It lasts until the encounter ends; the "
+            "1-minute limit is not tracked. A long rest restores uses; a short rest does not. Damage "
+            "resistance and the Strength advantage are not applied."
+        ),
+        implementation="agent.class_features:rage_damage_bonus",
+        test=(
+            "tests/agent/test_class_features.py::"
+            "test_rage_adds_damage_uses_recharge_and_ends_with_the_encounter"
+        ),
+    ),
+    Mechanic(
         id="hazard_damage",
         title="Hazard damage after a failed check",
         scope=(
@@ -206,25 +258,41 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="long_rest",
-        title="Long rest healing",
+        title="Long rest healing and Hit Dice recovery",
         scope=(
             "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum, every "
-            "expended spell slot and a fighter's Second Wind use. No other long-rest resource is "
-            "reset by the engine."
+            "expended spell slot, a fighter's Second Wind and Action Surge uses, and a barbarian's "
+            "Rage uses. It also regains half the character's level in spent Hit Dice, minimum one. "
+            "2024 campaigns follow the same Hit Dice rule in this engine. No other long-rest "
+            "resource is reset by the engine."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_long_rest_restores_hp",
     ),
     Mechanic(
         id="short_rest",
-        title="Short rest healing (no Hit Dice ledger)",
+        title="Short rest healing spends one Hit Die",
         scope=(
-            "A short rest (rest-for-an-hour wording) rolls one hit die of the class plus the CON "
-            "modifier, minimum 1 HP. Dice are not counted down, so short rests are not limited by "
-            "Hit Dice. A short rest also restores a fighter's Second Wind use."
+            "A short rest (rest-for-an-hour wording) spends one Hit Die of the class and rolls it "
+            "plus the CON modifier, minimum 1 HP, healing no more than the missing HP. With no Hit "
+            "Dice left it is refused: nothing is rolled and nothing is healed until a long rest. A "
+            "declared count of Hit Dice is not parsed, so one die is spent. A short rest also "
+            "restores a fighter's Second Wind and Action Surge uses."
         ),
         implementation="agent.resolution:heal_from_rest",
-        test="tests/agent/test_supported_rules.py::test_supported_short_rest_has_no_ledger",
+        test="tests/agent/test_supported_rules.py::test_supported_short_rest_spends_one_hit_die",
+    ),
+    Mechanic(
+        id="hit_dice",
+        title="Hit Dice ledger on the character sheet",
+        scope=(
+            "Each character has Hit Dice equal to its level, of the class die (d6 sorcerer or "
+            "wizard, d8 bard, cleric, druid, monk, rogue, warlock or artificer, d10 fighter, "
+            "paladin or ranger, d12 barbarian). The spent count is an engine-owned sheet resource, "
+            "shown with the remaining count after each rest. A manual sheet edit cannot change it."
+        ),
+        implementation="agent.resolution:hit_dice_status",
+        test="tests/test_hit_dice_persistence.py::test_supported_hit_dice_ledger_persists_and_is_protected",
     ),
     Mechanic(
         id="official_conditions",
@@ -404,15 +472,14 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="class_features",
-        title="Class features other than Second Wind",
-        boundary="Action Surge, Sneak Attack, Rage, Divine Smite and similar features have no engine effect.",
+        title="Class features other than Second Wind, Action Surge, Sneak Attack and Rage",
+        boundary=(
+            "Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery "
+            "points, ki points, Flurry of Blows, Stunning Strike, Superiority Dice and Martial Arts have "
+            "no engine effect, and neither do Rage's damage resistance and Strength advantage. Their "
+            "effects, uses and recharge are not applied."
+        ),
         owner="unassigned",
-    ),
-    UnsupportedMechanic(
-        id="hit_dice_ledger",
-        title="Expended Hit Dice ledger",
-        boundary="Short rests do not reduce a remaining Hit Dice count.",
-        owner="EDG-026",
     ),
     UnsupportedMechanic(
         id="monster_traits",
@@ -518,10 +585,11 @@ _SPELL_NAMES = (
     "feather fall|fireball|lightning bolt|color spray|witch bolt|ray of frost|chill touch|"
     "shocking grasp|acid splash|vicious mockery|dissonant whispers|spiritual weapon|hunter's mark"
 )
+# Features the engine does not execute. Action Surge, Sneak Attack and Rage are implemented
+# (agent.class_features) and are ruled on by their own helper, not by these names.
 _FEATURE_NAMES = (
-    "action surge|sneak attack|divine smite|lay on hands|barbarian rage|enter a rage|"
-    "bardic inspiration|channel divinity|wild shape|sorcery points?|ki points?|flurry of blows|"
-    "stunning strike|superiority dice|martial arts"
+    "divine smite|lay on hands|bardic inspiration|channel divinity|wild shape|sorcery points?|"
+    "ki points?|flurry of blows|stunning strike|superiority dice|martial arts"
 )
 _BONUS_ACTION_CLAIM = r"bonus\s+action"
 _DODGE_CLAIM = r"dodg\w*"
@@ -529,6 +597,7 @@ _ACTION_ECONOMY_CLAIM = (
     r"\b(?:(?:dash|disengage|help)\s+action|" + _BONUS_ACTION_CLAIM + r"|opportunity\s+attacks?|"
     r"" + _DODGE_CLAIM + r"|disengag\w*)\b"
 )
+_UNSUPPORTED_FEATURE = re.compile(r"\b(?:" + _FEATURE_NAMES + r")\b", re.IGNORECASE)
 _CLAIM_WORDS = {
     SPELL: (
         r"\b\d+d\d+\b|\bspell\s+slots?\b|\bslots?\b|\bconcentrat\w*|\b(?:"
@@ -573,10 +642,6 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"|\b(?:" + _SPELL_NAMES + r")\b",
             re.IGNORECASE,
         ),
-    ),
-    (
-        FEATURE,
-        re.compile(r"\b(?:" + _FEATURE_NAMES + r")\b|\benter(?:s)?\s+a\s+rage\b", re.IGNORECASE),
     ),
     (
         MANEUVER,
@@ -657,13 +722,22 @@ def _parsed_spell(parsed: Any) -> bool:
 
 
 def _parsed_feature(parsed: Any) -> str | None:
+    """A feature the parser named that is not Second Wind or an implemented class feature."""
     entities = getattr(parsed, "entities", None)
     if not isinstance(entities, dict):
         return None
     feature = str(entities.get("feature") or "").strip()
     if not feature or "second wind" in feature.lower():
         return None
+    if requested_features(None, feature):
+        return None  # an implemented class feature: handled by its own helper
     return feature[:60]
+
+
+def parsed_feature_name(parsed: Any) -> str | None:
+    entities = getattr(parsed, "entities", None)
+    name = str(entities.get("feature") or "").strip() if isinstance(entities, dict) else ""
+    return name or None
 
 
 def _engine_applied_maneuver(text: str, engine_effects: tuple[str, ...]) -> bool:
@@ -711,9 +785,20 @@ def classify_unsupported_actions(
             )
     elif _parsed_spell(parsed):
         found[SPELL] = UnsupportedAction(SPELL, "spell (parsed)")
-    feature = _parsed_feature(parsed)
+    # Implemented class features (EDG-145) the engine executed this turn are not declared. Any
+    # other declared one (refused, or not applied this turn) gets its own ruling.
+    class_features = requested_features(text, parsed_feature_name(parsed))
+    phrases = [f.replace("_", " ") for f in class_features if f not in engine_effects]
+    rulings = [feature_ruling(f, character) for f in class_features if f not in engine_effects]
+    unsupported = _UNSUPPORTED_FEATURE.search(text)
+    feature = unsupported.group(0) if unsupported else _parsed_feature(parsed)
     if feature:
-        found.setdefault(FEATURE, UnsupportedAction(FEATURE, feature.lower()))
+        phrases.append(feature.lower()[:60])
+        rulings.append(_RULINGS[FEATURE])
+    if phrases:
+        found[FEATURE] = UnsupportedAction(
+            FEATURE, "; ".join(phrases)[:60], " ".join(dict.fromkeys(rulings))
+        )
     for kind, pattern in _TEXT_PATTERNS:
         if (
             kind == SPELL
@@ -854,18 +939,23 @@ def _claim_pattern(
     effect than the one the player declared (a spell turn narrating a pin, say), and neither the
     narrator nor a flag can be trusted to name its own mechanic. Three exceptions describe engine
     facts: a catalog spell the engine executed (its name, dice and slots), an advantage or
-    disadvantage the engine applied this turn, and a restraint or prone effect really applied; those
-    claims are not applied to that turn's text.
+    disadvantage the engine applied this turn, a restraint or prone effect really applied, and an
+    implemented class feature the engine executed (`engine_effects`, EDG-145); those claims are not
+    applied to that turn's text.
     """
     if not actions:
         return None
+    maneuver_applied = bool(set(engine_effects) - FEATURE_EFFECTS)
     patterns = [
         p
         for kind, p in _claim_words(engine_effects).items()
         if not (executed_spell and kind == SPELL)
         and not (kind == ADVANTAGE and engine_roll_mode != "normal")
-        and not (kind == MANEUVER and engine_effects)
+        and not (kind == MANEUVER and maneuver_applied)
     ]
+    # An implemented class feature is a claim only while the engine has not executed it this turn.
+    executed = set(engine_effects) & FEATURE_EFFECTS
+    patterns += [NARRATION_CLAIMS[f] for f in IMPLEMENTED_FEATURES if f not in executed]
     if not patterns:
         return None
     return re.compile("|".join(f"(?:{p})" for p in patterns), re.IGNORECASE)

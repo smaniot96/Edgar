@@ -444,6 +444,7 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         "second_wind_uses_remaining": combat_state.get("second_wind_uses_remaining"),
         # Additive (EDG-044): what the hero's last turn spent (action, bonus action, Dodge).
         "economy": combat_state.get("economy"),
+        "raging": bool(combat_state.get("raging", False)),
     }
 
 

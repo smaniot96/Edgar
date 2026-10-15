@@ -30,7 +30,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.models.adjudication import AdjudicationResult
 from agent.resolution import (
+    CLASS_FEATURES_KEY,
     COMPLETION_FLAG,
+    HIT_DICE_KEY,
     SECOND_WIND_KEY,
     match_inventory_item,
     normalise_conditions,
@@ -140,6 +142,15 @@ async def _apply_character_update(db, character_id: int, campaign_id: int, cu) -
     if cu.second_wind_uses_remaining is not None:
         # Engine-owned sheet resource (EDG-025); persists across encounters and rests.
         stats[SECOND_WIND_KEY] = {"uses_remaining": max(0, int(cu.second_wind_uses_remaining))}
+    if cu.class_feature_uses:
+        # Engine-owned class feature uses (EDG-145): only the written features change.
+        features = dict(stats.get(CLASS_FEATURES_KEY) or {})
+        for feature, left in cu.class_feature_uses.items():
+            features[feature] = {"uses_remaining": max(0, int(left))}
+        stats[CLASS_FEATURES_KEY] = features
+    if cu.hit_dice_spent is not None:
+        # Engine-owned Hit Dice ledger (EDG-026): a short rest spends one, a long rest recovers some.
+        stats[HIT_DICE_KEY] = {"spent": max(0, int(cu.hit_dice_spent))}
     conditions = list(stats.get("conditions", []))
     for name in normalise_conditions(cu.add_conditions):
         if name not in conditions:

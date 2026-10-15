@@ -39,7 +39,11 @@ ruling. Its narration and adjudication cannot state an engine effect, so spells 
 maneuvers, advantage without an engine source, positioning and similar claims never change HP,
 conditions or flags. The exceptions are engine facts: a catalog spell (`agent.spells`) is executed
 by the engine, its dice, damage and healing come from the roll, and the spell-slot count is
-persisted in the assignment's `stats["spell_slots_expended"]`; a combat maneuver the engine actually
+persisted in the assignment's `stats["spell_slots_expended"]`; spent Hit Dice are persisted in
+`stats["hit_dice"]` (both are protected from manual sheet edits), and a rest turn stores its engine
+evidence (the hit die rolled, HP regained, Hit Dice left) as `rest` in the roll record; the uses of
+Action Surge and Rage are persisted per feature in `stats["class_features"]`, and a Rage flag lasts
+only for its encounter (`raging` in the combat state); a combat maneuver the engine actually
 applied (a won grapple, restraint or shove prone) is recorded in the combatant's `effects` and is
 not stripped from the narration. The scope is also summarised in the rules and narrator prompts.
 

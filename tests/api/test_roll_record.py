@@ -116,3 +116,75 @@ def test_stored_statuses_round_trip() -> None:
     assert stored_roll({"roll_status": ROLL_NO_ROLL, "roll": None}) == (ROLL_NO_ROLL, None)
     # A captured status without a record is a damaged row: never shown as a ruling.
     assert stored_roll({"roll_status": ROLL_CAPTURED, "roll": None}) == (ROLL_NOT_CAPTURED, None)
+
+
+def test_rest_evidence_is_stored_with_the_record_and_survives_storage() -> None:
+    from agent.models.adjudication import RestRecord
+
+    rest = AdjudicationResult(
+        success=True,
+        mechanical_summary="",
+        dice_log=[
+            {
+                "expression": "1d10+2",
+                "rolls": [5],
+                "modifier": 2,
+                "total": 7,
+                "purpose": "short rest hit die",
+            }
+        ],
+        rest_record=RestRecord(
+            kind="short",
+            expression="1d10+2",
+            rolled=7,
+            healed=7,
+            die="d10",
+            hit_dice_remaining=1,
+            hit_dice_total=2,
+        ),
+        character_update=CharacterUpdate(hp_delta=7, hit_dice_spent=1),
+    )
+
+    roll = build_roll_record(rest, "rest-1")
+
+    assert roll is not None
+    assert roll["healing"] == 7
+    assert roll["rest"] == {
+        "kind": "short",
+        "refused": False,
+        "expression": "1d10+2",
+        "rolled": 7,
+        "healed": 7,
+        "die": "d10",
+        "hit_dice_remaining": 1,
+        "hit_dice_total": 2,
+        "hit_dice_recovered": None,
+    }
+    assert roll["dice_log"][0]["purpose"] == "short rest hit die"
+    # Storage keeps the record as a plain JSON object and reads it back unchanged.
+    stored = {"roll_status": roll_status_for(roll), "roll": roll}
+    assert stored_roll(stored) == (ROLL_CAPTURED, roll)
+
+
+def test_refused_short_rest_with_no_dice_still_stores_its_evidence() -> None:
+    from agent.models.adjudication import RestRecord
+
+    refused = AdjudicationResult(
+        success=True,
+        mechanical_summary="Eda has no Hit Dice left until a long rest. No healing is rolled.",
+        rest_record=RestRecord(
+            kind="short",
+            refused=True,
+            die="d10",
+            healed=0,
+            hit_dice_remaining=0,
+            hit_dice_total=2,
+        ),
+    )
+
+    roll = build_roll_record(refused, "rest-2")
+
+    assert roll is not None and roll["dice_result"] is None and roll["dice_log"] == []
+    assert roll["rest"]["refused"] is True
+    assert (roll["rest"]["hit_dice_remaining"], roll["rest"]["hit_dice_total"]) == (0, 2)
+    assert roll_status_for(roll) == ROLL_CAPTURED

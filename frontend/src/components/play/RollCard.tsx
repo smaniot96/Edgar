@@ -1,6 +1,6 @@
 import type { AdjudicationResult } from "../../api/types";
 import { cn } from "../../lib/cn";
-import { healingRolls, rollParts, rollSummary, type HealingRoll } from "./rollText";
+import { healingRolls, restSummary, rollParts, rollSummary, type HealingRoll } from "./rollText";
 
 const CONTAINER =
   "inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-strong/80 bg-surface/80 px-2.5 py-1 text-xs text-ink";
@@ -22,6 +22,19 @@ function HealingPill({ roll }: { roll: HealingRoll }) {
  */
 export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }) {
   const p = rollParts(adj);
+  const rest = adj?.rest_record ?? null;
+  if (!p && rest) {
+    // A rest turn has no check; its card shows only the engine's rest evidence (EDG-026).
+    const text = restSummary(rest);
+    return (
+      <div className={CONTAINER} aria-label={text}>
+        <span aria-hidden className="text-ember-400">
+          ⚄
+        </span>
+        <span className="font-mono tabular-nums text-ink">{text}</span>
+      </div>
+    );
+  }
   const heals = healingRolls(adj);
   if (!p && !heals.length) return null;
   const healPills = heals.map((h, i) => <HealingPill key={`${h.label}-${i}`} roll={h} />);
