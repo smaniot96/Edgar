@@ -126,7 +126,24 @@ simulate (`GET /api/rules/supported-scope`):
   a foe that fails it, for one minute: the foe's own attacks have disadvantage, attacks against it
   have advantage, and it repeats the save at the end of each of its turns. Blindness only, at one
   foe; a declaration naming deafness is refused. The condition is stored on the foe, shown in the
-  roster and ends with the foe's defeat or the encounter. Concentration is not tracked.
+  roster and ends with the foe's defeat or the encounter.
+- Hold Person (concentration, EDG-043): a humanoid foe that fails its Wisdom save against the spell
+  save DC is paralyzed for up to one minute. It cannot act but stays in the fight, attacks against it
+  have advantage, a melee hit from within 5 feet is a critical hit (not from a reach weapon, whose
+  distance is not tracked), and it repeats the save at the end of each of its turns. A foe whose
+  record gives no readable humanoid type is refused before any roll or slot. Only one target; upcast
+  extra targets are not modelled.
+- Concentration: the caster holds one concentration spell at a time. Casting another ends the first
+  and its effects on foes. Taking damage requires a Constitution save (DC 10 or half the damage,
+  whichever is higher, rounded down, with the sheet's save modifier); a failure, or a fall to 0 HP,
+  ends it, as does the spell's minute or the end of its effect on every foe. The spell is shown in the
+  combat payload and the narrator's roster.
+- Monster riders and recharge (EDG-043): an exact record whose attack reads exactly as "and the
+  target must succeed on a DC N Constitution saving throw or be poisoned for 1 minute, ... repeat the
+  saving throw at the end of each of its turns" poisons the hero on a hit after the engine-rolled
+  save. The hero's attacks then have disadvantage, and it repeats the save at the end of its own turn.
+  An attack-style "Recharge X-6" attack is used once, then waits for a d6 at the start of the
+  creature's turns. Any other rider wording stays declared.
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or
@@ -140,10 +157,12 @@ simulate (`GET /api/rules/supported-scope`):
   declaration starts no combat and receives a ruling asking whether to release, question or kill.
   Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
-  other maneuvers, escape contests, spells outside that catalog, concentration, other conditions
-  (poisoned, frightened, paralyzed, stunned and the rest have no engine effect), cover, high ground,
-  flanking, difficult terrain and exact distances, Help, reactions other than opportunity attacks,
-  other bonus actions, declared counts of Hit Dice, and class features other than Second Wind, Action Surge, Sneak Attack and Rage
+  other maneuvers, escape contests, spells outside that catalog, other concentration spells, other
+  conditions (frightened, stunned, charmed and the rest have no engine effect; a poisoned hero's
+  ability checks are not penalised), breath and other save-based recharge abilities, cover, high
+  ground, flanking, difficult terrain and exact distances, Help, reactions other than opportunity
+  attacks, other bonus actions, declared counts of Hit Dice, and class features other than Second
+  Wind, Action Surge, Sneak Attack and Rage
   (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery and ki
   points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's damage
   resistance). A declared action of this kind gets a narrative ruling and no
@@ -154,10 +173,11 @@ simulate (`GET /api/rules/supported-scope`):
   listed attack. Regeneration heals at the start of the monster's turn, unless the damage types the
   record names have been taken since its last turn. Resistances, immunities and vulnerabilities apply
   to player damage by weapon or spell damage type. Speed and movement, legendary, lair and reaction
-  actions, spellcasting, recharge abilities, a Multiattack's later-attack disadvantage and unlisted
-  traits are declared in the combat start message and have no effect. Regeneration's 0 HP clause is
-  declared too: an exact creature at 0 HP is defeated at once. Stat blocks were checked against
-  real Monster Manual layouts (see docs/rules-verification-2014.md).
+  actions, spellcasting, breath and other save-based recharge abilities, a Multiattack's later-attack
+  disadvantage, other rider wording and unlisted traits are declared in the combat start message and
+  have no effect. Regeneration's 0 HP clause is declared too: an exact creature at 0 HP is defeated
+  at once. Stat blocks were checked against real Monster Manual layouts (see
+  docs/rules-verification-2014.md).
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
   with level. Foes without an exact record are clamped or left out. An exact creature is never

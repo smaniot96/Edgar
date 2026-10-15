@@ -15,7 +15,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agent.combatants import can_act
+from agent.combatants import is_standing
 from agent.history import continuity_context, public_earned_facts
 from agent.llm import make_chat_model
 from agent.models.parsed_input import ParsedInput
@@ -44,7 +44,7 @@ def _parser_context(state: AgentState) -> str:
         foes = [
             c.get("name")
             for c in combat.get("combatants") or []
-            if not c.get("is_player") and can_act(c)
+            if not c.get("is_player") and is_standing(c)
         ]
         if foes:
             parts.append(f"Combat in progress against: {', '.join(foes)}")

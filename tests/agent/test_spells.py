@@ -168,6 +168,7 @@ def test_catalog_covers_each_kind_with_provenance() -> None:
         "Healing Word",
         "Guiding Bolt",
         "Blindness/Deafness",
+        "Hold Person",
     }
     assert {s.kind for s in CATALOG} == {"attack", "auto", "save", "heal", "condition"}
     assert {s.name for s in CATALOG if s.action == "bonus_action"} == {"Healing Word"}

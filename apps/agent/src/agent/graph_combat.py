@@ -98,6 +98,7 @@ from agent.combatants import (
     disposition_of,
     finish_victory,
     has_effect,
+    is_standing,
     release_effect,
     roster_violations,
     stable_id,
@@ -105,24 +106,36 @@ from agent.combatants import (
 )
 from agent.conditions import (
     apply_spell_condition,
+    concentration_save,
     consume_mark,
+    drop_concentration,
     end_of_turn_saves,
     expire_effects,
+    hero_end_of_turn_saves,
+    humanoid_refusal,
+    paralyzed_melee_crit,
+    rider_save,
+    rider_save_line,
     save_line,
+    settle_concentration,
     spell_condition_sentence,
+    start_concentration,
 )
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.monster_stats import (
+    AttackRider,
     MonsterStatsError,
     adjust_monster_damage,
     attack_plan,
     combat_fields,
     declared_line,
     parse_monster_stats,
+    recharge_turn_start,
     record_damage,
     regenerate,
+    spend_recharge,
     stats_of,
     weapon_damage_type,
 )
@@ -635,7 +648,7 @@ def initiative_view(combatants: list[dict]) -> list[dict]:
 
 def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict | None, str | None]:
     """Pick a real living enemy for an attack, or return a question for the player."""
-    living = [e for e in enemies_in_order if can_act(e)]
+    living = [e for e in enemies_in_order if is_standing(e)]
     if not living:
         return None, None
     for n in named:
@@ -928,6 +941,11 @@ async def combat_round_node(state: AgentState) -> dict:
             return _ask_player(
                 state, f"Who do you cast {spell_plan.spell.name} at?", combat_state=combat_state
             )
+        if spell_plan.spell.humanoid_only:
+            # Refused before any roll or slot: a foe whose record gives no humanoid type is not a target.
+            refusal = humanoid_refusal(spell_plan.spell.name, spell_target)
+            if refusal:
+                return _ask_player(state, refusal, combat_state=combat_state)
     # EDG-044: declared moves are free but change band at most once (twice with Dash). Planned on
     # copies only: a refused turn changes no foe and rolls no die.
     moves = plan_moves(
@@ -963,6 +981,20 @@ async def combat_round_node(state: AgentState) -> dict:
     def damage_player(amount: int) -> None:
         nonlocal hp, sw_left
         hp = max(0, hp - amount)
+        # EDG-043: a caster who falls to 0 HP loses concentration; other damage needs a CON save.
+        if hp <= 0:
+            if ended_spell := drop_concentration(player, enemies):
+                log_lines.append(f"{hero} falls and loses concentration on {ended_spell}.")
+        elif (conc := concentration_save(player, enemies, character, amount)) is not None:
+            dice_log.append(conc.outcome.to_log(f"{hero} Constitution save (concentration)"))
+            if conc.kept:
+                log_lines.append(
+                    f"{hero} keeps concentration on {conc.spell} (rolled {conc.total} vs DC {conc.dc})."
+                )
+            else:
+                log_lines.append(
+                    f"{hero} loses concentration on {conc.spell} (rolled {conc.total} vs DC {conc.dc})."
+                )
         # No automatic rally unless a documented game mode enables it (default off).
         if SECOND_WIND_AUTO_AT_ZERO_HP and hp <= 0 and not fled:
             sw = spend_second_wind(character, remaining=sw_left)
@@ -984,6 +1016,7 @@ async def combat_round_node(state: AgentState) -> dict:
         expr: str,
         damage_type: str | None = None,
         exact: bool = False,
+        rider: AttackRider | None = None,
         ranged: bool = False,
         within_five_feet: bool = False,
         reaction: bool = False,
@@ -1040,6 +1073,19 @@ async def combat_round_node(state: AgentState) -> dict:
                 }
             )
             damage_player(dmg)
+            if rider is not None and hp > 0:
+                # EDG-043: the exact record's rider on a hit: the hero's save, engine-rolled.
+                rider_roll = rider_save(
+                    player,
+                    rider,
+                    character=character,
+                    source=e["name"],
+                    round_applied=int(combat_state.get("round", 1) or 1),
+                )
+                dice_log.append(rider_roll.outcome.to_log(f"{hero} {rider.ability} save ({rider.kind})"))
+                log_lines.append(rider_save_line(hero, rider_roll, attack=label or e["name"]))
+                if rider_roll.failed:
+                    round_effects.append(rider.kind)
         else:
             log_lines.append(f"{subject} misses {hero} (rolled {atk.total}{mode_text} vs AC {player_ac}).")
             outcomes.append(
@@ -1077,7 +1123,7 @@ async def combat_round_node(state: AgentState) -> dict:
         _healed, regen_note = regenerate(e)
         if regen_note:
             log_lines.append(regen_note)
-        plan = attack_plan(stats)
+        plan = attack_plan(stats, spent=e.get("recharge_spent") or ())
         band = band_of(e)
         if band == RANGED and not any(a.ranged for a in plan):
             # A melee-only foe at range spends its movement to close in, then attacks (EDG-044).
@@ -1096,9 +1142,11 @@ async def combat_round_node(state: AgentState) -> dict:
                 expr=attack.damage_dice,
                 damage_type=attack.damage_type,
                 exact=True,
+                rider=attack.rider,
                 ranged=attack.ranged,
                 within_five_feet=band == MELEE and attack.ranged,
             )
+            spend_recharge(e, attack)  # a recharge attack waits for its d6 (no-op for the others)
 
     def opportunity_attack(e: dict) -> bool:
         """The foe's reaction: one melee attack against the hero as it leaves reach (PHB p.195).
@@ -1135,9 +1183,16 @@ async def combat_round_node(state: AgentState) -> dict:
 
     def enemy_turn(e: dict) -> None:
         start_turn(e)  # its reaction comes back at the start of its turn (PHB p.190)
-        if not can_act(e) or hp <= 0 or fled:
+        # A foe that is down takes no turn. A paralyzed foe is still in the fight: it has its turn
+        # (its recharge and its repeat save) but makes no attack.
+        if not is_standing(e) or hp <= 0 or fled:
             return
-        foe_attacks(e)
+        for name, outcome, recharged in recharge_turn_start(e):
+            dice_log.append(outcome.to_log(f"{e['name']} {name} recharge"))
+            state_word = "recharges" if recharged else "does not recharge yet"
+            log_lines.append(f"{e['name']}'s {name} {state_word} (rolled {outcome.total} on the d6).")
+        if can_act(e):
+            foe_attacks(e)
         # EDG-043: a save-ending spell condition is repeated at the end of the foe's own turn.
         for save in end_of_turn_saves(e):
             dice_log.append(save.outcome.to_log(f"{save.name} {save.ability} save ({save.kind})"))
@@ -1316,9 +1371,13 @@ async def combat_round_node(state: AgentState) -> dict:
         if spell_target is not None and spell_result.attack is not None:
             consume_mark(spell_target)  # the attack roll spends a mark it was made against
         applied_condition: str | None = None
-        if spell_result.condition and spell_target is not None and can_act(spell_target):
+        spec = spell_plan.spell
+        if spec.concentration:
+            # Casting a concentration spell ends the caster's earlier one (EDG-043).
+            if previous := drop_concentration(player, enemies):
+                log_lines.append(f"{hero}'s concentration on {previous} ends.")
+        if spell_result.condition and spell_target is not None and is_standing(spell_target):
             # A foe that the spell defeated keeps no condition (defeat clears effects anyway).
-            spec = spell_plan.spell
             applied = apply_spell_condition(
                 spell_target,
                 spell_result.condition,
@@ -1334,6 +1393,13 @@ async def combat_round_node(state: AgentState) -> dict:
             if applied:
                 round_effects.append(spell_result.condition)
                 applied_condition = spell_result.condition
+                if spec.concentration:
+                    start_concentration(
+                        player,
+                        spec.name,
+                        round_applied=int(combat_state.get("round", 1) or 1),
+                        duration_rounds=spec.duration_rounds,
+                    )
             extra_outcome = " ".join(
                 [
                     extra_outcome,
@@ -1414,7 +1480,7 @@ async def combat_round_node(state: AgentState) -> dict:
         # One swing, or two with Action Surge (EDG-145). Each swing rolls its own engine d20.
         any_hit = False
         for swing in range(2 if surge_swing else 1):
-            if swing and not can_act(target):
+            if swing and not is_standing(target):
                 # The first swing finished the foe; the surged swing has nothing to hit.
                 log_lines.append(f"{hero}'s extra attack finds no foe left standing.")
                 break
@@ -1433,6 +1499,10 @@ async def combat_round_node(state: AgentState) -> dict:
             )
             round_modes.append(mode)
             consume_mark(target)  # the attack roll spends a mark it was made against
+            if attack.success and has_effect(target, "paralyzed"):
+                weapon_name = (attack.weapon or choose_weapon(character, player_input)).name
+                if paralyzed_melee_crit(target, weapon_name=weapon_name, ranged=ranged, spell=is_spell):
+                    attack.critical = True  # PHB Appendix A: a paralyzed foe's hit from 5 feet is a crit
             if check_result is None:
                 check_result = attack
             swing_log = dice_log if swing == 0 else later_swing_dice
@@ -1519,19 +1589,28 @@ async def combat_round_node(state: AgentState) -> dict:
     else:
         adj = AdjudicationResult(success=not fled and player_acted, mechanical_summary="")
 
+    # EDG-043: the hero's own turn ends: a rider's condition is repeated with the sheet's save.
+    if not fled:
+        for save in hero_end_of_turn_saves(player, character):
+            dice_log.append(save.outcome.to_log(f"{hero} {save.ability} save ({save.kind})"))
+            log_lines.append(save_line(save))
+
     # --- Enemies after the player ---
     for e in after:
         enemy_turn(e)
     # EDG-043: a timed spell condition ends after its last round (a mark, the caster's next turn).
     for foe_name, expired in expire_effects(combatants, int(combat_state.get("round", 1) or 1)):
         log_lines.append(f"{foe_name} is no longer {expired}.")
+    # EDG-043: concentration ends with its minute, or once no foe still carries its effect.
+    if ended_spell := settle_concentration(player, enemies, int(combat_state.get("round", 1) or 1)):
+        log_lines.append(f"{hero}'s concentration on {ended_spell} ends.")
 
     player["hp_current"] = hp
     apply_player_disposition(player, subdued=False)
     # Derived mirror for the HUD only; the sheet resource above is the authority.
     second_wind_used = bool(second_wind_status(character)) and sw_left <= 0
     player["second_wind_used"] = second_wind_used
-    active_enemies = [e for e in enemies if can_act(e)]
+    active_enemies = [e for e in enemies if is_standing(e)]
 
     # --- End conditions ---
     round_num = int(combat_state.get("round", 1) or 1)
@@ -1561,6 +1640,7 @@ async def combat_round_node(state: AgentState) -> dict:
     if ended:
         # Typed effects end with the encounter (EDG-021): nothing carries into a later fight.
         clear_effects(combatants)
+        player.pop("concentration", None)  # EDG-043: the caster stops concentrating with the fight
         player.pop("raging", None)  # rage, too, lasts only for this encounter (EDG-145)
 
     # EDG-044: what this turn spent, kept on the player row (persisted with the combatants).

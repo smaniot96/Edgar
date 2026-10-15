@@ -243,6 +243,13 @@ describe("combat economy (EDG-044)", () => {
       { kind: "dodging", label: "Dodging" },
     ]);
   });
+
+  it("labels Hold Person's paralysis and a rider's poison (EDG-043)", () => {
+    expect(mechanicalEffects([{ kind: "paralyzed" }, { kind: "poisoned" }])).toEqual([
+      { kind: "paralyzed", label: "Paralyzed" },
+      { kind: "poisoned", label: "Poisoned" },
+    ]);
+  });
 });
 describe("Hit Dice on the sheet (EDG-026)", () => {
   const assignment: CharacterAssignmentHistoryRead = {

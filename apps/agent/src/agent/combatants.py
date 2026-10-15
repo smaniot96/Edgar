@@ -8,7 +8,9 @@ Stored on every combatant:
   * `alive`: kept for existing readers with the living-vs-not meaning. True only for living
     dispositions (active, unconscious, captured). False for dead and defeated.
 
-Derived, never stored: `can_act` (active and above 0 HP). Only a combatant that can act attacks.
+Derived, never stored: `can_act` (active, above 0 HP and not paralyzed). Only a combatant that can
+act attacks. `is_standing` is the same without the paralysis: a paralyzed foe is still in the fight
+(it can be targeted, it still has a turn, and the fight is not over while it stands).
 
 `effects` (EDG-021): a list of typed combat effects, each `{kind, source, applied_round}`. Only
 the kinds in `EFFECT_KINDS` are read. Restraint (`restrained`) and `prone` come from a supported
@@ -18,10 +20,12 @@ advantage/disadvantage state of an attack. Missing or malformed `effects` reads 
 `dodging` (EDG-044) is the Dodge action: attacks against that combatant have disadvantage. It
 ends when the combatant's next turn starts (see `agent.graph_combat`), not at the end of a round.
 
-Spell conditions (EDG-043, see `agent.conditions`) add `blinded` and `marked` to the same list. They
-may also carry `expires_after_round` (the last round in force) and `save` (`{ability, dc}`: the
-combatant repeats that save at the end of each of its turns, and the effect ends on success). Rows
-written without those keys read exactly as before.
+Spell conditions (EDG-043, see `agent.conditions`) add `blinded`, `marked` and `paralyzed` to the same
+list. Monster riders add `poisoned` to a player. They may also carry `expires_after_round` (the last
+round in force) and `save` (`{ability, dc}`: the combatant repeats that save at the end of each of its
+turns, and the effect ends on success). Rows written without those keys read exactly as before.
+A caster's concentration (`concentration` on the player combatant, see `agent.conditions`) is a
+single dict, or absent. Recharge attacks used and not yet recharged are `recharge_spent` names.
 
 Legacy rows (written before `disposition` existed) carry only `alive`/`hp_current`. They are
 read honestly: `alive` False means "defeated" (cause unknown). It is not treated as proof of
@@ -56,11 +60,19 @@ _STATUS_TEXT = {
     "dead": "dead, cannot act",
     "defeated": "defeated, cannot act",
 }
-EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone", "dodging", "blinded", "marked")
+EFFECT_KINDS: tuple[str, ...] = (
+    "restrained",
+    "prone",
+    "dodging",
+    "blinded",
+    "marked",
+    "paralyzed",
+    "poisoned",
+)
 # Kinds that give the bearer's own attack rolls disadvantage, and kinds that give attacks against
 # the bearer advantage (a prone bearer is the exception: its melee/ranged split is in attack_roll_mode).
-_OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded"})
-_AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked"})
+_OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded", "poisoned"})
+_AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked", "paralyzed"})
 _EFFECT_TEXT = {
     "restrained": (
         "restrained with {source}: its attacks have disadvantage and attacks against it have "
@@ -74,6 +86,11 @@ _EFFECT_TEXT = {
         "blinded by {source}: its attacks have disadvantage and attacks against it have advantage"
     ),
     "marked": "marked by {source}: the next attack roll against it has advantage",
+    "paralyzed": (
+        "paralyzed by {source}: it cannot act; attacks against it have advantage, and a melee hit "
+        "from within 5 feet is a critical hit"
+    ),
+    "poisoned": "poisoned by {source}: its attacks have disadvantage",
     "dodging": "dodging (Dodge action): attacks against it have disadvantage until its next turn",
 }
 
@@ -171,8 +188,13 @@ def is_living(c: Mapping[str, Any]) -> bool:
     return disposition_of(c) in LIVING_DISPOSITIONS
 
 
-def can_act(c: Mapping[str, Any]) -> bool:
+def is_standing(c: Mapping[str, Any]) -> bool:
+    """Active and above 0 HP, paralysis aside: still in the fight (targets, victory, its own turn)."""
     return disposition_of(c) == "active" and _hp(c) > 0
+
+
+def can_act(c: Mapping[str, Any]) -> bool:
+    return is_standing(c) and not has_effect(c, "paralyzed")
 
 
 def declared_lethality(parsed: Any, player_input: str | None) -> Lethality | None:
@@ -342,6 +364,18 @@ def _effects_text(c: Mapping[str, Any]) -> str:
     )
 
 
+def concentration_of(c: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The caster's concentration (`{spell, round_applied, expires_after_round}`), or None."""
+    raw = c.get("concentration")
+    if not isinstance(raw, Mapping) or not raw.get("spell"):
+        return None  # a legacy row, or no concentration: none
+    return dict(raw)
+
+
+def _status(c: Mapping[str, Any]) -> str:
+    if disposition_of(c) == "active" and _hp(c) > 0 and has_effect(c, "paralyzed"):
+        return "active, cannot act (paralyzed)"
+    return _STATUS_TEXT[disposition_of(c)]
 def _position_text(c: Mapping[str, Any]) -> str:
     """A foe's band, stated for rows that carry one (EDG-044); legacy rows keep their text."""
     return f"; position: {band_text(c)}" if "band" in c else ""
@@ -349,18 +383,26 @@ def _position_text(c: Mapping[str, Any]) -> str:
 
 def narrator_roster(combatants: Iterable[Mapping[str, Any]], round_actors: Iterable[str]) -> str:
     """Authoritative roster text for the round narration. The engine decides; prose must agree."""
+    combatants = list(combatants)
     enemies = [c for c in combatants if not c.get("is_player")]
     lines = [
-        f'- id "{stable_id(c)}", name "{display_name(c)}": {_STATUS_TEXT[disposition_of(c)]}'
+        f'- id "{stable_id(c)}", name "{display_name(c)}": {_status(c)}'
         f"{_effects_text(c)}{_position_text(c)}{narrator_note(c)}"
         for c in enemies
     ]
     able = [display_name(c) for c in enemies if can_act(c)]
     actors = list(dict.fromkeys(round_actors))
+    hero = next((c for c in combatants if c.get("is_player")), None)
+    concentrating = concentration_of(hero) if hero is not None else None
     return (
         "Combat roster (authoritative; the engine decided every outcome):\n"
         + "\n".join(lines)
         + f"\nCombatants able to act now: {', '.join(able) if able else 'none'}."
+        + (
+            f"\n{display_name(hero)} is concentrating on {concentrating['spell']}."
+            if concentrating
+            else ""
+        )
         + (
             f"\nEnemy attacks this round were made only by: {', '.join(actors)}."
             if actors
