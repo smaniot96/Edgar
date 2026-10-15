@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 
 from apps.api.routers import adventures
 from apps.api.services import adventures_meta as store, campaign_sources
@@ -237,3 +237,47 @@ def test_startup_finalizes_queued_cancellation_using_ingestion_source_availabili
     cancelled = store.load_meta(slug)["job"]
     assert cancelled["state"] == "cancelled"
     assert cancelled["retryable"] is expected_retryable
+
+
+@pytest.mark.parametrize("stage", ["extracting", "embedding"])
+def test_restart_during_ingestion_stage_retries_from_retained_pdf(
+    recovery_store, tmp_path, stage
+):
+    slug = f"restart_{stage}"
+    token = "c" * 32
+    source_bytes = b"retained source PDF bytes across a process restart"
+    source = tmp_path / "original-name.pdf"
+    source.write_bytes(source_bytes)
+    job = store.new_job("ingestion", stage)
+    job.update(state="running", attempt_id=token)
+    store.save_meta(
+        slug,
+        {"status": "processing", "attempt": {"id": token}, "job": job},
+    )
+
+    store.stage_attempt_pdf(slug, token, source, "original-name.pdf")
+    job_id = job["job_id"]
+
+    assert store.fail_stale_processing() == [slug]
+    interrupted = campaign_sources.safe_job_read(store.load_meta(slug), slug)
+    assert interrupted is not None
+    assert interrupted.state == "interrupted"
+    assert interrupted.stage == stage
+    assert interrupted.job_id == job_id
+    assert interrupted.retryable
+    assert interrupted.retained_work == "source_pdf"
+
+    tasks = BackgroundTasks()
+    accepted = adventures.retry_adventure(slug, tasks)
+    assert accepted.status == "processing"
+    assert len(tasks.tasks) == 1
+
+    retried = store.load_meta(slug)
+    assert retried["job"]["job_id"] == job_id
+    retry_token = retried["attempt"]["id"]
+    retry_candidate = store.candidate_pdf_path(slug, retry_token)
+    assert retry_candidate.read_bytes() == source_bytes
+
+    with pytest.raises(HTTPException) as duplicate:
+        adventures.retry_adventure(slug, BackgroundTasks())
+    assert duplicate.value.status_code == 409
