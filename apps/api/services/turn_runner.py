@@ -38,7 +38,7 @@ import db.postgres.session as db_session_module
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
 from agent.nodes.narrator import build_narrator_prompt, make_narrator_model, narrator_context
-from db.postgres.models import CharacterAssignment, EventLog, Session as SessionModel
+from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
 from edgar_core.sources import citations_for, public_citations
 
@@ -163,6 +163,28 @@ async def persist_turn(
                         raise RuntimeError("Incomplete turn receipt")
                     return saved
 
+            from starlette.concurrency import run_in_threadpool
+            from .adventure_manifests import campaign_manifests
+            from .campaign_sources import require_campaign_sources
+            from .world_flags import load_world_flags
+            from .story_state import session_story_flags
+
+            campaign = (await db.execute(
+                select(Campaign).where(Campaign.id == game_session.campaign_id).with_for_update()
+            )).scalar_one()
+            if campaign.status == "ended":
+                raise ValueError("Campaign ended during generation")
+            if (campaign.source_mode != result.get("source_mode", "module")
+                or campaign.rules_edition != result.get("rules_edition", "2014")
+                or list(campaign.adventure_collections or []) != result.get("adventure_collections", [])):
+                raise ValueError("Campaign source binding changed during generation")
+            await require_campaign_sources(campaign)
+            current_manifests = {} if campaign.source_mode == "homebrew" else await run_in_threadpool(
+                campaign_manifests, list(campaign.adventure_collections or [])
+            )
+            if current_manifests != (result.get("adventure_manifests") or {}):
+                raise ValueError("Reviewed adventure changed during generation")
+
             # Other sessions may share an assignment. Serialize its inventory projection too.
             if game_session.active_character_id:
                 await db.execute(
@@ -191,6 +213,11 @@ async def persist_turn(
             current_story = await load_story_state(db, session_id, game_session.campaign_id)
             if current_story != expected_story:
                 raise ValueError("Story state changed during generation")
+            current_flags = session_story_flags(
+                current_story, current_manifests, await load_world_flags(db, game_session.campaign_id)
+            )
+            if current_flags != (result.get("world_flags") or {}):
+                raise ValueError("World state changed during generation")
             effects = adjudication.accepted_story_effects if adjudication else []
             if effects:
                 from agent.models.adjudication import AdjudicationResult
@@ -229,7 +256,15 @@ async def persist_turn(
                 await persist_combat(db, session_id, new_combat)
 
             if adjudication:
-                await apply_adjudication(db, game_session, adjudication)
+                discovery_keys = {
+                    entity["discovery_flag"]
+                    for manifest in (result.get("adventure_manifests") or {}).values()
+                    for entity in manifest.get("entities", [])
+                    if entity.get("discovery_flag")
+                }
+                await apply_adjudication(
+                    db, game_session, adjudication, session_discovery_keys=discovery_keys
+                )
 
             for event in result.get("telemetry_events") or []:
                 db.add(
