@@ -9,7 +9,7 @@
   - the adjudication outcome (mechanical_summary, dice_result)
   - rules context (for mechanical fidelity) and adventure context (for story flavour)
   - the story-so-far summary (`memory_summary`) and NPC names/dispositions
-  - the last few messages so the prose stays continuous
+  - every exchange after the summary boundary so the prose stays continuous
 
 The player's text is wrapped in <player_action> tags (untrusted input). Output length is bounded
 by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI renders state.
@@ -27,6 +27,17 @@ from edgar_core.story import player_story_effect
 
 _NARRATOR_TEMPERATURE = 0.7
 _RAG_BLOCK_TOP_K = 5
+
+
+def deterministic_narration(state: AgentState) -> str | None:
+    """Shared sync/SSE rendering for exact quotations and sealed policy outcomes."""
+    recall = state.get("exact_recall")
+    if recall:
+        page = f", p. {recall['page']}" if recall.get("page") else ""
+        return f"From {recall['source']}{page}:\n\n{recall['text']}"
+    if state.get("policy_rejection"):
+        return "That approach is not available in the current circumstances."
+    return state.get("policy_narration")
 
 
 def make_narrator_model():
@@ -157,18 +168,11 @@ async def narrator_node(state: AgentState) -> dict:
     The SSE endpoint bypasses this node and streams tokens directly via `build_narrator_prompt`
     + `llm.astream`, which is why prompt construction lives in a free function above.
     """
-    llm = make_narrator_model()
     messages = state.get("messages", [])
 
-    recall = state.get("exact_recall")
-    if recall:
-        page = f", p. {recall['page']}" if recall.get("page") else ""
-        narration = f"From {recall['source']}{page}:\n\n{recall['text']}"
-    elif state.get("policy_rejection"):
-        narration = "That approach is not available in the current circumstances."
-    elif state.get("policy_narration") is not None:
-        narration = state["policy_narration"]
-    else:
+    narration = deterministic_narration(state)
+    if narration is None:
+        llm = make_narrator_model()
         prompt = build_narrator_prompt(state)
         try:
             response = await llm.ainvoke(prompt)

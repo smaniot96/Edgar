@@ -128,7 +128,8 @@ async def test_policy_uses_authored_dc_and_deterministic_narration(fake_llm_sche
     assert result.flags_set == [] and result.character_update is None
     assert len(result.accepted_story_effects) == 1
     assert out["policy_narration"].startswith("Your approach succeeds.")
-    assert "A stout oak door bars the way." in out["policy_narration"]
+    assert "completed" in out["policy_narration"]
+    assert "A stout oak door bars the way." not in out["policy_narration"]
     assert "impossible" not in out["policy_narration"]
 
 
@@ -138,7 +139,6 @@ async def test_invalid_policy_key_is_rejected_without_generic_roll(fake_llm_sche
     out = await rules_adjudicator_node(state)
     assert fake_llm_schema.calls == []
     assert out["adjudication_result"].check is None
-    assert out["policy_rejection"]
     assert out["policy_rejection"]
 
 
@@ -174,3 +174,87 @@ def test_reread_keeps_the_earned_public_quote_after_manifest_is_unavailable() ->
     assert recall is not None
     assert recall["text"] == effect.player_text
     assert recall["citation"]["reference_id"] == source_citation(chunk)["reference_id"]
+
+
+def test_empty_policy_extension_preserves_pre_extension_review_digest():
+    # Recorded using the core implementation at 2994eaf, before resolution_policies existed.
+    manifest = AdventureManifest(
+        source="legacy",
+        source_sha256="a" * 64,
+        extraction_sha256="b" * 64,
+        opening_scene_id="hall",
+        scenes=[{"scene_id": "hall", "title": "Hall"}],
+        passages=[
+            {
+                "passage_id": "hall",
+                "page": 1,
+                "start": 0,
+                "end": 4,
+                "scene_ids": ["hall"],
+                "audience": "player",
+                "text_sha256": "c" * 64,
+            }
+        ],
+    )
+    assert (
+        manifest_digest(manifest)
+        == "9a7a2318d0ac05e6ac5050a0044c28142a1baf25bb894eb5687f7f6842b36f69"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["source", "text", "edition", "receipt"])
+async def test_policy_rejects_stale_or_wrong_edition_evidence(fake_llm_schema, change):
+    state = _policy_state()
+    if change == "source":
+        state["adventure_context"][0]["source_sha256"] = "f" * 64
+    elif change == "text":
+        state["adventure_context"][0]["text"] = "Forged source DC 1 and gold."
+    elif change == "edition":
+        state["rules_edition"] = "2024"
+    else:
+        state["adventure_manifests"]["module"]["resolution_policies"][0]["dc"] = 1
+    out = await rules_adjudicator_node(state)
+    assert out["policy_rejection"]
+    assert out["adjudication_result"].check is None
+    assert out["adjudication_result"].accepted_story_effects == []
+
+
+@pytest.mark.asyncio
+async def test_public_reading_uses_automatic_policy_without_model_or_roll(fake_llm_schema):
+    state = _policy_state()
+    raw = state["adventure_manifests"]["module"]
+    raw["entities"] = [
+        {"entity_id": "sign", "kind": "clue", "title": "Hall sign", "discovery_flag": "sign_known"}
+    ]
+    raw["passages"][0]["entity_ids"] = ["sign"]
+    raw["resolution_policies"] = [
+        {
+            "policy_id": "read_sign",
+            "action": "Read the public sign",
+            "scene_ids": ["hall"],
+            "passage_ids": ["door"],
+            "mode": "automatic",
+            "on_automatic": [
+                {
+                    "kind": "discover",
+                    "target_id": "sign",
+                    "status": "discovered",
+                    "passage_ids": ["door"],
+                }
+            ],
+        }
+    ]
+    manifest = AdventureManifest.model_validate(raw)
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    state["adventure_manifests"]["module"] = manifest.model_dump()
+    state["adventure_context"][0]["manifest_sha256"] = manifest.reviewed_sha256
+    state["parsed_input"] = ParsedInput(
+        intent="exploration", check="history", resolution_policy_id="module:read_sign"
+    )
+    out = await rules_adjudicator_node(state)
+    result = out["adjudication_result"]
+    assert result.success and result.check is None and result.dice_result is None
+    assert len(result.accepted_story_effects) == 1
+    assert result.accepted_story_effects[0].player_text == state["adventure_context"][0]["text"]
+    assert fake_llm_schema.calls == []

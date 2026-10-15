@@ -53,13 +53,13 @@ def _parser_context(state: AgentState) -> str:
     if policies:
         parts.append(
             "Reviewed current-scene action choices (select a policy key only when it directly matches the player's approach; unavailable choices must not be selected): "
-            + str(policies[:40])
+            + str(policies)
         )
     clues = parser_earned_clues(state)
     if clues:
         parts.append(
             "Session-earned public clues, available only for an explicit reread request; choose the exact fact_id when the player names or refers to that clue: "
-            + str(clues[-40:])
+            + str(clues)
         )
     continuity = continuity_context(state)
     if continuity:

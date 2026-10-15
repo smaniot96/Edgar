@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from agent.models.adjudication import AdjudicationResult
+from agent.resolution_policies import policy_effect_key
 from agent.state import AgentState
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import require_published, select_scene_context
@@ -330,7 +331,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 )
             continue
         candidate = candidates.get(proposal.target.model_dump_json())
-        policy_key = proposal.model_dump_json(exclude={"player_text"})
+        policy_key = policy_effect_key(proposal)
         if candidate is None or not _kind_matches(proposal, candidate):
             continue
         if proposal.kind == "visit" and proposal.target.canonical_id != state.get(
@@ -386,6 +387,10 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 and _reviewed_chunk(c, state)
             ]
             public = list({source_citation(c, edition)["reference_id"]: c for c in public}.values())
+            if policy_key in policy_reveals:
+                public = [c for c in public if c.get("passage_id") in policy_reveals[policy_key]]
+                if not policy_reveals[policy_key] <= {c.get("passage_id") for c in public}:
+                    continue
         if not public:
             continue
         if (
@@ -521,7 +526,7 @@ async def prepare_story_validation_state(adj: AdjudicationResult, state: AgentSt
     changed = False
     for effect in adj.story_effects[:20]:
         candidate = candidates.get(effect.target.model_dump_json())
-        policy_key = effect.model_dump_json(exclude={"player_text"})
+        policy_key = policy_effect_key(effect)
         authorized_policy_effects = set(state.get("authorized_policy_effect_keys") or [])
         authorized_reveals = next(
             (

@@ -6,6 +6,7 @@ import re
 
 from agent.models.parsed_input import ParsedInput
 from agent.resolution import normalise_check
+from edgar_core.artifacts import text_digest
 from edgar_core.manifests import (
     AdventureManifest,
     ManifestError,
@@ -14,6 +15,45 @@ from edgar_core.manifests import (
 )
 from edgar_core.sources import source_citation
 from edgar_core.story import StoryEffect, StoryRef, StoryState
+
+
+def policy_effect_key(effect: StoryEffect) -> str:
+    """Same identity before validation and after accepted-effect metadata is attached."""
+    proposal = StoryEffect.model_validate(effect.model_dump(include=set(StoryEffect.model_fields)))
+    proposal.source_reference_ids = sorted(set(proposal.source_reference_ids))
+    proposal.knowledge_fact_ids = sorted(set(proposal.knowledge_fact_ids))
+    return proposal.model_dump_json(exclude={"player_text"})
+
+
+def describe_policy_result(success: bool, effects: list, existing: list) -> str:
+    """Describe committed outcomes without quoting obstacle setup as an accomplishment."""
+    lines = ["Your approach succeeds." if success else "The check fails."]
+    verbs = {
+        "encounter": "You meet",
+        "relationship": "Your relationship changes with",
+        "move": "You reach",
+        "objective": "Objective",
+        "milestone": "Milestone",
+        "acquire": "You acquire",
+        "consume": "You spend",
+        "transfer": "You move",
+        "use": "You use",
+        "environment": "You change",
+    }
+    for effect in effects:
+        name = effect.display_name or "the supported result"
+        if effect.kind == "discover":
+            lines.append(f"You learn:\n{effect.player_text}")
+        elif effect.kind == "clock":
+            lines.append(f"{name}: {effect.quantity} intervals recorded ({effect.status}).")
+        else:
+            lines.append(f"{verbs.get(effect.kind, 'Result')}: {name} ({effect.status}).")
+    for effect in existing:
+        if effect.kind == "discover":
+            lines.append(f"You already know:\n{effect.player_text}")
+    if len(lines) == 1:
+        lines.append("That approach produces no further change. You can try another approach.")
+    return "\n\n".join(dict.fromkeys(lines))
 
 
 def policies_for_state(state: dict) -> list[dict]:
@@ -129,8 +169,6 @@ def _valid_public_source(fact, state: dict) -> dict | None:
     earned, the committed quotation and its sealed public citation remain the historical
     record; current retrieval must never substitute a newer passage.
     """
-    import re
-
     historical_refs = [
         ref
         for ref in fact.source_refs
@@ -208,6 +246,7 @@ def policy_source_is_fresh(selected: dict, state: dict) -> bool:
             or chunk.get("manifest_sha256") != manifest.reviewed_sha256
             or chunk.get("audience") != passage.audience
             or chunk.get("text_sha256") != passage.text_sha256
+            or text_digest(chunk.get("text", "")) != passage.text_sha256
         ):
             return False
     return True
@@ -237,6 +276,7 @@ def policy_effects_for_outcome(
     )
     selected["expected_effect_count"] = len(definitions)
     selected["authorized_effect_keys"] = []
+    selected["existing_effects"] = []
     if not definitions:
         return [], []
 
@@ -276,6 +316,7 @@ def policy_effects_for_outcome(
             if prior >= (definition.clock_max or 0):
                 continue  # An already completed clock is an idempotent no-op.
         elif previous and previous[-1].status == outcome.status:
+            selected["existing_effects"].append(previous[-1])
             continue  # Repeating an already committed outcome is an idempotent no-op.
         expected_effect_count += 1
         # Effect evidence is exact and authored for this outcome. In particular, an essential
@@ -289,9 +330,9 @@ def policy_effects_for_outcome(
                 for passage in manifest.passages
                 if passage.audience == "player" and outcome.target_id in passage.entity_ids
             }
-            evidence_passages = [
-                passage_id for passage_id in policy.passage_ids if passage_id in target_passage_ids
-            ]
+            evidence_passages = [pid for pid in outcome.passage_ids if pid in refs_by_passage]
+            if not evidence_passages:
+                evidence_passages = [pid for pid in policy.passage_ids if pid in target_passage_ids]
         else:
             evidence_passages = outcome.passage_ids
         evidence_ids = [
@@ -338,13 +379,11 @@ def policy_effects_for_outcome(
         if outcome.kind == "discover":
             authorizations.append(
                 {
-                    "effect_key": effect.model_dump_json(exclude={"player_text"}),
+                    "effect_key": policy_effect_key(effect),
                     "passage_ids": outcome.passage_ids,
                 }
             )
-        selected.setdefault("authorized_effect_keys", []).append(
-            effect.model_dump_json(exclude={"player_text"})
-        )
+        selected.setdefault("authorized_effect_keys", []).append(policy_effect_key(effect))
     selected["expected_effect_count"] = expected_effect_count
     return candidate_effects, authorizations
 

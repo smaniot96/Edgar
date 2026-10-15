@@ -384,6 +384,7 @@ def test_locked_module_statistics_cannot_be_used_before_prerequisites(index):
 def test_manifest_binding_receipt_and_old_digest_compatibility():
     manifest, _ = actor_manifest()
     old_body = manifest.model_dump(exclude={"reviewed_sha256", "reviewed_by"})
+    old_body.pop("resolution_policies")  # Absent from the historical receipt format.
     for entity in old_body["entities"]:
         entity.pop("stat_reference")
         entity.pop("reveal_on")

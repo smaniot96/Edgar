@@ -42,7 +42,9 @@ from agent.resolution import (
     resolve_from_parsed,
 )
 from agent.resolution_policies import (
+    describe_policy_result,
     exact_recall_fact,
+    policy_effect_key,
     policy_effects_for_outcome,
     policy_source_is_fresh,
     selected_policy,
@@ -268,7 +270,7 @@ async def adjudicate(
     messages = build_adjudicator_prompt(
         state, check_result, extra_outcome=extra_outcome, dice_log=extra_log
     )
-    result = await _invoke_with_retry(messages)
+    result = await _invoke_with_retry(messages) if selected is None else _neutral(check_result, state)
     if result is None:
         result = _neutral(check_result, state)
 
@@ -301,7 +303,6 @@ async def adjudicate(
         result.citation_ids = []
         state["authorized_policy_effect_keys"] = list(selected.get("authorized_effect_keys", []))
         state["policy_reveal_authorizations"] = reveal_authorizations
-        state["policy_expected_effects"] = len(policy_effects)
 
     if selected is None:
         enforce_side_effects(
@@ -331,7 +332,7 @@ async def adjudicate(
         # Persistence validates the canonicalized accepted effects again. Object validation
         # may add a quantity or resolved owner, so authorize exactly that sealed form.
         state["authorized_policy_effect_keys"] = [
-            effect.model_dump_json(exclude={"player_text"}) for effect in accepted
+            policy_effect_key(effect) for effect in accepted
         ]
         missing = [
             proposal
@@ -346,6 +347,7 @@ async def adjudicate(
         if (
             selected.get("generation_failed")
             or len(policy_effects) != selected.get("expected_effect_count", len(policy_effects))
+            or len(accepted) != len(policy_effects)
             or missing
         ):
             # A policy is atomic: never commit a discovery while dropping its authored cost,
@@ -353,6 +355,10 @@ async def adjudicate(
             result.accepted_story_effects = []
             result.story_effects = []
             result.scene_id = state.get("current_scene_id")
+            result.success = False
+            state["story_reveal_context"] = []
+            state["authorized_policy_effect_keys"] = []
+            state["policy_reveal_authorizations"] = []
             state["policy_rejection"] = True
             result.mechanical_summary = (
                 "That approach is not available in the current circumstances."
@@ -362,15 +368,9 @@ async def adjudicate(
                 "That approach is not available in the current circumstances."
             )
         else:
-            outcome_line = (
-                "Your approach succeeds." if result.success else "Your approach does not succeed."
+            state["policy_narration"] = describe_policy_result(
+                result.success, accepted, selected.get("existing_effects", [])
             )
-            source_text = [
-                effect.player_text.strip()
-                for effect in result.accepted_story_effects
-                if effect.player_text and effect.player_text.strip()
-            ]
-            state["policy_narration"] = "\n\n".join([outcome_line, *source_text])
     if selected is None and (state.get("manifest_status") == "reviewed" or result.story_effects):
         safe_story_summary(
             result,
@@ -382,6 +382,7 @@ async def adjudicate(
             if check_result
             else "The reviewed action proceeds without a roll."
         )
+        result.mechanical_summary += " " + state["policy_narration"]
     evidence = _rules_context(state) + eligible_context(
         state.get("planner_context", [])
         + (

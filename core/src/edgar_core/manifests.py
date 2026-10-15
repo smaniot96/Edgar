@@ -202,7 +202,7 @@ class PolicyEffect(Record):
 
     @model_validator(mode="after")
     def valid_effect_shape(self):
-        if self.kind in {"move", "acquire", "consume", "environment"} and self.destination:
+        if self.kind not in {"transfer", "use"} and self.destination is not None:
             raise ValueError(f"{self.kind} effects cannot declare a destination.")
         if self.kind == "transfer" and not self.destination:
             raise ValueError("Transfer effects need an explicit destination scene.")
@@ -226,9 +226,9 @@ class ResolutionPolicy(Record):
     check: Identifier | None = None
     dc: int | None = Field(default=None, ge=1, le=50)
     failure_mode: Literal["no_progress", "partial", "essential_reveal", "cost"] = "no_progress"
-    on_automatic: list[PolicyEffect] = Field(default_factory=list)
-    on_success: list[PolicyEffect] = Field(default_factory=list)
-    on_failure: list[PolicyEffect] = Field(default_factory=list)
+    on_automatic: list[PolicyEffect] = Field(default_factory=list, max_length=20)
+    on_success: list[PolicyEffect] = Field(default_factory=list, max_length=20)
+    on_failure: list[PolicyEffect] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def valid_resolution(self):
@@ -237,19 +237,20 @@ class ResolutionPolicy(Record):
                 raise ValueError("Check policies need a check and DC, but no automatic effects.")
             if self.check not in _POLICY_CHECKS:
                 raise ValueError("Resolution policy names an unsupported engine check.")
-        elif self.check is not None or self.dc is not None or not self.on_automatic:
-            raise ValueError("Automatic policies need automatic effects and no check or DC.")
-        effects = self.on_automatic + self.on_success + self.on_failure
-        if any(effect.quantity_delta is not None for effect in effects):
-            if any(
-                effect.kind != "clock" and effect.quantity_delta is not None for effect in effects
-            ):
-                raise ValueError("Only clock effects can have a quantity delta.")
-        if any(
-            effect.kind == "clock" and effect.quantity_delta is None
-            for effect in self.on_success + self.on_failure + self.on_automatic
+        elif (
+            self.check is not None
+            or self.dc is not None
+            or not self.on_automatic
+            or self.on_success
+            or self.on_failure
+            or self.failure_mode != "no_progress"
         ):
-            raise ValueError("Clock consequences need an explicit bounded increment.")
+            raise ValueError("Automatic policies need only automatic effects and no check or DC.")
+        for outcomes in (self.on_automatic, self.on_success, self.on_failure):
+            targets = {(effect.kind, effect.target_id) for effect in outcomes}
+            if len(targets) != len(outcomes):
+                raise ValueError("A policy outcome cannot repeat the same kind and target.")
+        effects = self.on_automatic + self.on_success + self.on_failure
         if self.failure_mode == "no_progress" and self.on_failure:
             raise ValueError("No-progress failure policies cannot declare failure effects.")
         if self.failure_mode in {"partial", "essential_reveal", "cost"} and not self.on_failure:

@@ -37,7 +37,12 @@ from sqlalchemy import select
 import db.postgres.session as db_session_module
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
-from agent.nodes.narrator import build_narrator_prompt, make_narrator_model, narrator_context
+from agent.nodes.narrator import (
+    build_narrator_prompt,
+    deterministic_narration,
+    make_narrator_model,
+    narrator_context,
+)
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
 from edgar_core.sources import citations_for, public_citations
@@ -526,18 +531,7 @@ async def stream_session_turn(
         narration = state.get("narration") or ""
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
-    elif state.get("exact_recall"):
-        recall = state["exact_recall"]
-        page = f", p. {recall['page']}" if recall.get("page") else ""
-        narration = f"From {recall['source']}{page}:\n\n{recall['text']}"
-        for piece in _yield_narration_tokens(narration):
-            yield sse_event("token", {"text": piece})
-    elif state.get("policy_rejection"):
-        narration = "That approach is not available in the current circumstances."
-        for piece in _yield_narration_tokens(narration):
-            yield sse_event("token", {"text": piece})
-    elif state.get("policy_narration") is not None:
-        narration = state["policy_narration"]
+    elif (narration := deterministic_narration(state)) is not None:
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
     else:
