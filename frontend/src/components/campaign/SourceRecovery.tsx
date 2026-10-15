@@ -110,7 +110,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
       {sources.map((source) => (
         <div key={source.slug} className="space-y-2 border-t border-line pt-2">
           <p className="font-medium">{source.title} — {source.status}</p>
-          <p className="text-ink-muted">{source.message ?? "The source is ready for module play."}</p>
+          <p className="text-ink-muted">{source.message ?? (source.status === "ready" ? "The source is ready for module play." : "This source is not ready for module play. Use the recovery options below.")}</p>
           {isJobActive(source.job) ? (
             <div role="status" className="space-y-2 rounded-control border border-info/30 bg-info-soft px-3 py-2">
               <p className="font-medium">{preparationProgress(source.job)}</p>

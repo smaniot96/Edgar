@@ -128,3 +128,11 @@ it("offers saved generation recovery without presenting PDF upload as required",
   expect(container.textContent).toContain("Follow their progress below");
   expect(container.textContent).not.toContain("Recover your source PDF");
 });
+
+
+it("does not call a missing source ready when its explanatory message is absent", async () => {
+  const campaign = { ...missing, sources: [{ ...missing.sources![0], message: null }] };
+  await act(() => root.render(<SourceRecovery campaign={campaign} onUpdated={vi.fn()} />));
+  expect(container.textContent).toContain("This source is not ready for module play.");
+  expect(container.textContent).not.toContain("The source is ready for module play.");
+});
