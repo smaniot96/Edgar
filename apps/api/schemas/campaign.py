@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from edgar_core.sources import DEFAULT_RULES_EDITION, RulesEdition
 
 from ._validators import forbid_null
+from .adventure import AdventureJobRead
 
 SourceStatus = Literal[
     "ready", "missing", "empty", "partial", "unavailable", "processing", "failed"
@@ -25,6 +26,7 @@ class SourceRead(BaseModel):
     extraction_preview_available: bool = False
     extraction_preview_current: bool = False
     ingestion: dict | None = None
+    job: AdventureJobRead | None = None
 
 
 class CampaignCreate(BaseModel):

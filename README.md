@@ -48,7 +48,7 @@ Compose explicitly rotates container output with the `json-file` driver, retaini
 
 `docker-compose.dev.yml` is a tracked, optional overlay: it mounts backend source, runs uvicorn with `--reload`, enables developer diagnostics, and mounts current migrations into the migration job. Select it with `make dev-up` or `docker compose -f docker-compose.yml -f docker-compose.dev.yml ...`. Matching `dev-build`, `dev-migrate`, `dev-logs` and `dev-down` targets use the same files. Plain Make targets select only `docker-compose.yml` and do not auto-load personal overrides. The former local `docker-compose.override.yml` was removed; Compose no longer automatically applies it.
 
-Uploads and AI generation run as in-process background tasks. If the API restarts mid-way, the adventure is marked `failed` on the next startup; `POST /api/adventures/{slug}/retry` re-runs it.
+Uploads and AI generation run as in-process background tasks. A restart marks unfinished work `interrupted` on startup; it does not resume a worker automatically. Generation saves its outline and completed chapters so an explicit retry can resume missing chapters or rebuild the index from a completed manuscript. PDF jobs retry from a retained upload or inspected extraction. A failed replacement leaves the last published source available, and `POST /api/adventures/{slug}/cancel` requests cancellation at the next safe boundary. Adventure status includes a safe job summary with the current stage, saved chapter count and next recovery action; it does not expose manuscript content or invent a percentage/ETA.
 
 ## Playing
 

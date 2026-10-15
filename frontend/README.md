@@ -1,6 +1,8 @@
 # Edgar frontend
 
-React 19 + TypeScript (strict) + Vite + Tailwind CSS 3 + React Router 7. Served in production from the API at `/ui/*` (built files live in `frontend/dist/` and are copied into the API Docker image).
+React 19 + TypeScript (strict) + Vite + Tailwind CSS 4 + React Router 7. Served in production from the API at `/ui/*` (built files live in `frontend/dist/` and are copied into the API Docker image).
+
+The Tailwind 4 browser baseline is Chrome 111+, Safari 16.4+, and Firefox 128+.
 
 ## Layout
 
@@ -15,7 +17,7 @@ React 19 + TypeScript (strict) + Vite + Tailwind CSS 3 + React Router 7. Served 
 
 ## Design tokens
 
-Defined in `tailwind.config.ts` — use these instead of hex values:
+Defined in the `@theme` block in `src/index.css` — use these instead of hex values:
 
 | Token | Use |
 | --- | --- |
@@ -31,7 +33,7 @@ Defined in `tailwind.config.ts` — use these instead of hex values:
 ## Development
 
 1. Start the API stack (`make up`, or `uv run uvicorn apps.api.main:app` with Postgres/Redis as in compose).
-2. From repo root: `make frontend-install` once, then `make frontend-dev` (Vite on **http://localhost:5173/ui/** with HMR). After editing `tailwind.config.ts`, restart Vite if new tokens don't show up.
+2. From repo root: `make frontend-install` once, then `make frontend-dev` (Vite on **http://localhost:5173/ui/** with HMR). After editing the `@theme` block in `src/index.css`, restart Vite if new tokens don't show up.
 3. Vite proxies `/api` to `http://localhost:8000` (`vite.config.ts`). Leave `VITE_API_BASE_URL` unset so the browser calls same-origin `/api` and the proxy applies.
 4. Before committing: `npm run lint`, `npm test`, and `npm run build` (includes strict TypeScript and unused-local/parameter checks).
 

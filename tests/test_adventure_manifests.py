@@ -487,3 +487,85 @@ def test_manifest_rejects_a_conflicting_reviewed_extraction_edition(source_bundl
     extraction.rules_edition = "2024"
     with pytest.raises(ManifestError, match="edition conflicts"):
         approve(extraction, edited_manifest(extraction, draft))
+
+
+def test_exact_generated_original_and_structured_references_survive_reviewed_reindex(
+    tmp_path, monkeypatch, isolated_index
+):
+    """Exercise the retained original through the real ingestion and review lifecycle."""
+    from apps.api.services import adventure_manifests as service, adventures_meta as store
+    from apps.api.services.manuscript import (
+        export_canonical_manuscript,
+        save_candidate_manuscript,
+    )
+
+    monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
+    pages = [
+        (1, "# The Quiet Keep\n\nThe guide waits beside the well. A silver key opens the gate beyond the old stone bridge and quiet village."),
+        (2, "## Peaceful ending\n\nThe guardian accepts the key and everyone returns home safely. The village celebrates its newfound peace beside the ancient well."),
+    ]
+    original = "\n\n".join(text for _, text in pages).encode()
+    store.save_meta("authored", {"status": "failed", "rules_edition": "2014"})
+    token = store.begin_attempt("authored")
+    save_candidate_manuscript("authored", token, original.decode())
+    chunks = embed.ingest_pages(
+        pages,
+        "authored",
+        "authored",
+        expected_pages=2,
+        rules_edition="2014",
+        preview_dir=store.attempt_dir("authored", token),
+        on_prepared=lambda report: store.prepare_attempt("authored", token, report),
+        publication_guard=lambda: store.attempt_guard("authored", token),
+    )
+    store.finish_attempt("authored", token, {"status": "ready", "chunks": chunks}, success=True)
+    first_index = store.load_meta("authored")["ingestion"]["index_version"]
+    compiled = service.compile_draft("authored")
+    draft = AdventureManifest.model_validate(compiled["manifest"])
+    draft.opening_scene_id = draft.scenes[0].scene_id
+    edited = draft.model_dump()
+    edited["entities"] = [
+        {"entity_id": "guide", "kind": "actor", "title": "The guide"},
+        {"entity_id": "silver_key", "kind": "clue", "title": "The key"},
+        {"entity_id": "peace", "kind": "ending", "title": "Peace"},
+    ]
+    # Re-validate the author edits instead of relying on unchecked model assignment.
+    draft = AdventureManifest.model_validate(edited)
+    for passage in draft.passages:
+        passage.audience = "player"
+        passage.entity_ids = ["guide", "silver_key"] if passage.page == 1 else ["peace"]
+    inspected = service.edit_draft("authored", draft)
+    service.publish_manifest(
+        "authored", reviewed_digest=inspected["reviewed_digest"], reviewer="Fixture author"
+    )
+    first_manifest = service.campaign_manifests(["authored"])["authored"]
+    first_export = export_canonical_manuscript("authored", tmp_path / "first.md")
+    assert (tmp_path / "first.md").read_bytes() == original
+    assert first_export.index_version != first_index
+
+    # Republish a new author-reviewed scene label against the same original, preserving IDs.
+    draft = AdventureManifest.model_validate(first_manifest)
+    draft.scenes[0].title = "The well at dawn"
+    inspected = service.edit_draft("authored", draft)
+    service.publish_manifest(
+        "authored", reviewed_digest=inspected["reviewed_digest"], reviewer="Fixture author"
+    )
+    second_manifest = service.campaign_manifests(["authored"])["authored"]
+    second_export = export_canonical_manuscript("authored", tmp_path / "second.md")
+    assert (tmp_path / "second.md").read_bytes() == original
+    assert second_export.sha256 == first_export.sha256
+    assert second_export.path == first_export.path
+    assert second_export.index_version != first_export.index_version
+    assert [s["scene_id"] for s in second_manifest["scenes"]] == [
+        s["scene_id"] for s in first_manifest["scenes"]
+    ]
+    assert second_manifest["entities"] == first_manifest["entities"]
+    scene = retrieve_active_scene(
+        {"authored": second_manifest}, draft.opening_scene_id, client=isolated_index
+    )
+    for chunk in scene["adventure_context"]:
+        assert chunk["source_sha256"] == second_export.source_sha256
+        assert chunk["extraction_sha256"] == second_export.extraction_sha256
+        assert chunk["manifest_sha256"] == second_manifest["reviewed_sha256"]
+    assert any(c["entity_ids"] == ["guide", "silver_key"] for c in scene["adventure_context"])
