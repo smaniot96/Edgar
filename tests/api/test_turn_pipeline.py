@@ -364,6 +364,102 @@ async def test_memory_summary_failure_does_not_fail_turn(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("with_summary", [False, True])
+async def test_turn_prompts_cover_full_uncovered_history_after_summary_or_failure(
+    monkeypatch, fake_llm_turn, fake_retrieval, api_client, stream, with_summary
+) -> None:
+    from agent import graph
+    from agent.nodes import input_parser, narrator, rules_adjudicator
+    from apps.api.services import session_messages, turn_runner
+
+    async def fail_summary(*_args):
+        raise RuntimeError("deterministic summary failure")
+
+    monkeypatch.setattr(session_messages, "summarize_story", fail_summary)
+    seen: dict[str, list[str]] = {"parser": [], "planner": [], "narrator": []}
+    original_parser = input_parser._parser_context
+    original_planner = rules_adjudicator.build_adjudicator_prompt
+    original_narrator = narrator.build_narrator_prompt
+
+    def capture_parser(state):
+        text = original_parser(state)
+        seen["parser"].append(text)
+        return text
+
+    def capture_planner(state, *args, **kwargs):
+        prompt = original_planner(state, *args, **kwargs)
+        seen["planner"].append(prompt[1]["content"])
+        return prompt
+
+    def capture_narrator(state):
+        prompt = original_narrator(state)
+        seen["narrator"].append(prompt[-1].content)
+        return prompt
+
+    monkeypatch.setattr(input_parser, "_parser_context", capture_parser)
+    monkeypatch.setattr(rules_adjudicator, "build_adjudicator_prompt", capture_planner)
+    monkeypatch.setattr(narrator, "build_narrator_prompt", capture_narrator)
+    monkeypatch.setattr(turn_runner, "build_narrator_prompt", capture_narrator)
+    monkeypatch.setattr(turn_runner, "app", graph.build_graph())
+    monkeypatch.setattr(turn_runner, "prepare_app", graph.build_graph(include_narrator=False))
+
+    sid = (await _seed(api_client))["session_id"]
+    import db.postgres.session as sm
+
+    expected_turns = range(1, 24)
+    async with sm.async_session_factory() as db, db.begin():
+        rows = []
+        for turn in expected_turns:
+            narration = f"EDG009-N{turn:03d} exact narration"
+            if turn == 23:
+                narration += " " + ("LONG-TAIL-EXACT " * 240)
+            rows.append(
+                EventLog(
+                    session_id=sid,
+                    event_type="narration",
+                    payload={"player_input": f"EDG009-P{turn:03d} exact action", "narration": narration},
+                )
+            )
+        db.add_all(rows)
+        await db.flush()
+        if with_summary:
+            db.add(
+                EventLog(
+                    session_id=sid,
+                    event_type="memory_summary",
+                    payload={
+                        "summary": "EDG009-SUMMARY-COVERS-T001-THROUGH-T004",
+                        "through_event_id": rows[3].id,
+                    },
+                )
+            )
+
+    endpoint = "/stream" if stream else ""
+    response = await api_client.post(
+        f"/api/sessions/{sid}/turn{endpoint}", json={"message": "I ask about the old note."}
+    )
+    if stream:
+        assert _sse_events(response.text)[-1][0] == "done", response.text
+    else:
+        assert response.status_code == 200, response.text
+
+    assert set(seen) == {"parser", "planner", "narrator"}
+    for prompt_list in seen.values():
+        assert len(prompt_list) == 1
+        prompt_text = prompt_list[0]
+        if with_summary:
+            assert "EDG009-SUMMARY-COVERS-T001-THROUGH-T004" in prompt_text
+            uncovered = range(5, 24)
+        else:
+            uncovered = expected_turns
+        for turn in uncovered:
+            assert f"EDG009-P{turn:03d} exact action" in prompt_text
+            assert f"EDG009-N{turn:03d} exact narration" in prompt_text
+        assert "LONG-TAIL-EXACT " * 240 in prompt_text
+
+
+@pytest.mark.asyncio
 async def test_memory_summary_is_persisted_every_n_turns_and_fed_to_narrator(
     monkeypatch, fake_llm_turn, fake_retrieval, api_client
 ) -> None:

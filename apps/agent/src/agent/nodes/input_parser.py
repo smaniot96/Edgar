@@ -10,10 +10,12 @@ output fails (provider hiccup, malformed tool call) the turn still proceeds as p
 exploration with no check, rather than failing.
 """
 
+import json
 import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.history import continuity_context, public_earned_facts
 from agent.llm import make_chat_model
 from agent.models.parsed_input import ParsedInput
 from agent.prompts import INPUT_PARSER, wrap_player_action
@@ -45,6 +47,18 @@ def _parser_context(state: AgentState) -> str:
     if (state.get("world_flags") or {}).get(PENDING_COMPLETION_FLAG):
         parts.append(
             "The DM just asked the player whether they want to end the adventure here."
+        )
+    continuity = continuity_context(state)
+    if continuity:
+        parts.append(continuity)
+    facts = public_earned_facts(state)
+    if facts:
+        parts.append(f"Committed player-known story facts and exact source quotations: {json.dumps(facts)}")
+    outcomes = state.get("resolved_combat_outcomes") or []
+    if outcomes:
+        parts.append(
+            "Authoritative resolved combat outcomes (never reopen or contradict): "
+            + json.dumps(outcomes)
         )
     return "\n".join(parts)
 

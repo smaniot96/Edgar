@@ -76,6 +76,42 @@ async def _selected(factory, sid):
         return await memory.load_memory_summary(db, sid)
 
 
+@pytest.mark.parametrize("boundary", [4, None])
+async def test_prompt_context_includes_every_uncovered_event_without_clipping(
+    memory_db, boundary
+):
+    _, factory, (sid, _) = memory_db
+    ids = await _narrations(factory, sid, 1, 25)
+    exact_long_tail = "The lens tracks reflections, not the sky. " + ("VERBATIM-TAIL " * 250)
+    async with factory() as db, db.begin():
+        db.add(
+            EventLog(
+                session_id=sid,
+                event_type="narration",
+                payload={"player_input": "read the note", "narration": exact_long_tail},
+            )
+        )
+        db.add(
+            EventLog(
+                session_id=sid,
+                event_type="memory_summary",
+                payload={
+                    "summary": "The earlier expedition reached the quay.",
+                    **({"through_event_id": ids[3]} if boundary is not None else {}),
+                },
+            )
+        )
+
+    async with factory() as db:
+        summary, messages = await memory.load_session_context(db, sid)
+
+    assert summary == "The earlier expedition reached the quay."
+    assert messages[0].content == ("p5" if boundary is not None else "p1")
+    assert messages[-2].content == "read the note"
+    assert messages[-1].content == exact_long_tail
+    assert len(messages) == (42 if boundary is not None else 50)
+
+
 def _fold(previous, messages):
     # An exact token ledger makes duplicated/dropped input visible across incremental bases.
     return " ".join([previous or "", *(m.content for m in messages if m.type == "ai")]).strip()

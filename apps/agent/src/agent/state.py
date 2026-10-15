@@ -21,7 +21,7 @@ class AgentState(TypedDict, total=False):
     player_input: str
     session_id: int
     campaign_id: int
-    messages: list  # langchain BaseMessage list, oldest first; rebuilt per turn from event_log
+    messages: list  # Uncovered narration events after memory_summary coverage, oldest first
     character: dict | None  # {id, name, class, level, hp_current, hp_max, stats, inventory}
     adventure_collections: list[str]  # campaigns.adventure_collections
     world_flags: dict[str, str]
@@ -31,7 +31,7 @@ class AgentState(TypedDict, total=False):
     npcs: list  # [{name, disposition}] loaded from DB; used to keep allies out of enemy rosters
     resolved_combat_outcomes: list[dict]  # Session-owned authoritative ended combat rows
     combat_state: dict  # loaded from DB if an encounter is in progress
-    memory_summary: str | None  # rolling "story so far" for turns older than `messages`
+    memory_summary: str | None  # rolling story summary immediately before `messages`
 
     # Produced by nodes
     parsed_input: ParsedInput  # InputParser

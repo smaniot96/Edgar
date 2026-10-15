@@ -17,15 +17,15 @@ by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI rende
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from agent.history import continuity_context, public_earned_facts
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import cited_excerpt, eligible_context
-from edgar_core.story import StoryState, player_story_effect
+from edgar_core.story import player_story_effect
 
 _NARRATOR_TEMPERATURE = 0.7
-_HISTORY_TAIL = 4
 _RAG_BLOCK_TOP_K = 5
 
 
@@ -70,16 +70,15 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
     rules_context, adventure_context = narrator_context(state)
     world_flags = state.get("world_flags", {})
     current_scene_id = state.get("current_scene_id")
-    messages = state.get("messages", [])
 
     context_parts = [f"Player's attempted action: {wrap_player_action(player_input)}"]
     if state.get("source_mode") == "homebrew":
         context_parts.append(
             "The player explicitly chose homebrew play. Continue creatively from saved story state; do not claim to follow an unavailable adventure module."
         )
-    summary = state.get("memory_summary")
-    if summary:
-        context_parts.append(f"Story so far: {summary}")
+    continuity = continuity_context(state)
+    if continuity:
+        context_parts.append(continuity)
     character = state.get("character")
     if character:
         context_parts.append(
@@ -101,11 +100,7 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
         )
     if world_flags and state.get("manifest_status") != "reviewed":
         context_parts.append(f"World flags (persisted state): {world_flags}")
-    earned = [
-        public
-        for fact in StoryState.model_validate(state.get("story_state") or {}).facts[-40:]
-        if (public := player_story_effect(fact)) is not None
-    ]
+    earned = public_earned_facts(state)
     if earned:
         context_parts.append(f"Committed player-known story facts: {earned}")
     if adjudication:
@@ -153,8 +148,6 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
         context_parts.append(f"Adventure module context (story/locations/NPCs):\n{block}")
 
     user_msg = HumanMessage(content="\n\n".join(context_parts))
-    if messages:
-        return [SystemMessage(content=NARRATOR), *list(messages)[-_HISTORY_TAIL:], user_msg]
     return [SystemMessage(content=NARRATOR), user_msg]
 
 

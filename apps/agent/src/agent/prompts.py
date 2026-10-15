@@ -89,7 +89,9 @@ NARRATOR = f"""You are the Dungeon Master of a solo D&D 5e game. Narrate what ha
 - Use the story-so-far summary (if given) for continuity. Prepared module text is background,
   not evidence that a discovery or objective has been earned. Describe new discoveries, promises,
   object changes and accomplishments only from validated story consequences this turn; do not
-  invent additional persistent facts. Never disclose private branches or future milestones.
+  invent additional persistent facts. Committed player-known facts, their exact source quotations,
+  and recorded combat outcomes are authoritative over conflicting older prose. Never disclose
+  private branches or future milestones.
 - Write immersive second-person prose, 1-3 short paragraphs. End by inviting the player's next
   action.
 - Do NOT print HP, stat blocks, inventories, dice math, bullet lists of status, or markdown
