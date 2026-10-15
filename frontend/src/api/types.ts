@@ -136,9 +136,18 @@ export interface CampaignCharacterRead {
 export interface NPCRead {
   id: number;
   campaign_id: number;
+  /** Null identifies a campaign-wide manual note; otherwise this NPC belongs to one save. */
+  session_id: number | null;
   name: string;
   disposition: string;
   stat_block: Record<string, unknown>;
+  /** Opaque link to the same earned person entry used by the selected session's journal. */
+  journal_entry_id: string | null;
+}
+
+export interface NPCListRead {
+  npcs: NPCRead[];
+  tracking: "not_selected" | "available" | "legacy_untracked";
 }
 
 export interface WorldFlagRead {

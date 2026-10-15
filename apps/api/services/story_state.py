@@ -163,6 +163,11 @@ async def _sync_npc(db: AsyncSession, game_session: SessionModel, fact: StoryFac
             stat_block={},
         )
         db.add(npc)
+    earned_name = known_story_name(fact)
+    if earned_name:
+        # A stable person may first be encountered unnamed and be named in a later
+        # accepted reveal. Keep the display projection synchronized with earned knowledge.
+        npc.name = earned_name[:255]
     if fact.kind == "relationship":
         npc.disposition = fact.status
     await db.flush()

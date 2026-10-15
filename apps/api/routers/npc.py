@@ -3,22 +3,33 @@
 All write endpoints are scoped to a campaign; reads can be done by NPC id directly.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import NPC, Campaign, Session as SessionModel
+from db.postgres.models import NPC, Campaign, EventLog, Session as SessionModel, StoryFact
 
 from ..dependencies import get_session
 from ..schemas.npc import NPCCreate, NPCRead, NPCUpdate
+from ..services.journal_identity import journal_entry_id
 from ._common import Page, get_or_404
 
 router = APIRouter(tags=["npcs"])
 
 
+def _read_npc(npc: NPC) -> NPCRead:
+    read = NPCRead.model_validate(npc)
+    if npc.session_id is None or not npc.story_identity or len(npc.story_identity) != 64:
+        return read
+    return read.model_copy(
+        update={"journal_entry_id": journal_entry_id(npc.session_id, "person", npc.story_identity)}
+    )
+
+
 @router.get("/campaigns/{campaign_id}/npcs", response_model=list[NPCRead])
 async def list_npcs(
     campaign_id: int,
+    response: Response,
     db: AsyncSession = Depends(get_session),
     page: Page = Depends(),
     session_id: int | None = None,
@@ -28,6 +39,20 @@ async def list_npcs(
         session = await get_or_404(db, SessionModel, session_id, "Session")
         if session.campaign_id != campaign_id:
             raise HTTPException(status_code=404, detail="Session not found for campaign")
+        # Match the journal's historical fallback: a played session with narration but no
+        # committed ledger rows predates automatic story tracking. This is safe metadata and
+        # does not reveal the contents or count of private facts.
+        fact_count = await db.scalar(
+            select(func.count()).select_from(StoryFact).where(StoryFact.session_id == session_id)
+        )
+        narration_count = await db.scalar(
+            select(func.count())
+            .select_from(EventLog)
+            .where(EventLog.session_id == session_id, EventLog.event_type == "narration")
+        )
+        response.headers["X-NPC-Tracking"] = (
+            "legacy_untracked" if narration_count and not fact_count else "available"
+        )
     result = await db.execute(
         select(NPC)
         .where(
@@ -38,7 +63,7 @@ async def list_npcs(
         .limit(page.limit)
         .offset(page.offset)
     )
-    return [NPCRead.model_validate(n) for n in result.scalars().all()]
+    return [_read_npc(n) for n in result.scalars().all()]
 
 
 @router.post("/campaigns/{campaign_id}/npcs", response_model=NPCRead, status_code=201)
@@ -53,7 +78,7 @@ async def create_npc(campaign_id: int, body: NPCCreate, db: AsyncSession = Depen
     db.add(npc)
     await db.commit()
     await db.refresh(npc)
-    return NPCRead.model_validate(npc)
+    return _read_npc(npc)
 
 
 @router.get("/npcs/{npc_id}", response_model=NPCRead)
@@ -63,7 +88,7 @@ async def get_npc(
     npc = await get_or_404(db, NPC, npc_id, "NPC")
     if npc.session_id is not None and npc.session_id != session_id:
         raise HTTPException(status_code=404, detail="NPC not found for session")
-    return NPCRead.model_validate(npc)
+    return _read_npc(npc)
 
 
 @router.patch("/npcs/{npc_id}", response_model=NPCRead)

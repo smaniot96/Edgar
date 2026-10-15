@@ -13,6 +13,7 @@ import type {
   ChatMessageRead,
   CombatState,
   NPCRead,
+  NPCListRead,
   SessionRead,
   SessionIntroRead,
   UserRead,
@@ -265,8 +266,19 @@ export function listCampaignCharacters(
 
 // ── NPCs & world flags ──────────────────────────────────────────────────────────
 
-export function listNpcs(campaignId: number, signal?: AbortSignal): Promise<NPCRead[]> {
-  return getJson(`/api/campaigns/${campaignId}/npcs`, signal);
+export async function listNpcs(
+  campaignId: number,
+  sessionId?: number | null,
+  signal?: AbortSignal,
+): Promise<NPCListRead> {
+  const query = sessionId == null ? "" : `?session_id=${sessionId}`;
+  const response = await apiFetch(`/api/campaigns/${campaignId}/npcs${query}`, { signal });
+  const tracking = response.headers.get("x-npc-tracking");
+  return {
+    npcs: (await response.json()) as NPCRead[],
+    tracking:
+      tracking === "legacy_untracked" ? "legacy_untracked" : sessionId == null ? "not_selected" : "available",
+  };
 }
 
 export function createNpc(
@@ -278,6 +290,13 @@ export function createNpc(
 
 export function deleteNpc(id: number): Promise<void> {
   return send("DELETE", `/api/npcs/${id}`);
+}
+
+export function updateNpc(
+  id: number,
+  body: { name: string; disposition: string },
+): Promise<NPCRead> {
+  return sendJson("PATCH", `/api/npcs/${id}`, body);
 }
 
 export function listWorldFlags(campaignId: number, signal?: AbortSignal): Promise<WorldFlagRead[]> {

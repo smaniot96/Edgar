@@ -7,6 +7,7 @@ import {
   createSession,
   deleteSession,
   getSession,
+  listNpcs,
   uploadAdventure,
 } from "./client";
 
@@ -59,6 +60,29 @@ describe("API transport", () => {
 });
 
 describe("shared request helpers", () => {
+  it("requests people for the selected save and reads the tracking state", async () => {
+    const npc = {
+      id: 7,
+      campaign_id: 3,
+      session_id: 9,
+      name: "Mara",
+      disposition: "wary",
+      stat_block: {},
+      journal_entry_id: "entry_person_9",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([npc]), { headers: { "x-npc-tracking": "available" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const signal = new AbortController().signal;
+
+    await expect(listNpcs(3, 9, signal)).resolves.toEqual({
+      npcs: [npc],
+      tracking: "available",
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/campaigns/3/npcs?session_id=9", { signal });
+  });
+
   it("serializes JSON writes and passes cancellation to reads", async () => {
     const fetchMock = vi.fn().mockImplementation(() => new Response('{"id":7}'));
     vi.stubGlobal("fetch", fetchMock);
