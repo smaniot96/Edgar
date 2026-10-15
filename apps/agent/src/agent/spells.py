@@ -6,10 +6,15 @@ number; neither the parser nor the narrator supplies one. A declared spell that 
 keeps the narrative ruling from `agent.supported_rules` and has no effect.
 
 Kinds:
-  attack  spell attack roll (`resolve_attack(..., spell=True)`); damage dice on a hit, doubled on a crit
-  auto    automatic-hit darts (Magic Missile): no roll
-  save    the target's saving throw against the caster's spell save DC; damage on a failed save only
-  heal    restores dice plus the spellcasting ability modifier to the caster
+  attack     spell attack roll (`resolve_attack(..., spell=True)`); damage dice on a hit, doubled on a crit
+  auto       automatic-hit darts (Magic Missile): no roll
+  save       the target's saving throw against the caster's spell save DC; damage on a failed save only
+  heal       restores dice plus the spellcasting ability modifier to the caster
+  condition  the target's saving throw against the spell save DC; no damage, and the spell's
+             condition applies on a failed save (Blindness/Deafness)
+
+A spell with `condition` set applies it on a hit (attack) or a failed save (condition). Its
+duration and the condition itself are recorded by `agent.conditions`, never by the parser.
 
 Slots: a cantrip (level 0) costs no slot. A leveled spell spends the slot the player names
 ("2nd-level slot") or else the lowest slot available at or above its level. Upcasting adds
@@ -20,10 +25,12 @@ the totals are derived from class and level, and a long rest clears the expended
 Casting time: `action` is "action" (the default) or "bonus_action" (Healing Word). A bonus-action
 spell uses the turn's bonus action slot (agent.action_economy), so the same turn may also attack.
 
-Deliberately absent: concentration spells (no duration tracking exists), Guiding Bolt (its
-advantage follow-up needs EDG-024) and Burning Hands (an area effect). A spell is added here only
-with its effect, cost and targeting implemented. Healing Word heals only its caster, as Cure Wounds
-does; a creature other than the hero is not a target.
+Deliberately absent: concentration spells (no concentration tracking exists), Burning Hands (an
+area effect) and Hold Person (concentration, humanoid-only). Blindness/Deafness is cast here as
+blindness only, at one target: a declaration that names deafness alone is refused, and the upcast
+extra targets are not modelled. Healing Word heals only its caster, as Cure Wounds does; a creature
+other than the hero is not a target. A spell is added here only with its effect, cost and
+targeting implemented.
 """
 
 from __future__ import annotations
@@ -60,7 +67,10 @@ class SpellSpec:
     upcast_dice: int = 0  # extra dice per slot level above `level`
     per_die_bonus: int = 0  # flat bonus added to each die (Magic Missile's +1)
     ability_bonus: bool = False  # heal: add the spellcasting modifier once
-    save_ability: str | None = None  # save: the ability the target saves with
+    save_ability: str | None = None  # save and condition: the ability the target saves with
+    condition: str | None = None  # the condition the spell applies (agent.conditions)
+    duration_rounds: int = 0  # rounds the condition lasts, counting the round it is applied
+    aliases: tuple[str, ...] = ()  # other names the player may use for the spell
     action: str = ACTION  # the turn slot the cast uses: ACTION or BONUS_ACTION
     source: str = ""
 
@@ -112,6 +122,40 @@ CATALOG: tuple[SpellSpec, ...] = (
         source=f"{_PHB}, Cure Wounds: 1d8 plus the spellcasting modifier, one die more per slot above 1st",
     ),
     SpellSpec(
+        name="Guiding Bolt",
+        level=1,
+        kind="attack",
+        dice=4,
+        die=6,
+        damage_type="radiant",
+        classes=("cleric",),
+        upcast_dice=1,
+        condition="marked",
+        duration_rounds=2,
+        source=(
+            f"{_PHB}, Guiding Bolt: ranged spell attack, 4d6 radiant on a hit, and the next attack "
+            "roll against the target before the end of your next turn has advantage; one die more "
+            "per slot above 1st"
+        ),
+    ),
+    SpellSpec(
+        name="Blindness/Deafness",
+        level=2,
+        kind="condition",
+        dice=0,  # no damage dice: the spell's effect is the condition
+        die=0,
+        damage_type=None,
+        classes=("bard", "cleric", "sorcerer", "wizard"),
+        save_ability="CON",
+        condition="blinded",
+        duration_rounds=10,
+        aliases=("Blindness",),
+        source=(
+            f"{_PHB}, Blindness/Deafness: the target makes a Constitution save or is blinded for one "
+            "minute, and repeats the save at the end of each of its turns"
+        ),
+    ),
+    SpellSpec(
         name="Healing Word",
         level=1,
         kind="heal",
@@ -126,15 +170,17 @@ CATALOG: tuple[SpellSpec, ...] = (
     ),
 )
 
-_BY_NAME = {spell.name.lower(): spell for spell in CATALOG}
+_BY_NAME = {name.lower(): spell for spell in CATALOG for name in (spell.name, *spell.aliases)}
+# Longest first, so an alias never shadows the full name it begins.
+_NAMES = sorted(_BY_NAME, key=len, reverse=True)
+_DEAFNESS = re.compile(r"\bdeaf\w*", re.IGNORECASE)
+_SPELL_NAME_WORDS = re.compile(r"\bblindness(?:/deafness)?\b", re.IGNORECASE)
 _CAST_VERB = re.compile(
     r"\b(?:cast|casts|casting|hurl|hurls|unleash|unleashes|conjure|conjures|invoke|invokes|"
     r"use|uses|using|speak|speaks)\b",
     re.IGNORECASE,
 )
-_NAME_RE = re.compile(
-    r"\b(" + "|".join(re.escape(spell.name) for spell in CATALOG) + r")\b", re.IGNORECASE
-)
+_NAME_RE = re.compile(r"\b(" + "|".join(re.escape(name) for name in _NAMES) + r")\b", re.IGNORECASE)
 _SLOT_LEVEL_RE = re.compile(
     r"\b([1-9])(?:st|nd|rd|th)[\s-]+level\b|\blevel\s+([1-9])\s+(?:spell\s+)?slots?\b",
     re.IGNORECASE,
@@ -175,6 +221,7 @@ class SpellResult:
     darts: int = 0
     damage: int = 0
     healing: int = 0
+    condition: str | None = None  # set only when the spell's condition now applies to a foe
     dice_log: list[dict] = field(default_factory=list)
 
 
@@ -301,6 +348,17 @@ def cast_request(
     spell = find_catalog_spell(player_input, parsed)
     if spell is None:
         return None
+    # The spell's own name contains "Blindness", so only the words around it are read. Only
+    # blindness is modelled: a declaration that mentions deafness is refused, never blinded instead.
+    rest = _SPELL_NAME_WORDS.sub("", str(player_input or ""))
+    if spell.condition == "blinded" and _DEAFNESS.search(rest):
+        return (
+            spell,
+            None,
+            (
+                f"{spell.name} is not cast: this engine applies only blindness, so no spell effect is applied."
+            ),
+        )
     plan, refusal = plan_cast(character, spell, requested_slot_level(player_input))
     return spell, plan, refusal
 
@@ -350,6 +408,9 @@ def resolve_spell(
             outcome = roll(_expr(count, spec.die, 0), rng)
             result.damage = max(1, outcome.total)
             result.dice_log.append(outcome.to_log(f"{spec.name} damage"))
+            # The condition needs a combat target; outside combat no foe carries it.
+            if spec.condition and target_ac is not None:
+                result.condition = spec.condition
     elif spec.kind == "auto":
         darts = _dice_count(spec, level, slot)
         outcome = roll(_expr(darts, spec.die, darts * spec.per_die_bonus), rng)
@@ -366,6 +427,17 @@ def resolve_spell(
             outcome = roll(_expr(_dice_count(spec, level, slot), spec.die, 0), rng)
             result.damage = max(1, outcome.total)
             result.dice_log.append(outcome.to_log(f"{spec.name} damage"))
+    elif spec.kind == "condition":
+        if target_ac is None:
+            # No foe is tracked outside combat: nothing is rolled and no condition is applied.
+            return result
+        result.save_dc = spell_save_dc(character)
+        bonus = int(target_save_bonus)
+        save = roll(f"1d20{bonus:+d}" if bonus else "1d20", rng)
+        result.dice_log.append(save.to_log(f"{spec.save_ability} save"))
+        result.save_success = result.save_dc is not None and save.total >= result.save_dc
+        if not result.save_success and spec.condition:
+            result.condition = spec.condition
     elif spec.kind == "heal":
         ability = CASTING_ABILITY.get(character_class(character), "WIS")
         mod = ability_modifier(character, ability) if spec.ability_bonus else 0
@@ -399,6 +471,18 @@ def narrate(result: SpellResult, *, hero: str, target: str | None) -> str:
         )
     if spec.kind == "heal":
         return f"{spec.name} restores {result.healing} HP to {hero}."
+    if spec.kind == "condition":
+        if result.save_success is None:
+            return f"{spec.name} has no foe to target. {NO_FOE_NOTE}"
+        who = target or "The target"
+        if result.save_success:
+            return (
+                f"{who} succeeds on the {spec.save_ability} save against {spec.name} "
+                f"(DC {result.save_dc}) and is unaffected."
+            )
+        return (
+            f"{who} fails the {spec.save_ability} save against {spec.name} (DC {result.save_dc})."
+        )
     return f"{spec.name} has no effect."
 
 
