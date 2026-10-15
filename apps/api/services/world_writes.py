@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.models.adjudication import AdjudicationResult
 from agent.resolution import (
     COMPLETION_FLAG,
+    SECOND_WIND_KEY,
     match_inventory_item,
     normalise_conditions,
     sanitize_flags,
@@ -136,6 +137,9 @@ async def _apply_character_update(db, character_id: int, campaign_id: int, cu) -
         ass.hp_current = max(0, min(ass.hp_max, ass.hp_current + cu.hp_delta))
 
     stats = dict(ass.stats or {})
+    if cu.second_wind_uses_remaining is not None:
+        # Engine-owned sheet resource (EDG-025); persists across encounters and rests.
+        stats[SECOND_WIND_KEY] = {"uses_remaining": max(0, int(cu.second_wind_uses_remaining))}
     conditions = list(stats.get("conditions", []))
     for name in normalise_conditions(cu.add_conditions):
         if name not in conditions:

@@ -772,6 +772,81 @@ def heal_from_rest(
 
 
 # --------------------------------------------------------------------------------------------
+# Fighter Second Wind (EDG-025): a persisted sheet resource, not an encounter flag
+# --------------------------------------------------------------------------------------------
+# Rule (2014 PHB, Fighter): a bonus action regains 1d10 + fighter level HP; once used it must be
+# finished by a short or long rest. Uses left live in CharacterAssignment.stats["second_wind"]
+# (a JSONB key, no migration). A sheet without the key has its full uses available.
+# 2024 campaigns follow the same single-use rule: the 2024 Fighter table is not in the local
+# rules corpus, so its scaling is not implemented (see the contract entry).
+
+SECOND_WIND_KEY = "second_wind"
+SECOND_WIND_REFUSAL = (
+    "{hero} has already used Second Wind and has no uses left until a short or long rest. "
+    "No healing is rolled."
+)
+
+
+def is_fighter(character: dict | None) -> bool:
+    return "fighter" in character_class(character)
+
+
+def second_wind_max_uses(character: dict | None) -> int:
+    return 1 if is_fighter(character) else 0
+
+
+def second_wind_remaining(character: dict | None) -> int:
+    """Uses left on the sheet, clamped to the maximum. Missing or malformed state means full."""
+    maximum = second_wind_max_uses(character)
+    stats = (character or {}).get("stats")
+    entry = stats.get(SECOND_WIND_KEY) if isinstance(stats, dict) else None
+    left = entry.get("uses_remaining") if isinstance(entry, dict) else None
+    if not isinstance(left, int) or isinstance(left, bool):
+        return maximum
+    return max(0, min(maximum, left))
+
+
+def second_wind_status(character: dict | None) -> dict | None:
+    """Public view of the resource for fighters; None for other classes."""
+    if not is_fighter(character):
+        return None
+    return {
+        "uses_remaining": second_wind_remaining(character),
+        "uses_max": second_wind_max_uses(character),
+    }
+
+
+def second_wind_after_rest(character: dict | None, kind: str | None) -> int | None:
+    """Uses left after a rest, or None when this rest does not restore Second Wind.
+
+    Both short and long rests restore the single use (2014 PHB).
+    """
+    if kind not in ("short", "long") or not is_fighter(character):
+        return None
+    return second_wind_max_uses(character)
+
+
+def declares_second_wind(text: str | None) -> bool:
+    return bool(text) and "second wind" in str(text).lower()
+
+
+def spend_second_wind(
+    character: dict | None, *, remaining: int | None = None, rng: random.Random | None = None
+) -> HealResult | None:
+    """Spend one use: roll 1d10 + fighter level. Returns None (and rolls nothing) if none is left.
+
+    `remaining` lets a caller that already spent uses this turn pass its own running count.
+    The caller persists `remaining - 1` on success.
+    """
+    left = second_wind_remaining(character) if remaining is None else remaining
+    if left <= 0 or not is_fighter(character):
+        return None
+    level = int((character or {}).get("level") or 1)
+    outcome = roll(f"1d10+{level}", rng)
+    return HealResult(amount=outcome.total, source="second_wind", dice=outcome)
+
+
+# --------------------------------------------------------------------------------------------
 # Validation helpers (shared with apps.api.services.world_writes)
 # --------------------------------------------------------------------------------------------
 
@@ -978,6 +1053,8 @@ def enforce_side_effects(
 
     cu = adj.character_update
     if cu is not None:
+        # Second Wind uses are engine-owned: a model-proposed count is never persisted.
+        cu.second_wind_uses_remaining = None
         cu.add_conditions = normalise_conditions(cu.add_conditions)
         cu.remove_conditions = normalise_conditions(cu.remove_conditions)
         cu.inventory_add = (
@@ -1022,6 +1099,8 @@ def enforce_side_effects(
         hp_delta -= damage_taken
 
         heal: HealResult | None = None
+        sw_remaining: int | None = None
+        sw_refusal = ""
         item = find_healing_consumable(
             character, parsed=parsed, player_input=player_input, proposed_removals=proposed_removals
         )
@@ -1031,6 +1110,15 @@ def enforce_side_effects(
             rest = detect_rest(player_input)
             if rest:
                 heal = heal_from_rest(character, rest, rng)
+                sw_remaining = second_wind_after_rest(character, rest)
+            elif declares_second_wind(player_input) and is_fighter(character):
+                # Out of combat the player's Second Wind is an engine use, spent or refused.
+                heal = spend_second_wind(character, rng=rng)
+                if heal is None:
+                    hero = (character or {}).get("name") or "The hero"
+                    sw_refusal = SECOND_WIND_REFUSAL.format(hero=hero)
+                else:
+                    sw_remaining = second_wind_remaining(character) - 1
         if heal is not None and heal.amount > 0:
             hp_delta += heal.amount
             if heal.dice is not None:
@@ -1041,6 +1129,13 @@ def enforce_side_effects(
                 adj.character_update = cu
             if heal.item not in cu.inventory_remove:
                 cu.inventory_remove.append(heal.item)
+        if sw_remaining is not None and sw_remaining != second_wind_remaining(character):
+            if cu is None:
+                cu = CharacterUpdate()
+                adj.character_update = cu
+            cu.second_wind_uses_remaining = sw_remaining
+        if sw_refusal:
+            adj.mechanical_summary = " ".join(x for x in (sw_refusal, adj.mechanical_summary) if x)
         if cu is None and hp_delta:
             cu = CharacterUpdate()
             adj.character_update = cu

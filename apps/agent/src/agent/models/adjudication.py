@@ -34,6 +34,9 @@ class CharacterUpdate(BaseModel):
     remove_conditions: list[str] = Field(default_factory=list)
     inventory_add: list[str] = Field(default_factory=list)
     inventory_remove: list[str] = Field(default_factory=list)
+    # Engine-owned Second Wind uses left on the sheet (EDG-025). Set only by the engine after a
+    # use or a rest; any model-proposed value is cleared in enforce_side_effects.
+    second_wind_uses_remaining: int | None = None
 
     @field_validator(
         "add_conditions", "remove_conditions", "inventory_add", "inventory_remove", mode="before"
