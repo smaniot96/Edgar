@@ -28,12 +28,14 @@ _SLOT_NAMES = {ACTION: "action", BONUS_ACTION: "bonus action"}
 
 @dataclass(frozen=True)
 class Declared:
-    kind: str  # "attack" | "maneuver" | "dodge" | "item" | "spell" | "second_wind"
+    kind: str  # "attack" | "maneuver" | "dodge" | "dash" | "disengage" | "item" | "spell" | ...
     slot: str  # ACTION or BONUS_ACTION
     label: str  # how the turn record and refusals name it
 
 
 DODGE = Declared("dodge", ACTION, "Dodge")
+DASH = Declared("dash", ACTION, "Dash")
+DISENGAGE = Declared("disengage", ACTION, "Disengage")
 SECOND_WIND = Declared("second_wind", BONUS_ACTION, "Second Wind")
 
 # A declared Dodge: the player's own clause, "I dodge", "I take the Dodge action", "and dodge".
@@ -50,6 +52,20 @@ _DODGE_DECLARED = re.compile(
 _DODGE_OBJECT = re.compile(
     r"\bdodg\w*\s+(?:the|an?|its|their|his|her|my|that|this|incoming)\s+\w+", re.I
 )
+# The same clause shape for Dash and Disengage. "Dash of salt" and "I dash a glance" are idioms, and
+# "dash my hopes" is not an action, so those objects do not declare the action.
+_ACTION_DECLARED = (
+    r"(?:^|[.;,!?]\s*|\b(?:i|we|and|then|also|now)\s+)"
+    r"(?:(?:will|'ll|want\s+to|choose\s+to|decide\s+to|try\s+to|take|use|do)\s+)*"
+    r"(?:the\s+)?{verb}(?:\s+action)?\b"
+)
+_DASH_DECLARED = re.compile(
+    _ACTION_DECLARED.format(verb=r"dash(?:es|ing)?")
+    + r"(?!\s+(?:of|a|an|glance|glances|look|looks|off|hopes|expectations|my|your|his|her|its|"
+    r"their|our|it\s+all)\b)",
+    re.IGNORECASE,
+)
+_DISENGAGE_DECLARED = re.compile(_ACTION_DECLARED.format(verb=r"disengag(?:e|es|ing)"), re.I)
 _ATTACK_WORDS = re.compile(
     r"\b(?:attack\w*|strik\w*|stab\w*|swing\w*|slash\w*|shoot\w*|lunge\w*|smash\w*|thrust\w*"
     r"|hit\s+(?:the|a|an|him|her|it|them)|cut\s+(?:the|a|an|him|her|it|them))\b",
@@ -59,6 +75,14 @@ _ATTACK_WORDS = re.compile(
 
 def dodge_declared(text: str | None) -> bool:
     return bool(_DODGE_DECLARED.search(str(text or "")))
+
+
+def dash_declared(text: str | None) -> bool:
+    return bool(_DASH_DECLARED.search(str(text or "")))
+
+
+def disengage_declared(text: str | None) -> bool:
+    return bool(_DISENGAGE_DECLARED.search(str(text or "")))
 
 
 def has_attack_words(text: str | None) -> bool:

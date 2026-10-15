@@ -101,12 +101,13 @@ async def test_short_rest_evidence_reloads_and_the_last_die_is_refused(
     assert again["character"]["hp_current"] == body["character"]["hp_current"]
     assert again["character"]["hit_dice"]["remaining"] == 0
 
-    # A long rest restores HP to the maximum and recovers the die (half of level 1, minimum one).
+    # A long rest restores HP to the maximum. Half of level 1 rounds down to zero (PHB p.187), so the
+    # spent die is not recovered and the ledger is unchanged.
     long_rest = await _turn(api_client, sid, "I sleep for the night")
     assert long_rest["character"]["hp_current"] == 12
-    assert long_rest["character"]["hit_dice"] == {"remaining": 1, "total": 1, "die": "d10"}
-    assert long_rest["roll"]["rest"]["hit_dice_recovered"] == 1
-    assert (await _stored_stats(sid))["hit_dice"] == {"spent": 0}
+    assert long_rest["character"]["hit_dice"] == {"remaining": 0, "total": 1, "die": "d10"}
+    assert long_rest["roll"]["rest"]["hit_dice_recovered"] == 0
+    assert (await _stored_stats(sid))["hit_dice"] == {"spent": 1}
 
 
 @pytest.mark.asyncio

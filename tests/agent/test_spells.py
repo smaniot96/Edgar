@@ -102,6 +102,9 @@ def _foe(name: str = "Goblin", hp: int = 20, ac: int = 12) -> dict:
         "is_boss": False,
         "is_player": False,
         "alive": True,
+        # Spell turns start with the foe at range (EDG-044): a ranged spell attack made within 5 feet
+        # has disadvantage, which these fixtures are not about.
+        "band": "ranged",
     }
 
 

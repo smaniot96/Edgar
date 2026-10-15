@@ -39,7 +39,8 @@ DAMAGE_TYPES = frozenset(
 # Damage type of each engine weapon (`agent.resolution._WEAPONS`), from the standard weapon table.
 # A weapon outside this table (the generic weapon) has no known type, so no resistance applies.
 WEAPON_DAMAGE_TYPE = {
-    "club": "bludgeoning", "dagger": "piercing", "quarterstaff": "bludgeoning",
+    "club": "bludgeoning", "greatclub": "bludgeoning", "dagger": "piercing",
+    "quarterstaff": "bludgeoning",
     "mace": "bludgeoning", "spear": "piercing", "handaxe": "slashing", "javelin": "piercing",
     "light hammer": "bludgeoning", "sickle": "slashing", "shortsword": "piercing",
     "scimitar": "slashing", "rapier": "piercing", "whip": "slashing", "longsword": "slashing",
@@ -47,7 +48,8 @@ WEAPON_DAMAGE_TYPE = {
     "flail": "bludgeoning", "trident": "piercing", "war pick": "piercing",
     "greatsword": "slashing", "greataxe": "slashing", "maul": "bludgeoning", "glaive": "slashing",
     "halberd": "slashing", "pike": "piercing", "lance": "piercing", "shortbow": "piercing",
-    "longbow": "piercing", "hand crossbow": "piercing", "heavy crossbow": "piercing",
+    "longbow": "piercing", "blowgun": "piercing", "hand crossbow": "piercing",
+    "heavy crossbow": "piercing",
     "light crossbow": "piercing", "crossbow": "piercing", "sling": "bludgeoning", "dart": "piercing",
 }  # fmt: skip
 
@@ -68,10 +70,10 @@ _STAT_LINE = re.compile(
     r"Damage (?:Resistances|Immunities|Vulnerabilities)|Condition Immunities|Proficiency Bonus)\b",
     re.IGNORECASE,
 )
-_ENTRY = re.compile(r"^([A-Z][\w'’ ()/,-]{0,70}?)\.\s+(\S.*)$")
+_ENTRY = re.compile(r"^([A-Z][\w'’ ()/,\u2013\u2014-]{0,70}?)\.\s+(\S.*)$")
 _ATTACK = re.compile(
-    r"^(Melee|Ranged) Weapon Attack:\s*\+(-?\d+) to hit\b.*?\bHit:\s*(\d+)\s*\(([^)]*)\)\s*"
-    r"([A-Za-z]+) damage\b(.*)$",
+    r"^(Melee or Ranged|Melee|Ranged) Weapon Attack:\s*\+(-?\d+) to hit\b.*?\bHit:\s*(\d+)\s*"
+    r"\(([^)]*)\)\s*([A-Za-z]+) damage\b(.*)$",
     re.IGNORECASE,
 )
 _REGEN_AMOUNT = re.compile(
@@ -84,6 +86,11 @@ _REGEN_SUPPRESS = re.compile(
     re.IGNORECASE,
 )
 _SUPPRESS_MAGIC = ("silvered", "adamantine", "magical", "magic")
+# An ability modifier in parentheses: "(+4)", "(-1)", or the PDF text layer's "(- 2)".
+_ABILITY_MOD = r"\(\s*([+\-\u2212\u2013]?)\s*(\d+)\s*\)"
+# Entry names may carry en or em dashes ("Fire Breath (Recharge 5–6)"), which the name pattern needs.
+_ATTACK_LEAD = re.compile(r"^(?:Melee or Ranged|Melee|Ranged) Weapon Attack:", re.IGNORECASE)
+_MULTI_WITH = re.compile(r"\battacks?\s+with\s+(?:its|his|her|their|the)\s+([A-Za-z]+)", re.I)
 
 
 class MonsterStatsError(ValueError):
@@ -209,18 +216,27 @@ def _line_value(text: str, label: str) -> str | None:
 
 def _abilities(text: str, lines: list[str]) -> dict[str, int]:
     labelled = {
-        m.group(1).upper(): int(m.group(2))
-        for m in re.finditer(r"\b(STR|DEX|CON|INT|WIS|CHA)\s+\d+\s*\(([+-]?\d+)\)", text, re.I)
+        m.group(1).upper(): _signed_mod(m.group(2), m.group(3))
+        for m in re.finditer(rf"\b(STR|DEX|CON|INT|WIS|CHA)\s+\d+\s*{_ABILITY_MOD}", text, re.I)
     }
     if len(labelled) == len(ABILITIES):
         return {a: labelled[a] for a in ABILITIES}
     # Unlabelled ability row: the header "STR DEX CON INT WIS CHA" precedes "18 (+4) 13 (+1) ...".
     for index, line in enumerate(lines[:-1]):
         if re.fullmatch(r"STR\s+DEX\s+CON\s+INT\s+WIS\s+CHA", line.strip(), re.IGNORECASE):
-            pairs = re.findall(r"(\d+)\s*\(([+-]?\d+)\)", lines[index + 1])
+            pairs = re.findall(rf"(\d+)\s*{_ABILITY_MOD}", lines[index + 1])
             if len(pairs) == len(ABILITIES):
-                return {a: int(mod) for a, (_score, mod) in zip(ABILITIES, pairs, strict=True)}
+                return {
+                    a: _signed_mod(sign, digits)
+                    for a, (_score, sign, digits) in zip(ABILITIES, pairs, strict=True)
+                }
     return {}
+
+
+def _signed_mod(sign: str, digits: str) -> int:
+    """An ability modifier from its sign and digits; a minus sign may be a dash in the text layer."""
+    value = int(digits)
+    return -value if sign in ("-", "\u2212", "\u2013") else value
 
 
 def _saves(text: str) -> dict[str, int]:
@@ -238,6 +254,8 @@ def _damage_rules(text: str, label: str) -> tuple[tuple[DamageRule, ...], list[s
     line = _line_value(text, label)
     if not line:
         return (), []
+    # The PDF text layer splits "nonmagical" into "non magical" (and sometimes "non-magical").
+    line = re.sub(r"\bnon[\s-]+magical\b", "nonmagical", line, flags=re.IGNORECASE)
     rules: list[DamageRule] = []
     declared: list[str] = []
     for clause in line.split(";"):
@@ -247,6 +265,12 @@ def _damage_rules(text: str, label: str) -> tuple[tuple[DamageRule, ...], list[s
             continue
         if "nonmagical" in words:
             rules += [DamageRule(t, nonmagical_only=True) for t in types]
+            if any(w in words for w in ("silvered", "adamantine")):
+                # The hero's weapons are plain, so the rule is applied; the exception is not read.
+                declared.append(
+                    f"{label.lower()} silvered or adamantine exception not executed "
+                    f"(the hero's weapons count as plain): {clause.strip()}"
+                )
         elif any(w in words for w in _SUPPRESS_MAGIC):
             declared.append(f"{label.lower()} qualifier not executed: {clause.strip()}")
         else:
@@ -298,7 +322,14 @@ def _multiattack(
     names = {_norm(a.name): a.name for a in attacks}
     pairs = re.findall(r"\b(\w+)\s+with\s+(?:its|his|her|their|the)?\s*([A-Za-z]+)", body, re.I)
     counts: dict[str, int] = {}
-    if pairs:
+    single = _MULTI_WITH.search(body)
+    if single and not any(_count(count_word) is not None for count_word, _ in pairs):
+        # "makes two attacks with its scimitar": every attack is that one listed attack.
+        key = _norm(single.group(1))
+        if key not in names:
+            return None
+        counts[names[key]] = total
+    elif pairs:
         for count_word, attack_word in pairs:
             n = _count(count_word)
             key = _norm(attack_word)
@@ -372,7 +403,7 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
                     f"{entry_name}: a creature at 0 HP is defeated at once; its death clause "
                     "(regeneration at the start of its next turn) is not executed"
                 )
-        elif entry_section == "actions" and re.match(r"(?:Melee|Ranged) Weapon Attack:", body):
+        elif entry_section == "actions" and _ATTACK_LEAD.match(body):
             attack, rider = _attack(body, entry_name)
             if attack is None:
                 declared.append(f"{entry_name}: attack could not be read exactly")
@@ -392,6 +423,8 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
             declared.append("Multiattack: counts could not be read exactly; one attack is used")
         else:
             multiattack = counted
+        if re.search(r"\bdisadvantage\b", multiattack_body or "", re.IGNORECASE):
+            declared.append("Multiattack: the disadvantage on a later attack is not executed")
 
     return MonsterStats(
         name=str(name)[:60],

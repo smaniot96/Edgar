@@ -377,12 +377,37 @@ def _expr(count: int, die: int, flat: int) -> str:
     return f"{count}d{die}{flat:+d}" if flat else f"{count}d{die}"
 
 
+def _save_roll(bonus: int, mode: RollMode, rng: Any, label: str) -> tuple[int, dict[str, Any]]:
+    """The target's d20 save (plus its stated bonus), at advantage or disadvantage when given.
+
+    Returns (total, dice-log entry). Disadvantage rolls two engine d20s and keeps the lower face,
+    as `agent.resolution` does for checks; the log keeps both faces in the order rolled.
+    """
+    if mode == "normal":
+        save = roll(f"1d20{bonus:+d}" if bonus else "1d20", rng)
+        return save.total, save.to_log(label)
+    pair = roll("2d20", rng)
+    kept = max(pair.rolls) if mode == "advantage" else min(pair.rolls)
+    total = kept + bonus
+    log = {
+        "expression": "2d20" + (f"{bonus:+d}" if bonus else ""),
+        "rolls": list(pair.rolls),
+        "modifier": bonus,
+        "total": total,
+        "kept": kept,
+        "roll_mode": mode,
+        "purpose": label,
+    }
+    return total, log
+
+
 def resolve_spell(
     character: dict | None,
     plan: CastPlan,
     *,
     target_ac: int | None = None,
     target_save_bonus: int = 0,
+    save_mode: RollMode = "normal",
     rng: Any = None,
     roll_mode: RollMode = "normal",
 ) -> SpellResult:
@@ -420,9 +445,9 @@ def resolve_spell(
     elif spec.kind == "save":
         result.save_dc = spell_save_dc(character)
         bonus = int(target_save_bonus)
-        save = roll(f"1d20{bonus:+d}" if bonus else "1d20", rng)
-        result.dice_log.append(save.to_log(f"{spec.save_ability} save"))
-        result.save_success = result.save_dc is not None and save.total >= result.save_dc
+        save_total, save_log = _save_roll(bonus, save_mode, rng, f"{spec.save_ability} save")
+        result.dice_log.append(save_log)
+        result.save_success = result.save_dc is not None and save_total >= result.save_dc
         if not result.save_success:
             outcome = roll(_expr(_dice_count(spec, level, slot), spec.die, 0), rng)
             result.damage = max(1, outcome.total)
@@ -433,9 +458,9 @@ def resolve_spell(
             return result
         result.save_dc = spell_save_dc(character)
         bonus = int(target_save_bonus)
-        save = roll(f"1d20{bonus:+d}" if bonus else "1d20", rng)
-        result.dice_log.append(save.to_log(f"{spec.save_ability} save"))
-        result.save_success = result.save_dc is not None and save.total >= result.save_dc
+        save_total, save_log = _save_roll(bonus, save_mode, rng, f"{spec.save_ability} save")
+        result.dice_log.append(save_log)
+        result.save_success = result.save_dc is not None and save_total >= result.save_dc
         if not result.save_success and spec.condition:
             result.condition = spec.condition
     elif spec.kind == "heal":
