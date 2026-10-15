@@ -15,6 +15,8 @@ the kinds in `EFFECT_KINDS` are read. Restraint (`restrained`) and `prone` come 
 contested maneuver, persist in this same JSONB list, and end explicitly: a declared release,
 the foe's defeat, or the end of the encounter. `attack_roll_mode` turns them into the 5e
 advantage/disadvantage state of an attack. Missing or malformed `effects` reads as none.
+`dodging` (EDG-044) is the Dodge action: attacks against that combatant have disadvantage. It
+ends when the combatant's next turn starts (see `agent.graph_combat`), not at the end of a round.
 
 Legacy rows (written before `disposition` existed) carry only `alive`/`hp_current`. They are
 read honestly: `alive` False means "defeated" (cause unknown). It is not treated as proof of
@@ -48,7 +50,9 @@ _STATUS_TEXT = {
     "dead": "dead, cannot act",
     "defeated": "defeated, cannot act",
 }
-EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone")
+EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone", "dodging")
+# Effects that change the combatant's own attacks (its rolls), as opposed to attacks against it.
+_ATTACKER_EFFECT_KINDS = frozenset({"restrained", "prone"})
 _EFFECT_TEXT = {
     "restrained": (
         "restrained with {source}: its attacks have disadvantage and attacks against it have "
@@ -58,6 +62,7 @@ _EFFECT_TEXT = {
         "knocked prone: its attacks have disadvantage, melee attacks against it have advantage "
         "and ranged attacks against it have disadvantage"
     ),
+    "dodging": "dodging (Dodge action): attacks against it have disadvantage until its next turn",
 }
 
 # The player's own declared intent, read from their words. Nonlethal wins when both appear
@@ -232,15 +237,18 @@ def attack_roll_mode(
     """The 5e attack-roll mode from combatant effects: "advantage", "disadvantage" or "normal".
 
     A restrained or prone attacker rolls at disadvantage. A restrained target is attacked with
-    advantage; a prone target with advantage in melee and disadvantage at range. Opposing sources
-    cancel to normal, as the rules do. Pure: it never rolls and never sets a number.
+    advantage; a prone target with advantage in melee and disadvantage at range; a dodging target
+    with disadvantage. Opposing sources cancel to normal, as the rules do. Pure: it never rolls and
+    never sets a number.
     """
     advantage = disadvantage = False
-    if any(e["kind"] in EFFECT_KINDS for e in effects_of(attacker)):
+    if any(e["kind"] in _ATTACKER_EFFECT_KINDS for e in effects_of(attacker)):
         disadvantage = True
     for e in effects_of(target):
         if e["kind"] == "restrained":
             advantage = True
+        elif e["kind"] == "dodging":
+            disadvantage = True
         elif e["kind"] == "prone":
             if ranged:
                 disadvantage = True

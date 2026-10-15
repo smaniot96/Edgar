@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { CharacterAssignmentHistoryRead, CharacterRead } from "../../api/types";
-import { hitDiceFrom, mergeTurnCharacter, orderCombatants, parseInventory, sheetForCampaign, sheetFromLibrary } from "./gameState";
+import {
+  economyLine,
+  hitDiceFrom,
+  mechanicalEffects,
+  mergeTurnCharacter,
+  orderCombatants,
+  parseInventory,
+  sheetForCampaign,
+  sheetFromLibrary,
+} from "./gameState";
 import { rollParts, rollSummary } from "./rollText";
 
 const eda: CharacterRead = {
@@ -195,6 +204,24 @@ describe("roll card text", () => {
   });
 });
 
+describe("combat economy (EDG-044)", () => {
+  it("reads the hero's last turn and stays silent for legacy payloads", () => {
+    expect(economyLine({ round: 2, action: "attack", bonus_action: "Second Wind", dodging: false })).toBe(
+      "Last turn: action attack · bonus action Second Wind",
+    );
+    expect(economyLine({ round: 1, action: "Dodge", bonus_action: null, dodging: true })).toBe(
+      "Last turn: action Dodge · bonus action unused",
+    );
+    expect(economyLine(null)).toBeNull();
+    expect(economyLine(undefined)).toBeNull();
+  });
+
+  it("labels Dodging as a mechanical effect and drops unknown kinds", () => {
+    expect(mechanicalEffects([{ kind: "dodging" }, { kind: "stunned" }])).toEqual([
+      { kind: "dodging", label: "Dodging" },
+    ]);
+  });
+});
 describe("Hit Dice on the sheet (EDG-026)", () => {
   const assignment: CharacterAssignmentHistoryRead = {
     id: 9, campaign_id: 3, campaign_title: "Quay", hp_current: 5, hp_max: 12,

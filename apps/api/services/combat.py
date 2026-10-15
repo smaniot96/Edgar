@@ -51,6 +51,8 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
         "second_wind_used": bool(player.get("second_wind_used", False)),
         "raging": bool(player.get("raging", False)),
         "solo_budget": player.get("solo_budget"),
+        # Additive (EDG-044): what the hero's last turn spent, read from the persisted player row.
+        "economy": player.get("action_economy"),
     }
     if all("init" in c for c in combatants) and combatants:
         from agent.graph_combat import initiative_view

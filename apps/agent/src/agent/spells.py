@@ -17,9 +17,13 @@ Slots: a cantrip (level 0) costs no slot. A leveled spell spends the slot the pl
 (5th, 11th and 17th). Expended counts are stored in the sheet's `stats["spell_slots_expended"]`;
 the totals are derived from class and level, and a long rest clears the expended count.
 
+Casting time: `action` is "action" (the default) or "bonus_action" (Healing Word). A bonus-action
+spell uses the turn's bonus action slot (agent.action_economy), so the same turn may also attack.
+
 Deliberately absent: concentration spells (no duration tracking exists), Guiding Bolt (its
-advantage follow-up needs EDG-024), Burning Hands (an area effect) and Healing Word (a bonus
-action). A spell is added here only with its effect, cost and targeting implemented.
+advantage follow-up needs EDG-024) and Burning Hands (an area effect). A spell is added here only
+with its effect, cost and targeting implemented. Healing Word heals only its caster, as Cure Wounds
+does; a creature other than the hero is not a target.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent.action_economy import ACTION, BONUS_ACTION
 from agent.resolution import (
     CASTING_ABILITY,
     CheckResult,
@@ -56,6 +61,7 @@ class SpellSpec:
     per_die_bonus: int = 0  # flat bonus added to each die (Magic Missile's +1)
     ability_bonus: bool = False  # heal: add the spellcasting modifier once
     save_ability: str | None = None  # save: the ability the target saves with
+    action: str = ACTION  # the turn slot the cast uses: ACTION or BONUS_ACTION
     source: str = ""
 
 
@@ -104,6 +110,19 @@ CATALOG: tuple[SpellSpec, ...] = (
         upcast_dice=1,
         ability_bonus=True,
         source=f"{_PHB}, Cure Wounds: 1d8 plus the spellcasting modifier, one die more per slot above 1st",
+    ),
+    SpellSpec(
+        name="Healing Word",
+        level=1,
+        kind="heal",
+        dice=1,
+        die=4,
+        damage_type=None,
+        classes=("bard", "cleric", "druid"),
+        upcast_dice=1,
+        ability_bonus=True,
+        action=BONUS_ACTION,
+        source=f"{_PHB}, Healing Word: bonus action, 1d4 plus the spellcasting modifier, one die more per slot above 1st",
     ),
 )
 

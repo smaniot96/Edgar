@@ -17,6 +17,7 @@ by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI rende
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from agent.action_economy import economy_text
 from agent.combatants import narrator_roster
 from agent.history import continuity_context, public_earned_facts
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
@@ -164,6 +165,8 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
             context_parts.append(
                 narrator_roster(combat["combatants"], combat.get("round_actors") or [])
             )
+            if turn_economy := economy_text(combat["combatants"]):
+                context_parts.append(turn_economy)
     context_parts.append(
         f"Selected rules edition: {edition}. Reference labels are provenance; do not recite hashes or private IDs."
     )

@@ -271,7 +271,16 @@ export interface CombatEffectView {
 const EFFECT_LABELS = new Map<string, string>([
   ["restrained", "Restrained"],
   ["prone", "Prone"],
+  ["dodging", "Dodging"],
 ]);
+
+/** The hero's last turn in one line (EDG-044), or null when the payload has no record. */
+export function economyLine(economy: CombatState["economy"]): string | null {
+  if (!economy || typeof economy !== "object") return null;
+  const action = typeof economy.action === "string" ? economy.action : "unused";
+  const bonus = typeof economy.bonus_action === "string" ? economy.bonus_action : "unused";
+  return `Last turn: action ${action} · bonus action ${bonus}`;
+}
 
 /** Engine `effects` mapped to display labels; unknown or narrative kinds are dropped. */
 export function mechanicalEffects(effects: CombatEffect[] | null | undefined): CombatEffectView[] {

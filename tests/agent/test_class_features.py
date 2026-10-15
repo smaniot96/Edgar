@@ -410,6 +410,21 @@ async def test_rage_adds_damage_uses_recharge_and_ends_with_the_encounter(
 
 
 @pytest.mark.asyncio
+async def test_rage_is_a_bonus_action_beside_the_attack(fake_llm_schema, fake_retrieval) -> None:
+    """EDG-044 x EDG-145: Rage takes the bonus-action slot; the turn's attack still happens."""
+    from agent.graph_combat import combat_round_node
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    ogre = _enemy("Ogre", hp=400, ac=1, init=1, attack_bonus=-20)
+    state = _state(BARBARIAN_1, [dict(ogre)], "I rage and swing the greataxe at the ogre")
+    with use_rng(random.Random(3)):
+        out = await combat_round_node(state)
+    economy = out["combat_state"]["economy"]
+    assert economy["bonus_action"] == "Rage" and economy["action"] == "attack"
+    assert _attack_checks(out["adjudication_result"].dice_log)  # the attack was still rolled
+
+
+@pytest.mark.asyncio
 async def test_rage_does_not_apply_to_a_ranged_attack(fake_llm_schema, fake_retrieval) -> None:
     from agent.graph_combat import combat_round_node
 

@@ -565,7 +565,7 @@ async def test_supported_contested_maneuver_applies_effect(fake_llm_schema, fake
         ("I attack with advantage", ["advantage"]),
         ("I attack from behind with disadvantage", ["advantage"]),
         ("I use Action Surge and attack twice", ["feature"]),
-        ("I take the dodge action", ["action_economy"]),
+        ("I take the dash action", ["action_economy"]),
         ("I use my bonus action to hide", ["action_economy"]),
         ("I stand in cover and blind the goblin", ["condition", "positioning"]),
         ("I flank the ogre from the high ground", ["positioning"]),
@@ -800,10 +800,10 @@ async def test_narration_cannot_present_unsupported_effect_as_executed(fake_llm_
 
 
 def test_clean_narration_still_states_the_ruling() -> None:
-    actions = classify_unsupported_actions("I take the dodge action")
+    actions = classify_unsupported_actions("I take the dash action")
     text = apply_narration_boundary("The goblin lunges at you. What now?", actions)
     assert text.startswith("The goblin lunges at you. What now?")
-    assert "Narrative ruling: action economy is not tracked" in text
+    assert "Narrative ruling: this action is not modelled" in text
 
 
 def test_supported_turns_are_untouched() -> None:
