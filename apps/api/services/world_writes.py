@@ -32,6 +32,7 @@ from agent.models.adjudication import AdjudicationResult
 from agent.resolution import (
     CLASS_FEATURES_KEY,
     COMPLETION_FLAG,
+    HIT_DICE_KEY,
     SECOND_WIND_KEY,
     match_inventory_item,
     normalise_conditions,
@@ -147,6 +148,9 @@ async def _apply_character_update(db, character_id: int, campaign_id: int, cu) -
         for feature, left in cu.class_feature_uses.items():
             features[feature] = {"uses_remaining": max(0, int(left))}
         stats[CLASS_FEATURES_KEY] = features
+    if cu.hit_dice_spent is not None:
+        # Engine-owned Hit Dice ledger (EDG-026): a short rest spends one, a long rest recovers some.
+        stats[HIT_DICE_KEY] = {"spent": max(0, int(cu.hit_dice_spent))}
     conditions = list(stats.get("conditions", []))
     for name in normalise_conditions(cu.add_conditions):
         if name not in conditions:

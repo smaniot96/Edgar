@@ -486,7 +486,7 @@ def test_supported_long_rest_restores_hp() -> None:
     assert healed is not None and healed.amount == 7
 
 
-def test_supported_short_rest_has_no_ledger() -> None:
+def test_supported_short_rest_spends_one_hit_die() -> None:
     character = {**FIGHTER, "hp_current": 5}
     before = dict(character)
     for seed in range(5):
@@ -495,7 +495,21 @@ def test_supported_short_rest_has_no_ledger() -> None:
         # 1d10 (fighter hit die) + CON 14 (+2), minimum 1.
         assert 3 <= healed.amount <= 12
         assert healed.dice.expression == "1d10+2"
-    assert character == before  # no Hit Dice count is written anywhere
+    assert character == before  # the roll itself writes nothing: the engine's enforcement does
+
+    # The rest spends one die and records it; with no die left it is refused without a roll.
+    adj = AdjudicationResult(success=True)
+    enforce_side_effects(
+        adj, character=character, check_result=None, player_input="I take a short rest"
+    )
+    assert adj.character_update.hit_dice_spent == 1 and adj.rest_record.hit_dice_remaining == 0
+    spent = {**character, "stats": {**character["stats"], "hit_dice": {"spent": 1}}}
+    assert heal_from_rest(spent, "short", rng=random.Random(0)) is None
+    refused = AdjudicationResult(success=True)
+    enforce_side_effects(
+        refused, character=spent, check_result=None, player_input="I take a short rest"
+    )
+    assert refused.rest_record.refused and not refused.dice_log
 
 
 def test_supported_conditions_are_tags_only() -> None:

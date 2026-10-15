@@ -38,7 +38,8 @@ def build_roll_record(
     if adjudication is None:
         return None
     dice_log = list(adjudication.dice_log or [])
-    if adjudication.dice_result is None and not dice_log:
+    rest = adjudication.rest_record
+    if adjudication.dice_result is None and not dice_log and rest is None:
         return None
     update = adjudication.character_update
     return {
@@ -57,6 +58,8 @@ def build_roll_record(
         "conditions": [c for c in adjudication.conditions or [] if c],
         "mechanical_summary": adjudication.mechanical_summary or "",
         "dice_log": [{key: d.get(key) for key in _DICE_KEYS} for d in dice_log],
+        # Rest evidence (EDG-026): the hit die rolled, healing applied and Hit Dice left.
+        "rest": rest.model_dump() if rest is not None else None,
     }
 
 

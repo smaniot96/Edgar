@@ -89,8 +89,10 @@ simulate (`GET /api/rules/supported-scope`):
   it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
   table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, spent by the
   player's action in or out of combat and restored by a short or long rest; no automatic use at 0
-  HP); short and long rest healing (a long rest also restores spell slots); healing potions taken
-  from inventory.
+  HP); Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends
+  one to roll it plus CON (minimum 1 HP, capped at the missing HP) and is refused with none left; a
+  long rest restores HP, spell slots and half the level in spent Hit Dice (minimum one; the 2024
+  campaigns use the same rule); healing potions taken from inventory.
 - Class features in combat: Fighter Action Surge (one use, two from level 17, restored by a short or
   long rest; it adds one more attack on the same foe in that round), Rogue Sneak Attack (1d6 per two
   rogue levels, once per turn, on a hit with a finesse or ranged weapon that has advantage from an
@@ -114,7 +116,7 @@ simulate (`GET /api/rules/supported-scope`):
   Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, concentration, other condition
-  effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and class
+  effects, cover and positioning, bonus actions and reactions, declared counts of Hit Dice, and class
   features other than Second Wind, Action Surge, Sneak Attack and Rage (Divine Smite, Lay on Hands,
   Bardic Inspiration, Channel Divinity, Wild Shape, sorcery and ki points, Flurry of Blows, Stunning
   Strike, Superiority Dice, Martial Arts; Rage's damage resistance). A declared action of this kind
