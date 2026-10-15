@@ -32,6 +32,7 @@ from edgar_core.sources import (
 from . import adventure_manifests
 from .campaign_sources import require_campaign_sources, source_error
 from .character_assignments import character_play_state
+from .roll_record import ROLL_NO_ROLL
 
 _INTRO_TEMPERATURE = 0.7
 
@@ -164,6 +165,9 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
                 "current_scene_id": session.current_scene_id,
                 "citations": citations,
                 "rules_edition": edition,
+                # An opening scene rolls no dice; say so rather than leaving it unrecorded.
+                "roll_status": ROLL_NO_ROLL,
+                "roll": None,
             },
         )
     )

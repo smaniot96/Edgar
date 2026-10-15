@@ -19,15 +19,16 @@ Enforcement is deterministic and never empties the roster:
   * Foes beyond the count limit, or that would push total HP over budget, are LEFT OUT. Bosses
     are kept first, then the builder's order. The first kept foe is never removed.
   * Numbers outside a range are CLAMPED into it. Damage is trimmed by dropping extra dice,
-    then smaller die sizes, then the modifier, until the average fits.
-  * Names, `creature_id`, `source_reference` and every other field are never changed. Exact
-    creature records keep their identity. The numbers a builder proposed for them are still
-    bounded, because the record text is not parsed here (replacing them with record-parsed
-    stats is EDG-004's scope).
+    then smaller die sizes, then the modifier, until the average fits. Generic foes only.
+  * An exact creature (one with a `creature_id`) is never rescaled (EDG-004): its HP, AC, attacks
+    and traits come from its verified record. The budget limits only how many foes take part, and
+    notes ("unscaled exact creature: ...") any exact foe whose record exceeds a per-foe band.
+  * Names, `creature_id`, `source_reference` and every other field are never changed.
   * Armor class is not budgeted.
 
 Every adjustment is recorded as an engine-written note. The combat start message shows the
-notes, and `combat_state["solo_budget"]` persists them for the HUD.
+notes, and `combat_state["solo_budget"]` persists them for the HUD. An unscaled note is information,
+not an adaptation, so it does not mark the encounter as adapted.
 """
 
 from __future__ import annotations
@@ -113,6 +114,14 @@ def clamp_damage(expr: str, avg_max: int) -> str:
     return f"{count}d{sides}{modifier:+d}" if modifier else f"{count}d{sides}"
 
 
+UNSCALED_PREFIX = "unscaled exact creature"
+
+
+def is_exact(enemy: dict) -> bool:
+    """An exact creature: a roster entry that names a verified creature record."""
+    return bool(enemy.get("creature_id"))
+
+
 def _hp_band(enemy: dict, budget: SoloBudget) -> tuple[int, int]:
     return budget.boss_hp if enemy.get("is_boss") else budget.foe_hp
 
@@ -138,6 +147,28 @@ def _clamp_foe(enemy: dict, budget: SoloBudget, notes: list[str]) -> dict:
     return out
 
 
+def _unscaled(enemy: dict, budget: SoloBudget, notes: list[str]) -> dict:
+    """An exact creature keeps its record's numbers; only an out-of-band value is noted."""
+    name = enemy.get("name", "?")
+    lo, hi = _hp_band(enemy, budget)
+    hp = int(enemy.get("hp_max", lo))
+    if not lo <= hp <= hi:
+        notes.append(f"{UNSCALED_PREFIX}: {name} keeps its record HP {hp} (solo band {lo}-{hi})")
+    bonus = int(enemy.get("attack_bonus", 0))
+    if bonus > budget.attack_bonus_max:
+        notes.append(
+            f"{UNSCALED_PREFIX}: {name} keeps its record attack +{bonus} "
+            f"(solo limit +{budget.attack_bonus_max})"
+        )
+    dice = str(enemy.get("damage_dice", ""))
+    if dice and clamp_damage(dice, budget.damage_avg_max) != dice:
+        notes.append(
+            f"{UNSCALED_PREFIX}: {name} keeps its record damage {dice} "
+            f"(solo average limit {budget.damage_avg_max})"
+        )
+    return dict(enemy)
+
+
 def apply_solo_budget(enemies: list[dict], level: Any) -> tuple[list[dict], dict]:
     """Return (roster within budget, summary). Pure: the input list and dicts are not mutated.
 
@@ -151,35 +182,51 @@ def apply_solo_budget(enemies: list[dict], level: Any) -> tuple[list[dict], dict
     # Bosses are kept first so a count or HP trim never removes the climactic foe.
     priority = sorted(range(len(enemies)), key=lambda i: (not enemies[i].get("is_boss"), i))
     kept: set[int] = set()
-    total = 0
+    generic_total = 0
+    generic_kept = False
     for i in priority:
         foe = enemies[i]
-        lo, hi = _hp_band(foe, budget)
-        hp = max(lo, min(hi, int(foe.get("hp_max", lo))))  # the HP this foe will have once clamped
+        name = foe.get("name", "?")
         if len(kept) >= budget.max_foes:
-            notes.append(f"{foe.get('name', '?')} left out (solo limit of {budget.max_foes} foes)")
-        elif kept and total + hp > budget.total_hp:
-            notes.append(
-                f"{foe.get('name', '?')} left out (solo total enemy HP limit of {budget.total_hp})"
-            )
+            notes.append(f"{name} left out (solo limit of {budget.max_foes} foes)")
+        elif is_exact(foe):
+            kept.add(i)  # exact records are not rescaled, so only the count limit applies
         else:
-            kept.add(i)
-            total += hp
+            lo, hi = _hp_band(foe, budget)
+            hp = max(lo, min(hi, int(foe.get("hp_max", lo))))  # HP once clamped
+            if generic_kept and generic_total + hp > budget.total_hp:
+                notes.append(f"{name} left out (solo total enemy HP limit of {budget.total_hp})")
+            else:
+                kept.add(i)
+                generic_total += hp
+                generic_kept = True
 
-    roster = [_clamp_foe(enemies[i], budget, notes) for i in sorted(kept)]
+    roster = [
+        _unscaled(enemies[i], budget, notes)
+        if is_exact(enemies[i])
+        else _clamp_foe(enemies[i], budget, notes)
+        for i in sorted(kept)
+    ]
     return roster, _summary(budget, notes)
 
 
 def _summary(budget: SoloBudget, notes: list[str]) -> dict:
-    return {"level": budget.level, "adapted": bool(notes), "notes": list(notes)}
+    changed = [n for n in notes if not n.startswith(UNSCALED_PREFIX)]
+    return {"level": budget.level, "adapted": bool(changed), "notes": list(notes)}
 
 
 def adaptation_sentence(summary: dict) -> str:
-    """Engine-written player-facing line for an adapted roster, or '' when nothing changed."""
-    if not summary.get("adapted"):
+    """Engine-written player-facing line for the combat start, or '' when there is no note.
+
+    An adapted roster says so. An unscaled exact creature is named as unscaled, so the player sees
+    that its record was kept, not rescaled.
+    """
+    notes = summary.get("notes") or []
+    if not notes:
         return ""
-    return (
+    head = (
         f"Encounter adapted for a solo level {summary['level']} hero: "
-        + "; ".join(summary["notes"])
-        + "."
+        if summary.get("adapted")
+        else f"Solo level {summary['level']} hero: "
     )
+    return head + "; ".join(notes) + "."

@@ -157,11 +157,36 @@ export interface SessionRead {
   active_character_id: number | null;
 }
 
+/** Whether a DM line's original roll was stored (EDG-030). Legacy rows are "not_captured". */
+export type RollStatus = "captured" | "no_roll" | "not_captured";
+
+/** The turn's original ruling and dice as stored at commit. Reload shows these; nothing re-rolls. */
+export interface RollRecord {
+  turn_id: string | null;
+  check: string | null;
+  success: boolean;
+  dc: number | null;
+  against: "DC" | "AC" | null;
+  modifier: number | null;
+  roll_expression: string | null;
+  natural_roll: number | null;
+  dice_result: number | null;
+  damage: number | null;
+  healing: number | null;
+  conditions: string[];
+  mechanical_summary: string;
+  dice_log: DiceLogEntry[];
+}
+
 export interface ChatMessageRead {
   citations?: SourceCitation[];
   ruling_citation_ids?: string[];
   role: "user" | "dm";
   content: string;
+  /** DM lines only. */
+  turn_id?: string | null;
+  roll_status?: RollStatus | null;
+  roll?: RollRecord | null;
   created_at: string;
 }
 
@@ -384,6 +409,24 @@ export interface DebugTimings {
   [key: string]: number | undefined;
 }
 
+/**
+ * Developer view of one combat round (EDG-031). Stage timings are only those the round measured;
+ * a stage listed in `timings_unavailable` was not measured and must not be shown as zero.
+ */
+export interface CombatRoundDiagnostics {
+  turn_id: string | null;
+  round: number;
+  ended: boolean;
+  outcome: string | null;
+  actors: { id: string; name: string }[];
+  player_action: Record<string, unknown>;
+  outcomes: Record<string, unknown>[];
+  dispositions: Record<string, unknown>[];
+  dice_log: Record<string, unknown>[];
+  timings_ms: Record<string, number>;
+  timings_unavailable: string[];
+}
+
 /** Payload of the optional `debug` SSE event, emitted only when debug=true. */
 export interface DebugPayload {
   parsed_input: ParsedInput | null;
@@ -394,6 +437,8 @@ export interface DebugPayload {
   world_flags_in: Record<string, unknown>;
   combat_state: CombatState | null;
   timings_ms: DebugTimings;
+  /** Combat turns only; null for a non-combat turn. */
+  combat_diagnostics?: CombatRoundDiagnostics | null;
   model: string;
 }
 
@@ -429,4 +474,6 @@ export interface TurnResult {
   current_scene_id?: string | null;
   combat_state?: CombatState | null;
   campaign_complete?: boolean;
+  roll_status?: RollStatus | null;
+  roll?: RollRecord | null;
 }

@@ -7,9 +7,11 @@ import type {
   ChatMessageRead,
   CombatOutcome,
   DebugPayload,
+  RollStatus,
   TurnResult,
   SourceCitation,
 } from "../../api/types";
+import { adjudicationFromRoll } from "./rollText";
 
 interface BaseLine {
   id: string;
@@ -32,6 +34,8 @@ export interface DmLine extends BaseLine {
   adjudication?: AdjudicationResult | null;
   debug?: DebugPayload | null;
   combatOutcome?: CombatOutcome;
+  /** Reloaded turns only: whether the original roll was stored (EDG-030). */
+  rollStatus?: RollStatus;
   /** True for DM turns produced in this browser session (eligible for a dev panel). */
   isTurn?: boolean;
   /** Narration was cut off (stream ended early / stopped) and was not saved. */
@@ -94,12 +98,22 @@ export type TurnAction =
 export const initialTurnState: TurnState = { lines: [], pending: null, announcement: "" };
 
 export function linesFromHistory(msgs: ChatMessageRead[]): Line[] {
-  return msgs.map((m, i) =>
-    m.role === "user"
-      ? { id: `h${i}`, role: "user", content: m.content }
-      : // Past DM turns have no captured debug; the dev panel says so in dev mode.
-        { id: `h${i}`, role: "dm", content: m.content, citations: m.citations, ruling_citation_ids: m.ruling_citation_ids, isTurn: true },
-  );
+  return msgs.map((m, i) => {
+    if (m.role === "user") return { id: `h${i}`, role: "user", content: m.content };
+    // Reloaded DM turns get their stored ruling back (same card as live); no re-roll happens here.
+    // Legacy turns have no stored record: the card is withheld and the line says so.
+    const rollStatus: RollStatus = m.roll_status ?? "not_captured";
+    return {
+      id: `h${i}`,
+      role: "dm",
+      content: m.content,
+      citations: m.citations,
+      ruling_citation_ids: m.ruling_citation_ids,
+      adjudication: m.roll ? adjudicationFromRoll(m.roll) : null,
+      rollStatus,
+      isTurn: true,
+    };
+  });
 }
 
 const CAMPAIGN_ENDED_TEXT = "This campaign has ended. The adventure is complete.";

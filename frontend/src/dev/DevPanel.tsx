@@ -48,6 +48,12 @@ function KV({ k, v }: { k: string; v: ReactNode }) {
   );
 }
 
+/** A stage the turn did not measure is labelled, never shown as zero (EDG-031). */
+function timing(v: number | undefined): ReactNode {
+  if (v === undefined) return <span className="text-ink-subtle">unavailable</span>;
+  return mono(v);
+}
+
 function mono(v: unknown): ReactNode {
   if (v === null || v === undefined) return <span className="text-ink-subtle">—</span>;
   if (typeof v === "boolean") return v ? "true" : "false";
@@ -250,11 +256,11 @@ export function DevPanel({
 
       {debug ? (
         <Section title="Timings & model" defaultOpen={false}>
-          <KV k="parsing_ms" v={mono(timings.parsing_ms)} />
-          <KV k="retrieving_ms" v={mono(timings.retrieving_ms)} />
-          <KV k="adjudicating_ms" v={mono(timings.adjudicating_ms)} />
-          <KV k="narrating_ms" v={mono(timings.narrating_ms)} />
-          <KV k="total_ms" v={mono(timings.total_ms)} />
+          <KV k="parsing_ms" v={timing(timings.parsing_ms)} />
+          <KV k="retrieving_ms" v={timing(timings.retrieving_ms)} />
+          <KV k="adjudicating_ms" v={timing(timings.adjudicating_ms)} />
+          <KV k="narrating_ms" v={timing(timings.narrating_ms)} />
+          <KV k="total_ms" v={timing(timings.total_ms)} />
           <KV k="model" v={mono(debug.model)} />
         </Section>
       ) : null}

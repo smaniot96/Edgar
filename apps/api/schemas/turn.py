@@ -40,3 +40,8 @@ class TurnResponse(BaseModel):
     current_scene_id: str | None = None
     character: dict | None = None
     campaign_complete: bool = False
+    # Developer-only (debug requested and EDGAR_DEBUG=1); null otherwise. EDG-031.
+    combat_diagnostics: dict | None = None
+    # The turn's original roll (EDG-030), the same record the reload path returns. Null when no dice.
+    roll_status: str | None = None
+    roll: dict | None = None

@@ -163,15 +163,17 @@ def test_exact_creature_identity_and_record_are_preserved() -> None:
     exact = foe(
         "Goblin", hp=120, bonus=10, creature_id=record["creature_id"], source_reference=provenance
     )
-    out, _ = apply_solo_budget([exact], 1)
+    out, summary = apply_solo_budget([exact], 1)
     kept = out[0]
     assert kept["name"] == "Goblin"
     assert kept["creature_id"] == record["creature_id"]
     assert kept["source_reference"] == provenance
     assert "text" not in kept["source_reference"]
-    # Only the numeric stats the budget bounds changed.
-    changed = {k for k in exact if exact[k] != kept[k]}
-    assert changed == {"hp_max", "hp_current", "attack_bonus"}
+    # EDG-004: an exact record is never rescaled, so no numeric stat changed. The out-of-band
+    # values are declared as unscaled instead.
+    assert kept == exact
+    assert summary["adapted"] is False
+    assert any(n.startswith("unscaled exact creature: Goblin") for n in summary["notes"])
 
 
 # --- damage fitting ------------------------------------------------------------------------
@@ -207,7 +209,10 @@ def _built_state(level: int = 1) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_llm_roster_out_of_scale_is_fitted_at_level_one(fake_llm_schema, monkeypatch):
+async def test_llm_numbers_are_ignored_and_only_the_foe_count_is_limited(
+    fake_llm_schema, monkeypatch
+):
+    # EDG-004: the builder's numbers never apply to an exact record; the record's do (7 HP here).
     install_record(monkeypatch)
     _builder(
         fake_llm_schema,
@@ -217,8 +222,7 @@ async def test_llm_roster_out_of_scale_is_fitted_at_level_one(fake_llm_schema, m
     budget_summary: dict = {}
     roster = await _build_enemy_roster(_built_state(1), ["Goblin"], budget_summary=budget_summary)
     assert len(roster) == 2
-    assert all(5 <= e["hp_max"] <= 30 for e in roster)
-    assert roster[0]["attack_bonus"] == 5 and roster[0]["damage_dice"] == "1d4+2"
+    assert all(e["hp_max"] == 7 and e["ac"] == 15 for e in roster)
     assert [e["name"] for e in roster] == ["Goblin", "Goblin 2"]
     assert budget_summary["adapted"] is True
     assert any("left out" in n for n in budget_summary["notes"])
@@ -234,10 +238,8 @@ async def test_roster_respects_the_budget_of_each_hero_level(fake_llm_schema, mo
     budget = solo_budget(level)
     roster = await _build_enemy_roster(_built_state(level), ["Goblin"])
     assert 1 <= len(roster) <= budget.max_foes
-    assert sum(e["hp_max"] for e in roster) <= budget.total_hp
-    for e in roster:
-        assert budget.foe_hp[0] <= e["hp_max"] <= budget.boss_hp[1]
-        assert e["attack_bonus"] <= budget.attack_bonus_max
+    # Exact records keep their record numbers at every level; only the count is limited.
+    assert all(e["hp_max"] == 7 for e in roster)
 
 
 @pytest.mark.asyncio
@@ -248,17 +250,17 @@ async def test_exact_record_is_preserved_byte_for_byte_when_in_budget(fake_llm_s
     entry = roster[0]
     assert entry["creature_id"] == record["creature_id"]
     assert entry["source_reference"] == _creature_source_reference(record)
-    assert entry["name"] == "Goblin" and entry["hp_max"] == 8 and entry["ac"] == 13
+    assert entry["name"] == "Goblin" and entry["hp_max"] == 7 and entry["ac"] == 15
 
 
 @pytest.mark.asyncio
-async def test_generic_fallback_enemy_still_works_within_budget(fake_llm_schema, monkeypatch):
+async def test_builder_failure_uses_the_exact_record_not_defaults(fake_llm_schema, monkeypatch):
     install_record(monkeypatch)
-    # No EncounterSetup response: the builder call fails and the legacy fallback is used.
+    # No EncounterSetup response: the builder call fails. Each resolved foe still uses its record.
     budget_summary: dict = {}
     roster = await _build_enemy_roster(_built_state(1), ["Goblin"], budget_summary=budget_summary)
-    assert roster[0]["stat_adaptation"] == "legacy_solo_fallback"
-    assert roster[0]["hp_max"] == 9 and roster[0]["hp_current"] == 9
+    assert roster[0]["stat_adaptation"] == "exact_record"
+    assert roster[0]["hp_max"] == 7 and roster[0]["hp_current"] == 7
     assert budget_summary == {"level": 1, "adapted": False, "notes": []}
 
 

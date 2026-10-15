@@ -36,6 +36,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from agent.monster_stats import narrator_note
+
 Lethality = Literal["lethal", "nonlethal"]
 
 DISPOSITIONS: tuple[str, ...] = ("active", "unconscious", "captured", "dead", "defeated")
@@ -299,7 +301,7 @@ def narrator_roster(combatants: Iterable[Mapping[str, Any]], round_actors: Itera
     enemies = [c for c in combatants if not c.get("is_player")]
     lines = [
         f'- id "{stable_id(c)}", name "{display_name(c)}": {_STATUS_TEXT[disposition_of(c)]}'
-        f"{_effects_text(c)}"
+        f"{_effects_text(c)}{narrator_note(c)}"
         for c in enemies
     ]
     able = [display_name(c) for c in enemies if can_act(c)]
