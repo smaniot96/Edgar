@@ -9,11 +9,15 @@ Executed by the engine: armor class, hit points, the DEX modifier for initiative
 bonuses (a spell's save), the attacks listed under Actions (bonus, damage dice and damage type),
 a Multiattack trait whose counts are stated in its text, Regeneration with its stated amount and
 its acid/fire-style suppression clause, and resistances, immunities and vulnerabilities by damage
-type. The engine decides every roll.
+type (EDG-043). Also executed: the creature type (its size-and-type line, for humanoid-only spells),
+a poisoned rider on a hit whose wording is read exactly (`AttackRider`), and a Recharge X-6 attack
+(`MonsterAttack.recharge`), rolled at the start of the creature's turns once spent. The engine
+decides every roll.
 
 Declared, never implied: speed and movement, legendary, lair and reaction actions, spellcasting,
-recharge abilities, spell attacks, damage riders and every other trait. Each one is listed in
-`MonsterStats.declared` and shown in the combat start message and the roster.
+other recharge abilities (breath and area saves), spell attacks, other damage riders and every
+other trait. Each one is listed in `MonsterStats.declared` and shown in the combat start message
+and the roster.
 
 Parsing is conservative: when a clause cannot be read exactly it is declared rather than guessed.
 """
@@ -22,11 +26,11 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
-from tools.dice import parse_dice
+from tools.dice import DiceOutcome, parse_dice, roll
 
 ABILITIES = ("STR", "DEX", "CON", "INT", "WIS", "CHA")
 DAMAGE_TYPES = frozenset(
@@ -84,10 +88,40 @@ _REGEN_SUPPRESS = re.compile(
     re.IGNORECASE,
 )
 _SUPPRESS_MAGIC = ("silvered", "adamantine", "magical", "magic")
+# Size and type line ("Small humanoid (goblinoid), neutral evil"). Records may wrap it in markdown
+# underscores or asterisks. The size word is required, so a heading or a stat line never matches.
+_TYPE_LINE = re.compile(
+    r"^[_*\s]*(?:Tiny|Small|Medium|Large|Huge|Gargantuan)\s+([A-Za-z][A-Za-z-]*)\b", re.IGNORECASE
+)
+# The poisoned rider, exactly as the Monster Manual words it on a hit (EDG-043, see AttackRider).
+# Any other clause after the damage (extra damage, unconsciousness, a different condition) is not
+# matched, so the attack keeps its declared rider.
+_POISON_RIDER = re.compile(
+    r"^,?\s*and the target must (?:succeed on|make) a DC (\d+) Constitution saving throw or be "
+    r"poisoned for 1 minute\.\s*The target can repeat the saving throw at the end of each of its "
+    r"turns, ending the effect (?:on itself |on the target |on it )?on a success\.?\s*$",
+    re.IGNORECASE,
+)
+# "Recharge 5-6" (or "Recharge 6") in an ability name. Recharge after a rest is not a d6 recharge.
+_RECHARGE_NAME = re.compile(r"\s*\(Recharge\s*(?:([2-5])\s*[-–]\s*6|(6))\)\s*$", re.IGNORECASE)
 
 
 class MonsterStatsError(ValueError):
     """A creature record has no stat block the engine can read exactly."""
+
+
+@dataclass(frozen=True)
+class AttackRider:
+    """A condition the target of a hit must save against (EDG-043). Only exact wording is read.
+
+    `poisoned`: a Constitution save at `dc`, failure poisons the target for one minute, and the
+    target repeats the save at the end of each of its turns (the repeat ends the effect on success).
+    """
+
+    kind: str
+    dc: int
+    ability: str
+    duration_rounds: int
 
 
 @dataclass(frozen=True)
@@ -97,6 +131,8 @@ class MonsterAttack:
     damage_dice: str
     damage_type: str
     ranged: bool = False
+    recharge: int | None = None  # "Recharge N-6": the d6 result that restores the attack (N)
+    rider: AttackRider | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +147,20 @@ class DamageRule:
 class Regeneration:
     amount: int
     suppressed_by: tuple[str, ...] = ()
+
+
+def _attack_from(raw: Mapping[str, Any]) -> MonsterAttack:
+    """A stored attack. Rows written before riders and recharge existed read with neither."""
+    rider = raw.get("rider")
+    return MonsterAttack(
+        name=str(raw["name"]),
+        bonus=int(raw["bonus"]),
+        damage_dice=str(raw["damage_dice"]),
+        damage_type=str(raw["damage_type"]),
+        ranged=bool(raw.get("ranged", False)),
+        recharge=None if raw.get("recharge") is None else int(raw["recharge"]),
+        rider=None if not isinstance(rider, Mapping) else AttackRider(**rider),
+    )
 
 
 @dataclass(frozen=True)
@@ -128,6 +178,9 @@ class MonsterStats:
     immunities: tuple[DamageRule, ...] = ()
     vulnerabilities: tuple[DamageRule, ...] = ()
     declared: tuple[str, ...] = ()  # traits and actions the engine does not execute
+    creature_type: str | None = (
+        None  # "humanoid", "beast", ... from the type line; None when unread
+    )
 
     @property
     def initiative_bonus(self) -> int:
@@ -158,6 +211,7 @@ class MonsterStats:
             "immunities": [asdict(r) for r in self.immunities],
             "vulnerabilities": [asdict(r) for r in self.vulnerabilities],
             "declared": list(self.declared),
+            "creature_type": self.creature_type,
         }
 
     @classmethod
@@ -171,7 +225,8 @@ class MonsterStats:
                 speed=raw.get("speed"),
                 abilities={str(k): int(v) for k, v in dict(raw.get("abilities") or {}).items()},
                 saves={str(k): int(v) for k, v in dict(raw.get("saves") or {}).items()},
-                attacks=tuple(MonsterAttack(**a) for a in raw.get("attacks") or ()),
+                attacks=tuple(_attack_from(a) for a in raw.get("attacks") or ()),
+                creature_type=raw.get("creature_type"),
                 multiattack=tuple((str(n), int(c)) for n, c in raw.get("multiattack") or ()),
                 regeneration=None
                 if regen is None
@@ -283,9 +338,15 @@ def _attack(body: str, name: str) -> tuple[MonsterAttack | None, str | None]:
     expected = math.floor(parsed.count * (parsed.sides + 1) / 2 + parsed.modifier)
     if expected != int(average):
         return None, None  # the stated average must agree with the stated dice
-    rider = f"{name}: damage rider or extra effect not executed" if rest.strip(" .") else None
+    poison = _POISON_RIDER.match(rest)
+    if poison:
+        rider = AttackRider("poisoned", int(poison.group(1)), "CON", duration_rounds=10)
+        return MonsterAttack(
+            name, int(bonus), dice, damage_type, kind.lower() == "ranged", None, rider
+        ), None
+    declared = f"{name}: damage rider or extra effect not executed" if rest.strip(" .") else None
     attack = MonsterAttack(name, int(bonus), dice, damage_type, ranged=kind.lower() == "ranged")
-    return attack, rider
+    return attack, declared
 
 
 def _multiattack(
@@ -357,7 +418,24 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
     regeneration: Regeneration | None = None
     for entry_section, entry_name, body in entries:
         lowered = entry_name.lower()
-        if "recharge" in lowered:
+        recharge = _RECHARGE_NAME.search(entry_name)
+        if (
+            recharge
+            and entry_section == "actions"
+            and re.match(r"(?:Melee|Ranged) Weapon Attack:", body)
+        ):
+            # An attack that recharges (EDG-043): executed once its attack text reads exactly.
+            attack, rider = _attack(body, entry_name[: recharge.start()].strip())
+            if attack is None:
+                declared.append(
+                    f"{entry_name}: recharge ability not executed (attack text not exact)"
+                )
+            else:
+                n = int(recharge.group(1) or recharge.group(2))
+                attacks.append(replace(attack, recharge=n))
+                if rider:
+                    declared.append(rider)
+        elif "recharge" in lowered:
             declared.append(f"{entry_name}: recharge ability not executed")
         elif entry_section in ("legendary", "lair", "reactions", "bonus"):
             declared.append(f"{entry_name}: {entry_section} action not executed")
@@ -407,7 +485,19 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
         immunities=immunities,
         vulnerabilities=vulnerabilities,
         declared=tuple(declared),
+        creature_type=_creature_type(lines),
     )
+
+
+def _creature_type(lines: list[str]) -> str | None:
+    """The type word of the size-and-type line that precedes the armor class ("humanoid")."""
+    for line in lines[:4]:
+        if re.match(r"Armor Class\b", line, re.IGNORECASE):
+            break
+        match = _TYPE_LINE.match(line)
+        if match:
+            return match.group(1).lower()
+    return None
 
 
 # --------------------------------------------------------------------------------------------
@@ -439,12 +529,61 @@ def combat_fields(stats: MonsterStats) -> dict[str, Any]:
     }
 
 
-def attack_plan(stats: MonsterStats) -> tuple[MonsterAttack, ...]:
-    """Attacks this creature makes in one turn: every listed attack once per multiattack count."""
+def attack_plan(stats: MonsterStats, spent: Iterable[str] = ()) -> tuple[MonsterAttack, ...]:
+    """Attacks this creature makes in one turn: every listed attack once per multiattack count.
+
+    `spent` names recharge attacks used and not yet recharged: they are left out of the plan. Without
+    a multiattack, a ready recharge attack is used first (its use is then spent), else the first
+    attack that does not recharge.
+    """
+    spent_set = set(spent)
     if stats.multiattack:
         by_name = {a.name: a for a in stats.attacks}
-        return tuple(by_name[name] for name, count in stats.multiattack for _ in range(count))
-    return stats.attacks[:1]
+        return tuple(
+            by_name[name]
+            for name, count in stats.multiattack
+            for _ in range(count)
+            if by_name[name].recharge is None or name not in spent_set
+        )
+    ready = [a for a in stats.attacks if a.recharge is not None and a.name not in spent_set]
+    if ready:
+        return (ready[0],)
+    return tuple(a for a in stats.attacks if a.recharge is None)[:1]
+
+
+def recharge_turn_start(combatant: dict) -> list[tuple[str, DiceOutcome, bool]]:
+    """Roll the d6 for each spent recharge attack at the start of this creature's turn (EDG-043).
+
+    Returns (attack name, the engine's d6 roll, recharged) for each one rolled. A recharged attack
+    leaves the spent list; one that did not recharge stays spent.
+    """
+    stats = stats_of(combatant)
+    spent = [str(n) for n in combatant.get("recharge_spent") or ()]
+    if stats is None or not spent:
+        return []
+    results: list[tuple[str, DiceOutcome, bool]] = []
+    still: list[str] = []
+    for name in spent:
+        attack = next((a for a in stats.attacks if a.name == name and a.recharge is not None), None)
+        if attack is None:  # a stored name with no recharge attack behind it: nothing to restore
+            continue
+        outcome = roll("1d6")
+        recharged = outcome.total >= attack.recharge
+        results.append((name, outcome, recharged))
+        if not recharged:
+            still.append(name)
+    combatant["recharge_spent"] = still
+    return results
+
+
+def spend_recharge(combatant: dict, attack: MonsterAttack) -> None:
+    """Record that a recharge attack was used, so it waits for its recharge roll."""
+    if attack.recharge is None:
+        return
+    spent = [str(n) for n in combatant.get("recharge_spent") or ()]
+    if attack.name not in spent:
+        spent.append(attack.name)
+    combatant["recharge_spent"] = spent
 
 
 def regenerate(combatant: dict) -> tuple[int, str | None]:
@@ -539,6 +678,13 @@ def narrator_note(combatant: Mapping[str, Any]) -> str:
                 + " damage since its last turn"
             )
         parts.append(text)
+    spent = set(combatant.get("recharge_spent") or ())
+    for attack in stats.attacks:
+        if (
+            attack.recharge is not None
+        ):  # EDG-043: a recharge attack is ready or spent, by engine state
+            state = "spent until its d6 recharge" if attack.name in spent else "ready"
+            parts.append(f"{attack.name} recharges on {attack.recharge}-6 ({state})")
     return "".join(f"; {part}" for part in parts)
 
 
