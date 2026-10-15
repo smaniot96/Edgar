@@ -256,6 +256,31 @@ async def test_story_pickup_environment_reload_and_rejection(
     assert any(f["kind"] == "environment" for f in ledger["facts"])
     assert any(f["kind"] == "objective" and f["status"] == "completed" for f in ledger["facts"])
     assert all(f["player_text"] == PUBLIC for f in ledger["facts"])
+    # A later deliberate drop and pickup is a new occurrence of the same object, while
+    # retries/proposals that leave ownership unchanged never create another copy.
+    await turn([effect("transfer", "note", status="moved", destination="room")])
+    reacquired = await turn([pickup])
+    assert (
+        sum(
+            isinstance(i, dict) and i.get("story_object_id") == stable_id
+            for i in reacquired["character"]["inventory"]["items"]
+        )
+        == 1
+    )
+    await turn([effect("consume", "cord", status="consumed")])
+    await turn([effect("acquire", "cord", status="acquired")])
+    async with sm.async_session_factory() as db:
+        consumed_state = await load_story_state(db, sid)
+    assert (
+        len(
+            [
+                f
+                for f in consumed_state["facts"]
+                if f["kind"] == "acquire" and f["target"]["canonical_id"] == "cord"
+            ]
+        )
+        == 1
+    )
     restored = await api_client.get(f"/api/sessions/{sid}/messages")
     assert NOTE in restored.text
     assert SECRET not in restored.text

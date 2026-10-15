@@ -205,6 +205,7 @@ async def test_typed_object_consume_does_not_remove_second_same_name_item(db_ses
             "items": [{"name": "Spare cord", "story_object_id": "another-object"}, "Spare cord"]
         },
     )
+    ass.hp_current = 10
     adj = AdjudicationResult(
         success=True,
         accepted_story_effects=[accepted],
@@ -212,7 +213,7 @@ async def test_typed_object_consume_does_not_remove_second_same_name_item(db_ses
     )
     await apply_adjudication(db_session, sess, adj)
     assert len(ass.inventory["items"]) == 2
-    assert ass.hp_current == 20
+    assert ass.hp_current == 12
 
 
 @pytest.mark.asyncio

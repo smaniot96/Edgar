@@ -158,6 +158,8 @@ async def persist_turn(
                     )
                 ).scalar_one_or_none()
                 if receipt is not None:
+                    if (receipt.payload or {}).get("player_input") != body_message:
+                        raise ValueError("Turn identity was reused for a different action")
                     saved = (receipt.payload or {}).get("done")
                     if saved is None:
                         raise RuntimeError("Incomplete turn receipt")
@@ -250,9 +252,7 @@ async def persist_turn(
                     ),
                     {**result, "character": current_character, "story_state": current_story},
                 )
-                if [e.effect_id for e in checked.accepted_story_effects] != [
-                    e.effect_id for e in effects
-                ]:
+                if checked.accepted_story_effects != effects:
                     raise ValueError("Story consequences no longer validate")
                 # Validate against current committed ownership before any legacy writes.
                 await apply_story_inventory(
