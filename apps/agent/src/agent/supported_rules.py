@@ -19,6 +19,13 @@ Runtime enforcement uses the same vocabulary:
   * `apply_narration_boundary` removes narration sentences that claim an unsupported effect and
     appends the ruling, so a fake or misbehaving provider cannot present one as executed.
 
+The engine-executed facts of a turn travel as one `EngineApplied` value, built once from the
+state by `engine_applied_for_state`. Adding a new engine-executed fact means:
+  1. a typed effect: the combat round records its id in `engine_effects`, and its claim is
+     exempted where it is matched (`_claim_words`, `_claim_pattern`, `_executed_economy_phrase`);
+     or a new fact: add one field to `EngineApplied` and read it in `engine_applied_for_state`;
+  2. nothing else: do not add a keyword argument to the classification or boundary functions.
+
 Engine-owned dice and numbers are unchanged: this module never rolls and never sets a number.
 """
 
@@ -87,8 +94,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "d20 plus the ability modifier, plus the proficiency bonus when the sheet (or the "
             "class default) makes the skill, save or tool proficient, against a DC of 10 (easy), "
-            "15 (medium, default), 20 (hard) or 25 (very hard). Advantage and disadvantage apply "
-            "only from engine-owned sources (see advantage_disadvantage)."
+            "15 (medium, default), 20 (hard) or 25 (very hard), the PHB and DMG typical DCs for "
+            "those tiers; the very easy (5) and nearly impossible (30) DCs are not offered as tiers. "
+            "Advantage and disadvantage apply only from engine-owned sources (see "
+            "advantage_disadvantage)."
         ),
         implementation="agent.resolution:resolve_check",
         test="tests/agent/test_supported_rules.py::test_supported_d20_checks_use_dc_tiers",
@@ -139,8 +148,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="armor_class",
         title="Armor class from armor, DEX and shield",
         scope=(
-            "AC from the armor table, DEX modifier as capped by the armor type, plus 2 for a "
-            "shield; unarmored characters use 10 plus DEX. Armor is matched by name."
+            "AC from the armor table (PHB, 2014), DEX modifier as capped by the armor type (medium "
+            "armor at most +2), plus 2 for a shield. Unarmored characters use 10 plus DEX, except a "
+            "barbarian (10 plus DEX plus CON, a shield still counts) and a monk without a shield (10 "
+            "plus DEX plus WIS). Armor is matched by name; heavy-armor Strength requirements and "
+            "stealth are not applied."
         ),
         implementation="agent.graph_combat:_player_ac",
         test="tests/agent/test_supported_rules.py::test_supported_armor_class_from_table",
@@ -168,7 +180,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="second_wind",
         title="Fighter Second Wind (one use, restored by rests)",
         scope=(
-            "Fighter only, one use. The player's action spends it, in or out of combat: the engine "
+            "Fighter only, one use (PHB, 2014, PDF p.73). The player's action spends it, in or out of combat: the engine "
             "rolls 1d10 plus fighter level and caps the result at max HP. A request with no use left "
             "is refused without a roll. Uses are stored on the character sheet, so they carry over "
             "between encounters, and a short or long rest restores the use. There is no automatic "
@@ -184,8 +196,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="class_feature_action_surge",
         title="Fighter Action Surge (one more attack, restored by rests)",
         scope=(
-            "Fighter level 2 and up; one use, or two from level 17. Declared with an attack on a foe "
-            "in combat, a use adds one more weapon attack against that foe in the same round, with its "
+            "Fighter level 2 and up; one use, or two from level 17 (PHB, PDF p.72-73: the book grants "
+            "one additional action, and the engine executes only an extra weapon attack). Declared "
+            "with an attack on a foe in combat, a use adds one more weapon attack against that foe in "
+            "the same round, with its "
             "own engine roll and damage. A request with no use left, or with no attack, is refused "
             "without a roll and spends nothing. Uses are stored on the character sheet, and a short or "
             "long rest restores them. Outside combat it has no effect."
@@ -198,9 +212,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         title="Rogue Sneak Attack (once per turn, with engine advantage)",
         scope=(
             "Rogue. A hit with a finesse or ranged weapon, on an attack that has advantage from an "
-            "engine source (see advantage_disadvantage), adds 1d6 per two rogue levels, rounded up, "
-            "once per turn. A critical hit doubles these dice. The ally-adjacent condition is not "
-            "tracked, so an attack without advantage gets no Sneak Attack. It has no uses to restore."
+            "engine source (see advantage_disadvantage), adds 1d6 per two rogue levels, rounded up "
+            "(PHB, 2014, PDF p.96), once per turn. A critical hit doubles these dice. The book's other "
+            "trigger, an ally within 5 feet of the target that is not incapacitated, is not tracked, "
+            "so an attack without engine advantage gets no Sneak Attack. It has no uses to restore."
         ),
         implementation="agent.class_features:sneak_attack_roll",
         test=(
@@ -212,8 +227,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="class_feature_rage",
         title="Barbarian Rage (damage bonus; uses restored by a long rest)",
         scope=(
-            "Barbarian. Uses per long rest: 2 at level 1, 3 at level 3, 4 at level 6, 5 at level 12 and "
-            "6 at level 17. Declared in combat, rage starts without using the round's attack (bonus "
+            "Barbarian (PHB, PDF pp.48-49). Uses per long rest: 2 at level 1, 3 at level 3, 4 at level 6, "
+            "5 at level 12 and 6 at level 17. Declared in combat, rage starts without using the round's attack (bonus "
             "actions are not tracked) and adds +2 damage, or +3 from level 9 and +4 from level 16, to each "
             "hit with a melee weapon attack that uses Strength. It lasts until the encounter ends; the "
             "1-minute limit is not tracked. A long rest restores uses; a short rest does not. Damage "
@@ -296,9 +311,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum, every "
             "expended spell slot, a fighter's Second Wind and Action Surge uses, and a barbarian's "
-            "Rage uses. It also regains half the character's level in spent Hit Dice, minimum one. "
-            "2024 campaigns follow the same Hit Dice rule in this engine. No other long-rest "
-            "resource is reset by the engine."
+            "Rage uses. It also regains spent Hit Dice up to half the character's total, rounded "
+            "down (PHB, 2014, PDF p.187), so a level-1 character regains none. 2024 campaigns follow "
+            "the same Hit Dice rule in this engine. The book's minimum rest length, the once-per-24-hour "
+            "limit and the at-least-1-HP start condition are not checked. No other long-rest resource "
+            "is reset by the engine."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_long_rest_restores_hp",
@@ -308,8 +325,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         title="Short rest healing spends one Hit Die",
         scope=(
             "A short rest (rest-for-an-hour wording) spends one Hit Die of the class and rolls it "
-            "plus the CON modifier, minimum 1 HP, healing no more than the missing HP. With no Hit "
-            "Dice left it is refused: nothing is rolled and nothing is healed until a long rest. A "
+            "plus the CON modifier; the character regains that total (PHB, 2014, PDF p.187; no "
+            "minimum), capped at the missing HP. With no Hit Dice left it is refused: nothing is "
+            "rolled and nothing is healed until a long rest. The rules allow one or more dice; a "
             "declared count of Hit Dice is not parsed, so one die is spent. A short rest also "
             "restores a fighter's Second Wind and Action Surge uses."
         ),
@@ -320,9 +338,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="hit_dice",
         title="Hit Dice ledger on the character sheet",
         scope=(
-            "Each character has Hit Dice equal to its level, of the class die (d6 sorcerer or "
-            "wizard, d8 bard, cleric, druid, monk, rogue, warlock or artificer, d10 fighter, "
-            "paladin or ranger, d12 barbarian). The spent count is an engine-owned sheet resource, "
+            "Each character has Hit Dice equal to its level, of the class die (PHB class table: d6 "
+            "sorcerer or wizard, d8 bard, cleric, druid, monk, rogue or warlock, d10 fighter, paladin "
+            "or ranger, d12 barbarian; the artificer's d8 is not in the local 2014 books). The spent "
+            "count is an engine-owned sheet resource, "
             "shown with the remaining count after each rest. A manual sheet edit cannot change it."
         ),
         implementation="agent.resolution:hit_dice_status",
@@ -371,8 +390,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "the player's AC; a hit rolls the record's damage dice, and a natural 20 doubles them. A "
             "Multiattack trait whose counts are stated in its text makes one attack roll per listed "
             "attack in a round. Without a readable Multiattack, the first listed attack is made and "
-            "the trait is declared. Damage riders, spell attacks and recharge abilities are declared, "
-            "not executed."
+            "the trait is declared. Damage riders, spell attacks, recharge abilities and a "
+            "Multiattack's disadvantage on a later attack are declared, not executed."
         ),
         implementation="agent.monster_stats:attack_plan",
         test="tests/agent/test_monster_stats.py::test_multiattack_rolls_one_attack_per_listed_attack",
@@ -400,8 +419,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "Player damage to an exact creature takes the damage type of the engine weapon (standard "
             "weapon table) or of the catalog spell. Resistance halves it, immunity blocks it and "
             "vulnerability doubles it. A resistance written for nonmagical attacks applies to "
-            "weapons, not to spells. When the damage type is unknown no rule applies, and the round "
-            "says so."
+            'weapons, not to spells. A "nonmagical" resistance that also excludes silvered or '
+            "adamantine weapons is applied as written for the hero's plain weapons, and the exception "
+            "is declared. When the damage type is unknown no rule applies, and the round says so."
         ),
         implementation="agent.monster_stats:adjust_monster_damage",
         test=(
@@ -416,7 +436,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "In combat, against one foe, with rope or bare hands. The player's Athletics check is "
             "contested by the foe's Dexterity check (Acrobatics without proficiency); the higher "
             "total wins and a tie fails. Success restrains a grappled or pinned foe: its attacks have "
-            "disadvantage and attacks against it have advantage. Success on a shove prone knocks the "
+            "disadvantage, attacks against it have advantage and its Dexterity saves (a spell's, such as "
+            "Sacred Flame's) have disadvantage. Success on a shove prone knocks the "
             "foe prone: its attacks have disadvantage, and melee attacks against it have advantage "
             "while ranged attacks have disadvantage. The maneuver replaces that turn's attack. A "
             "restraint ends when the player declares a release, when the foe is defeated, or when the "
@@ -428,19 +449,52 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="action_economy",
-        title="Action, bonus action and Dodge in one player turn",
+        title="Action, bonus action, Dodge, Dash and Disengage in one player turn",
         scope=(
             "Each player turn has one action and one bonus action. The engine classifies every "
             "declared action from a fixed table: attack, contested maneuver, item use, a catalog "
-            "action spell and Dodge use the action; Second Wind and Healing Word use the bonus "
-            "action. A second action, or a second bonus action, in the same turn is refused with no "
-            "roll and no round. Dodge gives attacks against the hero disadvantage until the hero's "
-            "next turn begins. The turn's spending is shown in the combat HUD and the narration "
-            "context. Dash, Disengage, Help, reactions, opportunity attacks and movement are not "
-            "modelled."
+            "action spell, Dodge, Dash and Disengage use the action; Second Wind and Healing Word use "
+            "the bonus action. A second action, or a second bonus action, in the same turn is refused "
+            "with no roll and no round. Dodge (PHB, PDF p.193) gives attacks against the hero "
+            "disadvantage until the hero's next turn begins. The book's other two Dodge effects are "
+            "not applied: the attacker must be seen for the disadvantage, and Dexterity saves get "
+            "advantage. No engine effect rolls a save for the hero, and sight is not tracked. Dash "
+            "allows a second move in the turn and Disengage stops the opportunity attacks that moves "
+            "would provoke (see positioning). The turn's spending is shown in the combat HUD and the "
+            "narration context. Help is not modelled."
         ),
         implementation="agent.action_economy:refusal_for",
         test="tests/agent/test_action_economy.py::test_second_action_is_refused_before_any_roll",
+    ),
+    Mechanic(
+        id="positioning",
+        title="Coarse positioning: melee or ranged band, and one move per turn (Dash for two)",
+        scope=(
+            "Each foe stands within 5 feet of the hero (melee) or beyond it (ranged). A foe starts "
+            "at range only when every attack its record lists is ranged; otherwise it starts in melee. "
+            "The hero moves by declaration ('I close in on the archer', 'I back away'), which is free "
+            "and is not an action: one band change per turn at normal speed, and two with the Dash "
+            "action. A ranged-only foe at range stays there; a melee-only foe at range closes in on its "
+            "turn and then attacks. A melee-only attack or grapple cannot reach a foe at range and is "
+            "refused with no roll. A ranged attack made within 5 feet of a foe has disadvantage. The "
+            "bands are shown in the combat HUD and the narration context; rows from before this rule "
+            "carry no band and are not rewritten. Exact distances are not tracked."
+        ),
+        implementation="agent.positioning:plan_moves",
+        test="tests/agent/test_positioning.py::test_hero_moves_one_band_per_turn_and_dash_allows_two",
+    ),
+    Mechanic(
+        id="opportunity_attacks",
+        title="Opportunity attacks (the reaction): leaving a foe's melee reach",
+        scope=(
+            "When the hero moves from a foe's melee band to range without the Disengage action, that "
+            "foe may make one melee attack against the hero with its reaction: the record's first melee "
+            "attack, rolled and damaged by the engine. A creature has one reaction per round, which comes "
+            "back at the start of its own turn. A foe with no melee attack makes none. No other reaction "
+            "is executed."
+        ),
+        implementation="agent.graph_combat:combat_round_node",
+        test="tests/agent/test_positioning.py::test_leaving_melee_provokes_one_opportunity_attack",
     ),
     Mechanic(
         id="captive_lifecycle",
@@ -494,17 +548,20 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="positioning_cover",
-        title="Positioning, cover, high ground and flanking",
-        boundary="No cover, elevation or flanking modifier is applied and no position is tracked.",
+        title="Cover, high ground, flanking, difficult terrain and exact distances",
+        boundary=(
+            "No cover, elevation, flanking or difficult-terrain modifier is applied. Only the melee and "
+            "ranged bands are recorded: no exact distance in feet is tracked and no movement speed is spent."
+        ),
         owner="EDG-044",
     ),
     UnsupportedMechanic(
         id="action_economy_remainder",
-        title="Dash, Disengage, Help, reactions, opportunity attacks and other bonus actions",
+        title="Help, reactions other than opportunity attacks, and other bonus actions",
         boundary=(
             "Each turn allows one action and one bonus action, and only Second Wind and Healing Word "
-            "use the bonus action. Dash, Disengage, Help, reactions, opportunity attacks and any other "
-            "bonus action have no engine effect and no movement is tracked."
+            "use the bonus action. Help, any reaction other than an opportunity attack, and any other "
+            "bonus action have no engine effect."
         ),
         owner="EDG-044",
     ),
@@ -608,12 +665,12 @@ _RULINGS = {
         "roll uses the plain d20 and the sheet modifier."
     ),
     ACTION_ECONOMY: (
-        "Narrative ruling: this action is not modelled. Dash, Disengage, Help, reactions, opportunity "
-        "attacks and other bonus actions have no engine effect."
+        "Narrative ruling: this action is not modelled. Help, reactions other than opportunity attacks "
+        "and other bonus actions have no engine effect."
     ),
     POSITIONING: (
-        "Narrative ruling: positioning is not tracked. Cover, high ground and flanking give no "
-        "modifier and no position is recorded."
+        "Narrative ruling: cover, high ground, flanking and difficult terrain are not modelled. They "
+        "give no modifier, and no position beyond the melee and ranged bands is recorded."
     ),
 }
 
@@ -637,10 +694,17 @@ _OTHER_CONDITION_CLAIMS = (
 )
 _BONUS_ACTION_CLAIM = r"bonus[\s-]+action"
 _DODGE_CLAIM = r"dodg\w*"
-_ACTION_ECONOMY_CLAIM = (
-    r"\b(?:(?:dash|disengage|help)\s+action|" + _BONUS_ACTION_CLAIM + r"|opportunity\s+attacks?|"
-    r"" + _DODGE_CLAIM + r"|disengag\w*)\b"
+# Each economy phrase, keyed by the typed effect the engine records when it executes it. Help has no
+# effect in this engine, so its phrase is always a claim.
+_ECONOMY_PARTS = (
+    ("dodge", _DODGE_CLAIM),
+    ("bonus_action", _BONUS_ACTION_CLAIM),
+    ("dash", r"dash\s+action"),
+    ("disengage", r"disengag\w*"),
+    ("opportunity_attack", r"opportunity\s+attacks?"),
+    ("help", r"help\s+action"),
 )
+_ACTION_ECONOMY_CLAIM = r"\b(?:" + "|".join(p for _, p in _ECONOMY_PARTS) + r")\b"
 _UNSUPPORTED_FEATURE = re.compile(r"\b(?:" + _FEATURE_NAMES + r")\b", re.IGNORECASE)
 # A shove or pin aimed at an inanimate object ("shove the table against the door") is not a combat
 # maneuver, so the object is excluded by lookahead.
@@ -841,10 +905,10 @@ def parsed_feature_name(parsed: Any) -> str | None:
     return name or None
 
 
-def _engine_applied_maneuver(text: str, engine_effects: tuple[str, ...]) -> bool:
+def _engine_applied_maneuver(text: str, applied: EngineApplied) -> bool:
     """True when the declared maneuver is a supported one whose effect the engine applied."""
     maneuver = classify_combat_maneuver(text)
-    return maneuver is not None and maneuver.kind in engine_effects
+    return maneuver is not None and maneuver.kind in applied.effects
 
 
 # Spell conditions the executed spell records on a foe; when the engine recorded none, the narrated
@@ -854,10 +918,36 @@ _CONDITION_RECORDED = frozenset({"blinded"})
 ENGINE_ROLL_MODE_KEY = "engine_roll_mode"
 
 
-def engine_roll_mode(state: dict[str, Any] | None) -> str:
-    """The roll mode the engine applied this turn ("normal" when none or unknown)."""
-    mode = (state or {}).get(ENGINE_ROLL_MODE_KEY)
-    return mode if mode in ("advantage", "disadvantage") else "normal"
+@dataclass(frozen=True)
+class EngineApplied:
+    """What the engine really executed this turn. The boundary reads this, never LLM text.
+
+    `roll_mode` is the advantage or disadvantage the engine applied ("normal" when none).
+    `effects` are the typed effect ids the combat round recorded this turn. `executed_spell` is
+    True when a catalog spell is executed (no refusal). See the module docstring for how to add one.
+    """
+
+    roll_mode: str = "normal"
+    effects: tuple[str, ...] = ()
+    executed_spell: bool = False
+
+
+def engine_applied_for_state(state: dict[str, Any] | None) -> EngineApplied:
+    """The engine-applied facts recorded in this turn's state (missing or unknown: none).
+
+    `engine_effects` is recorded by the combat round; the executed spell is derived from the
+    player's cast request, which the engine executes unless the character cannot cast it.
+    """
+    state = state or {}
+    mode = state.get(ENGINE_ROLL_MODE_KEY)
+    request = cast_request(
+        state.get("player_input"), state.get("parsed_input"), state.get("character")
+    )
+    return EngineApplied(
+        roll_mode=mode if mode in ("advantage", "disadvantage") else "normal",
+        effects=tuple(str(kind) for kind in (state.get("engine_effects") or ())),
+        executed_spell=request is not None and request[2] is None,
+    )
 
 
 def classify_unsupported_actions(
@@ -865,8 +955,7 @@ def classify_unsupported_actions(
     parsed: Any = None,
     character: dict | None = None,
     *,
-    engine_roll_mode: str = "normal",
-    engine_effects: tuple[str, ...] = (),
+    applied: EngineApplied = EngineApplied(),
 ) -> tuple[UnsupportedAction, ...]:
     """Deterministic classification of the declared action against the unsupported list.
 
@@ -874,13 +963,14 @@ def classify_unsupported_actions(
     A declared catalog spell that the character can cast is executed by the engine and is not
     listed; a catalog spell that is refused (no access, no slot) is listed with that refusal as
     its ruling. Any other declared spell, and a spell attack proposed by the parser, is listed.
-    When the engine applied advantage or disadvantage this turn, an advantage wording describes a
-    real effect and is not an unsupported action. `engine_effects` are the typed effects the
-    engine applied this turn (EDG-021): a supported maneuver that really applied one is not
-    unsupported, so its narration is not stripped.
+    When the engine applied advantage or disadvantage this turn (`applied.roll_mode`), an advantage
+    wording describes a real effect and is not an unsupported action. `applied.effects` are the
+    typed effects the engine applied this turn (EDG-021): a supported maneuver that really applied
+    one is not unsupported, so its narration is not stripped.
     """
     text = str(player_input or "")
     scan = _IDIOM.sub(" ", text)
+    effects = applied.effects
     found: dict[str, UnsupportedAction] = {}
     request = cast_request(text, parsed, character)
     if request is not None:
@@ -889,7 +979,7 @@ def classify_unsupported_actions(
             found[SPELL] = UnsupportedAction(
                 SPELL, spell.name.lower(), f"Narrative ruling: {refusal}"
             )
-        elif spell.condition in _CONDITION_RECORDED and spell.condition not in engine_effects:
+        elif spell.condition in _CONDITION_RECORDED and spell.condition not in effects:
             # The executed spell recorded no condition (the save succeeded, or no foe was in the
             # fight): a narrated blindness would be a claim without an engine effect, so it is ruled on.
             found[CONDITION] = UnsupportedAction(
@@ -903,8 +993,8 @@ def classify_unsupported_actions(
     # Implemented class features (EDG-145) the engine executed this turn are not declared. Any
     # other declared one (refused, or not applied this turn) gets its own ruling.
     class_features = requested_features(scan, parsed_feature_name(parsed))
-    phrases = [f.replace("_", " ") for f in class_features if f not in engine_effects]
-    rulings = [feature_ruling(f, character) for f in class_features if f not in engine_effects]
+    phrases = [f.replace("_", " ") for f in class_features if f not in effects]
+    rulings = [feature_ruling(f, character) for f in class_features if f not in effects]
     unsupported = _UNSUPPORTED_FEATURE.search(scan)
     feature = unsupported.group(0) if unsupported else _parsed_feature(parsed)
     if feature:
@@ -922,9 +1012,9 @@ def classify_unsupported_actions(
             and not _UNCOVERED_SPELL.search(text)
         ):
             continue  # the executed catalog spell; its casting words are not a declared spell
-        if kind == ADVANTAGE and engine_roll_mode != "normal":
+        if kind == ADVANTAGE and applied.roll_mode != "normal":
             continue
-        if kind == CONDITION and "blinded" in engine_effects:
+        if kind == CONDITION and "blinded" in effects:
             pattern = _TEXT_CONDITION_OTHER  # the engine blinded a foe: that word is not a claim
         if kind in found:
             continue
@@ -932,22 +1022,22 @@ def classify_unsupported_actions(
             (
                 m
                 for m in pattern.finditer(scan)
-                if not _executed_economy_phrase(kind, m.group(0), engine_effects, text)
+                if not _executed_economy_phrase(kind, m.group(0), applied, text)
             ),
             None,
         )
         if not match:
             continue
-        if kind == MANEUVER and _engine_applied_maneuver(text, engine_effects):
+        if kind == MANEUVER and _engine_applied_maneuver(text, applied):
             continue
         found[kind] = UnsupportedAction(kind, match.group(0).lower()[:60])
-    economy = _parsed_economy(parsed, text, engine_effects)
+    economy = _parsed_economy(parsed, text, applied)
     if ACTION_ECONOMY not in found and economy:
         found[ACTION_ECONOMY] = UnsupportedAction(ACTION_ECONOMY, economy)
     return tuple(found[kind] for kind in _KIND_ORDER if kind in found)
 
 
-def _parsed_economy(parsed: Any, text: str, engine_effects: tuple[str, ...]) -> str | None:
+def _parsed_economy(parsed: Any, text: str, applied: EngineApplied) -> str | None:
     """A combat action the parser named (Dash, Disengage...) that the engine does not model.
 
     Read only in combat (the economy slots are combat rules), and never for an action the engine
@@ -960,38 +1050,37 @@ def _parsed_economy(parsed: Any, text: str, engine_effects: tuple[str, ...]) -> 
     if not action or re.search(r"dodg", action, re.IGNORECASE):
         return None
     if not _PARSED_ECONOMY.search(action) or _executed_economy_phrase(
-        ACTION_ECONOMY, action, engine_effects, text
+        ACTION_ECONOMY, action, applied, text
     ):
         return None
     return action.lower()[:60]
 
 
 def _executed_economy_phrase(
-    kind: str, phrase: str, engine_effects: tuple[str, ...], text: str = ""
+    kind: str, phrase: str, applied: EngineApplied, text: str = ""
 ) -> bool:
     """True when the phrase names an action economy slot the engine executed this turn.
 
-    A Dodge (`dodge` effect) and a bonus action Second Wind or Healing Word (`bonus_action`) are
-    supported, so their wording describes a real effect and is neither declared nor stripped. A
-    declared "bonus action" is that executed one only when the player also names Second Wind or
-    Healing Word; "use my bonus action to hide" stays unsupported beside a Second Wind.
+    A Dodge (`dodge` effect), Dash, Disengage and an opportunity attack are supported, so their
+    wording describes a real effect and is neither declared nor stripped. A declared "bonus action"
+    is that executed one only when the player also names Second Wind or Healing Word; "use my bonus
+    action to hide" stays unsupported beside a Second Wind.
     """
     if kind != ACTION_ECONOMY:
         return False
     word = phrase.lower()
-    if "dodge" in engine_effects and word.startswith("dodg"):
+    if "dodge" in applied.effects and word.startswith("dodg"):
         return True
-    if "bonus_action" in engine_effects and word.startswith("bonus"):
+    if "bonus_action" in applied.effects and word.startswith("bonus"):
         return bool(_EXECUTED_BONUS_SPELL_OR_FEATURE.search(text))
-    return False
+    if "dash" in applied.effects and word.startswith("dash"):
+        return True
+    if "disengage" in applied.effects and word.startswith("disengag"):
+        return True
+    return "opportunity_attack" in applied.effects and word.startswith("opportunity")
 
 
 _EXECUTED_BONUS_SPELL_OR_FEATURE = re.compile(r"second\s+wind|healing\s+word", re.IGNORECASE)
-
-
-def engine_effects_for_state(state: dict[str, Any]) -> tuple[str, ...]:
-    """Typed effects the engine applied in this turn, as recorded by the combat round."""
-    return tuple(str(kind) for kind in (state.get("engine_effects") or ()))
 
 
 def actions_for_state(state: dict[str, Any]) -> tuple[UnsupportedAction, ...]:
@@ -999,17 +1088,8 @@ def actions_for_state(state: dict[str, Any]) -> tuple[UnsupportedAction, ...]:
         state.get("player_input"),
         state.get("parsed_input"),
         state.get("character"),
-        engine_roll_mode=engine_roll_mode(state),
-        engine_effects=engine_effects_for_state(state),
+        applied=engine_applied_for_state(state),
     )
-
-
-def executed_spell_for_state(state: dict[str, Any]) -> bool:
-    """True when this turn casts a catalog spell the engine executes (no refusal)."""
-    request = cast_request(
-        state.get("player_input"), state.get("parsed_input"), state.get("character")
-    )
-    return request is not None and request[2] is None
 
 
 def has_declared_spell(actions: tuple[UnsupportedAction, ...]) -> bool:
@@ -1049,28 +1129,18 @@ def boundary_prompt_block(actions: tuple[UnsupportedAction, ...]) -> str | None:
 # --------------------------------------------------------------------------------------------
 
 
-def _claim_words(engine_effects: tuple[str, ...]) -> dict[str, str]:
+def _claim_words(applied: EngineApplied) -> dict[str, str]:
     """The claim vocabulary, minus the action economy phrases the engine executed this turn."""
     words = dict(_CLAIM_WORDS)
-    executed = [
-        claim
-        for effect, claim in (("dodge", _DODGE_CLAIM), ("bonus_action", _BONUS_ACTION_CLAIM))
-        if effect in engine_effects
-    ]
-    if executed:
-        # Only the claims the engine did not execute remain (Dash, Disengage, opportunity attacks).
-        words[ACTION_ECONOMY] = (
-            r"\b(?:(?:dash|disengage|help)\s+action|opportunity\s+attacks?|disengag\w*)\b"
-        )
+    remaining = [claim for effect, claim in _ECONOMY_PARTS if effect not in applied.effects]
+    if len(remaining) < len(_ECONOMY_PARTS):
+        # Only the claims the engine did not execute remain (Help always does).
+        words[ACTION_ECONOMY] = r"\b(?:" + "|".join(remaining) + r")\b"
     return words
 
 
 def _claim_pattern(
-    actions: tuple[UnsupportedAction, ...],
-    *,
-    engine_roll_mode: str = "normal",
-    executed_spell: bool = False,
-    engine_effects: tuple[str, ...] = (),
+    actions: tuple[UnsupportedAction, ...], applied: EngineApplied = EngineApplied()
 ) -> re.Pattern[str] | None:
     """Claims of every unsupported mechanic, once any unsupported action is declared.
 
@@ -1079,25 +1149,25 @@ def _claim_pattern(
     narrator nor a flag can be trusted to name its own mechanic. Three exceptions describe engine
     facts: a catalog spell the engine executed (its name, dice and slots), an advantage or
     disadvantage the engine applied this turn, a restraint or prone effect really applied, and an
-    implemented class feature the engine executed (`engine_effects`, EDG-145); those claims are not
-    applied to that turn's text.
+    implemented class feature the engine executed (`applied.effects`, EDG-145); those claims are
+    not applied to that turn's text.
     """
     if not actions:
         return None
-    maneuver_applied = bool({"restrained", "prone"} & set(engine_effects))
+    maneuver_applied = bool({"restrained", "prone"} & set(applied.effects))
     patterns = []
-    for kind, p in _claim_words(engine_effects).items():
-        if executed_spell and kind == SPELL:
+    for kind, p in _claim_words(applied).items():
+        if applied.executed_spell and kind == SPELL:
             continue
-        if kind == ADVANTAGE and engine_roll_mode != "normal":
+        if kind == ADVANTAGE and applied.roll_mode != "normal":
             continue
         if kind == MANEUVER and maneuver_applied:
             continue
-        if kind == CONDITION and "blinded" in engine_effects:
+        if kind == CONDITION and "blinded" in applied.effects:
             p = _OTHER_CONDITION_CLAIMS  # the engine's blinded is real; other conditions still ruled
         patterns.append(p)
     # An implemented class feature is a claim only while the engine has not executed it this turn.
-    executed = set(engine_effects) & FEATURE_EFFECTS
+    executed = set(applied.effects) & FEATURE_EFFECTS
     patterns += [NARRATION_CLAIMS[f] for f in IMPLEMENTED_FEATURES if f not in executed]
     if not patterns:
         return None
@@ -1108,16 +1178,14 @@ def apply_adjudication_boundary(
     adj: Any,
     actions: tuple[UnsupportedAction, ...],
     *,
-    engine_roll_mode: str = "normal",
-    executed_spell: bool = False,
-    engine_effects: tuple[str, ...] = (),
+    applied: EngineApplied = EngineApplied(),
 ) -> None:
     """Remove LLM-proposed effects that claim an unsupported mechanic. Mutates `adj`.
 
     Conditions are never stored for an unsupported turn. Damage is removed for spell, feature and
     maneuver turns because the engine has no verified effect for them. Flags whose key or value
     claims an unsupported effect are dropped. The ruling is stated in the mechanical summary.
-    `executed_spell` marks a turn whose catalog spell the engine executes (see `_claim_pattern`).
+    `applied` holds the facts the engine executed this turn (see `_claim_pattern`).
     """
     if not actions:
         return
@@ -1131,12 +1199,7 @@ def apply_adjudication_boundary(
             cu.damage_dice = None
     if kinds & {SPELL, FEATURE, MANEUVER}:
         adj.damage = None
-    claim = _claim_pattern(
-        actions,
-        engine_roll_mode=engine_roll_mode,
-        executed_spell=executed_spell,
-        engine_effects=engine_effects,
-    )
+    claim = _claim_pattern(actions, applied)
     if claim is not None:
         adj.flags_set = [
             fu
@@ -1201,9 +1264,7 @@ def apply_narration_boundary(
     narration: str,
     actions: tuple[UnsupportedAction, ...],
     *,
-    engine_roll_mode: str = "normal",
-    executed_spell: bool = False,
-    engine_effects: tuple[str, ...] = (),
+    applied: EngineApplied = EngineApplied(),
 ) -> str:
     """Drop narration sentences that claim an unsupported effect and state the ruling.
 
@@ -1212,15 +1273,7 @@ def apply_narration_boundary(
     """
     if not actions:
         return narration
-    body = _strip_claim_sentences(
-        narration,
-        _claim_pattern(
-            actions,
-            engine_roll_mode=engine_roll_mode,
-            executed_spell=executed_spell,
-            engine_effects=engine_effects,
-        ),
-    )
+    body = _strip_claim_sentences(narration, _claim_pattern(actions, applied))
     rulings = " ".join(ruling_lines(actions))
     if not body:
         return rulings

@@ -144,7 +144,7 @@ async def test_hit_dice_persist_across_rests_and_reload(db_session) -> None:
         payload = await character_play_state(fresh, char.id, camp.id)
         assert payload["hit_dice"] == {"remaining": 1, "total": 2, "die": "d10"}
 
-    # A long rest recovers half the level (minimum one): the next reload shows both dice again.
+    # A long rest recovers up to half the total, rounded down (PHB p.187): both dice show again.
     await apply_adjudication(
         db_session,
         sess,

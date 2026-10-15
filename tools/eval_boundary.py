@@ -36,11 +36,12 @@ from agent.models.parsed_input import ParsedInput  # noqa: E402
 from agent.spells import cast_request  # noqa: E402
 from agent.supported_rules import (  # noqa: E402
     ENGINE_ROLL_LINE,
+    EngineApplied,
     actions_for_state,
     apply_adjudication_boundary,
     apply_narration_boundary,
     classify_unsupported_actions,
-    executed_spell_for_state,
+    engine_applied_for_state,
 )
 
 CHARACTER = {"name": "Lyra", "class": "Wizard", "level": 5, "hp_current": 22, "hp_max": 22}
@@ -95,7 +96,9 @@ def predict_kinds(item: dict, character: dict = CHARACTER) -> set[str]:
     """The unsupported kinds the classifier gives one labelled item (the production call shape)."""
     parsed = ParsedInput(**item["parsed"])
     effects = _engine_effects(item["text"], item["mode"], parsed, character)
-    actions = classify_unsupported_actions(item["text"], parsed, character, engine_effects=effects)
+    actions = classify_unsupported_actions(
+        item["text"], parsed, character, applied=EngineApplied(effects=effects)
+    )
     return {a.kind for a in actions}
 
 
@@ -205,7 +208,8 @@ def _scenario_actions(scenario: dict, parsed: ParsedInput | None) -> tuple:
             scenario["player_input"], scenario["mode"], parsed, character
         ),
     }
-    return actions_for_state(state), executed_spell_for_state(state), state["engine_effects"]
+    applied = engine_applied_for_state(state)
+    return actions_for_state(state), applied
 
 
 def eval_roster(narr: dict, examples: int) -> dict[str, Any]:
@@ -246,7 +250,7 @@ def eval_narration(narr: dict, examples: int) -> dict[str, Any]:
     scenarios_seen = 0
     for scenario in narr["scenarios"]:
         parsed = ParsedInput(**scenario["parsed"]) if scenario.get("parsed") else None
-        actions, executed, effects = _scenario_actions(scenario, parsed)
+        actions, applied = _scenario_actions(scenario, parsed)
         if not actions:
             continue
         scenarios_seen += 1
@@ -254,13 +258,7 @@ def eval_narration(narr: dict, examples: int) -> dict[str, Any]:
             text = sample.get("text")
             if not text:
                 continue
-            out = apply_narration_boundary(
-                text,
-                actions,
-                engine_roll_mode="normal",
-                executed_spell=executed,
-                engine_effects=effects,
-            )
+            out = apply_narration_boundary(text, actions, applied=applied)
             claims = set(sample["labels"].get("claim_sentences") or [])
             kept_text = out
             for sentence in (s for s in _SENT.split(text) if s.strip()):
@@ -291,15 +289,13 @@ def eval_adjudication(narr: dict, examples: int) -> dict[str, Any]:
     lost_examples: list[str] = []
     for scenario in narr["scenarios"]:
         parsed = ParsedInput(**scenario["parsed"]) if scenario.get("parsed") else None
-        actions, executed, effects = _scenario_actions(scenario, parsed)
+        actions, applied = _scenario_actions(scenario, parsed)
         if not actions:
             continue
         summary = scenario["adjudication"]["mechanical_summary"]
         roll_sentences = [s.strip() for s in _SENT.split(summary) if ENGINE_ROLL_LINE.search(s)]
         adj = AdjudicationResult(**{"success": False, **scenario["adjudication"]})
-        apply_adjudication_boundary(
-            adj, actions, engine_roll_mode="normal", executed_spell=executed, engine_effects=effects
-        )
+        apply_adjudication_boundary(adj, actions, applied=applied)
         for sentence in roll_sentences:
             checked += 1
             if sentence not in adj.mechanical_summary:

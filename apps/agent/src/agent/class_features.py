@@ -44,7 +44,7 @@ DECLARED_TEXT = {
     RAGE: re.compile(
         # "into rage" needs its article ("into a rage"), so "into rage metal" declares nothing.
         r"\b(?:into\s+(?:a|my|the)\s+|(?:enter|activat|use|start|begin)\w*\s+(?:a\s+|my\s+|the\s+)?)rage\b"
-        r"|\bbarbarian\s+rage\b|\bi\s+rage\b",
+        r"|\bbarbarian\s+rage\b|\bi\s+rage\b(?!\s+(?:against|about|over)\b)",
         re.IGNORECASE,
     ),
 }

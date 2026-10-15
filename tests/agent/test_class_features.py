@@ -34,7 +34,11 @@ from agent.resolution import (
     enforce_side_effects,
     resolve_attack,
 )
-from agent.supported_rules import apply_narration_boundary, classify_unsupported_actions
+from agent.supported_rules import (
+    EngineApplied,
+    apply_narration_boundary,
+    classify_unsupported_actions,
+)
 from tools.dice import use_rng
 
 ABILITIES = {"STR": 16, "DEX": 14, "CON": 14, "INT": 10, "WIS": 10, "CHA": 8}
@@ -196,6 +200,11 @@ def test_rage_damage_bonus_by_level_and_attack_type() -> None:
     rapier_sheet = _sheet("Barbarian", 1, weapons=("rapier",))
     rapier_sheet["stats"]["DEX"] = 18  # DEX above STR: the finesse attack uses DEX
     assert rage_damage_bonus(rapier_sheet, _hit(rapier_sheet), raging=True) == 0
+
+
+def test_rage_as_an_idiom_is_not_a_declaration() -> None:
+    assert requested_features("I rage against the machine") == ()
+    assert requested_features("I rage and swing the greataxe") == ("rage",)
 
 
 def test_requested_features_are_declared_words_not_prose() -> None:
@@ -543,7 +552,9 @@ def test_implemented_features_are_only_ruled_when_not_executed(text, kinds, char
 def test_executed_feature_is_not_a_declared_action_and_keeps_its_narration() -> None:
     surge_text = "I use Action Surge and attack the ogre"
     assert (
-        classify_unsupported_actions(surge_text, None, FIGHTER_2, engine_effects=("action_surge",))
+        classify_unsupported_actions(
+            surge_text, None, FIGHTER_2, applied=EngineApplied(effects=("action_surge",))
+        )
         == ()
     )
     narration = (
@@ -555,10 +566,12 @@ def test_executed_feature_is_not_a_declared_action_and_keeps_its_narration() -> 
         "I use Action Surge and divine smite the ogre",
         None,
         FIGHTER_2,
-        engine_effects=("action_surge",),
+        applied=EngineApplied(effects=("action_surge",)),
     )
     assert [a.kind for a in declared] == ["feature"]
-    kept = apply_narration_boundary(narration, declared, engine_effects=("action_surge",))
+    kept = apply_narration_boundary(
+        narration, declared, applied=EngineApplied(effects=("action_surge",))
+    )
     assert "You use Action Surge and drive a second strike home." in kept
     assert "The ogre staggers." in kept
     assert "Its rage is spent" in kept  # bare "rage" is prose, not a claim
@@ -580,7 +593,9 @@ def test_narration_about_rage_or_surge_in_prose_is_not_stripped() -> None:
 def test_maneuver_claims_stay_stripped_when_only_a_feature_was_executed() -> None:
     declared = classify_unsupported_actions("I shove the ogre and pin it", None, ROGUE_1)
     narration = "The ogre is pinned to the wall. Your sneak attack lands cleanly."
-    kept = apply_narration_boundary(narration, declared, engine_effects=("sneak_attack",))
+    kept = apply_narration_boundary(
+        narration, declared, applied=EngineApplied(effects=("sneak_attack",))
+    )
     assert "pinned to the wall" not in kept  # the engine did not apply the maneuver
     assert "Your sneak attack lands cleanly." in kept  # the engine did apply Sneak Attack
 

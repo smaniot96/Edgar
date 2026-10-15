@@ -45,11 +45,11 @@ from agent.nodes.narrator import (
     make_narrator_model,
     narrator_context,
 )
+from agent.positioning import band_of
 from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
-    engine_roll_mode,
-    executed_spell_for_state,
+    engine_applied_for_state,
 )
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
@@ -431,6 +431,9 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
                 "alive": c.get("alive", True),
                 "disposition": disposition_of(c),
                 "can_act": can_act(c),
+                # Additive (EDG-044): a foe's distance band and whether its reaction is spent.
+                "band": None if c.get("is_player") else band_of(c),
+                "reaction_used": bool(c.get("reaction_used", False)),
             }
             for c in (combat_state.get("combatants") or [])
         ],
@@ -609,10 +612,7 @@ async def stream_session_turn(
             yield sse_event("error", error_body("llm_unavailable"))
             return
         narration = apply_narration_boundary(
-            message_text(response),
-            actions,
-            engine_roll_mode=engine_roll_mode(state),
-            executed_spell=executed_spell_for_state(state),
+            message_text(response), actions, applied=engine_applied_for_state(state)
         )
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
