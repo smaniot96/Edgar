@@ -401,6 +401,8 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         "current_turn_index": combat_state.get("current_turn_index"),
         "player_ac": combat_state.get("player_ac"),
         "second_wind_used": combat_state.get("second_wind_used", False),
+        # Additive (EDG-148): whether the engine fitted this roster to the solo budget, and why.
+        "solo_budget": combat_state.get("solo_budget"),
     }
 
 

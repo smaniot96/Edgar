@@ -296,9 +296,12 @@ SOLO_ADAPTATIONS: tuple[str, ...] = (
         "HP to 1 and the story continues, often with the hero captured or at the enemy's mercy."
     ),
     (
-        "Encounters are scaled down for a solo level-1 hero. The encounter builder is prompted "
-        "for a lone boss of about 18-30 HP and mooks of about 5-11 HP, within validated ranges "
-        "(enemy HP 1-120). The budget is prompt guidance, not an engine-enforced limit."
+        "Encounters are fitted to a solo hero by an engine-enforced budget (agent.encounter_budget) "
+        "derived from hero level, applied when a new roster is built. At level 1 it allows at most "
+        "2 foes, a boss of 18-30 HP, other foes of 5-11 HP, and a total enemy HP of 41. Higher "
+        "levels scale those numbers up and allow more foes. Over-budget foes are clamped into range "
+        "or left out, never renamed. Exact creature identities and source records are kept. The "
+        "combat start notes any adaptation, and the combat state records it."
     ),
     (
         "Second Wind rallies the fighter once per encounter, automatically when a blow would "
