@@ -15,13 +15,40 @@ from pydantic import BaseModel, ConfigDict, Field
 from edgar_core.manifests import Digest, Identifier
 
 StoryKind = Literal[
-    "discover", "encounter", "visit", "move", "objective", "milestone", "promise", "clock",
-    "relationship", "outcome", "acquire", "consume", "transfer", "use", "environment",
+    "discover",
+    "encounter",
+    "visit",
+    "move",
+    "objective",
+    "milestone",
+    "promise",
+    "clock",
+    "relationship",
+    "outcome",
+    "acquire",
+    "consume",
+    "transfer",
+    "use",
+    "environment",
 ]
 StoryStatus = Literal[
-    "discovered", "encountered", "visited", "active", "completed", "failed", "fulfilled",
-    "broken", "advanced", "friendly", "neutral", "hostile", "acquired", "consumed", "moved",
-    "used", "changed",
+    "discovered",
+    "encountered",
+    "visited",
+    "active",
+    "completed",
+    "failed",
+    "fulfilled",
+    "broken",
+    "advanced",
+    "friendly",
+    "neutral",
+    "hostile",
+    "acquired",
+    "consumed",
+    "moved",
+    "used",
+    "changed",
 ]
 
 
@@ -77,9 +104,32 @@ def story_target_id(target: StoryRef) -> str:
 def accept_story_effect(
     effect: StoryEffect, *, turn_id: str, source_refs: list[dict], display_name: str = ""
 ) -> AcceptedStoryEffect:
-    """Seal a previously validated effect; identity deduplicates exact replays across turns."""
+    """Seal a previously validated effect; identity deduplicates static facts and per-turn mutable operations."""
     body = effect.model_dump()
+    body["source_reference_ids"] = sorted(set(body["source_reference_ids"]))
+    body["knowledge_fact_ids"] = sorted(set(body["knowledge_fact_ids"]))
+    identity = dict(body)
+    if effect.kind in {
+        "acquire",
+        "consume",
+        "transfer",
+        "use",
+        "environment",
+        "relationship",
+        "move",
+    }:
+        identity["turn_id"] = turn_id
     effect_id = hashlib.sha256(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return AcceptedStoryEffect(**body, effect_id=effect_id, turn_id=turn_id, source_refs=source_refs, display_name=display_name)
+    source_refs = sorted(
+        {ref["reference_id"]: ref for ref in source_refs}.values(),
+        key=lambda ref: ref["reference_id"],
+    )
+    return AcceptedStoryEffect(
+        **body,
+        effect_id=effect_id,
+        turn_id=turn_id,
+        source_refs=source_refs,
+        display_name=display_name,
+    )

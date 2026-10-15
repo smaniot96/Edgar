@@ -57,6 +57,13 @@ Fill out:
 - flags_set: when the action changes the campaign world (door unlocked, NPC met, plot fact
   learned), use stable snake_case keys and short string values. Reuse existing flag keys when
   updating the same fact. flags_cleared: only keys that exist in the current world flags.
+- story_effects: propose canonical discoveries, encounters, visits/moves, objectives, milestones,
+  promises, relationships, clocks or supported object operations only from the eligible candidates.
+  Copy the complete canonical target and exact supporting source_reference_ids; knowledge_fact_ids
+  may reference committed facts only. Definitions and recent conversation are not earned knowledge.
+  Never invent promises, completion, source IDs, object availability or clock progress. Private
+  planner material must never appear in player_text or mechanical_summary. The validator supplies
+  exact reviewed player text after acceptance. Engine outcomes/numbers are not story proposals.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
 
@@ -75,7 +82,10 @@ NARRATOR = f"""You are the Dungeon Master of a solo D&D 5e game. Narrate what ha
 - Use **official rules context** only for consistency with mechanics. Use **adventure module
   context** for locations, NPCs and module-specific story. Respect NPC dispositions.
 - If a current scene is given, stay in that scene unless the outcome clearly moves the party.
-- Use the story-so-far summary (if given) for continuity.
+- Use the story-so-far summary (if given) for continuity. Prepared module text is background,
+  not evidence that a discovery or objective has been earned. Describe new discoveries, promises,
+  object changes and accomplishments only from validated story consequences this turn; do not
+  invent additional persistent facts. Never disclose private branches or future milestones.
 - Write immersive second-person prose, 1-3 short paragraphs. End by inviting the player's next
   action.
 - Do NOT print HP, stat blocks, inventories, dice math, bullet lists of status, or markdown

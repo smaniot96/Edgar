@@ -71,6 +71,7 @@ class Entity(Record):
     kind: Literal["actor", "clue", "hazard", "ending"]
     title: str = Field(min_length=1, max_length=200)
     discovery_flag: Identifier | None = None
+    reveal_on: Literal["success", "always"] = "success"
     stat_reference: StatReference | None = None
 
 
@@ -149,17 +150,44 @@ class AdventureManifest(Record):
                 raise ValueError("Passage names an unknown scene or entity.")
             if passage.audience not in ("excluded", "unreviewed") and not passage.scene_ids:
                 raise ValueError("Playable passages need an explicit scene scope.")
-        for category in (self.objects, self.objectives, self.milestones, self.promises, self.clocks):
+        for category in (
+            self.objects,
+            self.objectives,
+            self.milestones,
+            self.promises,
+            self.clocks,
+        ):
             if len({d.canonical_id for d in category}) != len(category):
                 raise ValueError("Story definition IDs must be unique within their kind.")
             for definition in category:
-                if not set(definition.scene_ids) <= scenes or not set(definition.passage_ids) <= passages:
+                if (
+                    not set(definition.scene_ids) <= scenes
+                    or not set(definition.passage_ids) <= passages
+                ):
                     raise ValueError("Story definition names an unknown scene or passage.")
-                if not definition.statuses or any(status not in {
-                    "discovered", "encountered", "visited", "active", "completed", "failed",
-                    "fulfilled", "broken", "advanced", "friendly", "neutral", "hostile",
-                    "acquired", "consumed", "moved", "used", "changed",
-                } for status in definition.statuses):
+                if not definition.statuses or any(
+                    status
+                    not in {
+                        "discovered",
+                        "encountered",
+                        "visited",
+                        "active",
+                        "completed",
+                        "failed",
+                        "fulfilled",
+                        "broken",
+                        "advanced",
+                        "friendly",
+                        "neutral",
+                        "hostile",
+                        "acquired",
+                        "consumed",
+                        "moved",
+                        "used",
+                        "changed",
+                    }
+                    for status in definition.statuses
+                ):
                     raise ValueError("Story definition has unsupported statuses.")
         for clock in self.clocks:
             if clock.clock_max is None:
@@ -193,6 +221,8 @@ def manifest_digest(manifest: AdventureManifest) -> str:
     # Absent optional actor bindings must not revoke receipts issued before this extension.
     # Adding or changing an explicit binding still changes the complete review digest.
     for entity in body["entities"]:
+        if entity["reveal_on"] == "success":
+            entity.pop("reveal_on")
         if entity["stat_reference"] is None:
             entity.pop("stat_reference")
     for key in ("objects", "objectives", "milestones", "promises", "clocks"):
