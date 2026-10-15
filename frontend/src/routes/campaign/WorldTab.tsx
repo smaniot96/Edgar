@@ -197,6 +197,20 @@ export default function WorldTab({ campaignId }: { campaignId: number }) {
           <Button type="submit" loading={busy} loadingText="Saving…">
             Set
           </Button>
+          {key || value ? (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => {
+                setKey("");
+                setValue("");
+                setOutcome(null);
+              }}
+            >
+              Cancel
+            </Button>
+          ) : null}
         </div>
       </form>
       {outcome ? (
@@ -213,8 +227,15 @@ export default function WorldTab({ campaignId }: { campaignId: number }) {
           <p>{safeFailure("load", flags.error)}</p>
           <Button variant="secondary" size="sm" onClick={flags.refetch}>Retry</Button>
         </div>
-      ) : flags.data === undefined ? (
-        <LoadingText />
+      ) : null}
+      {flags.error && flags.data !== undefined ? (
+        <div role="alert" className="space-y-2 text-sm text-danger">
+          <p>The list could not be refreshed. Showing the last loaded world overrides.</p>
+          <Button variant="secondary" size="sm" onClick={flags.refetch}>Retry</Button>
+        </div>
+      ) : null}
+      {flags.data === undefined ? (
+        flags.error ? null : <LoadingText />
       ) : flags.data.length === 0 ? (
         <EmptyState title="No world flags yet">
           No manual flags are stored for this campaign. This does not mean the story is unchanged;
