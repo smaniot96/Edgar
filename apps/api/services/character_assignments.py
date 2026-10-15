@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from agent.class_features import class_feature_status
 from agent.resolution import second_wind_status
+from agent.spells import expended_slots, slot_totals
 from db.postgres.models import Character, CharacterAssignment
 
 
@@ -68,12 +69,42 @@ async def character_play_state(
         "stats": assignment.stats,
         "inventory": assignment.inventory,
     }
-    # Additive, derived view of the Second Wind resource (fighters only).
-    second_wind = second_wind_status(out)
+    out.update(resource_view(out))
+    return out
+
+
+def resource_view(character: dict[str, Any]) -> dict[str, Any]:
+    """Additive, read-only resource views derived from class, level and stored stats.
+
+    Keys are present only where the class has the resource; nothing is stored or rewritten here.
+    """
+    out: dict[str, Any] = {}
+    second_wind = second_wind_status(character)
     if second_wind is not None:
         out["second_wind"] = second_wind
+    spell_slots = spell_slots_status(character)
+    if spell_slots is not None:
+        out["spell_slots"] = spell_slots
     # Additive view of the class feature uses (EDG-145); absent for classes without them.
-    class_features = class_feature_status(out)
+    class_features = class_feature_status(character)
     if class_features is not None:
         out["class_features"] = class_features
     return out
+
+
+def spell_slots_status(character: dict[str, Any] | None) -> dict[str, dict[str, int]] | None:
+    """Public view of spell slots per level, e.g. {"1": {"total": 4, "remaining": 3}}.
+
+    None for non-casters. Expended counts above the derived total are clamped to zero remaining.
+    """
+    totals = slot_totals(character)
+    if not totals:
+        return None
+    spent = expended_slots(character)
+    return {
+        str(level): {
+            "total": total,
+            "remaining": total - min(total, spent.get(str(level), 0)),
+        }
+        for level, total in totals.items()
+    }

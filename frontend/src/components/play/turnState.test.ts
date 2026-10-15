@@ -108,3 +108,20 @@ describe("turnReducer", () => {
     expect(s2).toBe(s1);
   });
 });
+
+describe("linesFromHistory stored rolls (EDG-030)", () => {
+  it("keeps a legacy DM turn without a card and labelled as not captured", () => {
+    const [line] = linesFromHistory([{ role: "dm", content: "Old.", created_at: "" }]);
+    expect(line).toMatchObject({ role: "dm", content: "Old.", rollStatus: "not_captured", adjudication: null });
+  });
+
+  it("marks a no-dice turn as no roll, not as missing", () => {
+    const [line] = linesFromHistory([{ role: "dm", content: "Which door?", created_at: "", roll_status: "no_roll", roll: null }]);
+    expect(line).toMatchObject({ rollStatus: "no_roll", adjudication: null });
+  });
+
+  it("never gives a user line roll state", () => {
+    const [line] = linesFromHistory([{ role: "user", content: "I look", created_at: "" }]);
+    expect(line).toEqual({ id: "h0", role: "user", content: "I look" });
+  });
+});

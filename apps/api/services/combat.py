@@ -50,6 +50,7 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
         "player_ac": player.get("ac"),
         "second_wind_used": bool(player.get("second_wind_used", False)),
         "raging": bool(player.get("raging", False)),
+        "solo_budget": player.get("solo_budget"),
     }
     if all("init" in c for c in combatants) and combatants:
         from agent.graph_combat import initiative_view

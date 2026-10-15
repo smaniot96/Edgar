@@ -294,6 +294,66 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         test="tests/agent/test_supported_rules.py::test_supported_completion_needs_confirmation",
     ),
     Mechanic(
+        id="exact_monster_records",
+        title="Exact creature records: stat block read by code, not by the encounter builder",
+        scope=(
+            "A creature identified by its verified record fights with that record's armor class, "
+            "hit points, DEX modifier for initiative, saving-throw bonuses (a spell's save uses the "
+            "stated bonus), attacks and traits. The encounter builder chooses which exact creatures "
+            "take part and never supplies their numbers. The solo budget does not rescale an exact "
+            "record: it limits only how many foes take part, and notes a record that exceeds a "
+            "per-foe band. A record whose stat block cannot be read exactly blocks the encounter."
+        ),
+        implementation="agent.monster_stats:parse_monster_stats",
+        test="tests/agent/test_monster_stats.py::test_troll_record_survives_every_stage",
+    ),
+    Mechanic(
+        id="monster_attacks",
+        title="Monster attacks: listed attacks and multiattack",
+        scope=(
+            "Each attack listed under Actions is an engine d20 roll plus the record's bonus against "
+            "the player's AC; a hit rolls the record's damage dice, and a natural 20 doubles them. A "
+            "Multiattack trait whose counts are stated in its text makes one attack roll per listed "
+            "attack in a round. Without a readable Multiattack, the first listed attack is made and "
+            "the trait is declared. Damage riders, spell attacks and recharge abilities are declared, "
+            "not executed."
+        ),
+        implementation="agent.monster_stats:attack_plan",
+        test="tests/agent/test_monster_stats.py::test_multiattack_rolls_one_attack_per_listed_attack",
+    ),
+    Mechanic(
+        id="monster_regeneration",
+        title="Monster regeneration with its stated suppression",
+        scope=(
+            "A creature whose record states regeneration regains the stated HP at the start of its "
+            "turn, up to its maximum. When the record names the damage types that suppress it, "
+            "regeneration does not happen at that turn if the creature took one of them since its "
+            "last turn. A creature reduced to 0 HP is defeated at once: the record's clause about "
+            "regenerating from 0 HP is declared, not executed."
+        ),
+        implementation="agent.monster_stats:regenerate",
+        test=(
+            "tests/agent/test_monster_stats.py::"
+            "test_regeneration_is_suppressed_by_fire_or_acid_taken_since_the_last_turn"
+        ),
+    ),
+    Mechanic(
+        id="monster_damage_types",
+        title="Resistance, immunity and vulnerability by damage type",
+        scope=(
+            "Player damage to an exact creature takes the damage type of the engine weapon (standard "
+            "weapon table) or of the catalog spell. Resistance halves it, immunity blocks it and "
+            "vulnerability doubles it. A resistance written for nonmagical attacks applies to "
+            "weapons, not to spells. When the damage type is unknown no rule applies, and the round "
+            "says so."
+        ),
+        implementation="agent.monster_stats:adjust_monster_damage",
+        test=(
+            "tests/agent/test_monster_stats.py::"
+            "test_resistance_halves_immunity_blocks_and_vulnerability_doubles"
+        ),
+    ),
+    Mechanic(
         id="contested_maneuvers",
         title="Grapple, pin and restrain; shove prone (in combat, contested)",
         scope=(
@@ -388,9 +448,16 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="monster_traits",
-        title="Monster traits, multiattack and special actions",
-        boundary="Enemies attack once per round with the single attack recorded in their roster.",
-        owner="EDG-004",
+        title=(
+            "Other monster traits: speed and movement, legendary, lair and reaction actions, "
+            "spellcasting, recharge abilities and unlisted traits"
+        ),
+        boundary=(
+            "Each such trait is declared, not executed, in the combat start message. It has no engine "
+            "effect: a monster never moves, casts, recharges or takes a legendary, lair or reaction "
+            "action, and its passive traits are not applied."
+        ),
+        owner="EDG-043",
     ),
     UnsupportedMechanic(
         id="exploding_dice",
@@ -409,9 +476,14 @@ SOLO_ADAPTATIONS: tuple[str, ...] = (
         "HP to 1 and the story continues, often with the hero captured or at the enemy's mercy."
     ),
     (
-        "Encounters are scaled down for a solo level-1 hero. The encounter builder is prompted "
-        "for a lone boss of about 18-30 HP and mooks of about 5-11 HP, within validated ranges "
-        "(enemy HP 1-120). The budget is prompt guidance, not an engine-enforced limit."
+        "Encounters are fitted to a solo hero by an engine-enforced budget (agent.encounter_budget) "
+        "derived from hero level, applied when a new roster is built. At level 1 it allows at most "
+        "2 foes, a boss of 18-30 HP, other foes of 5-11 HP, and a total enemy HP of 41. Higher "
+        "levels scale those numbers up and allow more foes. A foe without an exact record is "
+        "clamped into range or left out, never renamed. An exact creature is never rescaled: its "
+        "record's numbers apply, the budget limits only how many foes take part, and a record that "
+        "exceeds a per-foe band is noted as an unscaled exact creature. The combat start notes any "
+        "adaptation, and the combat state records it."
     ),
 )
 

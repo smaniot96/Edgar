@@ -86,6 +86,16 @@ class CampaignCharacterPatch(BaseModel):
         return self
 
 
+class SecondWindRead(BaseModel):
+    uses_remaining: int
+    uses_max: int
+
+
+class SpellSlotRead(BaseModel):
+    total: int
+    remaining: int
+
+
 class CharacterAssignmentHistoryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -99,3 +109,6 @@ class CharacterAssignmentHistoryRead(BaseModel):
     assigned_at: datetime
     ended_at: datetime | None
     status: Literal["active", "ended"]
+    # Derived, read-only resource views (EDG-034); absent for classes without the resource.
+    second_wind: SecondWindRead | None = None
+    spell_slots: dict[str, SpellSlotRead] | None = None

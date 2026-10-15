@@ -36,6 +36,10 @@ class ChatMessageRead(BaseModel):
     citations: list[dict] = Field(default_factory=list)
     rules_edition: str | None = None
     ruling_citation_ids: list[str] = Field(default_factory=list)
+    # DM lines only (EDG-030): the turn's stored original roll, or why there is none.
+    turn_id: str | None = None
+    roll_status: Literal["captured", "no_roll", "not_captured"] | None = None
+    roll: dict | None = None
     created_at: datetime
 
 

@@ -48,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -64,6 +65,7 @@ from agent.class_features import (
     sneak_attack_roll,
     spend_use,
 )
+from agent.combat_telemetry import combat_round_event
 from agent.combatants import (
     INERT_NPC_DISPOSITIONS,
     add_effect,
@@ -79,10 +81,24 @@ from agent.combatants import (
     has_effect,
     release_effect,
     roster_violations,
+    stable_id,
     view_fields,
 )
+from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
+from agent.monster_stats import (
+    MonsterStatsError,
+    adjust_monster_damage,
+    attack_plan,
+    combat_fields,
+    declared_line,
+    parse_monster_stats,
+    record_damage,
+    regenerate,
+    stats_of,
+    weapon_damage_type,
+)
 from agent.nodes import narrator_node, world_retriever_node
 from agent.nodes.rules_adjudicator import adjudicate
 from agent.prompts import UNTRUSTED_INPUT_NOTICE, wrap_player_action
@@ -92,6 +108,7 @@ from agent.resolution import (
     ability_modifier,
     character_class,
     check_spec,
+    choose_weapon,
     decide_completion,
     find_healing_consumable,
     heal_from_consumable,
@@ -172,11 +189,12 @@ ENCOUNTER_BUILDER = (
     "allies, companions, rescued or friendly NPCs as enemies.\n"
     "- If the player names a specific antagonist, use that EXACT name for that enemy.\n"
     "- Use ONLY the resolved foe names and their complete source records below. Never rename a "
-    "creature or add an unlisted identity. Use their records for HP/AC/attack/damage.\n"
-    "- Scale for a SOLO low-level hero: keep the total threat modest. A lone boss should be "
-    "~18-30 HP; mooks ~5-11 HP. Avoid stacking many strong enemies.\n"
-    "- hp_max 5-30, ac 10-16, attack_bonus 2-5, damage_dice in NdM or NdM+K form (e.g. 1d6+1), "
-    "initiative_bonus = the creature's DEX modifier (-1..4).\n"
+    "creature or add an unlisted identity.\n"
+    "- For an exact record the engine takes every number (HP, AC, attacks, traits) from that "
+    "record. Your hp_max, ac, attack_bonus, damage_dice and initiative_bonus are ignored, so your "
+    "only decision is which of the resolved foes take part.\n"
+    "- Scale for a SOLO hero: keep the group modest and stay within the solo budget given in the "
+    "context. The engine leaves out any foe beyond the foe-count limit.\n"
     "- is_boss: true ONLY for the adventure's final antagonist / climactic villain named in the "
     "adventure context; false for everyone else.\n\n" + UNTRUSTED_INPUT_NOTICE
 )
@@ -403,10 +421,44 @@ def _creature_source_reference(record: dict) -> dict:
     return {key: record[key] for key in fields if key in record}
 
 
-async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dict]:
-    """Build only verified identities; retain the legacy solo numerical adaptation."""
+def _exact_enemy(identity: dict, *, is_boss: bool = False) -> dict:
+    """A roster entry whose numbers come only from its exact record (EDG-004).
+
+    The record's stat block is parsed by code into `monster_stats`; the flat HP/AC/attack fields
+    mirror it for older readers. The encounter builder never supplies these numbers.
+    """
+    name = str(identity["encounter_name"])
+    try:
+        stats = parse_monster_stats(str(identity.get("text") or ""), name=name)
+    except MonsterStatsError as exc:
+        raise CreatureResolutionError(
+            f"Creature record for {name!r} has no parseable stat block ({exc}). "
+            "Review and reingest its source."
+        ) from exc
+    return {
+        "name": name[:60],
+        "creature_id": identity["creature_id"],
+        "source_reference": _creature_source_reference(identity),
+        "stat_adaptation": "exact_record",
+        **combat_fields(stats),
+        "monster_stats": stats.to_dict(),
+        "is_boss": bool(is_boss),
+        "is_player": False,
+        "disposition": "active",
+        "alive": True,
+    }
+
+
+async def _build_enemy_roster(
+    state: AgentState, targets: list[str], *, budget_summary: dict | None = None
+) -> list[dict]:
+    """Build only verified identities, then fit the roster to the solo budget (EDG-148).
+
+    `budget_summary`, when given, receives the engine's adaptation record for the combat start.
+    """
     adv_ctx = state.get("adventure_context", []) or []
     player_input = state.get("player_input", "")
+    budget = solo_budget(clamp_level((state.get("character") or {}).get("level")))
     allies, hostiles = _npc_groups(state)
     inert = _inert_npc_names(state)
     # Allies the player explicitly attacks by name become fair game (player's choice).
@@ -438,7 +490,10 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
     if adv_ctx:
         ctx_lines.append("Scene context (for flavour only; do not turn allies into enemies):")
         ctx_lines += [f"- {c.get('text', '')[:300]}" for c in adv_ctx[:2]]
-    ctx_lines.append("Resolved foes and complete source records (solo numerical adaptations only):")
+    ctx_lines.append(
+        f"Solo budget for this level-{budget.level} hero (enforced by the engine): {budget.describe()}."
+    )
+    ctx_lines.append("Resolved foes and complete source records (the engine applies their stats):")
     ctx_lines += [f"Foe: {c['encounter_name']}\n{c['text']}" for c in monster_ctx]
 
     enemies: list[dict] = []
@@ -460,24 +515,7 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
                 raise CreatureResolutionError(
                     "Encounter builder proposed an unverified creature identity. Review the exact foe names."
                 )
-            enemies.append(
-                {
-                    "name": identity["encounter_name"][:60],
-                    "creature_id": identity["creature_id"],
-                    "source_reference": _creature_source_reference(identity),
-                    "stat_adaptation": "legacy_solo_encounter",
-                    "hp_max": e.hp_max,
-                    "hp_current": e.hp_max,
-                    "ac": e.ac,
-                    "attack_bonus": e.attack_bonus,
-                    "damage_dice": _enemy_damage_expr(e.damage_dice),
-                    "initiative_bonus": e.initiative_bonus,
-                    "is_boss": bool(e.is_boss),
-                    "is_player": False,
-                    "disposition": "active",
-                    "alive": True,
-                }
-            )
+            enemies.append(_exact_enemy(identity, is_boss=e.is_boss))
     except CreatureResolutionError:
         raise
     except Exception as e:
@@ -485,28 +523,8 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
         enemies = []
 
     if not enemies:
-        # Compatibility fallback is an explicit solo adaptation of resolved records only.
-        names = [c["encounter_name"] for c in monster_ctx]
-        seen: dict[str, int] = {}
-        for t in names:
-            seen[t] = seen.get(t, 0) + 1
-            name = t if seen[t] == 1 else f"{t} {seen[t]}"
-            enemies.append(
-                {
-                    "name": name,
-                    "creature_id": identities[normalize_reference(t)]["creature_id"],
-                    "source_reference": _creature_source_reference(
-                        identities[normalize_reference(t)]
-                    ),
-                    "stat_adaptation": "legacy_solo_fallback",
-                    **_DEFAULT_ENEMY,
-                    "hp_current": _DEFAULT_ENEMY["hp_max"],
-                    "is_boss": False,
-                    "is_player": False,
-                    "disposition": "active",
-                    "alive": True,
-                }
-            )
+        # Builder unavailable: every resolved foe still fights with its own exact record.
+        enemies = [_exact_enemy(c) for c in monster_ctx]
     # Unique names so targeting and initiative stay unambiguous.
     counts: dict[str, int] = {}
     for e in enemies:
@@ -514,6 +532,12 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
         counts[key] = counts.get(key, 0) + 1
         if counts[key] > 1:
             e["name"] = f"{e['name']} {counts[key]}"
+    # Fit to the solo budget last, so every name above is already unique when notes refer to it.
+    enemies, summary = apply_solo_budget(enemies, budget.level)
+    if summary["adapted"]:
+        log.info("solo_budget_adapted", extra={"level": budget.level, "notes": summary["notes"]})
+    if budget_summary is not None:
+        budget_summary.update(summary)
     return enemies
 
 
@@ -573,9 +597,12 @@ def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict 
     return None, f"You don't see {named[0]} among your foes. Who do you attack? ({foes})"
 
 
-def _strike(target: dict, amount: int, parsed: Any, player_input: str) -> str:
+def _strike(
+    target: dict, amount: int, parsed: Any, player_input: str, damage_type: str | None = None
+) -> str:
     """Apply an engine-rolled hit to an enemy; returns the status phrase for the round log."""
     target["hp_current"] = max(0, int(target["hp_current"]) - amount)
+    record_damage(target, damage_type, amount)
     if target["hp_current"] <= 0:
         apply_defeat(target, declared_lethality(parsed, player_input))
         if disposition_of(target) == "unconscious":
@@ -657,9 +684,13 @@ async def combat_round_node(state: AgentState) -> dict:
 
     log_lines: list[str] = []
     dice_log: list[dict] = []
+    # Stage timings this round actually measures (EDG-031). A stage that does not run is absent.
+    stage_ms: dict[str, int] = {}
 
     # --- Retrieve context (degrades to empty context on outage) ---
+    t_stage = time.monotonic()
     retr = await world_retriever_node(state)
+    stage_ms["retrieving_ms"] = int((time.monotonic() - t_stage) * 1000)
     if retr.get("error"):
         return retr
     state = {**state, **retr}
@@ -675,8 +706,9 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Initialise on first entry ---
     if not combat_state.get("combatants"):
+        budget_summary: dict = {}
         try:
-            enemies = await _build_enemy_roster(state, named)
+            enemies = await _build_enemy_roster(state, named, budget_summary=budget_summary)
         except CreatureResolutionError as exc:
             return {**retr, "error": str(exc), "error_code": "creature_identity_unresolved"}
         if not enemies:
@@ -691,6 +723,8 @@ async def combat_round_node(state: AgentState) -> dict:
             "ac": player_ac,
             "disposition": "active" if player_hp > 0 else "unconscious",
             "alive": player_hp > 0,
+            # Per-encounter facts live on the player combatant: the table has no column for them.
+            "solo_budget": budget_summary,
         }
         ordered = roll_initiative([player_combatant] + enemies, character)
         combat_state.update(
@@ -701,6 +735,7 @@ async def combat_round_node(state: AgentState) -> dict:
                 "current_turn_index": 0,
                 "ended": False,
                 "outcome": None,
+                "solo_budget": budget_summary,
             }
         )
         log_lines.append(
@@ -708,6 +743,10 @@ async def combat_round_node(state: AgentState) -> dict:
             + ", ".join(f"{_display(c)} {c['init']}" for c in ordered)
             + "."
         )
+        if adaptation := adaptation_sentence(budget_summary):
+            log_lines.append(adaptation)
+        # What each exact record declares but the engine does not run is stated, never implied.
+        log_lines += [line for e in enemies if (line := declared_line(e))]
     elif any("init" not in c for c in combat_state["combatants"]):
         # Encounter persisted before initiative was tracked: roll it now.
         combat_state["combatants"] = roll_initiative(list(combat_state["combatants"]), character)
@@ -810,30 +849,109 @@ async def combat_round_node(state: AgentState) -> dict:
                 log_lines.append(f"{hero} digs deep and uses Second Wind, recovering {sw.amount} HP to stay in the fight!")
 
     round_actors: list[str] = []
+    actors: list[dict] = []
+    outcomes: list[dict] = []
+
+    def enemy_attack(
+        e: dict,
+        *,
+        label: str | None,
+        bonus: int,
+        expr: str,
+        damage_type: str | None = None,
+        exact: bool = False,
+    ) -> None:
+        """One engine-rolled attack by an enemy. `exact` attacks keep their record's dice."""
+        round_actors.append(_display(e))
+        if not any(a["id"] == stable_id(e) for a in actors):  # one entry per foe (multiattack)
+            actors.append({"id": stable_id(e), "name": _display(e)})
+        mode = attack_roll_mode(e, player)
+        round_modes.append(mode)
+        atk, draws = _roll_with_mode(f"1d20{bonus:+d}", mode)
+        dice_log.append(
+            _mode_log(atk, f"{e['name']} {label} attack" if label else f"{e['name']} attack", mode, draws)
+        )
+        mode_text = "" if mode == "normal" else f" at {mode}"
+        subject = f"{e['name']}'s {label}" if label else e["name"]
+        natural = atk.rolls[0]
+        if natural == 20 or (natural != 1 and atk.total >= player_ac):
+            if natural == 20:
+                p = parse_dice(expr)
+                count = p.count * 2 if exact else min(p.count * 2, 8)
+                expr = f"{count}d{p.sides}{p.modifier:+d}" if p.modifier else f"{count}d{p.sides}"
+            dmg_roll = roll(expr)
+            dice_log.append(
+                dmg_roll.to_log(f"{e['name']} {label} damage" if label else f"{e['name']} damage")
+            )
+            dmg = max(1, dmg_roll.total)
+            crit = " Critical hit!" if natural == 20 else ""
+            typed = f" {damage_type}" if damage_type else ""
+            log_lines.append(
+                f"{subject} hits {hero} for {dmg}{typed} damage (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}"
+            )
+            outcomes.append(
+                {
+                    "actor": stable_id(e),
+                    "action": "attack",
+                    "attack": label,
+                    "hit": True,
+                    "roll": atk.total,
+                    "roll_mode": mode,
+                    "target_ac": player_ac,
+                    "critical": natural == 20,
+                    "damage": dmg,
+                    "damage_type": damage_type,
+                }
+            )
+            damage_player(dmg)
+        else:
+            log_lines.append(f"{subject} misses {hero} (rolled {atk.total}{mode_text} vs AC {player_ac}).")
+            outcomes.append(
+                {
+                    "actor": stable_id(e),
+                    "action": "attack",
+                    "attack": label,
+                    "hit": False,
+                    "roll": atk.total,
+                    "roll_mode": mode,
+                    "target_ac": player_ac,
+                    "critical": False,
+                    "damage": 0,
+                    "damage_type": damage_type,
+                }
+            )
 
     def enemy_turn(e: dict) -> None:
         if not can_act(e) or hp <= 0 or fled:
             return
-        round_actors.append(_display(e))
-        mode = attack_roll_mode(e, player)
-        round_modes.append(mode)
-        atk, draws = _roll_with_mode(f"1d20{int(e.get('attack_bonus', 3)):+d}", mode)
-        dice_log.append(_mode_log(atk, f"{e['name']} attack", mode, draws))
-        mode_text = "" if mode == "normal" else f" at {mode}"
-        natural = atk.rolls[0]
-        if natural == 20 or (natural != 1 and atk.total >= player_ac):
-            expr = _enemy_damage_expr(e.get("damage_dice", "1d6+1"))
-            if natural == 20:
-                p = parse_dice(expr)
-                expr = f"{min(p.count * 2, 8)}d{p.sides}{p.modifier:+d}" if p.modifier else f"{min(p.count * 2, 8)}d{p.sides}"
-            dmg_roll = roll(expr)
-            dice_log.append(dmg_roll.to_log(f"{e['name']} damage"))
-            dmg = max(1, dmg_roll.total)
-            crit = " Critical hit!" if natural == 20 else ""
-            log_lines.append(f"{e['name']} hits {hero} for {dmg} damage (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}")
-            damage_player(dmg)
-        else:
-            log_lines.append(f"{e['name']} misses {hero} (rolled {atk.total}{mode_text} vs AC {player_ac}).")
+        stats = stats_of(e)
+        if stats is None:
+            # Legacy or generic combatant: its stored numbers, one attack (EDG-148 clamps apply).
+            enemy_attack(
+                e,
+                label=None,
+                bonus=int(e.get("attack_bonus", 3)),
+                expr=_enemy_damage_expr(e.get("damage_dice", "1d6+1")),
+            )
+            return
+        # Exact record: regeneration at the start of its turn, then each listed attack in order.
+        _healed, regen_note = regenerate(e)
+        if regen_note:
+            log_lines.append(regen_note)
+        plan = attack_plan(stats)
+        if not plan:
+            log_lines.append(f"{e['name']} has no supported attack and takes no action.")
+        for attack in plan:
+            if hp <= 0:
+                break
+            enemy_attack(
+                e,
+                label=attack.name,
+                bonus=attack.bonus,
+                expr=attack.damage_dice,
+                damage_type=attack.damage_type,
+                exact=True,
+            )
 
     player_index = combatants.index(player)
     before = [c for c in combatants[:player_index] if not c.get("is_player")]
@@ -849,6 +967,7 @@ async def combat_round_node(state: AgentState) -> dict:
     inventory_used: list[str] = []
     player_acted = hp > 0
     extra_outcome = ""
+    player_action: dict = {"action": "none", "result": "down"}
     spell_expended: dict[str, int] | None = None
     # Class features (EDG-145). Rage starts without using the round's attack (bonus actions are
     # not tracked). Action Surge adds a second swing, and only when the player attacks a foe.
@@ -873,10 +992,12 @@ async def combat_round_node(state: AgentState) -> dict:
     if not player_acted:
         log_lines.append(f"{hero} is down before they can act.")
     elif fled:
+        player_action = {"action": "flee", "result": "fled"}
         log_lines.append(f"{hero} disengages and flees the fight.")
     elif missing_item:
         wanted = getattr(parsed, "uses_item", None) or "that item"
         extra_outcome = f"{hero} reaches for {wanted}, but does not have it."
+        player_action = {"action": "item", "result": "not_carried"}
         log_lines.append(extra_outcome)
     elif heal_item:
         heal = heal_from_consumable(character, heal_item)
@@ -886,22 +1007,31 @@ async def combat_round_node(state: AgentState) -> dict:
             hp = min(player_hp_max, hp + heal.amount)
             inventory_used.append(heal_item)
             extra_outcome = f"{hero} uses {heal_item} and regains {heal.amount} HP."
+            player_action = {"action": "item", "item": heal_item, "result": "healed", "healed": heal.amount}
             log_lines.append(extra_outcome)
+        else:
+            player_action = {"action": "item", "item": heal_item, "result": "no_effect"}
     elif wants_second_wind:
         sw = spend_second_wind(character, remaining=sw_left)
         if sw is None:
             # Refused without a roll: no uses left until a short or long rest.
             extra_outcome = SECOND_WIND_REFUSAL.format(hero=hero)
+            player_action = {"action": "second_wind", "result": "already_used"}
         else:
             dice_log.append(sw.dice.to_log("second wind"))
             hp = min(player_hp_max, hp + sw.amount)
             sw_left -= 1
             extra_outcome = f"{hero} uses Second Wind and regains {sw.amount} HP."
+            player_action = {"action": "second_wind", "result": "used", "recovered": sw.amount}
         log_lines.append(extra_outcome)
     elif spell_plan is not None:
         # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
         # chosen foe the same way a weapon hit does.
-        save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
+        target_stats = stats_of(spell_target) if spell_target else None
+        if target_stats is not None:
+            save_bonus = target_stats.save_bonus(spell_plan.spell.save_ability or "DEX")
+        else:
+            save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
         # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
         spell_mode = (
             attack_roll_mode(player, spell_target, ranged=True)
@@ -923,9 +1053,20 @@ async def combat_round_node(state: AgentState) -> dict:
         if spell_result.healing:
             hp = min(player_hp_max, hp + spell_result.healing)
         if spell_result.damage and spell_target is not None:
-            dealt = spell_result.damage
-            status = _strike(spell_target, dealt, parsed, player_input)
-            extra_outcome = f"{extra_outcome} {status}"
+            spell_type = spell_plan.spell.damage_type
+            dealt, resist_note = adjust_monster_damage(
+                spell_target, spell_result.damage, spell_type, magical=True
+            )
+            status = _strike(spell_target, dealt, parsed, player_input, damage_type=spell_type)
+            extra_outcome = f"{extra_outcome}{resist_note} {status}"
+        player_action = {
+            "action": "catalog_spell",
+            "spell": spell_result.spec.name,
+            "target": stable_id(spell_target) if spell_target else None,
+            "slot_level": spell_result.slot_level,
+            "damage": spell_result.damage,
+            "healing": spell_result.healing,
+        }
         if spell_result.attack is not None:
             check_result = spell_result.attack
             log_lines.append(f"{check_result.describe()}. {extra_outcome}")
@@ -934,11 +1075,18 @@ async def combat_round_node(state: AgentState) -> dict:
     elif spell_declared:
         # Narrative ruling only; appended to the round summary below.
         extra_outcome = ""
+        player_action = {"action": "declared_action", "result": "narrative_only"}
     elif combat_action is not None and combat_action.kind == "release":
+        player_action = {"action": "release", "result": "nothing_bound"}
         if release_target is None:
             extra_outcome = f"{hero} has nothing bound to release."
         else:
             release_effect(release_target, "restrained")
+            player_action = {
+                "action": "release",
+                "target": stable_id(release_target),
+                "result": "released",
+            }
             extra_outcome = f"{hero} releases {release_target['name']}; it is no longer restrained."
         log_lines.append(extra_outcome)
     elif combat_action is not None and target is not None:
@@ -970,10 +1118,17 @@ async def combat_round_node(state: AgentState) -> dict:
                 extra_outcome = f"{hero} shoves {target_name} prone."
         else:
             extra_outcome = f"{target_name} is already {'restrained' if kind == 'restrained' else 'prone'}."
+        player_action = {
+            "action": f"maneuver_{kind}",
+            "target": stable_id(target),
+            "won": bool(won),
+            "effect_applied": bool(won and kind in round_effects),
+        }
         log_lines.append(f"{contest_line}. {extra_outcome}")
     elif is_attack and target is not None:
         ranged = bool(_RANGED_HINT.search(player_input))
         # One swing, or two with Action Surge (EDG-145). Each swing rolls its own engine d20.
+        any_hit = False
         for swing in range(2 if surge_swing else 1):
             if swing and not can_act(target):
                 # The first swing finished the foe; the surged swing has nothing to hit.
@@ -994,6 +1149,7 @@ async def combat_round_node(state: AgentState) -> dict:
             if swing:
                 later_swing_dice.extend(attack.dice_log)
             if attack.success:
+                any_hit = True
                 rage_bonus = rage_damage_bonus(character, attack, raging=bool(player.get("raging")))
                 swing_dealt, dmg_roll = roll_attack_damage(
                     character, attack, hint=player_input, bonus=rage_bonus
@@ -1009,31 +1165,50 @@ async def combat_round_node(state: AgentState) -> dict:
                     notes += f" Sneak Attack adds {sneak.total}."
                 if rage_bonus:
                     notes += f" Rage adds {rage_bonus}."
+                weapon = attack.weapon or choose_weapon(character, player_input)
+                damage_type = weapon_damage_type(weapon.name)
+                swing_dealt, resist_note = adjust_monster_damage(
+                    target, swing_dealt, damage_type, magical=False
+                )
                 dealt += swing_dealt
-                status = _strike(target, swing_dealt, parsed, player_input)
+                status = _strike(target, swing_dealt, parsed, player_input, damage_type=damage_type)
                 crit = "Critical hit! " if attack.critical else ""
                 swing_text = (
-                    f"{crit}{hero} hits {target['name']} for {swing_dealt} damage {status}{notes}"
+                    f"{crit}{hero} hits {target['name']} for {swing_dealt} damage{resist_note} "
+                    f"{status}{notes}"
                 )
             else:
                 swing_text = f"{hero} misses {target['name']}."
             mode_text = "" if mode == "normal" else f" (at {mode})"
             log_lines.append(f"{attack.describe()}{mode_text}. {swing_text}")
             extra_outcome = " ".join(part for part in (extra_outcome, swing_text) if part)
+        player_action = {
+            "action": "spell" if is_spell else "attack",
+            "target": stable_id(target),
+            "hit": any_hit,
+            "damage": dealt,
+            "target_disposition": disposition_of(target),
+        }
     else:
         check_result, extra = resolve_from_parsed(character, parsed, player_input=player_input)
         dice_log += extra
+        player_action = {
+            "action": "check",
+            "success": check_result.success if check_result is not None else None,
+        }
         if check_result is not None:
             log_lines.append(check_result.describe() + ".")
 
     # --- Adjudicator: describes consequences of the known outcome (flags/scene/items) ---
     if player_acted and not fled:
+        t_stage = time.monotonic()
         adj = await adjudicate(
             {**state, "engine_effects": tuple(round_effects)},
             engine_check=check_result,
             in_combat=True,
             extra_outcome=extra_outcome or None,
         )
+        stage_ms["adjudicating_ms"] = int((time.monotonic() - t_stage) * 1000)
         if adj.mechanical_summary and check_result is None:
             log_lines.append(adj.mechanical_summary)
     else:
@@ -1158,7 +1333,9 @@ async def combat_round_node(state: AgentState) -> dict:
         "engine_effects": engine_effects,
         "engine_roll_mode": round_roll_mode,
     }
+    t_stage = time.monotonic()
     narr_updates = await narrator_node(narr_state)
+    stage_ms["narrating_ms"] = int((time.monotonic() - t_stage) * 1000)
     if narr_updates.get("error"):
         return {**retr, "error": narr_updates["error"]}
     narration = narr_updates.get("narration", "")
@@ -1178,6 +1355,27 @@ async def combat_round_node(state: AgentState) -> dict:
     elif outcome == "fled":
         narration += "\n\n*(You have left the fight.)*"
 
+    round_event = combat_round_event(
+        turn_id=state.get("turn_id"),
+        round_num=round_num,
+        ended=ended,
+        outcome=outcome,
+        actors=actors,
+        player_action=player_action,
+        outcomes=outcomes,
+        dispositions=[
+            {
+                "id": stable_id(c),
+                "name": _display(c),
+                "is_player": bool(c.get("is_player")),
+                "disposition": disposition_of(c),
+                "hp_current": c.get("hp_current"),
+            }
+            for c in combatants
+        ],
+        dice_log=adj.dice_log,
+        stage_ms=stage_ms,
+    )
     return {
         **retr,
         "combat_state": combat_state,
@@ -1187,6 +1385,8 @@ async def combat_round_node(state: AgentState) -> dict:
         "engine_roll_mode": round_roll_mode,
         "rules_context": state.get("rules_context", []),
         "adventure_context": state.get("adventure_context", []),
+        # Written in the turn transaction by persist_turn (EDG-031); never committed here.
+        "telemetry_events": [round_event],
     }
 
 

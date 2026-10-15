@@ -157,11 +157,36 @@ export interface SessionRead {
   active_character_id: number | null;
 }
 
+/** Whether a DM line's original roll was stored (EDG-030). Legacy rows are "not_captured". */
+export type RollStatus = "captured" | "no_roll" | "not_captured";
+
+/** The turn's original ruling and dice as stored at commit. Reload shows these; nothing re-rolls. */
+export interface RollRecord {
+  turn_id: string | null;
+  check: string | null;
+  success: boolean;
+  dc: number | null;
+  against: "DC" | "AC" | null;
+  modifier: number | null;
+  roll_expression: string | null;
+  natural_roll: number | null;
+  dice_result: number | null;
+  damage: number | null;
+  healing: number | null;
+  conditions: string[];
+  mechanical_summary: string;
+  dice_log: DiceLogEntry[];
+}
+
 export interface ChatMessageRead {
   citations?: SourceCitation[];
   ruling_citation_ids?: string[];
   role: "user" | "dm";
   content: string;
+  /** DM lines only. */
+  turn_id?: string | null;
+  roll_status?: RollStatus | null;
+  roll?: RollRecord | null;
   created_at: string;
 }
 
@@ -219,6 +244,10 @@ export interface CharacterAssignmentHistoryRead {
   assigned_at: string;
   ended_at: string | null;
   status: string;
+  /** Derived Second Wind resource (EDG-034); absent for non-fighters and legacy payloads. */
+  second_wind?: SecondWindState | null;
+  /** Derived spell slots per level, keyed by level as a string (casters only). */
+  spell_slots?: Record<string, SpellSlotState> | null;
 }
 
 /** Per-turn adjudication frame from the SSE/turn contract. */
@@ -276,6 +305,25 @@ export interface AdjudicationResult {
   scene_id?: string | null;
 }
 
+/** Engine-owned Second Wind counter (read-only view of the sheet resource). */
+export interface SecondWindState {
+  uses_remaining: number;
+  uses_max: number;
+}
+
+/** Engine-owned spell slot counter for one spell level. */
+export interface SpellSlotState {
+  total: number;
+  remaining: number;
+}
+
+/** Supported combat effect on a combatant (EDG-021). Only the engine list is mechanical. */
+export interface CombatEffect {
+  kind: string;
+  source?: string | null;
+  applied_round?: number | null;
+}
+
 export interface Combatant {
   name: string;
   display_name?: string | null;
@@ -289,6 +337,7 @@ export interface Combatant {
   /** Combat disposition from the engine: active, unconscious, captured, dead or defeated. */
   disposition?: string | null;
   can_act?: boolean | null;
+  effects?: CombatEffect[] | null;
 }
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | null;
@@ -304,6 +353,7 @@ export interface InitiativeEntry {
   alive?: boolean;
   disposition?: string | null;
   can_act?: boolean | null;
+  effects?: CombatEffect[] | null;
 }
 
 export interface CombatState {
@@ -347,6 +397,24 @@ export interface DebugTimings {
   [key: string]: number | undefined;
 }
 
+/**
+ * Developer view of one combat round (EDG-031). Stage timings are only those the round measured;
+ * a stage listed in `timings_unavailable` was not measured and must not be shown as zero.
+ */
+export interface CombatRoundDiagnostics {
+  turn_id: string | null;
+  round: number;
+  ended: boolean;
+  outcome: string | null;
+  actors: { id: string; name: string }[];
+  player_action: Record<string, unknown>;
+  outcomes: Record<string, unknown>[];
+  dispositions: Record<string, unknown>[];
+  dice_log: Record<string, unknown>[];
+  timings_ms: Record<string, number>;
+  timings_unavailable: string[];
+}
+
 /** Payload of the optional `debug` SSE event, emitted only when debug=true. */
 export interface DebugPayload {
   parsed_input: ParsedInput | null;
@@ -357,6 +425,8 @@ export interface DebugPayload {
   world_flags_in: Record<string, unknown>;
   combat_state: CombatState | null;
   timings_ms: DebugTimings;
+  /** Combat turns only; null for a non-combat turn. */
+  combat_diagnostics?: CombatRoundDiagnostics | null;
   model: string;
 }
 
@@ -375,7 +445,9 @@ export interface TurnCharacter {
   stats?: Record<string, unknown> | null;
   inventory?: Record<string, unknown> | null;
   /** Fighter Second Wind resource (additive; present for fighters). */
-  second_wind?: { uses_remaining: number; uses_max: number } | null;
+  second_wind?: SecondWindState | null;
+  /** Derived spell slots per level (casters only; additive). */
+  spell_slots?: Record<string, SpellSlotState> | null;
 }
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */
@@ -390,4 +462,6 @@ export interface TurnResult {
   current_scene_id?: string | null;
   combat_state?: CombatState | null;
   campaign_complete?: boolean;
+  roll_status?: RollStatus | null;
+  roll?: RollRecord | null;
 }

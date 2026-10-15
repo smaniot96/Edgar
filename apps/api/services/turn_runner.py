@@ -35,6 +35,7 @@ import structlog
 from sqlalchemy import select
 
 import db.postgres.session as db_session_module
+from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
 from agent.combatants import can_act, disposition_of
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
@@ -57,6 +58,7 @@ from edgar_core.sources import citations_for, public_citations
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
+from .roll_record import build_roll_record, roll_status_for
 from .world_writes import (
     MissingCharacterAssignmentError,
     apply_adjudication,
@@ -148,6 +150,9 @@ async def persist_turn(
         }.values()
     )
     ruling_citation_ids = [ref["reference_id"] for ref in ruling_refs]
+    # The original dice, stored on the narration row so reload never re-rolls (EDG-030).
+    turn_roll = build_roll_record(adjudication, result.get("turn_id"))
+    roll_status = roll_status_for(turn_roll)
     async with db_session_module.async_session_factory() as db:
         try:
             game_session = (
@@ -325,6 +330,8 @@ async def persist_turn(
                     "ruling_citation_ids": ruling_citation_ids,
                     "rules_edition": edition,
                     "turn_id": turn_id,
+                    "roll_status": roll_status,
+                    "roll": turn_roll,
                 },
             )
             db.add(narration_event)
@@ -376,6 +383,8 @@ async def persist_turn(
                 "retrieval_degraded": bool(result.get("retrieval_degraded")),
                 "source_status": result.get("source_status", []),
                 "source_mode": result.get("source_mode", "module"),
+                "roll_status": roll_status,
+                "roll": turn_roll,
             }
             narration_event.payload = {**narration_event.payload, "done": done}
             await db.commit()
@@ -430,6 +439,8 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         "current_turn_index": combat_state.get("current_turn_index"),
         "player_ac": combat_state.get("player_ac"),
         "second_wind_used": combat_state.get("second_wind_used", False),
+        # Additive (EDG-148): whether the engine fitted this roster to the solo budget, and why.
+        "solo_budget": combat_state.get("solo_budget"),
         "second_wind_uses_remaining": combat_state.get("second_wind_uses_remaining"),
         "raging": bool(combat_state.get("raging", False)),
     }
@@ -451,6 +462,14 @@ def _truncate_ctx(items: Any, n: int = 8, width: int = 320) -> list[dict[str, An
     return out
 
 
+def combat_round_from_events(events: list[dict] | None) -> dict[str, Any] | None:
+    """The developer view of this turn's combat round, or None for a non-combat turn."""
+    for event in events or []:
+        if event.get("event_type") == COMBAT_ROUND_EVENT:
+            return combat_round_public(event.get("payload"))
+    return None
+
+
 def _debug_payload(
     *,
     parsed: Any,
@@ -459,6 +478,7 @@ def _debug_payload(
     world_flags_in: dict | None,
     combat_state: dict | None,
     timings: dict[str, int],
+    combat_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Everything a developer needs to confirm a turn ran correctly: intent classification,
     the RAG chunks actually retrieved (the silently-dead-RAG class of bug), full combat
@@ -486,6 +506,8 @@ def _debug_payload(
         if combat_state
         else combat_state,
         "timings_ms": timings,
+        # Combat turns only: the round's actors, original dice and outcomes (EDG-031).
+        "combat_diagnostics": combat_diagnostics,
         "model": LLM_MODEL,
     }
 
@@ -627,6 +649,9 @@ async def stream_session_turn(
     lap("saving_ms")
 
     if debug:
+        combat_diagnostics = combat_round_from_events(state.get("telemetry_events"))
+        # Stages the combat round measured itself. Unmeasured ones stay absent (UI: unavailable).
+        combat_timings = (combat_diagnostics or {}).get("timings_ms") or {}
         yield sse_event(
             "debug",
             _debug_payload(
@@ -635,7 +660,12 @@ async def stream_session_turn(
                 adv_ctx=state.get("adventure_context"),
                 world_flags_in=initial_state.get("world_flags"),
                 combat_state=state.get("combat_state"),
-                timings={**timings, "total_ms": int((time.monotonic() - t0) * 1000)},
+                timings={
+                    **timings,
+                    **combat_timings,
+                    "total_ms": int((time.monotonic() - t0) * 1000),
+                },
+                combat_diagnostics=combat_diagnostics,
             ),
         )
     yield sse_event("done", done_payload)
