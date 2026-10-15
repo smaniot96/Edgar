@@ -101,9 +101,6 @@ CASTING_ABILITY = {
     "wizard": "INT", "artificer": "INT", "cleric": "WIS", "druid": "WIS", "ranger": "WIS",
     "bard": "CHA", "sorcerer": "CHA", "warlock": "CHA", "paladin": "CHA",
 }  # fmt: skip
-# Representative level-1 attack cantrip damage per caster class.
-_SPELL_DAMAGE = {"wizard": "1d10", "sorcerer": "1d10", "warlock": "1d10", "artificer": "1d10"}
-_DEFAULT_SPELL_DAMAGE = "1d8"
 
 HIT_DIE = {
     "barbarian": 12, "fighter": 10, "paladin": 10, "ranger": 10, "bard": 8, "cleric": 8,
@@ -585,13 +582,12 @@ def roll_attack_damage(
     rng: random.Random | None = None,
 ) -> tuple[int, DiceOutcome]:
     """Weapon (or cantrip) damage for a hit; dice doubled on a critical."""
-    cls = character_class(character)
     if attack.kind == "spell_attack":
-        expr = _SPELL_DAMAGE.get(cls, _DEFAULT_SPELL_DAMAGE)
-    else:
-        weapon = attack.weapon or choose_weapon(character, hint)
-        mod = ability_modifier(character, _attack_ability(character, weapon))
-        expr = f"{weapon.dice}{mod:+d}" if mod else weapon.dice
+        # Spell damage is a catalog effect (agent.spells); a class-die stand-in is never rolled.
+        raise ValueError("spell attacks take their damage from agent.spells.resolve_spell")
+    weapon = attack.weapon or choose_weapon(character, hint)
+    mod = ability_modifier(character, _attack_ability(character, weapon))
+    expr = f"{weapon.dice}{mod:+d}" if mod else weapon.dice
     if attack.critical:
         expr = _double_dice(expr)
     outcome = roll(expr, rng)
@@ -629,8 +625,8 @@ def resolve_from_parsed(
     if check:
         norm = normalise_check(check)
         if norm is not None and norm[1] == "spell_attack":
-            # No verified spell effect exists: a spell attack would only be a class-die stand-in.
-            # The supported-action boundary (agent.supported_rules) rules on it instead.
+            # Declared spells resolve through agent.spells (catalog) or get the narrative ruling
+            # of the supported-action boundary (agent.supported_rules). Never a class-die roll.
             log.info("declared_spell_attack_not_resolved")
             return None, []
         return resolve_check(character, check, difficulty, hint=hint, rng=rng), []
@@ -978,6 +974,8 @@ def enforce_side_effects(
 
     cu = adj.character_update
     if cu is not None:
+        # Spell slots are an engine ledger (agent.spells): a model proposal never sets them.
+        cu.spell_slots_expended = None
         cu.add_conditions = normalise_conditions(cu.add_conditions)
         cu.remove_conditions = normalise_conditions(cu.remove_conditions)
         cu.inventory_add = (
@@ -1020,6 +1018,13 @@ def enforce_side_effects(
             )
             cu.damage_dice = None
         hp_delta -= damage_taken
+
+        if detect_rest(player_input) == "long":
+            # A long rest restores every expended spell slot (the ledger is cleared).
+            if cu is None:
+                cu = CharacterUpdate()
+                adj.character_update = cu
+            cu.spell_slots_expended = {}
 
         heal: HealResult | None = None
         item = find_healing_consumable(

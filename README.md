@@ -86,12 +86,16 @@ simulate (`GET /api/rules/supported-scope`):
 
 - Executed by the engine: d20 ability, skill, save and tool checks against DCs of 10/15/20/25;
   weapon attacks with natural 1 and 20 handling; AC from the armor table; initiative; combat rounds
-  in initiative order; Fighter Second Wind (once per encounter); short and long rest healing; healing
-  potions taken from inventory.
-- Not supported: advantage and disadvantage, grapple/shove/pin/restraint, declared spell effects,
-  spell slots and concentration, condition effects, cover and positioning, bonus actions and
-  reactions, the Hit Dice ledger, and class features beyond Second Wind. A declared action of this
-  kind gets a narrative ruling and no mechanical effect.
+  in initiative order; Fighter Second Wind (once per encounter); short and long rest healing (a long
+  rest also restores spell slots); healing potions taken from inventory.
+- Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
+  darts, upcast by slot), Sacred Flame (DEX save) and Cure Wounds (self-heal). Their dice are
+  rolled by the engine, leveled spells spend a slot tracked per character, and a cast with no slot
+  left is refused with no effect.
+- Not supported: advantage and disadvantage, grapple/shove/pin/restraint, spells outside that
+  catalog, concentration, condition effects, cover and positioning, bonus actions and reactions,
+  the Hit Dice ledger, and class features beyond Second Wind. A declared action of this kind gets a
+  narrative ruling and no mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   scaled down for a single level-1 hero.
 

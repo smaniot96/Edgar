@@ -35,8 +35,10 @@ The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session
 `GET /api/rules/supported-scope` is read-only and static. It returns the code-owned contract
 (`agent.supported_rules`): the mechanics the engine executes, the rules it does not execute, and
 the solo-play adaptations. A declared action that falls in the unsupported list receives a narrative
-ruling. Its narration and adjudication cannot state an engine effect, so spells, maneuvers,
-advantage, positioning and similar claims never change HP, conditions or flags. The scope is also
+ruling. Its narration and adjudication cannot state an engine effect, so spells outside the catalog,
+maneuvers, advantage, positioning and similar claims never change HP, conditions or flags. Catalog
+spells (`agent.spells`) are executed by the engine: their dice, damage and healing come from the
+roll, and the spell-slot count is persisted in the assignment's `stats["spell_slots_expended"]`. The scope is also
 summarised in the rules and narrator prompts.
 
 ## Health
