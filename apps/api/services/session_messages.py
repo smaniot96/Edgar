@@ -6,20 +6,25 @@ payload records which narration row it covers up to), updated off the critical p
 turn commits and only once SUMMARY_EVERY_N_TURNS new turns have aged out of the window.
 """
 
+from dataclasses import dataclass
+from typing import Literal
+
 import structlog
 from langchain_core.messages import AIMessage, HumanMessage
-from sqlalchemy import select
+from sqlalchemy import BigInteger, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 import db.postgres.session as db_session_module
 from agent.nodes.memory_summarizer import summarize_story
-from db.postgres.models import EventLog
+from db.postgres.models import EventLog, Session as SessionModel
 
 log = structlog.get_logger()
 
 RECENT_TURNS = 10
 SUMMARY_EVERY_N_TURNS = 5
 MEMORY_SUMMARY_EVENT = "memory_summary"
+MAX_GENERATION_ATTEMPTS = 3
 
 
 def _events_to_messages(events: list[EventLog]) -> list[HumanMessage | AIMessage]:
@@ -54,70 +59,154 @@ async def load_session_messages(
     return _events_to_messages(list(reversed(result.scalars().all())))
 
 
-async def _latest_summary_row(db: AsyncSession, session_id: int) -> EventLog | None:
+async def _latest_summary_row(db: AsyncSession, session_id: int) -> tuple[EventLog, int] | None:
+    """Choose maximum *valid* narration coverage, with insertion order only breaking ties.
+
+    Legacy rows remain untouched. Missing/malformed boundaries can supply fallback text,
+    but cannot claim coverage or seed incremental generation. Validate the pointer against
+    this session's narration, so unrelated event ids cannot hide unsummarized history.
+    """
+    raw_through = EventLog.payload["through_event_id"].astext
+    parsed_through = case(
+        (raw_through.op("~")("^[0-9]{1,18}$"), cast(raw_through, BigInteger)),
+        else_=0,
+    )
+    narration = aliased(EventLog)
+    coverage = func.coalesce(narration.id, 0)
     result = await db.execute(
-        select(EventLog)
+        select(EventLog, coverage)
+        .outerjoin(
+            narration,
+            (narration.id == parsed_through)
+            & (narration.session_id == EventLog.session_id)
+            & (narration.event_type == "narration")
+            & (narration.id < EventLog.id),
+        )
         .where(
             EventLog.session_id == session_id,
             EventLog.event_type == MEMORY_SUMMARY_EVENT,
+            func.jsonb_typeof(EventLog.payload["summary"]) == "string",
+            EventLog.payload["summary"].astext.op("~")("[^[:space:]]"),
         )
-        .order_by(EventLog.id.desc())
+        .order_by(coverage.desc(), EventLog.id.desc())
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    row = result.one_or_none()
+    return (row[0], row[1]) if row is not None else None
 
 
 async def load_memory_summary(db: AsyncSession, session_id: int) -> str | None:
-    """The latest persisted "story so far" for this session, or None if there is none yet."""
-    row = await _latest_summary_row(db, session_id)
-    if row is None:
-        return None
-    summary = (row.payload or {}).get("summary")
-    return str(summary) if summary else None
+    """The persisted story with greatest valid narration coverage, or legacy fallback text."""
+    latest = await _latest_summary_row(db, session_id)
+    return latest[0].payload["summary"] if latest is not None else None
+
+
+@dataclass(frozen=True)
+class _MemorySnapshot:
+    base_summary_id: int | None
+    previous_summary: str | None
+    through_event_id: int
+    turns_summarized: int
+    # Only immutable primitives leave the transaction; no attached ORM/message objects.
+    messages: tuple[tuple[str, str], ...]
+
+
+async def _read_memory_snapshot(session_id: int, *, min_turns: int) -> _MemorySnapshot | None:
+    async with db_session_module.async_session_factory() as db, db.begin():
+        # Match turn publication's Session-first lock order. Under READ COMMITTED this
+        # stabilizes summary publication and committed turn writes across the two reads.
+        owner = await db.scalar(
+            select(SessionModel.id).where(SessionModel.id == session_id).with_for_update()
+        )
+        if owner is None:
+            return None
+        latest = await _latest_summary_row(db, session_id)
+        through_id = latest[1] if latest is not None else 0
+        result = await db.execute(
+            select(EventLog)
+            .where(
+                EventLog.session_id == session_id,
+                EventLog.event_type == "narration",
+                EventLog.id > through_id,
+            )
+            .order_by(EventLog.id.asc())
+        )
+        pending = list(result.scalars().all())
+        aged_out = pending[:-RECENT_TURNS] if len(pending) > RECENT_TURNS else []
+        if len(aged_out) < min_turns:
+            return None
+        return _MemorySnapshot(
+            base_summary_id=latest[0].id if latest is not None else None,
+            previous_summary=latest[0].payload["summary"] if through_id else None,
+            through_event_id=aged_out[-1].id,
+            turns_summarized=len(aged_out),
+            messages=tuple((m.type, str(m.content)) for m in _events_to_messages(aged_out)),
+        )
+
+
+async def _publish_memory_summary(
+    session_id: int, snapshot: _MemorySnapshot, summary: str
+) -> Literal["published", "obsolete", "rebase"]:
+    async with db_session_module.async_session_factory() as db, db.begin():
+        owner = await db.scalar(
+            select(SessionModel.id).where(SessionModel.id == session_id).with_for_update()
+        )
+        if owner is None:
+            return "obsolete"
+        latest = await _latest_summary_row(db, session_id)
+        if latest is not None and latest[1] >= snapshot.through_event_id:
+            return "obsolete"
+        if (latest[0].id if latest is not None else None) != snapshot.base_summary_id:
+            # A result must describe exactly its recorded incremental base. Regenerate
+            # against the winner instead of combining text generated from different bases.
+            return "rebase"
+        db.add(
+            EventLog(
+                session_id=session_id,
+                event_type=MEMORY_SUMMARY_EVENT,
+                payload={
+                    "summary": summary,
+                    "through_event_id": snapshot.through_event_id,
+                    "turns_summarized": snapshot.turns_summarized,
+                    "base_summary_event_id": snapshot.base_summary_id,
+                },
+            )
+        )
+    return "published"
 
 
 async def maybe_update_memory_summary(session_id: int) -> None:
-    """Fold turns that aged out of the verbatim window into the rolling summary.
+    """Generate outside DB transactions and publish only against the current summary base.
 
-    Runs after the turn has committed (as a response background task) in its own short-lived
-    DB session. Never raises: a failed summary only means the narrator keeps the previous one.
+    Overlapping equal/older jobs are no-ops. A changed base retries from fresh immutable
+    input, at most MAX_GENERATION_ATTEMPTS times to bound provider work under contention.
+    Exhausted/failed jobs leave history intact; later background jobs retry aged-out turns.
+    Cancellation propagates while context managers release connections/roll back writes.
     """
     try:
-        async with db_session_module.async_session_factory() as db:
-            latest = await _latest_summary_row(db, session_id)
-            previous = (latest.payload or {}) if latest is not None else {}
-            through_id = int(previous.get("through_event_id") or 0)
-
-            result = await db.execute(
-                select(EventLog)
-                .where(
-                    EventLog.session_id == session_id,
-                    EventLog.event_type == "narration",
-                    EventLog.id > through_id,
-                )
-                .order_by(EventLog.id.asc())
+        for attempt in range(MAX_GENERATION_ATTEMPTS):
+            snapshot = await _read_memory_snapshot(
+                session_id,
+                # Once a job qualified, finish even a smaller remainder after rebasing.
+                min_turns=SUMMARY_EVERY_N_TURNS if attempt == 0 else 1,
             )
-            pending = list(result.scalars().all())
-            # The newest RECENT_TURNS stay verbatim in the prompt; only older turns are summarised.
-            aged_out = pending[:-RECENT_TURNS] if len(pending) > RECENT_TURNS else []
-            if len(aged_out) < SUMMARY_EVERY_N_TURNS:
+            if snapshot is None:
                 return
-
-            summary = await summarize_story(previous.get("summary"), _events_to_messages(aged_out))
-            if not summary:
+            messages = [
+                HumanMessage(content=text) if kind == "human" else AIMessage(content=text)
+                for kind, text in snapshot.messages
+            ]
+            summary = await summarize_story(snapshot.previous_summary, messages)
+            if not summary or not summary.strip():
                 return
-            db.add(
-                EventLog(
-                    session_id=session_id,
-                    event_type=MEMORY_SUMMARY_EVENT,
-                    payload={
-                        "summary": summary,
-                        "through_event_id": aged_out[-1].id,
-                        "turns_summarized": len(aged_out),
-                    },
+            outcome = await _publish_memory_summary(session_id, snapshot, summary)
+            if outcome == "rebase":
+                continue
+            if outcome == "published":
+                log.info(
+                    "memory_summary_updated", session_id=session_id, turns=snapshot.turns_summarized
                 )
-            )
-            await db.commit()
-            log.info("memory_summary_updated", session_id=session_id, turns=len(aged_out))
+            return
+        log.info("memory_summary_contended", session_id=session_id)
     except Exception:
         log.warning("memory_summary_failed", session_id=session_id, exc_info=True)
