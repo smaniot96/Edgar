@@ -19,12 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
+from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
 from db.postgres.models import Campaign, EventLog, Session as SessionModel
 from edgar_core.sources import public_citations
 
 from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
-from ..schemas.turn import TurnRequest, TurnResponse
+from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
 from ..services.campaign_sources import require_campaign_sources
 from ..services.character_assignments import character_play_state, load_active_assignment
 from ..services.combat import (
@@ -41,6 +42,7 @@ from ..services.session_messages import (
 from ..services.story_state import load_story_state, session_story_flags
 from ..services.turn_runner import (
     TurnError,
+    combat_round_from_events,
     combat_state_public,
     error_body,
     persist_turn,
@@ -217,6 +219,32 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
     return out
 
 
+@router.get("/sessions/{session_id}/diagnostics/combat")
+async def list_combat_diagnostics(session_id: int, db: AsyncSession = Depends(get_session)):
+    """Stored combat-round diagnostics for reload, oldest first (developer only, EDG-031).
+
+    Only rounds that were written with this feature appear. A turn with no entry has no stored
+    combat telemetry, which the UI must show as not captured, never as zero or inferred.
+    """
+    if not debug_turns_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+    await get_or_404(db, SessionModel, session_id, "Session")
+    rows = (
+        (
+            await db.execute(
+                select(EventLog)
+                .where(EventLog.session_id == session_id, EventLog.event_type == COMBAT_ROUND_EVENT)
+                .order_by(EventLog.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {"created_at": row.created_at, **(combat_round_public(row.payload) or {})} for row in rows
+    ]
+
+
 @router.post("/sessions/{session_id}/intro")
 async def session_intro(
     session_id: int,
@@ -352,10 +380,14 @@ async def session_turn(
             citations=done["citations"],
             rules_edition=done["rules_edition"],
             ruling_citation_ids=done["ruling_citation_ids"],
-            combat_state=result.get("combat_state"),
+            # The public roster shape only: raw combatants carry planner-only creature provenance.
+            combat_state=done["combat_state"],
             current_scene_id=done["current_scene_id"],
             character=done["character"],
             campaign_complete=done["campaign_complete"],
+            combat_diagnostics=(
+                combat_round_from_events(result.get("telemetry_events")) if body.debug else None
+            ),
         )
     except HTTPException:
         raise

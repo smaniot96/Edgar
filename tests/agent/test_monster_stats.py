@@ -407,6 +407,23 @@ async def test_multiattack_rolls_one_attack_per_listed_attack(fake_llm_schema, f
 
 
 @pytest.mark.asyncio
+async def test_multiattack_is_recorded_in_the_combat_round_telemetry(
+    fake_llm_schema, fake_retrieval
+):
+    """EDG-031 round row: one actor entry for the Troll, one outcome per listed attack."""
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    state = _round_state([_player(init=5, ac=18), troll_combatant(init=20)], "I attack the troll")
+    with use_rng(random.Random(3)):
+        out = await combat_round_node(state)
+    payload = next(e for e in out["telemetry_events"] if e["event_type"] == "combat_round")[
+        "payload"
+    ]
+    assert [a["id"] for a in payload["actors"]] == ["Troll"]
+    assert [o["attack"] for o in payload["outcomes"]] == ["Bite", "Claw", "Claw"]
+    assert all(o["actor"] == "Troll" and "roll_mode" in o for o in payload["outcomes"])
+
+
+@pytest.mark.asyncio
 async def test_regeneration_is_logged_at_the_start_of_the_monsters_turn(
     fake_llm_schema, fake_retrieval
 ):
