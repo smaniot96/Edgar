@@ -315,7 +315,11 @@ async def test_encounter_respects_ally_dispositions(
     caplog.set_level(logging.INFO, logger="agent.graph_combat")
     monkeypatch.setattr(
         "agent.graph_combat.resolve_creature",
-        lambda name, **kw: {"creature_id": "bandit", "creature_name": "Bandit", "text": "Complete synthetic Bandit record"},
+        lambda name, **kw: {
+            "creature_id": "bandit",
+            "creature_name": "Bandit",
+            "text": "Bandit\nArmor Class 12\nHit Points 11\nComplete synthetic Bandit record",
+        },
     )
     fake_llm_schema.responses[ParsedInput] = ParsedInput(
         intent="combat", check="attack", target="bandit"

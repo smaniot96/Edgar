@@ -105,10 +105,19 @@ simulate (`GET /api/rules/supported-scope`):
   effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and class
   features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
   mechanical effect.
+- Exact monster records (EDG-004): a creature identified by its verified record uses that record's
+  armor class, hit points, DEX initiative bonus, saving-throw bonuses (for a spell's save), attacks
+  and traits. Each listed attack is rolled by the engine; a stated Multiattack makes one roll per
+  listed attack. Regeneration heals at the start of the monster's turn, unless the damage types the
+  record names have been taken since its last turn. Resistances, immunities and vulnerabilities apply
+  to player damage by weapon or spell damage type. Speed and movement, legendary, lair and reaction
+  actions, spellcasting, recharge abilities and unlisted traits are declared in the combat start
+  message and have no effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
-  with level. Over-budget foes are clamped or left out, exact creature identities are kept, and the
-  combat start notes any adaptation.
+  with level. Foes without an exact record are clamped or left out. An exact creature is never
+  rescaled: the budget limits only how many foes take part, and an out-of-band record is noted as
+  unscaled. The combat start notes any adaptation.
 
 ## Repo layout
 

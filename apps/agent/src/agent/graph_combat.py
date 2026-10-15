@@ -70,6 +70,18 @@ from agent.combatants import (
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
+from agent.monster_stats import (
+    MonsterStatsError,
+    adjust_monster_damage,
+    attack_plan,
+    combat_fields,
+    declared_line,
+    parse_monster_stats,
+    record_damage,
+    regenerate,
+    stats_of,
+    weapon_damage_type,
+)
 from agent.nodes import narrator_node, world_retriever_node
 from agent.nodes.rules_adjudicator import adjudicate
 from agent.prompts import UNTRUSTED_INPUT_NOTICE, wrap_player_action
@@ -78,6 +90,7 @@ from agent.resolution import (
     ability_modifier,
     character_class,
     check_spec,
+    choose_weapon,
     decide_completion,
     find_healing_consumable,
     heal_from_consumable,
@@ -150,12 +163,12 @@ ENCOUNTER_BUILDER = (
     "allies, companions, rescued or friendly NPCs as enemies.\n"
     "- If the player names a specific antagonist, use that EXACT name for that enemy.\n"
     "- Use ONLY the resolved foe names and their complete source records below. Never rename a "
-    "creature or add an unlisted identity. Use their records for HP/AC/attack/damage.\n"
-    "- Scale for a SOLO hero: keep the total threat modest and stay within the solo budget given "
-    "in the context. Avoid stacking many strong enemies. The engine clamps or leaves out anything "
-    "beyond that budget.\n"
-    "- hp_max, attack_bonus and damage_dice within the solo budget; ac 10-16; damage_dice in NdM "
-    "or NdM+K form (e.g. 1d6+1); initiative_bonus = the creature's DEX modifier (-1..4).\n"
+    "creature or add an unlisted identity.\n"
+    "- For an exact record the engine takes every number (HP, AC, attacks, traits) from that "
+    "record. Your hp_max, ac, attack_bonus, damage_dice and initiative_bonus are ignored, so your "
+    "only decision is which of the resolved foes take part.\n"
+    "- Scale for a SOLO hero: keep the group modest and stay within the solo budget given in the "
+    "context. The engine leaves out any foe beyond the foe-count limit.\n"
     "- is_boss: true ONLY for the adventure's final antagonist / climactic villain named in the "
     "adventure context; false for everyone else.\n\n" + UNTRUSTED_INPUT_NOTICE
 )
@@ -341,6 +354,34 @@ def _creature_source_reference(record: dict) -> dict:
     return {key: record[key] for key in fields if key in record}
 
 
+def _exact_enemy(identity: dict, *, is_boss: bool = False) -> dict:
+    """A roster entry whose numbers come only from its exact record (EDG-004).
+
+    The record's stat block is parsed by code into `monster_stats`; the flat HP/AC/attack fields
+    mirror it for older readers. The encounter builder never supplies these numbers.
+    """
+    name = str(identity["encounter_name"])
+    try:
+        stats = parse_monster_stats(str(identity.get("text") or ""), name=name)
+    except MonsterStatsError as exc:
+        raise CreatureResolutionError(
+            f"Creature record for {name!r} has no parseable stat block ({exc}). "
+            "Review and reingest its source."
+        ) from exc
+    return {
+        "name": name[:60],
+        "creature_id": identity["creature_id"],
+        "source_reference": _creature_source_reference(identity),
+        "stat_adaptation": "exact_record",
+        **combat_fields(stats),
+        "monster_stats": stats.to_dict(),
+        "is_boss": bool(is_boss),
+        "is_player": False,
+        "disposition": "active",
+        "alive": True,
+    }
+
+
 async def _build_enemy_roster(
     state: AgentState, targets: list[str], *, budget_summary: dict | None = None
 ) -> list[dict]:
@@ -385,7 +426,7 @@ async def _build_enemy_roster(
     ctx_lines.append(
         f"Solo budget for this level-{budget.level} hero (enforced by the engine): {budget.describe()}."
     )
-    ctx_lines.append("Resolved foes and complete source records (solo numerical adaptations only):")
+    ctx_lines.append("Resolved foes and complete source records (the engine applies their stats):")
     ctx_lines += [f"Foe: {c['encounter_name']}\n{c['text']}" for c in monster_ctx]
 
     enemies: list[dict] = []
@@ -407,24 +448,7 @@ async def _build_enemy_roster(
                 raise CreatureResolutionError(
                     "Encounter builder proposed an unverified creature identity. Review the exact foe names."
                 )
-            enemies.append(
-                {
-                    "name": identity["encounter_name"][:60],
-                    "creature_id": identity["creature_id"],
-                    "source_reference": _creature_source_reference(identity),
-                    "stat_adaptation": "legacy_solo_encounter",
-                    "hp_max": e.hp_max,
-                    "hp_current": e.hp_max,
-                    "ac": e.ac,
-                    "attack_bonus": e.attack_bonus,
-                    "damage_dice": _enemy_damage_expr(e.damage_dice),
-                    "initiative_bonus": e.initiative_bonus,
-                    "is_boss": bool(e.is_boss),
-                    "is_player": False,
-                    "disposition": "active",
-                    "alive": True,
-                }
-            )
+            enemies.append(_exact_enemy(identity, is_boss=e.is_boss))
     except CreatureResolutionError:
         raise
     except Exception as e:
@@ -432,28 +456,8 @@ async def _build_enemy_roster(
         enemies = []
 
     if not enemies:
-        # Compatibility fallback is an explicit solo adaptation of resolved records only.
-        names = [c["encounter_name"] for c in monster_ctx]
-        seen: dict[str, int] = {}
-        for t in names:
-            seen[t] = seen.get(t, 0) + 1
-            name = t if seen[t] == 1 else f"{t} {seen[t]}"
-            enemies.append(
-                {
-                    "name": name,
-                    "creature_id": identities[normalize_reference(t)]["creature_id"],
-                    "source_reference": _creature_source_reference(
-                        identities[normalize_reference(t)]
-                    ),
-                    "stat_adaptation": "legacy_solo_fallback",
-                    **_DEFAULT_ENEMY,
-                    "hp_current": _DEFAULT_ENEMY["hp_max"],
-                    "is_boss": False,
-                    "is_player": False,
-                    "disposition": "active",
-                    "alive": True,
-                }
-            )
+        # Builder unavailable: every resolved foe still fights with its own exact record.
+        enemies = [_exact_enemy(c) for c in monster_ctx]
     # Unique names so targeting and initiative stay unambiguous.
     counts: dict[str, int] = {}
     for e in enemies:
@@ -526,9 +530,12 @@ def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict 
     return None, f"You don't see {named[0]} among your foes. Who do you attack? ({foes})"
 
 
-def _strike(target: dict, amount: int, parsed: Any, player_input: str) -> str:
+def _strike(
+    target: dict, amount: int, parsed: Any, player_input: str, damage_type: str | None = None
+) -> str:
     """Apply an engine-rolled hit to an enemy; returns the status phrase for the round log."""
     target["hp_current"] = max(0, int(target["hp_current"]) - amount)
+    record_damage(target, damage_type, amount)
     if target["hp_current"] <= 0:
         apply_defeat(target, declared_lethality(parsed, player_input))
         if disposition_of(target) == "unconscious":
@@ -662,6 +669,8 @@ async def combat_round_node(state: AgentState) -> dict:
         )
         if adaptation := adaptation_sentence(budget_summary):
             log_lines.append(adaptation)
+        # What each exact record declares but the engine does not run is stated, never implied.
+        log_lines += [line for e in enemies if (line := declared_line(e))]
     elif any("init" not in c for c in combat_state["combatants"]):
         # Encounter persisted before initiative was tracked: roll it now.
         combat_state["combatants"] = roll_initiative(list(combat_state["combatants"]), character)
@@ -754,29 +763,76 @@ async def combat_round_node(state: AgentState) -> dict:
 
     round_actors: list[str] = []
 
-    def enemy_turn(e: dict) -> None:
-        if not can_act(e) or hp <= 0 or fled:
-            return
+    def enemy_attack(
+        e: dict,
+        *,
+        label: str | None,
+        bonus: int,
+        expr: str,
+        damage_type: str | None = None,
+        exact: bool = False,
+    ) -> None:
+        """One engine-rolled attack by an enemy. `exact` attacks keep their record's dice."""
         round_actors.append(_display(e))
         mode = attack_roll_mode(e, player)
         round_modes.append(mode)
-        atk, draws = _roll_with_mode(f"1d20{int(e.get('attack_bonus', 3)):+d}", mode)
-        dice_log.append(_mode_log(atk, f"{e['name']} attack", mode, draws))
+        atk, draws = _roll_with_mode(f"1d20{bonus:+d}", mode)
+        dice_log.append(
+            _mode_log(atk, f"{e['name']} {label} attack" if label else f"{e['name']} attack", mode, draws)
+        )
         mode_text = "" if mode == "normal" else f" at {mode}"
+        subject = f"{e['name']}'s {label}" if label else e["name"]
         natural = atk.rolls[0]
         if natural == 20 or (natural != 1 and atk.total >= player_ac):
-            expr = _enemy_damage_expr(e.get("damage_dice", "1d6+1"))
             if natural == 20:
                 p = parse_dice(expr)
-                expr = f"{min(p.count * 2, 8)}d{p.sides}{p.modifier:+d}" if p.modifier else f"{min(p.count * 2, 8)}d{p.sides}"
+                count = p.count * 2 if exact else min(p.count * 2, 8)
+                expr = f"{count}d{p.sides}{p.modifier:+d}" if p.modifier else f"{count}d{p.sides}"
             dmg_roll = roll(expr)
-            dice_log.append(dmg_roll.to_log(f"{e['name']} damage"))
+            dice_log.append(
+                dmg_roll.to_log(f"{e['name']} {label} damage" if label else f"{e['name']} damage")
+            )
             dmg = max(1, dmg_roll.total)
             crit = " Critical hit!" if natural == 20 else ""
-            log_lines.append(f"{e['name']} hits {hero} for {dmg} damage (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}")
+            typed = f" {damage_type}" if damage_type else ""
+            log_lines.append(
+                f"{subject} hits {hero} for {dmg}{typed} damage (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}"
+            )
             damage_player(dmg)
         else:
-            log_lines.append(f"{e['name']} misses {hero} (rolled {atk.total}{mode_text} vs AC {player_ac}).")
+            log_lines.append(f"{subject} misses {hero} (rolled {atk.total}{mode_text} vs AC {player_ac}).")
+
+    def enemy_turn(e: dict) -> None:
+        if not can_act(e) or hp <= 0 or fled:
+            return
+        stats = stats_of(e)
+        if stats is None:
+            # Legacy or generic combatant: its stored numbers, one attack (EDG-148 clamps apply).
+            enemy_attack(
+                e,
+                label=None,
+                bonus=int(e.get("attack_bonus", 3)),
+                expr=_enemy_damage_expr(e.get("damage_dice", "1d6+1")),
+            )
+            return
+        # Exact record: regeneration at the start of its turn, then each listed attack in order.
+        _healed, regen_note = regenerate(e)
+        if regen_note:
+            log_lines.append(regen_note)
+        plan = attack_plan(stats)
+        if not plan:
+            log_lines.append(f"{e['name']} has no supported attack and takes no action.")
+        for attack in plan:
+            if hp <= 0:
+                break
+            enemy_attack(
+                e,
+                label=attack.name,
+                bonus=attack.bonus,
+                expr=attack.damage_dice,
+                damage_type=attack.damage_type,
+                exact=True,
+            )
 
     player_index = combatants.index(player)
     before = [c for c in combatants[:player_index] if not c.get("is_player")]
@@ -823,7 +879,11 @@ async def combat_round_node(state: AgentState) -> dict:
     elif spell_plan is not None:
         # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
         # chosen foe the same way a weapon hit does.
-        save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
+        target_stats = stats_of(spell_target) if spell_target else None
+        if target_stats is not None:
+            save_bonus = target_stats.save_bonus(spell_plan.spell.save_ability or "DEX")
+        else:
+            save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
         # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
         spell_mode = (
             attack_roll_mode(player, spell_target, ranged=True)
@@ -845,9 +905,12 @@ async def combat_round_node(state: AgentState) -> dict:
         if spell_result.healing:
             hp = min(player_hp_max, hp + spell_result.healing)
         if spell_result.damage and spell_target is not None:
-            dealt = spell_result.damage
-            status = _strike(spell_target, dealt, parsed, player_input)
-            extra_outcome = f"{extra_outcome} {status}"
+            spell_type = spell_plan.spell.damage_type
+            dealt, resist_note = adjust_monster_damage(
+                spell_target, spell_result.damage, spell_type, magical=True
+            )
+            status = _strike(spell_target, dealt, parsed, player_input, damage_type=spell_type)
+            extra_outcome = f"{extra_outcome}{resist_note} {status}"
         if spell_result.attack is not None:
             check_result = spell_result.attack
             log_lines.append(f"{check_result.describe()}. {extra_outcome}")
@@ -907,9 +970,12 @@ async def combat_round_node(state: AgentState) -> dict:
         if check_result.success:
             dealt, dmg_roll = roll_attack_damage(character, check_result, hint=player_input)
             dice_log.append(dmg_roll.to_log("player damage"))
-            status = _strike(target, dealt, parsed, player_input)
+            weapon = check_result.weapon or choose_weapon(character, player_input)
+            damage_type = weapon_damage_type(weapon.name)
+            dealt, resist_note = adjust_monster_damage(target, dealt, damage_type, magical=False)
+            status = _strike(target, dealt, parsed, player_input, damage_type=damage_type)
             crit = "Critical hit! " if check_result.critical else ""
-            extra_outcome = f"{crit}{hero} hits {target['name']} for {dealt} damage {status}"
+            extra_outcome = f"{crit}{hero} hits {target['name']} for {dealt} damage{resist_note} {status}"
         else:
             extra_outcome = f"{hero} misses {target['name']}."
         mode_text = "" if mode == "normal" else f" (at {mode})"
