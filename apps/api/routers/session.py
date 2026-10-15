@@ -350,7 +350,9 @@ def _turn_error_response(err: TurnError) -> JSONResponse:
     return JSONResponse(status_code=err.status_code, content=error_body(err.code))
 
 
-async def _replayed_turn(db: AsyncSession, session_id: int, body: TurnRequest):
+async def _replayed_turn(
+    db: AsyncSession, session_id: int, body: TurnRequest
+) -> TurnResponse | None:
     if body.request_id is None:
         return None
     await get_or_404(db, SessionModel, session_id, "Session")
