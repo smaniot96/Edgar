@@ -8,13 +8,14 @@ import {
   updateWorldFlag,
 } from "../../api/client";
 import type { WorldFlagRead } from "../../api/types";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
 import { EmptyState, LoadingText } from "../../components/ui/EmptyState";
 import { ErrorNotice } from "../../components/ui/ErrorNotice";
 import { Input, TextField } from "../../components/ui/Field";
 import { cardClasses } from "../../components/ui/styles";
 import { cn } from "../../lib/cn";
 import { useQuery } from "../../lib/useQuery";
+import { useMode } from "../../dev/ModeContext";
 
 function FlagRow({
   flag,
@@ -73,7 +74,10 @@ function FlagRow({
 }
 
 export default function WorldTab({ campaignId }: { campaignId: number }) {
-  const flags = useQuery(`world-flags:${campaignId}`, (s) => listWorldFlags(campaignId, s));
+  const { isDev } = useMode();
+  // Manual flags are private owner controls. Do not fetch their raw payload for a hidden
+  // ordinary-mode editor; the session journal is the player-facing record of earned facts.
+  const flags = useQuery(isDev ? `world-flags:${campaignId}` : null, (s) => listWorldFlags(campaignId, s));
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -116,14 +120,32 @@ export default function WorldTab({ campaignId }: { campaignId: number }) {
     }
   }
 
+  if (!isDev) {
+    return (
+      <section aria-labelledby="world-state-heading" className="space-y-3">
+        <h2 id="world-state-heading" className="font-serif text-lg font-semibold text-ink">
+          Known story changes
+        </h2>
+        <p className="max-w-prose text-sm leading-relaxed text-ink-muted">
+          The campaign flag editor is an advanced owner tool. Choose a saved session to read the
+          committed discoveries and changes recorded for that playthrough.
+        </p>
+        <ButtonLink to={`/campaigns/${campaignId}?tab=sessions`} variant="secondary" size="sm">
+          Choose a session for its Journal
+        </ButtonLink>
+      </section>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <p className="rounded-control bg-warning-soft px-3 py-2 text-sm text-warning">
-        World state is normally set by the DM as you play. Editing it by hand overrides the story's
-        memory — use with care.
+        Advanced world overrides for Campaign {campaignId}. Saving edits legacy campaign flags used
+        by the DM. These owner actions do not rewrite committed journal facts, inventory, promises,
+        or history.
       </p>
       <form onSubmit={(e) => void add(e)} className={cn(cardClasses, "space-y-3 p-4")}>
-        <h3 className="text-sm font-semibold">Set a flag</h3>
+        <h3 className="text-sm font-semibold">Advanced world overrides</h3>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <TextField
             fieldClassName="flex-1"
@@ -156,7 +178,8 @@ export default function WorldTab({ campaignId }: { campaignId: number }) {
         <LoadingText />
       ) : flags.data.length === 0 ? (
         <EmptyState title="No world flags yet">
-          Flags appear as your choices change the world.
+          No manual flags are stored for this campaign. This does not mean the story is unchanged;
+          committed discoveries belong to each saved session's journal.
         </EmptyState>
       ) : (
         <div className="overflow-x-auto">
