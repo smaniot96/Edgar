@@ -285,8 +285,12 @@ def weapon_proficient(character: dict | None, weapon: Weapon) -> bool:
     """
     if weapon is _DEFAULT_WEAPON:
         return True
-    grants = set(CLASS_WEAPONS.get(character_class(character), ()))
-    for token in _listed_proficiencies(character):
+    cls = character_class(character)
+    listed = _listed_proficiencies(character)
+    if cls not in CLASS_WEAPONS:
+        return True  # homebrew/unknown class: no class table to judge by, never invent a penalty
+    grants = set(CLASS_WEAPONS.get(cls, ()))
+    for token in listed:
         grants.add(token[: -len("_weapons")] if token.endswith("_weapons") else token)
     if "simple" in grants and weapon.simple:
         return True

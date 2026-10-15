@@ -330,6 +330,11 @@ def test_proficient_weapon_categories_and_listed_grants() -> None:
     assert check_spec(martial, "attack", hint="my warhammer").proficient is True
 
 
+def test_unknown_class_keeps_proficiency_rather_than_inventing_a_penalty() -> None:
+    homebrew = {**CLERIC, "class": "Blood Hunter", "inventory": {"weapons": ["greatsword"]}}
+    assert check_spec(homebrew, "attack").proficient is True
+
+
 def test_unarmed_attack_keeps_proficiency() -> None:
     unarmed = {**CLERIC, "inventory": {}}
     spec = check_spec(unarmed, "attack")
