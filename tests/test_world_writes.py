@@ -238,3 +238,59 @@ async def test_resolved_combat_outcome_cannot_regress(db_session):
     with pytest.raises(ValueError, match="resolved combat"):
         await persist_combat(db_session, sess.id, {**unchanged, "ended": False, "outcome": None})
     assert resolved.ended is True and resolved.outcome == "victory"
+
+
+@pytest.mark.asyncio
+async def test_combat_dispositions_persist_to_npc_rows_and_survive_reload(db_session):
+    """EDG-022: captive/dead rows are session-owned, idempotent, and never touch manual NPCs."""
+    from apps.api.services.combat import (
+        load_resolved_combat_outcomes,
+        persist_combat,
+        persist_combat_npcs,
+    )
+    from db.postgres.models import NPC
+
+    camp, _, sess = await _setup(db_session)
+    manual = NPC(
+        campaign_id=camp.id, session_id=None, name="Raider", disposition="hostile", stat_block={}
+    )
+    db_session.add(manual)
+    await db_session.flush()
+    ended = {
+        "initiative_order": ["Hero", "Raider", "Raider Captain", "Cultist"],
+        "round": 2,
+        "current_turn_index": 0,
+        "ended": True,
+        "outcome": "victory",
+        "combatants": [
+            {"name": "Hero", "is_player": True, "alive": True, "disposition": "active"},
+            {"name": "Raider", "is_player": False, "alive": True, "disposition": "captured"},
+            {"name": "Raider Captain", "is_player": False, "alive": False, "disposition": "dead"},
+            {"name": "Cultist", "is_player": False, "alive": False},  # legacy: cause unknown
+        ],
+    }
+    combat_id = await persist_combat(db_session, sess.id, ended)
+    for _ in range(2):  # idempotent
+        await persist_combat_npcs(db_session, sess.id, camp.id, combat_id, ended)
+    await db_session.commit()
+    db_session.expunge_all()
+
+    rows = {
+        n.name: n
+        for n in (await db_session.execute(select(NPC).where(NPC.session_id == sess.id)))
+        .scalars()
+        .all()
+    }
+    assert set(rows) == {"Raider", "Raider Captain"}  # the legacy Cultist claims neither fate
+    assert rows["Raider"].disposition == "captive"
+    assert rows["Raider"].stat_block["life_state"] == "living"
+    assert rows["Raider Captain"].disposition == "dead"
+    assert rows["Raider Captain"].stat_block["life_state"] == "dead"
+    untouched = await db_session.get(NPC, manual.id)
+    assert untouched.disposition == "hostile" and untouched.session_id is None
+
+    outcome = (await load_resolved_combat_outcomes(db_session, sess.id))[0]
+    by_name = {c["name"]: c for c in outcome["combatants"]}
+    assert by_name["Raider"]["disposition"] == "captured"
+    assert by_name["Raider Captain"]["disposition"] == "dead"
+    assert "disposition" not in by_name["Cultist"]
