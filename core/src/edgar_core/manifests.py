@@ -398,9 +398,10 @@ class AdventureManifest(Record):
                     raise ValueError("Story definition names an unknown scene or passage.")
                 if not set(definition.announcement_passage_ids) <= set(definition.passage_ids):
                     raise ValueError("Announcement evidence must belong to its definition.")
-                if definition.announcement_passage_ids and category not in (
-                    self.objectives,
-                    self.milestones,
+                if (
+                    definition.announcement_passage_ids
+                    and category is not self.objectives
+                    and category is not self.milestones
                 ):
                     raise ValueError("Only goals and milestones can be announced.")
                 if definition.clock_reveal is not None and category is not self.clocks:

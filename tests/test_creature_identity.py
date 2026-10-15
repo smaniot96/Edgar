@@ -385,9 +385,13 @@ def test_manifest_binding_receipt_and_old_digest_compatibility():
     manifest, _ = actor_manifest()
     old_body = manifest.model_dump(exclude={"reviewed_sha256", "reviewed_by"})
     old_body.pop("resolution_policies")  # Absent from the historical receipt format.
+    old_body.pop("opening_journal")
+    for passage in old_body["passages"]:
+        passage.pop("known_scene_ids")
     for entity in old_body["entities"]:
         entity.pop("stat_reference")
         entity.pop("reveal_on")
+        entity.pop("object_id")
     for key in ("objects", "objectives", "milestones", "promises", "clocks"):
         old_body.pop(key)
     old_digest = text_digest(
