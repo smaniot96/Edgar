@@ -178,7 +178,12 @@ async def test_legacy_npc_rows_stay_campaign_wide_and_new_rows_are_scoped(api_cl
         campaign_id=campaign.id, name="Manual", disposition="friendly", stat_block={"old": True}
     )
     db_session.add(legacy)
-    encounter = effect("encounter", "odo", "encountered")
+    encounter = effect(
+        "encounter",
+        "odo",
+        "encountered",
+        player_text="Private source prose that must never appear in the people list.",
+    )
     await persist_story_effects(db_session, sessions[0], [encounter], event_id=events[0].id)
     await db_session.commit()
     response = await api_client.get(f"/api/campaigns/{campaign.id}/npcs")
@@ -193,6 +198,9 @@ async def test_legacy_npc_rows_stay_campaign_wide_and_new_rows_are_scoped(api_cl
     npc_id = next(n["id"] for n in response.json() if n["name"] != "Manual")
     learned = next(n for n in response.json() if n["name"] != "Manual")
     assert learned["session_id"] == sessions[0].id
+    assert learned["stat_block"] == {}
+    assert "Private source prose" not in response.text
+    assert "never public" not in response.text
     from edgar_core.story import story_target_id
 
     assert learned["journal_entry_id"] == journal_entry_id(
