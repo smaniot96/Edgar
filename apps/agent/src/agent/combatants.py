@@ -16,6 +16,11 @@ contested maneuver, persist in this same JSONB list, and end explicitly: a decla
 the foe's defeat, or the end of the encounter. `attack_roll_mode` turns them into the 5e
 advantage/disadvantage state of an attack. Missing or malformed `effects` reads as none.
 
+Spell conditions (EDG-043, see `agent.conditions`) add `blinded` and `marked` to the same list. They
+may also carry `expires_after_round` (the last round in force) and `save` (`{ability, dc}`: the
+combatant repeats that save at the end of each of its turns, and the effect ends on success). Rows
+written without those keys read exactly as before.
+
 Legacy rows (written before `disposition` existed) carry only `alive`/`hp_current`. They are
 read honestly: `alive` False means "defeated" (cause unknown). It is not treated as proof of
 death or capture, and no nonlethal intent is invented. No stored data is rewritten.
@@ -48,7 +53,11 @@ _STATUS_TEXT = {
     "dead": "dead, cannot act",
     "defeated": "defeated, cannot act",
 }
-EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone")
+EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone", "blinded", "marked")
+# Kinds that give the bearer's own attack rolls disadvantage, and kinds that give attacks against
+# the bearer advantage (a prone bearer is the exception: its melee/ranged split is in attack_roll_mode).
+_OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded"})
+_AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked"})
 _EFFECT_TEXT = {
     "restrained": (
         "restrained with {source}: its attacks have disadvantage and attacks against it have "
@@ -58,6 +67,10 @@ _EFFECT_TEXT = {
         "knocked prone: its attacks have disadvantage, melee attacks against it have advantage "
         "and ranged attacks against it have disadvantage"
     ),
+    "blinded": (
+        "blinded by {source}: its attacks have disadvantage and attacks against it have advantage"
+    ),
+    "marked": "marked by {source}: the next attack roll against it has advantage",
 }
 
 # The player's own declared intent, read from their words. Nonlethal wins when both appear
@@ -198,13 +211,25 @@ def has_effect(c: Mapping[str, Any], kind: str) -> bool:
     return any(e["kind"] == kind for e in effects_of(c))
 
 
-def add_effect(c: dict, kind: str, *, source: str | None, round_applied: int) -> bool:
+def add_effect(
+    c: dict,
+    kind: str,
+    *,
+    source: str | None,
+    round_applied: int,
+    expires_after_round: int | None = None,
+    save: Mapping[str, Any] | None = None,
+) -> bool:
     """Apply a typed effect. False when the combatant already has that effect (no stacking)."""
     if kind not in EFFECT_KINDS:
         raise ValueError(f"unknown combat effect: {kind!r}")
     if has_effect(c, kind):
         return False
-    entry = {"kind": kind, "source": source, "applied_round": int(round_applied)}
+    entry: dict[str, Any] = {"kind": kind, "source": source, "applied_round": int(round_applied)}
+    if expires_after_round is not None:
+        entry["expires_after_round"] = int(expires_after_round)
+    if save is not None:
+        entry["save"] = {"ability": str(save["ability"]), "dc": int(save["dc"])}
     c["effects"] = [*effects_of(c), entry]
     return True
 
@@ -231,15 +256,16 @@ def attack_roll_mode(
 ) -> str:
     """The 5e attack-roll mode from combatant effects: "advantage", "disadvantage" or "normal".
 
-    A restrained or prone attacker rolls at disadvantage. A restrained target is attacked with
-    advantage; a prone target with advantage in melee and disadvantage at range. Opposing sources
-    cancel to normal, as the rules do. Pure: it never rolls and never sets a number.
+    A restrained, prone or blinded attacker rolls at disadvantage. A restrained, blinded or marked
+    target is attacked with advantage; a prone target with advantage in melee and disadvantage at
+    range. Opposing sources cancel to normal, as the rules do. Pure: it never rolls and never sets a
+    number.
     """
     advantage = disadvantage = False
-    if any(e["kind"] in EFFECT_KINDS for e in effects_of(attacker)):
+    if any(e["kind"] in _OWN_ATTACK_DISADVANTAGE for e in effects_of(attacker)):
         disadvantage = True
     for e in effects_of(target):
-        if e["kind"] == "restrained":
+        if e["kind"] in _AGAINST_ADVANTAGE:
             advantage = True
         elif e["kind"] == "prone":
             if ranged:
@@ -266,6 +292,17 @@ def finish_victory(combatants: Iterable[dict]) -> None:
             c["alive"] = True
 
 
+def _public_effect(e: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "kind": e["kind"],
+        "source": e.get("source"),
+        "applied_round": e.get("applied_round"),
+    }
+    if e.get("expires_after_round") is not None:  # additive: only timed effects carry it
+        out["expires_after_round"] = e["expires_after_round"]
+    return out
+
+
 def view_fields(c: Mapping[str, Any]) -> dict[str, Any]:
     """Public, shape-stable disposition fields for the roster, HUD and narrator."""
     disposition = disposition_of(c)
@@ -274,10 +311,7 @@ def view_fields(c: Mapping[str, Any]) -> dict[str, Any]:
         "disposition": disposition,
         "can_act": can_act(c),
         "alive": disposition in LIVING_DISPOSITIONS,
-        "effects": [
-            {"kind": e["kind"], "source": e.get("source"), "applied_round": e.get("applied_round")}
-            for e in effects_of(c)
-        ],
+        "effects": [_public_effect(e) for e in effects_of(c)],
     }
 
 

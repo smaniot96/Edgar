@@ -161,8 +161,10 @@ def test_catalog_covers_each_kind_with_provenance() -> None:
         "Magic Missile",
         "Sacred Flame",
         "Cure Wounds",
+        "Guiding Bolt",
+        "Blindness/Deafness",
     }
-    assert {s.kind for s in CATALOG} == {"attack", "auto", "save", "heal"}
+    assert {s.kind for s in CATALOG} == {"attack", "auto", "save", "heal", "condition"}
     assert all(s.source.startswith("Player's Handbook (2014") for s in CATALOG)
 
 

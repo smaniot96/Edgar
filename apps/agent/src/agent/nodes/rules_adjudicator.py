@@ -286,6 +286,12 @@ async def adjudicate(
         request = cast_request(player_input, parsed, character)
     if request is not None:
         _spell, plan, refusal = request
+        if refusal is None and plan is not None and plan.spell.kind == "condition":
+            # A condition needs a foe to carry it: outside combat none is tracked, so no slot is spent.
+            refusal = (
+                f"{_spell.name} is not cast: a condition needs a foe in combat, so no spell effect "
+                "is applied."
+            )
         if refusal:
             return AdjudicationResult(
                 success=False, mechanical_summary=refusal, completion_status="none"

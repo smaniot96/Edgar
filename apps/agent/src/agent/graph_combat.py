@@ -73,6 +73,14 @@ from agent.combatants import (
     stable_id,
     view_fields,
 )
+from agent.conditions import (
+    apply_spell_condition,
+    consume_mark,
+    end_of_turn_saves,
+    expire_effects,
+    save_line,
+    spell_condition_sentence,
+)
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
@@ -901,9 +909,7 @@ async def combat_round_node(state: AgentState) -> dict:
                 }
             )
 
-    def enemy_turn(e: dict) -> None:
-        if not can_act(e) or hp <= 0 or fled:
-            return
+    def foe_attacks(e: dict) -> None:
         stats = stats_of(e)
         if stats is None:
             # Legacy or generic combatant: its stored numbers, one attack (EDG-148 clamps apply).
@@ -932,6 +938,15 @@ async def combat_round_node(state: AgentState) -> dict:
                 damage_type=attack.damage_type,
                 exact=True,
             )
+
+    def enemy_turn(e: dict) -> None:
+        if not can_act(e) or hp <= 0 or fled:
+            return
+        foe_attacks(e)
+        # EDG-043: a save-ending spell condition is repeated at the end of the foe's own turn.
+        for save in end_of_turn_saves(e):
+            dice_log.append(save.outcome.to_log(f"{save.name} {save.ability} save ({save.kind})"))
+            log_lines.append(save_line(save))
 
     player_index = combatants.index(player)
     before = [c for c in combatants[:player_index] if not c.get("is_player")]
@@ -990,8 +1005,11 @@ async def combat_round_node(state: AgentState) -> dict:
         target_stats = stats_of(spell_target) if spell_target else None
         if target_stats is not None:
             save_bonus = target_stats.save_bonus(spell_plan.spell.save_ability or "DEX")
+        elif spell_target is not None and spell_plan.spell.save_ability == "DEX":
+            # A legacy foe has only its initiative (DEX) bonus; other saves stay unmodified.
+            save_bonus = int(spell_target.get("initiative_bonus", 0) or 0)
         else:
-            save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
+            save_bonus = 0
         # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
         spell_mode = (
             attack_roll_mode(player, spell_target, ranged=True)
@@ -1019,6 +1037,35 @@ async def combat_round_node(state: AgentState) -> dict:
             )
             status = _strike(spell_target, dealt, parsed, player_input, damage_type=spell_type)
             extra_outcome = f"{extra_outcome}{resist_note} {status}"
+        if spell_target is not None and spell_result.attack is not None:
+            consume_mark(spell_target)  # the attack roll spends a mark it was made against
+        applied_condition: str | None = None
+        if spell_result.condition and spell_target is not None and can_act(spell_target):
+            # A foe that the spell defeated keeps no condition (defeat clears effects anyway).
+            spec = spell_plan.spell
+            applied = apply_spell_condition(
+                spell_target,
+                spell_result.condition,
+                source=spec.name,
+                round_applied=int(combat_state.get("round", 1) or 1),
+                duration_rounds=spec.duration_rounds,
+                repeat_save=(
+                    {"ability": spec.save_ability, "dc": spell_result.save_dc}
+                    if spec.save_ability and spell_result.save_dc is not None
+                    else None
+                ),
+            )
+            if applied:
+                round_effects.append(spell_result.condition)
+                applied_condition = spell_result.condition
+            extra_outcome = " ".join(
+                [
+                    extra_outcome,
+                    spell_condition_sentence(
+                        spell_result.condition, spell_target["name"], applied=applied
+                    ),
+                ]
+            )
         player_action = {
             "action": "catalog_spell",
             "spell": spell_result.spec.name,
@@ -1026,6 +1073,7 @@ async def combat_round_node(state: AgentState) -> dict:
             "slot_level": spell_result.slot_level,
             "damage": spell_result.damage,
             "healing": spell_result.healing,
+            "condition": applied_condition,
         }
         if spell_result.attack is not None:
             check_result = spell_result.attack
@@ -1096,6 +1144,7 @@ async def combat_round_node(state: AgentState) -> dict:
             roll_mode=mode,
         )
         round_modes.append(mode)
+        consume_mark(target)  # the attack roll spends a mark it was made against
         if check_result.success:
             dealt, dmg_roll = roll_attack_damage(character, check_result, hint=player_input)
             dice_log.append(dmg_roll.to_log("player damage"))
@@ -1144,6 +1193,9 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Enemies after the player ---
     for e in after:
         enemy_turn(e)
+    # EDG-043: a timed spell condition ends after its last round (a mark, the caster's next turn).
+    for foe_name, expired in expire_effects(combatants, int(combat_state.get("round", 1) or 1)):
+        log_lines.append(f"{foe_name} is no longer {expired}.")
 
     player["hp_current"] = hp
     apply_player_disposition(player, subdued=False)
