@@ -44,6 +44,7 @@ from agent.nodes.narrator import (
     make_narrator_model,
     narrator_context,
 )
+from agent.supported_rules import actions_for_state, apply_narration_boundary
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
 from edgar_core.sources import citations_for, public_citations
@@ -541,6 +542,21 @@ async def stream_session_turn(
     elif (narration := deterministic_narration(state)) is not None:
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
+    elif actions := actions_for_state(state):
+        # A declared unsupported mechanic must not reach the player unchecked: wait for the
+        # complete narration, drop claimed effects, and only then stream the bounded text.
+        prompt = build_narrator_prompt(state)
+        llm = make_narrator_model()
+        try:
+            response = await llm.ainvoke(prompt)
+        except Exception:
+            log.exception("turn_narrator_failed", session_id=session_id)
+            yield sse_event("error", error_body("llm_unavailable"))
+            return
+        narration = apply_narration_boundary(message_text(response), actions)
+        for piece in _yield_narration_tokens(narration):
+            yield sse_event("token", {"text": piece})
+        lap("narrating_ms")
     else:
         prompt = build_narrator_prompt(state)
         llm = make_narrator_model()

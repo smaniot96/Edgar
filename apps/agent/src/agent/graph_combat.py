@@ -77,6 +77,7 @@ from agent.resolution import (
     roll_attack_damage,
 )
 from agent.state import AgentState
+from agent.supported_rules import actions_for_state, has_declared_spell, ruling_lines
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference, reference_matches
 from tools.dice import parse_dice, roll
@@ -586,6 +587,11 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Decide the player's action BEFORE any dice, so a bad target never burns a round ---
     is_attack, is_spell = (False, False) if fled else _is_attack_action(parsed, named)
+    # Declared spells have no verified engine effect: they never become attack rolls (EDG-028).
+    actions = actions_for_state(state)
+    spell_declared = has_declared_spell(actions)
+    if spell_declared:
+        is_attack, is_spell = False, False
     heal_item = None
     missing_item = False
     if not fled:
@@ -685,6 +691,9 @@ async def combat_round_node(state: AgentState) -> dict:
             second_wind_used = True
             extra_outcome = f"{hero} uses Second Wind and regains {sw.total} HP."
         log_lines.append(extra_outcome)
+    elif spell_declared:
+        # Narrative ruling only; appended to the round summary below.
+        extra_outcome = ""
     elif is_attack and target is not None:
         check_result = resolve_attack(character, int(target.get("ac", 12)), spell=is_spell, hint=player_input)
         if check_result.success:
@@ -783,6 +792,11 @@ async def combat_round_node(state: AgentState) -> dict:
     adj.character_update = cu
     adj.damage = dealt or None
     adj.dice_log = [*adj.dice_log, *[d for d in dice_log if d not in adj.dice_log]]
+    # Declared unsupported mechanics are ruled on in the round summary (no engine effect).
+    summary_text = " ".join(line for line in log_lines if line)
+    for ruling in ruling_lines(actions):
+        if ruling not in summary_text:
+            log_lines.append(ruling)
     adj.mechanical_summary = " ".join(line for line in log_lines if line)
 
     boss_victory = outcome == "victory" and any(e.get("is_boss") for e in enemies)

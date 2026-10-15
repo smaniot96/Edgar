@@ -79,6 +79,22 @@ curl -N -X POST http://localhost:8000/api/sessions/1/turn/stream \
 
 The `/turn/stream` endpoint emits Server-Sent Events (`status`, `token`, `adjudication`, `done`, `error`); `/turn` returns one JSON. `apps/api/README.md` documents both.
 
+### Rules scope
+
+The engine simulates a deliberately simplified subset of 5e, and declares what it does not
+simulate (`GET /api/rules/supported-scope`):
+
+- Executed by the engine: d20 ability, skill, save and tool checks against DCs of 10/15/20/25;
+  weapon attacks with natural 1 and 20 handling; AC from the armor table; initiative; combat rounds
+  in initiative order; Fighter Second Wind (once per encounter); short and long rest healing; healing
+  potions taken from inventory.
+- Not supported: advantage and disadvantage, grapple/shove/pin/restraint, declared spell effects,
+  spell slots and concentration, condition effects, cover and positioning, bonus actions and
+  reactions, the Hit Dice ledger, and class features beyond Second Wind. A declared action of this
+  kind gets a narrative ruling and no mechanical effect.
+- Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
+  scaled down for a single level-1 hero.
+
 ## Repo layout
 
 ```
