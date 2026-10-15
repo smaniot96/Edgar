@@ -162,7 +162,10 @@ async def test_poisoned_rider_on_a_hit_saves_and_the_hero_repeats_it(
         ParsedInput(intent="combat", check="attack", target="spitter"),
         round_num=2,
     )
-    with use_rng(ScriptedDice([9, 4, 16, 2])):
+    # The hero's melee attack needs the Spitter within 5 feet (EDG-044 reach rules); its crossbow
+    # then fires at disadvantage (PHB p.195), so its attack rolls a pair (2 and 3, keeping 2).
+    follow["combat_state"]["combatants"][1]["band"] = "melee"
+    with use_rng(ScriptedDice([9, 4, 16, 2, 3])):
         second = await combat_round_node(follow)
     hero_after_round_one = first["combat_state"]["combatants"][0]
     assert (

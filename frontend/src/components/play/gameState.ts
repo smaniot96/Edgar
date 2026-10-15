@@ -257,6 +257,8 @@ export interface HudCombatant {
   /** Engine disposition (`active`, `unconscious`, `captured`, `dead`, `defeated`) when known. */
   disposition: string | null;
   canAct: boolean | null;
+  /** A foe's distance band from the hero ("melee" or "ranged"); null when unknown or for the hero. */
+  band: string | null;
   /** Supported engine effects only (restrained, prone), in engine order. */
   effects: CombatEffectView[];
   isCurrent: boolean;
@@ -331,6 +333,7 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
       alive: c.alive !== false && (num(c.hp_current) ?? 1) > 0,
       disposition: c.disposition ?? null,
       canAct: typeof c.can_act === "boolean" ? c.can_act : null,
+      band: c.is_player ? null : (c.band ?? null),
       effects: mechanicalEffects(c.effects),
       isCurrent: false,
     };
@@ -350,6 +353,7 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
           alive: typeof e.alive === "boolean" ? e.alive : base.alive && (hp == null || hp > 0),
           disposition: e.disposition ?? base.disposition,
           canAct: typeof e.can_act === "boolean" ? e.can_act : base.canAct,
+          band: e.band ?? base.band,
           effects: e.effects ? mechanicalEffects(e.effects) : base.effects,
         });
       } else {
@@ -365,6 +369,7 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
           alive: typeof e.alive === "boolean" ? e.alive : hp == null || hp > 0,
           disposition: e.disposition ?? null,
           canAct: typeof e.can_act === "boolean" ? e.can_act : null,
+          band: e.is_player ? null : (e.band ?? null),
           effects: mechanicalEffects(e.effects),
           isCurrent: false,
         });

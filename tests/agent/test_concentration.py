@@ -66,7 +66,8 @@ WAIT = ParsedInput(intent="other")
 
 def _exact_foe(text: str = GOBLIN_TEXT, name: str = "Goblin", hp: int = 7) -> dict:
     stats = parse_monster_stats(text, name=name)
-    return {**_foe(name, hp=hp, ac=stats.ac), "monster_stats": stats.to_dict()}
+    # In the melee band: the cleric's mace attacks here are not ranged (EDG-044 reach rules).
+    return {**_foe(name, hp=hp, ac=stats.ac), "band": "melee", "monster_stats": stats.to_dict()}
 
 
 def _state(message: str, foes: list[dict], parsed: ParsedInput) -> dict:

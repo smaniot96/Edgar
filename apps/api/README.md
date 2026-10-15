@@ -26,7 +26,7 @@ curl -N -X POST "http://localhost:8000/api/sessions/1/turn/stream" \
 
 The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session and writes everything in a single commit: adjudication side effects (`apply_adjudication`), combat state, telemetry, the narration `event_log` row and campaign completion. Any save failure rolls back and surfaces as an error (an `error` SSE event when streaming). After the commit, a background task may fold older turns into a stored `memory_summary` event; its failures are logged, never raised.
 
-`GET /api/sessions/{id}/combat` returns the active encounter in the same public shape as `done.combat_state` (roster HP and AC, initiative order, whose turn it is), or `null`, so the UI can restore its combat HUD after a reload. Setting `EDGAR_DEBUG=1` enables the per-stage `debug` frames that the UI's Developer mode shows. Each combat round also stores one `combat_round` event_log row in the turn transaction (actors, original dice, outcomes, dispositions, and only the stage timings the round measured; unmeasured stages are listed in `timings_unavailable`). With `debug` and `EDGAR_DEBUG=1` the `debug` frame and sync response carry it as `combat_diagnostics`; `GET /api/sessions/{id}/diagnostics/combat` returns stored rounds for reload (404 when `EDGAR_DEBUG` is off). A turn with no stored row was not captured; it is never reported as zero.
+`GET /api/sessions/{id}/combat` returns the active encounter in the same public shape as `done.combat_state` (roster HP and AC, initiative order, whose turn it is, and for each foe its distance `band` (`melee` or `ranged`) and whether its `reaction_used` is spent; the hero's band is `null`), or `null`, so the UI can restore its combat HUD after a reload. Setting `EDGAR_DEBUG=1` enables the per-stage `debug` frames that the UI's Developer mode shows. Each combat round also stores one `combat_round` event_log row in the turn transaction (actors, original dice, outcomes, dispositions, and only the stage timings the round measured; unmeasured stages are listed in `timings_unavailable`). With `debug` and `EDGAR_DEBUG=1` the `debug` frame and sync response carry it as `combat_diagnostics`; `GET /api/sessions/{id}/diagnostics/combat` returns stored rounds for reload (404 when `EDGAR_DEBUG` is off). A turn with no stored row was not captured; it is never reported as zero.
 
 `current_user_id()` looks up the seeded `dm@edgar.local` user; this is the single-user seam for solo play and is replaced by real auth when there is more than one user.
 
@@ -47,7 +47,11 @@ only for its encounter (`raging` in the combat state); a combat maneuver the eng
 applied (a won grapple, restraint or shove prone) and a spell condition it recorded (a foe blinded by
 Blindness/Deafness, marked by Guiding Bolt, or paralyzed by Hold Person), and a monster rider's poison
 on the hero, are recorded in the combatant's `effects` and are not stripped from the narration. The
-hero's concentration is the `concentration` field of the combat payload and of the combatant row. The scope is also summarised in the rules and narrator prompts.
+hero's concentration is the `concentration` field of the combat payload and of the combatant row. A
+foe's position band and spent reaction are stored on its combatant row (`band`, `reaction_used`,
+additive; a row without `band` reads as melee and is not rewritten), and a Dash or Disengage the hero
+takes is recorded in the turn's `economy`. The scope is also summarised in the rules and narrator
+prompts.
 
 ## Health
 

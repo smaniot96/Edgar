@@ -94,10 +94,20 @@ simulate (`GET /api/rules/supported-scope`):
   rest restores HP, spell slots and half the level in spent Hit Dice (minimum one; the 2024
   campaigns use the same rule); healing potions taken from inventory.
 - Action economy in combat: each player turn has one action and one bonus action. Attacks, contested
-  maneuvers, item use, catalog action spells and Dodge use the action; Second Wind, Healing Word and
-  Rage use the bonus action. A second action or bonus action in the same turn is refused with no
-  roll and no round. Dodge gives attacks against the hero disadvantage until the hero's next turn;
-  the HUD and narration show what the turn spent.
+  maneuvers, item use, catalog action spells, Dodge, Dash and Disengage use the action; Second Wind,
+  Healing Word and Rage use the bonus action. A second action or bonus action in the same turn is
+  refused with no roll and no round. Dodge gives attacks against the hero disadvantage until the
+  hero's next turn; the HUD and narration show what the turn spent.
+- Positioning in combat: each foe stands in the melee band (within 5 feet of the hero) or the ranged
+  band (beyond it), set from its exact record (a foe whose listed attacks are all ranged starts at
+  range). Movement is free and declared in the hero's words ("I close in on the archer", "I back
+  away"): one band change per turn, two with the Dash action. A melee-only foe at range closes in on
+  its turn and then attacks; a ranged-only foe stays at range. A melee attack or grapple cannot reach
+  a foe at range and is refused with no roll, with the move that fixes it named. A ranged attack
+  made within 5 feet has disadvantage. Leaving a foe's melee band without the Disengage action
+  provokes one opportunity attack from that foe, rolled by the engine with its reaction; a reaction
+  comes back at the start of the foe's own turn. Exact distances, cover, flanking and high ground are
+  not tracked.
 - Class features in combat: Fighter Action Surge (one use, two from level 17, restored by a short or
   long rest; it adds one more attack on the same foe in that round), Rogue Sneak Attack (1d6 per two
   rogue levels, once per turn, on a hit with a finesse or ranged weapon that has advantage from an
@@ -146,9 +156,10 @@ simulate (`GET /api/rules/supported-scope`):
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, other concentration spells, other
   conditions (frightened, stunned, charmed and the rest have no engine effect; a poisoned hero's
-  ability checks are not penalised), breath and other save-based recharge abilities, cover and
-  positioning, Dash, Disengage, Help, reactions, opportunity attacks, other bonus actions, declared
-  counts of Hit Dice, and class features other than Second Wind, Action Surge, Sneak Attack and Rage
+  ability checks are not penalised), breath and other save-based recharge abilities, cover, high
+  ground, flanking, difficult terrain and exact distances, Help, reactions other than opportunity
+  attacks, other bonus actions, declared counts of Hit Dice, and class features other than Second
+  Wind, Action Surge, Sneak Attack and Rage
   (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery and ki
   points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's damage
   resistance). A declared action of this kind gets a narrative ruling and no

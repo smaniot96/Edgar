@@ -79,6 +79,28 @@ describe("character sheet", () => {
 });
 
 describe("orderCombatants", () => {
+  it("carries each foe's band, and no band for the hero or a legacy row", () => {
+    const rows = orderCombatants({
+      round: 1,
+      ended: false,
+      outcome: null,
+      initiative_order: ["Archer", "player", "Goblin"],
+      current_turn_index: 1,
+      combatants: [
+        { name: "Eda", is_player: true, hp_current: 10, hp_max: 12, alive: true, band: null },
+        { name: "Goblin", is_player: false, hp_current: 7, hp_max: 7, alive: true, band: "melee" },
+        { name: "Archer", is_player: false, hp_current: 5, hp_max: 5, alive: true, band: "ranged" },
+        { name: "Wolf", is_player: false, hp_current: 11, hp_max: 11, alive: true },
+      ],
+    });
+    expect(rows.map((r) => [r.name, r.band])).toEqual([
+      ["Archer", "ranged"],
+      ["Eda", null],
+      ["Goblin", "melee"],
+      ["Wolf", null],
+    ]);
+  });
+
   it("orders by initiative_order, maps the internal 'player' name, appends unlisted", () => {
     const rows = orderCombatants({
       round: 1,
