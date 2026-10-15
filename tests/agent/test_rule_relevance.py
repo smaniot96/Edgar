@@ -374,3 +374,46 @@ def test_independent_queries_preserve_distinct_citations(monkeypatch):
         [{"query": "feature", "references": ["feature"]}], client=None, rules_edition="2014"
     )
     assert [c["page"] for c in hits] == [10, 20] and not degraded
+
+
+def test_native_qdrant_exact_rules_filter_edition_and_staged_evidence(corpus, monkeypatch):
+    from contextlib import closing
+
+    from testcontainers.qdrant import QdrantContainer
+
+    from db.vector.versions import begin_index, promote_index
+
+    monkeypatch.setattr(
+        retrieval, "embed_query", lambda _: (_ for _ in ()).throw(ConnectionError())
+    )
+    with QdrantContainer("qdrant/qdrant:v1.16.3") as container:
+        with closing(container.get_client()) as q:
+            q.create_collection(BOOK, vectors_config=VectorParams(size=3, distance=Distance.COSINE))
+            points, _ = corpus.scroll(BOOK, limit=100, with_vectors=True)
+            q.upsert(
+                BOOK, [PointStruct(id=p.id, vector=p.vector, payload=p.payload) for p in points]
+            )
+            token = begin_index(q, BOOK, "PHB", "active")
+            promote_index(q, BOOK, "PHB", "active", token, {}, validate=lambda: None)
+            q.upsert(
+                BOOK,
+                [
+                    PointStruct(
+                        id=900,
+                        vector=[1.0, 0.0, 0.0],
+                        payload={
+                            **points[0].payload,
+                            "section": "Magic Missile",
+                            "text": "Magic Missile\nIncomplete staged replacement must stay hidden.",
+                            "index_version": "staged",
+                        },
+                    )
+                ],
+            )
+            invalidate_collection_cache()
+            hits = retrieval.search_rules_context(
+                "Magic Missile rules", references=["Magic Missile"], rules_edition="2014", client=q
+            )
+            assert len(hits) == 1
+            assert "three glowing darts" in hits[0]["text"]
+            assert hits[0]["rules_edition"] == "2014" and hits[0]["index_version"] == "active"

@@ -9,6 +9,7 @@ from qdrant_client.models import Distance, PointStruct
 
 from db.vector import VECTOR_SIZE, ensure_collection, existing_collection_names
 from db.vector.scripts import create_collections_for_pdfs, new_collection
+from db.vector.versions import active_index_read
 
 
 @pytest.fixture
@@ -27,7 +28,8 @@ def test_collection_creation_refreshes_cache_and_preserves_existing_points(qdran
     assert vectors.distance == Distance.COSINE
 
     qdrant.upsert(
-        "rules_test", points=[PointStruct(id=1, vector=[1.0] * VECTOR_SIZE, payload={"text": "rule"})]
+        "rules_test",
+        points=[PointStruct(id=1, vector=[1.0] * VECTOR_SIZE, payload={"text": "rule"})],
     )
     assert not ensure_collection(qdrant, "rules_test")
     assert qdrant.get_collection("rules_test").points_count == 1
@@ -46,7 +48,9 @@ def test_collection_management_propagates_errors(qdrant, monkeypatch, failing_me
 
 
 @pytest.mark.parametrize("index_available", [False, True])
-def test_ingestion_reuses_collection_and_tolerates_index_failure(qdrant, monkeypatch, index_available):
+def test_ingestion_reuses_collection_and_tolerates_index_failure(
+    qdrant, monkeypatch, index_available
+):
     from ingestion import embed
 
     def create_index(*_args, **_kwargs):
@@ -60,8 +64,11 @@ def test_ingestion_reuses_collection_and_tolerates_index_failure(qdrant, monkeyp
     pages = [(1, "# Rules\n\nA character rolls a d20 for an ability check.")]
     assert embed.ingest_pages(pages, "test-book", "rules_test") == 1
     assert embed.ingest_pages(pages, "test-book", "rules_test") == 1
-    assert qdrant.get_collection("rules_test").points_count == 1
-    point = qdrant.scroll("rules_test")[0][0]
+    assert qdrant.get_collection("rules_test").points_count == 2  # content plus routing point
+    with active_index_read(qdrant, "rules_test") as route:
+        points = qdrant.scroll("rules_test", scroll_filter=route)[0]
+    assert len(points) == 1
+    point = points[0]
     assert point.payload["source"] == "test-book"
     assert point.payload["page"] == 1
 

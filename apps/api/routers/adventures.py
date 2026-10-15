@@ -668,7 +668,11 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
         # processing metadata prevents a later request from starting a second ingest.
         with _source_lock(slug):
             source = source_read(slug)
-            if source.status in ("ready", "processing", "unavailable"):
+            if load_adventure_metadata(slug).get("status") == "processing" or source.status in (
+                "ready",
+                "processing",
+                "unavailable",
+            ):
                 raise HTTPException(
                     status_code=409,
                     detail="This source cannot be re-uploaded in its current state.",

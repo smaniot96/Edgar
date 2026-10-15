@@ -82,8 +82,6 @@ _OPTIONAL_PAYLOAD_KEYS = (
     "span_start",
     "span_end",
     "text_sha256",
-    "source_version",
-    "index_version",
     "rule_policy",
 )
 
@@ -282,8 +280,6 @@ def _edition_filter(rules_edition: str | None) -> Filter | None:
 
 def _scroll_rule_candidates(q: Any, collection: str, query_filter: Filter, *, limit: int) -> list:
     # Version pinning spans the whole read, including future pagination if the bound changes.
-    from db.vector.versions import active_index_read
-
     with active_index_read(q, collection, query_filter) as active_filter:
         points, _offset = q.scroll(
             collection_name=collection,
