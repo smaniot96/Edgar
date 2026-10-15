@@ -84,8 +84,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "d20 plus the ability modifier, plus the proficiency bonus when the sheet (or the "
             "class default) makes the skill, save or tool proficient, against a DC of 10 (easy), "
-            "15 (medium, default), 20 (hard) or 25 (very hard). Advantage and disadvantage apply "
-            "only from engine-owned sources (see advantage_disadvantage)."
+            "15 (medium, default), 20 (hard) or 25 (very hard), the PHB and DMG typical DCs for "
+            "those tiers; the very easy (5) and nearly impossible (30) DCs are not offered as tiers. "
+            "Advantage and disadvantage apply only from engine-owned sources (see "
+            "advantage_disadvantage)."
         ),
         implementation="agent.resolution:resolve_check",
         test="tests/agent/test_supported_rules.py::test_supported_d20_checks_use_dc_tiers",
@@ -136,8 +138,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="armor_class",
         title="Armor class from armor, DEX and shield",
         scope=(
-            "AC from the armor table, DEX modifier as capped by the armor type, plus 2 for a "
-            "shield; unarmored characters use 10 plus DEX. Armor is matched by name."
+            "AC from the armor table (PHB, 2014), DEX modifier as capped by the armor type (medium "
+            "armor at most +2), plus 2 for a shield. Unarmored characters use 10 plus DEX, except a "
+            "barbarian (10 plus DEX plus CON, a shield still counts) and a monk without a shield (10 "
+            "plus DEX plus WIS). Armor is matched by name; heavy-armor Strength requirements and "
+            "stealth are not applied."
         ),
         implementation="agent.graph_combat:_player_ac",
         test="tests/agent/test_supported_rules.py::test_supported_armor_class_from_table",
@@ -165,7 +170,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="second_wind",
         title="Fighter Second Wind (one use, restored by rests)",
         scope=(
-            "Fighter only, one use. The player's action spends it, in or out of combat: the engine "
+            "Fighter only, one use (PHB, 2014, PDF p.73). The player's action spends it, in or out of combat: the engine "
             "rolls 1d10 plus fighter level and caps the result at max HP. A request with no use left "
             "is refused without a roll. Uses are stored on the character sheet, so they carry over "
             "between encounters, and a short or long rest restores the use. There is no automatic "
@@ -181,8 +186,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="class_feature_action_surge",
         title="Fighter Action Surge (one more attack, restored by rests)",
         scope=(
-            "Fighter level 2 and up; one use, or two from level 17. Declared with an attack on a foe "
-            "in combat, a use adds one more weapon attack against that foe in the same round, with its "
+            "Fighter level 2 and up; one use, or two from level 17 (PHB, PDF p.72-73: the book grants "
+            "one additional action, and the engine executes only an extra weapon attack). Declared "
+            "with an attack on a foe in combat, a use adds one more weapon attack against that foe in "
+            "the same round, with its "
             "own engine roll and damage. A request with no use left, or with no attack, is refused "
             "without a roll and spends nothing. Uses are stored on the character sheet, and a short or "
             "long rest restores them. Outside combat it has no effect."
@@ -195,9 +202,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         title="Rogue Sneak Attack (once per turn, with engine advantage)",
         scope=(
             "Rogue. A hit with a finesse or ranged weapon, on an attack that has advantage from an "
-            "engine source (see advantage_disadvantage), adds 1d6 per two rogue levels, rounded up, "
-            "once per turn. A critical hit doubles these dice. The ally-adjacent condition is not "
-            "tracked, so an attack without advantage gets no Sneak Attack. It has no uses to restore."
+            "engine source (see advantage_disadvantage), adds 1d6 per two rogue levels, rounded up "
+            "(PHB, 2014, PDF p.96), once per turn. A critical hit doubles these dice. The book's other "
+            "trigger, an ally within 5 feet of the target that is not incapacitated, is not tracked, "
+            "so an attack without engine advantage gets no Sneak Attack. It has no uses to restore."
         ),
         implementation="agent.class_features:sneak_attack_roll",
         test=(
@@ -209,8 +217,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="class_feature_rage",
         title="Barbarian Rage (damage bonus; uses restored by a long rest)",
         scope=(
-            "Barbarian. Uses per long rest: 2 at level 1, 3 at level 3, 4 at level 6, 5 at level 12 and "
-            "6 at level 17. Declared in combat, rage starts without using the round's attack (bonus "
+            "Barbarian (PHB, PDF pp.48-49). Uses per long rest: 2 at level 1, 3 at level 3, 4 at level 6, "
+            "5 at level 12 and 6 at level 17. Declared in combat, rage starts without using the round's attack (bonus "
             "actions are not tracked) and adds +2 damage, or +3 from level 9 and +4 from level 16, to each "
             "hit with a melee weapon attack that uses Strength. It lasts until the encounter ends; the "
             "1-minute limit is not tracked. A long rest restores uses; a short rest does not. Damage "
@@ -339,9 +347,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum, every "
             "expended spell slot, a fighter's Second Wind and Action Surge uses, and a barbarian's "
-            "Rage uses. It also regains half the character's level in spent Hit Dice, minimum one. "
-            "2024 campaigns follow the same Hit Dice rule in this engine. No other long-rest "
-            "resource is reset by the engine."
+            "Rage uses. It also regains spent Hit Dice up to half the character's total, rounded "
+            "down (PHB, 2014, PDF p.187), so a level-1 character regains none. 2024 campaigns follow "
+            "the same Hit Dice rule in this engine. The book's minimum rest length, the once-per-24-hour "
+            "limit and the at-least-1-HP start condition are not checked. No other long-rest resource "
+            "is reset by the engine."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_long_rest_restores_hp",
@@ -351,8 +361,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         title="Short rest healing spends one Hit Die",
         scope=(
             "A short rest (rest-for-an-hour wording) spends one Hit Die of the class and rolls it "
-            "plus the CON modifier, minimum 1 HP, healing no more than the missing HP. With no Hit "
-            "Dice left it is refused: nothing is rolled and nothing is healed until a long rest. A "
+            "plus the CON modifier; the character regains that total (PHB, 2014, PDF p.187; no "
+            "minimum), capped at the missing HP. With no Hit Dice left it is refused: nothing is "
+            "rolled and nothing is healed until a long rest. The rules allow one or more dice; a "
             "declared count of Hit Dice is not parsed, so one die is spent. A short rest also "
             "restores a fighter's Second Wind and Action Surge uses."
         ),
@@ -363,9 +374,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="hit_dice",
         title="Hit Dice ledger on the character sheet",
         scope=(
-            "Each character has Hit Dice equal to its level, of the class die (d6 sorcerer or "
-            "wizard, d8 bard, cleric, druid, monk, rogue, warlock or artificer, d10 fighter, "
-            "paladin or ranger, d12 barbarian). The spent count is an engine-owned sheet resource, "
+            "Each character has Hit Dice equal to its level, of the class die (PHB class table: d6 "
+            "sorcerer or wizard, d8 bard, cleric, druid, monk, rogue or warlock, d10 fighter, paladin "
+            "or ranger, d12 barbarian; the artificer's d8 is not in the local 2014 books). The spent "
+            "count is an engine-owned sheet resource, "
             "shown with the remaining count after each rest. A manual sheet edit cannot change it."
         ),
         implementation="agent.resolution:hit_dice_status",
@@ -414,8 +426,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "the player's AC; a hit rolls the record's damage dice, and a natural 20 doubles them. A "
             "Multiattack trait whose counts are stated in its text makes one attack roll per listed "
             "attack in a round. Without a readable Multiattack, the first listed attack is made and "
-            "the trait is declared. Damage riders, spell attacks and recharge abilities are declared, "
-            "not executed."
+            "the trait is declared. Damage riders, spell attacks, recharge abilities and a "
+            "Multiattack's disadvantage on a later attack are declared, not executed."
         ),
         implementation="agent.monster_stats:attack_plan",
         test="tests/agent/test_monster_stats.py::test_multiattack_rolls_one_attack_per_listed_attack",
@@ -443,8 +455,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "Player damage to an exact creature takes the damage type of the engine weapon (standard "
             "weapon table) or of the catalog spell. Resistance halves it, immunity blocks it and "
             "vulnerability doubles it. A resistance written for nonmagical attacks applies to "
-            "weapons, not to spells. When the damage type is unknown no rule applies, and the round "
-            "says so."
+            'weapons, not to spells. A "nonmagical" resistance that also excludes silvered or '
+            "adamantine weapons is applied as written for the hero's plain weapons, and the exception "
+            "is declared. When the damage type is unknown no rule applies, and the round says so."
         ),
         implementation="agent.monster_stats:adjust_monster_damage",
         test=(
@@ -459,7 +472,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "In combat, against one foe, with rope or bare hands. The player's Athletics check is "
             "contested by the foe's Dexterity check (Acrobatics without proficiency); the higher "
             "total wins and a tie fails. Success restrains a grappled or pinned foe: its attacks have "
-            "disadvantage and attacks against it have advantage. Success on a shove prone knocks the "
+            "disadvantage, attacks against it have advantage and its Dexterity saves (a spell's, such as "
+            "Sacred Flame's) have disadvantage. Success on a shove prone knocks the "
             "foe prone: its attacks have disadvantage, and melee attacks against it have advantage "
             "while ranged attacks have disadvantage. The maneuver replaces that turn's attack. A "
             "restraint ends when the player declares a release, when the foe is defeated, or when the "
@@ -477,10 +491,13 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "declared action from a fixed table: attack, contested maneuver, item use, a catalog "
             "action spell, Dodge, Dash and Disengage use the action; Second Wind and Healing Word use "
             "the bonus action. A second action, or a second bonus action, in the same turn is refused "
-            "with no roll and no round. Dodge gives attacks against the hero disadvantage until the "
-            "hero's next turn begins. Dash allows a second move in the turn and Disengage stops the "
-            "opportunity attacks that moves would provoke (see positioning). The turn's spending is "
-            "shown in the combat HUD and the narration context. Help is not modelled."
+            "with no roll and no round. Dodge (PHB, PDF p.193) gives attacks against the hero "
+            "disadvantage until the hero's next turn begins. The book's other two Dodge effects are "
+            "not applied: the attacker must be seen for the disadvantage, and Dexterity saves get "
+            "advantage. No engine effect rolls a save for the hero, and sight is not tracked. Dash "
+            "allows a second move in the turn and Disengage stops the opportunity attacks that moves "
+            "would provoke (see positioning). The turn's spending is shown in the combat HUD and the "
+            "narration context. Help is not modelled."
         ),
         implementation="agent.action_economy:refusal_for",
         test="tests/agent/test_action_economy.py::test_second_action_is_refused_before_any_roll",

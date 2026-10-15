@@ -327,10 +327,18 @@ def _player_ac(character: dict | None) -> int:
         base = 14
     elif "chain shirt" in armor or "scale" in armor:
         base = 13 + min(dex_mod, 2) + (1 if "scale" in armor else 0)
+    elif re.search(r"\bhide\b", armor):
+        base = 12 + min(dex_mod, 2)  # PHB Armor table (PDF p.146): medium, DEX capped at +2
     elif "studded" in armor:
         base = 12 + dex_mod
     elif "leather" in armor or "padded" in armor:
         base = 11 + dex_mod
+    elif character_class(character) == "barbarian":
+        # Unarmored Defense (PHB p.49): no armor, a shield still counts.
+        base = 10 + dex_mod + ability_modifier(character, "CON")
+    elif character_class(character) == "monk" and not shield:
+        # Unarmored Defense (PHB p.79): no armor and no shield.
+        base = 10 + dex_mod + ability_modifier(character, "WIS")
     else:
         base = 10 + dex_mod
     return base + shield
@@ -1331,11 +1339,20 @@ async def combat_round_node(state: AgentState) -> dict:
             else "normal"
         )
         round_modes.append(spell_mode)
+        # A restrained foe makes its Dexterity saves at disadvantage (PHB Appendix A, PDF p.293).
+        save_mode = (
+            "disadvantage"
+            if spell_target is not None
+            and spell_plan.spell.save_ability == "DEX"
+            and has_effect(spell_target, "restrained")
+            else "normal"
+        )
         spell_result = resolve_spell(
             character,
             spell_plan,
             target_ac=int(spell_target.get("ac", 12)) if spell_target else None,
             target_save_bonus=save_bonus,
+            save_mode=save_mode,
             roll_mode=spell_mode,
         )
         dice_log += spell_result.dice_log
