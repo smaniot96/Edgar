@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 
 import {
+  ApiError,
   createWorldFlag,
   deleteWorldFlag,
   listWorldFlags,
@@ -10,12 +11,31 @@ import {
 import type { WorldFlagRead } from "../../api/types";
 import { Button, ButtonLink } from "../../components/ui/Button";
 import { EmptyState, LoadingText } from "../../components/ui/EmptyState";
-import { ErrorNotice } from "../../components/ui/ErrorNotice";
 import { Input, TextField } from "../../components/ui/Field";
 import { cardClasses } from "../../components/ui/styles";
+import { useMode } from "../../dev/ModeContext";
 import { cn } from "../../lib/cn";
 import { useQuery } from "../../lib/useQuery";
-import { useMode } from "../../dev/ModeContext";
+
+type Outcome = { kind: "success" | "error"; message: string } | null;
+
+function safeFailure(action: "load" | "create" | "update" | "delete", error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504) {
+      return "The server could not be reached. Check the connection and try again.";
+    }
+    if (error.status === 404) return "That flag could not be found. Refresh the list and try again.";
+    if (error.status === 409) return "That flag changed while you were editing it. Refresh and try again.";
+    if (error.status >= 400 && error.status < 500) {
+      return action === "create"
+        ? "The flag could not be created. Check the key and value, then try again."
+        : "The flag request was rejected. Check the value and try again.";
+    }
+  }
+  return action === "load"
+    ? "World overrides could not be loaded. Try again."
+    : "The flag change could not be saved. Try again.";
+}
 
 function FlagRow({
   flag,
@@ -47,6 +67,11 @@ function FlagRow({
       </td>
       <td className="py-2">
         <div className="flex justify-end gap-1">
+          {val !== flag.value ? (
+            <Button variant="secondary" size="sm" disabled={saving} onClick={() => setVal(flag.value)}>
+              Cancel
+            </Button>
+          ) : null}
           <Button
             variant="secondary"
             size="sm"
@@ -81,42 +106,45 @@ export default function WorldTab({ campaignId }: { campaignId: number }) {
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(null);
+  const [outcome, setOutcome] = useState<Outcome>(null);
 
   async function add(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    setError(null);
+    setOutcome(null);
     try {
       await createWorldFlag(campaignId, { key: key.trim(), value: value.trim() });
       setKey("");
       setValue("");
       flags.refetch();
+      setOutcome({ kind: "success", message: "World flag created." });
     } catch (err) {
-      setError(err);
+      setOutcome({ kind: "error", message: safeFailure("create", err) });
     } finally {
       setBusy(false);
     }
   }
 
   async function save(flag: WorldFlagRead, next: string) {
-    setError(null);
+    setOutcome(null);
     try {
       await updateWorldFlag(campaignId, flag.key, next);
       flags.refetch();
+      setOutcome({ kind: "success", message: "World flag updated." });
     } catch (err) {
-      setError(err);
+      setOutcome({ kind: "error", message: safeFailure("update", err) });
     }
   }
 
   async function remove(flag: WorldFlagRead) {
     if (!window.confirm(`Delete flag "${flag.key}"?`)) return;
-    setError(null);
+    setOutcome(null);
     try {
       await deleteWorldFlag(campaignId, flag.key);
       flags.refetch();
+      setOutcome({ kind: "success", message: "World flag deleted." });
     } catch (err) {
-      setError(err);
+      setOutcome({ kind: "error", message: safeFailure("delete", err) });
     }
   }
 
@@ -171,9 +199,20 @@ export default function WorldTab({ campaignId }: { campaignId: number }) {
           </Button>
         </div>
       </form>
-      <ErrorNotice error={error} />
+      {outcome ? (
+        <p
+          className={outcome.kind === "success" ? "text-sm text-success" : "text-sm text-danger"}
+          role={outcome.kind === "error" ? "alert" : "status"}
+          aria-live={outcome.kind === "error" ? "assertive" : "polite"}
+        >
+          {outcome.message}
+        </p>
+      ) : null}
       {flags.error && flags.data === undefined ? (
-        <ErrorNotice error={flags.error} onRetry={flags.refetch} />
+        <div role="alert" className="space-y-2 text-sm text-danger">
+          <p>{safeFailure("load", flags.error)}</p>
+          <Button variant="secondary" size="sm" onClick={flags.refetch}>Retry</Button>
+        </div>
       ) : flags.data === undefined ? (
         <LoadingText />
       ) : flags.data.length === 0 ? (
