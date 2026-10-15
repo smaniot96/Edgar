@@ -29,7 +29,6 @@ import json
 import re
 import time
 from collections.abc import AsyncIterator
-from dataclasses import replace
 from typing import Any
 
 import structlog
@@ -608,12 +607,8 @@ async def stream_session_turn(
             log.exception("turn_narrator_failed", session_id=session_id)
             yield sse_event("error", error_body("llm_unavailable"))
             return
-        # This streamed path has never passed the engine's typed effects to the narration boundary
-        # (the sync narrator does). Preserved unchanged by the EngineApplied refactor; a follow-up.
         narration = apply_narration_boundary(
-            message_text(response),
-            actions,
-            applied=replace(engine_applied_for_state(state), effects=()),
+            message_text(response), actions, applied=engine_applied_for_state(state)
         )
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
