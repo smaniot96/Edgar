@@ -62,7 +62,8 @@ from agent.resolution import (
     roll_attack_damage,
 )
 from agent.state import AgentState
-from db.vector import retrieve_monster
+from db.vector.creatures import CreatureResolutionError, resolve_creature
+from db.vector.references import normalize_reference, reference_matches
 from tools.dice import parse_dice, roll
 
 log = logging.getLogger(__name__)
@@ -115,7 +116,8 @@ ENCOUNTER_BUILDER = (
     "- Include ONLY hostile creatures the player is fighting. NEVER include the player's "
     "allies, companions, rescued or friendly NPCs as enemies.\n"
     "- If the player names a specific antagonist, use that EXACT name for that enemy.\n"
-    "- Use the Monster Manual excerpts when given for HP/AC/attack/damage.\n"
+    "- Use ONLY the resolved foe names and their complete source records below. Never rename a "
+    "creature or add an unlisted identity. Use their records for HP/AC/attack/damage.\n"
     "- Scale for a SOLO low-level hero: keep the total threat modest. A lone boss should be "
     "~18-30 HP; mooks ~5-11 HP. Avoid stacking many strong enemies.\n"
     "- hp_max 5-30, ac 10-16, attack_bonus 2-5, damage_dice in NdM or NdM+K form (e.g. 1d6+1), "
@@ -225,8 +227,7 @@ def _named_targets(state: AgentState) -> list[str]:
 
 
 def _name_matches(a: str, b: str) -> bool:
-    a, b = a.lower().strip(), b.lower().strip()
-    return bool(a and b) and (a in b or b in a)
+    return reference_matches(a, b)
 
 
 def _npc_groups(state: AgentState) -> tuple[list[str], list[str]]:
@@ -244,51 +245,90 @@ def _npc_groups(state: AgentState) -> tuple[list[str], list[str]]:
 
 
 async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
-    """Monster Manual chunks per named foe; empty on any failure/timeout."""
-    client = state.get("qdrant_client")
-    out: list[dict] = []
-    for name in names[:3]:
+    """Full exact records per named foe. An outage or unresolved identity blocks setup."""
+    out = []
+    for name in dict.fromkeys(names[:6]):
         try:
-            hits = await asyncio.wait_for(
+            record = await asyncio.wait_for(
                 asyncio.to_thread(
-                    retrieve_monster, name, client=client,
+                    resolve_creature,
+                    name,
+                    client=state.get("qdrant_client"),
                     rules_edition=state.get("rules_edition", "2014"),
+                    adventure_manifests=state.get("adventure_manifests"),
+                    current_scene_id=state.get("current_scene_id"),
+                    world_flags=state.get("world_flags"),
                 ),
                 timeout=_MONSTER_LOOKUP_TIMEOUT_S,
             )
-        except Exception as e:
-            log.info("monster_lookup_failed", extra={"monster_name": name, "error": str(e)[:200]})
-            continue
-        out += list(hits or [])
+        except CreatureResolutionError:
+            raise
+        except Exception as exc:
+            log.info("monster_lookup_failed", extra={"monster_name": name, "error": str(exc)[:200]})
+            raise CreatureResolutionError(
+                f"Creature source unavailable for {name!r}. Retry once the source is available."
+            ) from exc
+        out.append({**record, "encounter_name": record.get("actor_name") or record.get("creature_name") or name})
     return out
 
 
+def _creature_source_reference(record: dict) -> dict:
+    """Keep compact private provenance; canonical whole text stays in its source index."""
+    fields = (
+        "collection",
+        "source",
+        "page",
+        "page_end",
+        "source_pages",
+        "source_sha256",
+        "extraction_sha256",
+        "rules_edition",
+        "source_version",
+        "index_version",
+        "creature_name",
+        "creature_key",
+        "actor_id",
+        "actor_collection",
+        "actor_manifest_sha256",
+        "passage_id",
+        "manifest_sha256",
+    )
+    return {key: record[key] for key in fields if key in record}
+
+
 async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dict]:
-    """One grounded LLM call to stat the enemies; falls back to sensible defaults on failure."""
-    rules_ctx = state.get("rules_context", []) or []
+    """Build only verified identities; retain the legacy solo numerical adaptation."""
     adv_ctx = state.get("adventure_context", []) or []
     player_input = state.get("player_input", "")
     allies, hostiles = _npc_groups(state)
     # Allies the player explicitly attacks by name become fair game (player's choice).
     allies = [a for a in allies if not any(_name_matches(a, t) for t in targets)]
 
-    monster_ctx = await _monster_context(state, targets or hostiles)
+    candidate_names = [
+        n for n in (targets or hostiles) if not any(_name_matches(n, a) for a in allies)
+    ]
+    if not candidate_names:
+        return []
+    monster_ctx = await _monster_context(state, candidate_names)
+    identities = {normalize_reference(c["encounter_name"]): c for c in monster_ctx}
 
     ctx_lines = [
         f"Player's action this turn: {wrap_player_action(player_input)}",
         f"Foes the player named: {', '.join(targets) if targets else '(none named — infer the hostile creatures present from the scene)'}",
     ]
     if allies:
-        ctx_lines.append(f"These are the player's ALLIES — never stat them as enemies: {', '.join(allies)}")
+        ctx_lines.append(
+            f"These are the player's ALLIES — never stat them as enemies: {', '.join(allies)}"
+        )
     if hostiles:
-        ctx_lines.append(f"Known hostile NPCs (enemies only if present in this fight): {', '.join(hostiles)}")
+        ctx_lines.append(
+            f"Known hostile NPCs (enemies only if present in this fight): {', '.join(hostiles)}"
+        )
     if adv_ctx:
         ctx_lines.append("Scene context (for flavour only; do not turn allies into enemies):")
         ctx_lines += [f"- {c.get('text', '')[:300]}" for c in adv_ctx[:2]]
-    mm = monster_ctx or rules_ctx[:2]
-    if mm:
-        ctx_lines.append("Monster Manual / rules context:")
-        ctx_lines += [f"- {c.get('text', '')[:500]}" for c in mm[:4]]
+    ctx_lines.append("Resolved foes and complete source records (solo numerical adaptations only):")
+    ctx_lines += [f"Foe: {c['encounter_name']}\n{c['text']}" for c in monster_ctx]
 
     enemies: list[dict] = []
     try:
@@ -304,9 +344,17 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
             if any(_name_matches(e.name, a) for a in allies):
                 log.info("dropped_ally_from_roster", extra={"ally_name": e.name})
                 continue
+            identity = identities.get(normalize_reference(e.name))
+            if identity is None:
+                raise CreatureResolutionError(
+                    "Encounter builder proposed an unverified creature identity. Review the exact foe names."
+                )
             enemies.append(
                 {
-                    "name": e.name[:60],
+                    "name": identity["encounter_name"][:60],
+                    "creature_id": identity["creature_id"],
+                    "source_reference": _creature_source_reference(identity),
+                    "stat_adaptation": "legacy_solo_encounter",
                     "hp_max": e.hp_max,
                     "hp_current": e.hp_max,
                     "ac": e.ac,
@@ -318,13 +366,15 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
                     "alive": True,
                 }
             )
+    except CreatureResolutionError:
+        raise
     except Exception as e:
         log.warning("encounter_builder_failed", extra={"error": str(e)[:200]})
         enemies = []
 
     if not enemies:
-        # Deterministic fallback: one enemy per named target, else known hostile NPCs.
-        names = targets or hostiles[:2]
+        # Compatibility fallback is an explicit solo adaptation of resolved records only.
+        names = [c["encounter_name"] for c in monster_ctx]
         seen: dict[str, int] = {}
         for t in names:
             seen[t] = seen.get(t, 0) + 1
@@ -332,6 +382,11 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
             enemies.append(
                 {
                     "name": name,
+                    "creature_id": identities[normalize_reference(t)]["creature_id"],
+                    "source_reference": _creature_source_reference(
+                        identities[normalize_reference(t)]
+                    ),
+                    "stat_adaptation": "legacy_solo_fallback",
                     **_DEFAULT_ENEMY,
                     "hp_current": _DEFAULT_ENEMY["hp_max"],
                     "is_boss": False,
@@ -390,9 +445,7 @@ def initiative_view(combatants: list[dict]) -> list[dict]:
     ]
 
 
-def select_target(
-    enemies_in_order: list[dict], named: list[str]
-) -> tuple[dict | None, str | None]:
+def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict | None, str | None]:
     """Pick a real living enemy for an attack, or return a question for the player."""
     living = [e for e in enemies_in_order if e.get("alive") and e.get("hp_current", 0) > 0]
     if not living:
@@ -401,7 +454,7 @@ def select_target(
         for e in living:
             if _name_matches(n, e["name"]):
                 return e, None
-    if not named or len(living) == 1:
+    if not named:
         return living[0], None
     foes = ", ".join(e["name"] for e in living)
     return None, f"You don't see {named[0]} among your foes. Who do you attack? ({foes})"
@@ -446,7 +499,10 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Initialise on first entry ---
     if not combat_state.get("combatants"):
-        enemies = await _build_enemy_roster(state, named)
+        try:
+            enemies = await _build_enemy_roster(state, named)
+        except CreatureResolutionError as exc:
+            return {**retr, "error": str(exc), "error_code": "creature_identity_unresolved"}
         if not enemies:
             return _ask_player(state, "Who are you fighting? Name the foe you attack.")
         player_ac = _player_ac(character)

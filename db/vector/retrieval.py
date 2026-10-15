@@ -37,6 +37,7 @@ from db.vector.collections import (
     effective_rules_collection_names,
     existing_collection_names,
 )
+from db.vector.creatures import identified_creature
 from db.vector.embeddings import embed_query, get_embeddings  # noqa: F401  (re-exported)
 from db.vector.references import normalize_reference, reference_matches
 from db.vector.versions import active_index_read
@@ -60,6 +61,11 @@ _OPTIONAL_PAYLOAD_KEYS = (
     "heading_path",
     "page_end",
     "stat_block",
+    "creature_name",
+    "creature_key",
+    "creature_id",
+    "source_version",
+    "index_version",
     "source_pages",
     "source_sha256",
     "extraction_sha256",
@@ -506,37 +512,82 @@ def retrieve_monster(
     min_score: float | None = 0.15,
     collections: list[str] | None = None,
     rules_edition: str | None = None,
+    source_sha256: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Monster Manual chunks for a creature name (e.g. a combat target), stat blocks first.
+    """Return exact whole creature records, or [] when the identity is unresolved.
 
-    Searches only the monster-manual collections (`rules_monster_manual`, legacy
-    `monster_manual`). Vector hits are re-ranked so chunks whose heading / text actually name
-    the creature, and chunks that look like stat blocks, beat merely similar lore. Each chunk
-    carries `kind="rules"`, the raw `score` and the re-ranked `rank_score`.
+    No vector score, prose mention, plural guess or substring can establish identity.
+    Newly indexed records carry a normalized creature_key. Legacy verified stat records
+    may match an exact section spelling; other legacy records need reviewed reingestion.
+    `min_score` remains accepted for saved callers but has no role in exact lookup.
+    Edition and source filters, when supplied, must match explicitly.
     """
-    clean = _monster_key(name)
-    if not clean:
+    clean = normalize_reference(name)
+    if not clean or limit <= 0:
         return []
     q = _client(client)
-    names = _existing_only(q, list(collections or MONSTER_MANUAL_COLLECTIONS))
+    names = _existing_only(q, list(collections or MONSTER_MANUAL_COLLECTIONS), refresh=True)
     if not names:
         return []
-
-    vector = embed_query(
-        f"{name.strip()} stat block: Armor Class, Hit Points, Speed, Challenge, Actions"
+    spellings = list(
+        dict.fromkeys([name.strip(), name.strip().title(), name.strip().upper(), clean])
     )
-    hits = _gather_hits(
-        q, names, vector, max(10, limit * 5), kind="rules", rules_edition=rules_edition
-    )
+    conditions = [FieldCondition(key="stat_block", match=MatchValue(value=True))]
     if rules_edition:
-        hits = [c for c in hits if c.get("rules_edition") in (None, "unspecified", rules_edition)]
-    if min_score is not None:
-        hits = [h for h in hits if h.get("score") is None or h["score"] >= min_score]
-
-    for h in hits:
-        h["rank_score"] = (h.get("score") or 0.0) + _monster_bonus(h, clean)
-    hits.sort(key=lambda h: h["rank_score"], reverse=True)
-    return _rank(hits, limit=limit, min_score=None, dedupe=True, presorted=True)
+        conditions.append(
+            FieldCondition(key="rules_edition", match=MatchValue(value=rules_edition))
+        )
+    if source_sha256:
+        conditions.append(
+            FieldCondition(key="source_sha256", match=MatchValue(value=source_sha256))
+        )
+    query_filter = Filter(
+        must=conditions,
+        should=[
+            FieldCondition(key="creature_key", match=MatchValue(value=clean)),
+            FieldCondition(key="section", match=MatchAny(any=spellings)),
+        ],
+    )
+    out = []
+    for collection in names:
+        try:
+            # Hold the source-version snapshot across every page of the exact lookup.
+            with active_index_read(q, collection, query_filter) as active_filter:
+                offset = None
+                while True:
+                    points, offset = q.scroll(
+                        collection_name=collection,
+                        scroll_filter=active_filter,
+                        limit=256,
+                        offset=offset,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    for point in points:
+                        chunk = {
+                            **_chunk_from_payload(point.payload or {}, kind="rules"),
+                            "collection": collection,
+                            "score": None,
+                        }
+                        record = identified_creature(chunk)
+                        if record and record["creature_key"] == clean:
+                            out.append(record)
+                    if offset is None:
+                        break
+        except Exception as exc:
+            raise RetrievalError(f"Exact creature retrieval failed for {collection}") from exc
+    # Exact duplicate aliases may collapse; nearby variants and distinct provenance never do.
+    unique = {}
+    for record in out:
+        signature = (
+            record.get("source"),
+            record.get("source_sha256"),
+            record.get("extraction_sha256"),
+            record.get("rules_edition"),
+            record["text"],
+        )
+        unique.setdefault(signature, record)
+    return list(unique.values())[:limit]
 
 
 # --- internals -------------------------------------------------------------------------------
@@ -651,33 +702,6 @@ def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
-
-
-def _monster_key(name: str) -> str:
-    """'Goblins #2' -> 'goblin'; plural 's' dropped so substring matching tolerates plurals."""
-    key = re.sub(r"[^a-z ]+", " ", name.lower())
-    key = re.sub(r"\s+", " ", key).strip()
-    if len(key) > 3 and key.endswith("s"):
-        key = key[:-1]
-    return key
-
-
-def _monster_bonus(chunk: dict[str, Any], key: str) -> float:
-    bonus = 0.0
-    heading = _normalize(f"{chunk.get('section') or ''} {chunk.get('heading_path') or ''}")
-    text = _normalize(chunk.get("text", ""))
-    if key in heading:
-        bonus += 0.15
-    elif key in text[:300]:
-        bonus += 0.08
-    elif key in text:
-        bonus += 0.04
-    raw = chunk.get("text", "")
-    if chunk.get("stat_block") or (
-        "Armor Class" in raw and ("Hit Points" in raw or "Challenge" in raw)
-    ):
-        bonus += 0.05
-    return bonus
 
 
 def _query_collection(q: QdrantClient, collection_name: str, vector, limit: int, query_filter=None):

@@ -60,6 +60,10 @@ PUBLIC_ERRORS: dict[str, tuple[int, str]] = {
         409,
         "Review and publish the adventure scene manifest before module play.",
     ),
+    "creature_identity_unresolved": (
+        409,
+        "Use an exact verified creature name, or review the actor's statistics reference. If its source is unavailable, recover it before retrying.",
+    ),
     "llm_unavailable": (503, "The Dungeon Master is unavailable right now. Try again."),
     "character_not_assigned": (
         409,
@@ -267,7 +271,17 @@ def _debug_payload(
         "rules_context_count": len(rules_ctx or []),
         "adventure_context_count": len(adv_ctx or []),
         "world_flags_in": world_flags_in or {},
-        "combat_state": combat_state,  # full, untrimmed (enemy stats included)
+        # Source references can identify planner-only module statistics. Keep those private
+        # even in the optional client debug stream; numeric combat diagnostics remain.
+        "combat_state": {
+            **combat_state,
+            "combatants": [
+                {k: v for k, v in c.items() if k not in {"source_reference", "creature_id"}}
+                for c in combat_state.get("combatants", [])
+            ],
+        }
+        if combat_state
+        else combat_state,
         "timings_ms": timings,
         "model": LLM_MODEL,
     }

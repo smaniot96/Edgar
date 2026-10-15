@@ -175,7 +175,8 @@ def test_select_target_prefers_named_then_first_living() -> None:
     assert select_target([dead, gob, wolf], []) == (gob, None)  # never a phantom "enemy"
     target, question = select_target([gob, wolf], ["dragon"])
     assert target is None and "Goblin" in question
-    assert select_target([gob], ["dragon"]) == (gob, None)  # only one foe: obvious target
+    target, question = select_target([gob], ["dragon"])
+    assert target is None and "Goblin" in question
 
 
 # --- combat_round_node ---------------------------------------------------------------------
@@ -308,9 +309,17 @@ async def test_boss_kill_with_proposal_completes(fake_llm_schema, fake_retrieval
 
 
 @pytest.mark.asyncio
-async def test_encounter_respects_ally_dispositions(fake_llm_schema, fake_retrieval, caplog) -> None:
+async def test_encounter_respects_ally_dispositions(
+    fake_llm_schema, fake_retrieval, caplog, monkeypatch
+) -> None:
     caplog.set_level(logging.INFO, logger="agent.graph_combat")
-    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", check="attack", target="bandit")
+    monkeypatch.setattr(
+        "agent.graph_combat.resolve_creature",
+        lambda name, **kw: {"creature_id": "bandit", "creature_name": "Bandit", "text": "Complete synthetic Bandit record"},
+    )
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(
+        intent="combat", check="attack", target="bandit"
+    )
     fake_llm_schema.responses[EncounterSetup] = EncounterSetup(
         enemies=[EnemyStat(name="Bandit", hp_max=8), EnemyStat(name="Sildar", hp_max=10)]
     )
@@ -318,7 +327,10 @@ async def test_encounter_respects_ally_dispositions(fake_llm_schema, fake_retrie
     state = _state(
         None,
         "I attack the bandit",
-        npcs=[{"name": "Sildar", "disposition": "friendly"}, {"name": "Klarg", "disposition": "hostile"}],
+        npcs=[
+            {"name": "Sildar", "disposition": "friendly"},
+            {"name": "Klarg", "disposition": "hostile"},
+        ],
     )
     with use_rng(random.Random(2)):
         out = await _round(fake_llm_schema, state)
@@ -334,14 +346,17 @@ async def test_encounter_respects_ally_dispositions(fake_llm_schema, fake_retrie
 
 
 @pytest.mark.asyncio
-async def test_monster_lookup_failure_keeps_encounter_fallback_available(monkeypatch, caplog) -> None:
+async def test_monster_lookup_failure_requires_recovery(monkeypatch, caplog) -> None:
     caplog.set_level(logging.INFO, logger="agent.graph_combat")
 
     def unavailable(*_args, **_kwargs):
         raise ConnectionError("monster corpus unavailable")
 
-    monkeypatch.setattr("agent.graph_combat.retrieve_monster", unavailable)
-    assert await _monster_context({}, ["Goblin"]) == []
+    from db.vector.creatures import CreatureResolutionError
+
+    monkeypatch.setattr("agent.graph_combat.resolve_creature", unavailable)
+    with pytest.raises(CreatureResolutionError, match="source unavailable"):
+        await _monster_context({}, ["Goblin"])
     assert any(
         record.message == "monster_lookup_failed" and record.monster_name == "Goblin"
         for record in caplog.records

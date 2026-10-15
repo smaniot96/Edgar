@@ -39,11 +39,39 @@ class Scene(Record):
     references: list[Identifier] = Field(default_factory=list)
 
 
+class StatReference(Record):
+    """An explicitly reviewed actor identity, never inferred from its name or prose."""
+
+    kind: Literal["template", "module"]
+    creature_name: str = Field(min_length=1, max_length=200)
+    collection: str | None = Field(default=None, min_length=1)
+    source_sha256: Digest | None = None
+    rules_edition: SourceEdition | None = None
+    passage_id: Identifier | None = None
+
+    @model_validator(mode="after")
+    def explicit_binding(self):
+        if self.kind == "template":
+            if (
+                not self.collection
+                or not self.source_sha256
+                or self.rules_edition not in ("2014", "2024")
+                or self.passage_id
+            ):
+                raise ValueError(
+                    "Templates require a collection, source checksum and explicit edition."
+                )
+        elif not self.passage_id or any((self.collection, self.source_sha256, self.rules_edition)):
+            raise ValueError("Module statistics require a passage in this reviewed manifest.")
+        return self
+
+
 class Entity(Record):
     entity_id: Identifier
     kind: Literal["actor", "clue", "hazard", "ending"]
     title: str = Field(min_length=1, max_length=200)
     discovery_flag: Identifier | None = None
+    stat_reference: StatReference | None = None
 
 
 class Passage(Record):
@@ -99,12 +127,37 @@ class AdventureManifest(Record):
                 raise ValueError("Passage names an unknown scene or entity.")
             if passage.audience not in ("excluded", "unreviewed") and not passage.scene_ids:
                 raise ValueError("Playable passages need an explicit scene scope.")
+        for entity in self.entities:
+            reference = entity.stat_reference
+            if reference is None:
+                continue
+            if entity.kind != "actor":
+                raise ValueError("Only actors can reference creature statistics.")
+            if reference.kind == "template" and reference.rules_edition != self.rules_edition:
+                raise ValueError("Actor template edition must match its adventure manifest.")
+            if reference.kind == "module":
+                passage = next(
+                    (p for p in self.passages if p.passage_id == reference.passage_id), None
+                )
+                if (
+                    passage is None
+                    or entity.entity_id not in passage.entity_ids
+                    or passage.audience not in ("player", "planner")
+                ):
+                    raise ValueError(
+                        "Module statistics must be a playable reviewed passage for this actor."
+                    )
         return self
 
 
 def manifest_digest(manifest: AdventureManifest) -> str:
     """Receipt covers all structure/classification; editing a published draft revokes it."""
     body = manifest.model_dump(exclude={"reviewed_sha256", "reviewed_by"})
+    # Absent optional actor bindings must not revoke receipts issued before this extension.
+    # Adding or changing an explicit binding still changes the complete review digest.
+    for entity in body["entities"]:
+        if entity["stat_reference"] is None:
+            entity.pop("stat_reference")
     encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return text_digest(encoded)
 
