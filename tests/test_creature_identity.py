@@ -296,6 +296,27 @@ def test_module_record_uses_reviewed_exact_private_span_and_scene_gating(index):
         resolve_creature("Captain Ash", current_scene_id="hall", **kwargs)
 
 
+def test_module_record_resolver_uses_only_active_reviewed_passage_version(index):
+    manifest, chunks = actor_manifest(
+        {"kind": "module", "creature_name": "Captain Ash", "passage_id": "stats"},
+        module_stat=True,
+    )
+    records = [
+        {**chunk, "index_version": version} for version in ("active", "staged") for chunk in chunks
+    ]
+    put(index, records, collection="module")
+    token = begin_index(index, "module", "synthetic_module", "active")
+    promote_index(index, "module", "synthetic_module", "active", token, {}, validate=lambda: None)
+    begin_index(index, "module", "synthetic_module", "staged")
+    resolved = resolve_creature(
+        "Captain Ash",
+        client=index,
+        adventure_manifests={"module": manifest.model_dump()},
+        current_scene_id="hall",
+    )
+    assert resolved["index_version"] == "active" and resolved["passage_id"] == "stats"
+
+
 def test_missing_template_source_or_edition_never_borrows_another(index):
     put(index, [stat("Bandit", edition="2024")])
     manifest, _ = actor_manifest(
