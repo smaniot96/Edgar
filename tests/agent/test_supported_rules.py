@@ -492,7 +492,7 @@ def test_supported_short_rest_spends_one_hit_die() -> None:
     for seed in range(5):
         healed = heal_from_rest(character, "short", rng=random.Random(seed))
         assert healed is not None and healed.dice is not None
-        # 1d10 (fighter hit die) + CON 14 (+2), minimum 1.
+        # 1d10 (fighter hit die) + CON 14 (+2); the total is regained, with no minimum (PHB p.187).
         assert 3 <= healed.amount <= 12
         assert healed.dice.expression == "1d10+2"
     assert character == before  # the roll itself writes nothing: the engine's enforcement does

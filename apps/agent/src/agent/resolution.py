@@ -138,7 +138,10 @@ class Weapon:
 
 
 _WEAPONS = [
+    # Simple melee weapons (PHB Weapons table, PDF p.150). "greatclub" is listed so that the
+    # shorter "club" does not match it and grant a 1d4.
     Weapon("dagger", "1d4", finesse=True, simple=True), Weapon("club", "1d4", simple=True),
+    Weapon("greatclub", "1d8", simple=True),
     Weapon("quarterstaff", "1d6", simple=True), Weapon("mace", "1d6", simple=True),
     Weapon("spear", "1d6", simple=True), Weapon("handaxe", "1d6", simple=True),
     Weapon("javelin", "1d6", simple=True), Weapon("light hammer", "1d4", simple=True),
@@ -152,6 +155,8 @@ _WEAPONS = [
     Weapon("pike", "1d10"), Weapon("lance", "1d12"),
     Weapon("shortbow", "1d6", ranged=True, simple=True),
     Weapon("longbow", "1d8", ranged=True),
+    # Blowgun: martial ranged, 1 piercing damage (PHB Weapons table, PDF p.150).
+    Weapon("blowgun", "1d1", ranged=True),
     Weapon("hand crossbow", "1d6", ranged=True), Weapon("heavy crossbow", "1d10", ranged=True),
     Weapon("light crossbow", "1d8", ranged=True, simple=True),
     Weapon("crossbow", "1d8", ranged=True),
@@ -177,13 +182,14 @@ _CONDITION_ALIASES = {
 }  # fmt: skip
 
 # (keyword tokens that must all be present, healing dice) — most specific first.
+# Potions of healing: DMG "Potions of Healing" table (PDF p.188). Goodberry: PHB 1st-level spell,
+# one berry restores 1 HP (PDF p.247). No "healing draught" or "healing elixir" is in the books, so
+# none is mapped; an item with that name gets no engine healing.
 _HEALING_ITEMS: list[tuple[frozenset[str], str]] = [
     (frozenset({"supreme", "healing"}), "10d4+20"),
     (frozenset({"superior", "healing"}), "8d4+8"),
     (frozenset({"greater", "healing"}), "4d4+4"),
     (frozenset({"potion", "healing"}), "2d4+2"),
-    (frozenset({"healing", "draught"}), "2d4+2"),
-    (frozenset({"healing", "elixir"}), "2d4+2"),
     (frozenset({"goodberry"}), "1d1"),
 ]
 
@@ -993,15 +999,17 @@ def heal_from_rest(
         con = ability_modifier(character, "CON")
         expr = f"1d{die}{con:+d}" if con else f"1d{die}"
         outcome = roll(expr, rng)
-        return HealResult(amount=max(1, outcome.total), source="short_rest", dice=outcome)
+        # PHB p.186: the character regains hit points equal to the total; no floor of 1.
+        return HealResult(amount=max(0, outcome.total), source="short_rest", dice=outcome)
     return None
 
 
 # --------------------------------------------------------------------------------------------
 # Hit Dice (EDG-026): a persisted sheet resource spent by short rests
 # --------------------------------------------------------------------------------------------
-# Rule (2014 PHB): a short rest spends Hit Dice one at a time; each rolls the class die plus CON
-# (minimum 1 HP). A long rest regains half the character's level in spent Hit Dice (minimum one).
+# Rule (2014 PHB, PDF p.187): a short rest spends one or more Hit Dice; each rolls the class die plus
+# CON and regains that total (no minimum). A long rest regains up to half the character's total Hit
+# Dice, rounded down, so a level-1 character regains none. The engine spends one die per short rest.
 # Total = character level. Spent count lives in CharacterAssignment.stats["hit_dice"] as
 # {"spent": n} (a JSONB key, no migration); a sheet without the key has none spent. 2024 campaigns
 # follow the same rule in this engine. A short rest spends one die: a declared count is not parsed.
@@ -1042,7 +1050,8 @@ def hit_dice_status(character: dict | None) -> dict[str, Any]:
 
 
 def hit_dice_recovered_by_long_rest(character: dict | None) -> int:
-    return max(1, hit_dice_total(character) // 2)
+    # PHB p.187: "up to a number of dice equal to half of the character's total number of them".
+    return hit_dice_total(character) // 2
 
 
 def hit_dice_after_long_rest(character: dict | None) -> int | None:
