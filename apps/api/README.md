@@ -36,7 +36,8 @@ The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session
 (`agent.supported_rules`): the mechanics the engine executes, the rules it does not execute, and
 the solo-play adaptations. A declared action that falls in the unsupported list receives a narrative
 ruling. Its narration and adjudication cannot state an engine effect, so spells, maneuvers,
-advantage, positioning and similar claims never change HP, conditions or flags. The scope is also
+advantage without an engine source, positioning and similar claims never change HP, conditions or
+flags. The scope is also
 summarised in the rules and narrator prompts.
 
 ## Health
