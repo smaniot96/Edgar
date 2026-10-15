@@ -132,7 +132,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     if opening_text:
         context_parts.append(
             "Open the story at the reviewed opening scene. "
-            "Use only these complete player-approved passages; citation labels identify their "
+            "Use only these complete reviewed player-visible passages; citation labels identify their "
             "sources and must not be narrated. Do not skip ahead to later scenes:\n" + opening_text
         )
     else:
@@ -154,6 +154,24 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     narration = message_text(response)
     if not narration.strip():
         return None
+
+    if not homebrew:
+        # Preparation may have been replaced while the provider was running. Never attach
+        # an old seed to a newly reviewed source or mix their opening evidence.
+        try:
+            current_opening = await asyncio.to_thread(
+                _reviewed_opening, adventure_collections[0], edition
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="The prepared adventure changed while opening. Retry to use the current version.",
+            ) from exc
+        if current_opening != (opening_scene_id, passages, seeds):
+            raise HTTPException(
+                status_code=409,
+                detail="The prepared adventure changed while opening. Retry to use the current version.",
+            )
 
     if opening_scene_id is not None:
         session.current_scene_id = opening_scene_id
