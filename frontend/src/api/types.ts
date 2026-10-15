@@ -324,6 +324,24 @@ export interface DebugTimings {
   [key: string]: number | undefined;
 }
 
+/**
+ * Developer view of one combat round (EDG-031). Stage timings are only those the round measured;
+ * a stage listed in `timings_unavailable` was not measured and must not be shown as zero.
+ */
+export interface CombatRoundDiagnostics {
+  turn_id: string | null;
+  round: number;
+  ended: boolean;
+  outcome: string | null;
+  actors: { id: string; name: string }[];
+  player_action: Record<string, unknown>;
+  outcomes: Record<string, unknown>[];
+  dispositions: Record<string, unknown>[];
+  dice_log: Record<string, unknown>[];
+  timings_ms: Record<string, number>;
+  timings_unavailable: string[];
+}
+
 /** Payload of the optional `debug` SSE event, emitted only when debug=true. */
 export interface DebugPayload {
   parsed_input: ParsedInput | null;
@@ -334,6 +352,8 @@ export interface DebugPayload {
   world_flags_in: Record<string, unknown>;
   combat_state: CombatState | null;
   timings_ms: DebugTimings;
+  /** Combat turns only; null for a non-combat turn. */
+  combat_diagnostics?: CombatRoundDiagnostics | null;
   model: string;
 }
 
