@@ -10,6 +10,12 @@ Stored on every combatant:
 
 Derived, never stored: `can_act` (active and above 0 HP). Only a combatant that can act attacks.
 
+`effects` (EDG-021): a list of typed combat effects, each `{kind, source, applied_round}`. Only
+the kinds in `EFFECT_KINDS` are read. Restraint (`restrained`) and `prone` come from a supported
+contested maneuver, persist in this same JSONB list, and end explicitly: a declared release,
+the foe's defeat, or the end of the encounter. `attack_roll_mode` turns them into the 5e
+advantage/disadvantage state of an attack. Missing or malformed `effects` reads as none.
+
 Legacy rows (written before `disposition` existed) carry only `alive`/`hp_current`. They are
 read honestly: `alive` False means "defeated" (cause unknown). It is not treated as proof of
 death or capture, and no nonlethal intent is invented. No stored data is rewritten.
@@ -20,6 +26,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any, Literal
 
 Lethality = Literal["lethal", "nonlethal"]
@@ -33,6 +40,17 @@ _STATUS_TEXT = {
     "captured": "captured, cannot act",
     "dead": "dead, cannot act",
     "defeated": "defeated, cannot act",
+}
+EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone")
+_EFFECT_TEXT = {
+    "restrained": (
+        "restrained with {source}: its attacks have disadvantage and attacks against it have "
+        "advantage"
+    ),
+    "prone": (
+        "knocked prone: its attacks have disadvantage, melee attacks against it have advantage "
+        "and ranged attacks against it have disadvantage"
+    ),
 }
 
 # The player's own declared intent, read from their words. Nonlethal wins when both appear
@@ -59,6 +77,43 @@ _ATTACK_VERBS = (
 _OTHER_ATTACKER = re.compile(
     r"\b(?:other|second|another|additional|third|remaining)\s+([a-z][a-z-]*)\b", re.IGNORECASE
 )
+# Supported contested maneuvers, read from the player's words (EDG-021). Shove-away and other
+# maneuvers are not matched here, so they stay unsupported and receive a ruling.
+_RESTRAIN_TEXT = re.compile(
+    r"\b(?:grapple\w*|pin|pins|pinned|pinning|restrain\w*|tie\s+(?:him|her|it|them)\s+up"
+    r"|hold\s+(?:him|her|it|them)\s+(?:down|in\s+place|still|fast))\b",
+    re.IGNORECASE,
+)
+_PRONE_TEXT = re.compile(
+    r"\b(?:knock\w*\s+(?:\w+\s+){0,2}(?:prone|down)|trip\w*"
+    r"|shov(?:e|es|ed|ing)\b[^.!?\n]{0,40}?\b(?:prone|down|(?:to|on)\s+the\s+(?:ground|floor)"
+    r"|off\s+(?:his|her|its|their)\s+feet))\b",
+    re.IGNORECASE,
+)
+_RELEASE_TEXT = re.compile(
+    r"\b(?:release\w*|let\s+(?:go\s+of|him\s+go|her\s+go|it\s+go|them\s+go)|unpin\w*|untie\w*"
+    r"|unbind\w*)\b",
+    re.IGNORECASE,
+)
+_ROPE_TEXT = re.compile(r"\b(?:rope|cord|chains?|manacles?|bonds?|bindings?)\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class CombatManeuver:
+    kind: str  # "restrained" | "prone" | "release"
+    source: str | None = None  # "rope" | "hands" for a restraint; "shove" for prone
+
+
+def classify_combat_maneuver(text: str | None) -> CombatManeuver | None:
+    """The supported maneuver the player declared, from their words. None for anything else."""
+    words = text or ""
+    if _RELEASE_TEXT.search(words):
+        return CombatManeuver("release")
+    if _RESTRAIN_TEXT.search(words):
+        return CombatManeuver("restrained", "rope" if _ROPE_TEXT.search(words) else "hands")
+    if _PRONE_TEXT.search(words):
+        return CombatManeuver("prone", "shove")
+    return None
 
 
 def display_name(c: Mapping[str, Any]) -> str:
@@ -117,6 +172,73 @@ def apply_defeat(c: dict, lethality: Lethality | None) -> None:
         disposition = "defeated"
     c["disposition"] = disposition
     c["alive"] = disposition in LIVING_DISPOSITIONS
+    # A combatant that cannot act keeps no restraint or prone state: the effect ends with it.
+    clear_effects([c])
+
+
+def effects_of(c: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Typed effects on a combatant. Legacy rows without `effects` read as none."""
+    raw = c.get("effects")
+    if not isinstance(raw, list):
+        return []
+    return [dict(e) for e in raw if isinstance(e, Mapping) and e.get("kind") in EFFECT_KINDS]
+
+
+def has_effect(c: Mapping[str, Any], kind: str) -> bool:
+    return any(e["kind"] == kind for e in effects_of(c))
+
+
+def add_effect(c: dict, kind: str, *, source: str | None, round_applied: int) -> bool:
+    """Apply a typed effect. False when the combatant already has that effect (no stacking)."""
+    if kind not in EFFECT_KINDS:
+        raise ValueError(f"unknown combat effect: {kind!r}")
+    if has_effect(c, kind):
+        return False
+    entry = {"kind": kind, "source": source, "applied_round": int(round_applied)}
+    c["effects"] = [*effects_of(c), entry]
+    return True
+
+
+def release_effect(c: dict, kind: str) -> bool:
+    """Explicitly end one effect (a declared release). False when it was not in force."""
+    before = effects_of(c)
+    after = [e for e in before if e["kind"] != kind]
+    if len(after) == len(before):
+        return False
+    c["effects"] = after
+    return True
+
+
+def clear_effects(combatants: Iterable[dict]) -> None:
+    """End every typed effect (defeat or end of the encounter). Rows without effects are untouched."""
+    for c in combatants:
+        if c.get("effects"):
+            c["effects"] = []
+
+
+def attack_roll_mode(
+    attacker: Mapping[str, Any], target: Mapping[str, Any], *, ranged: bool = False
+) -> str:
+    """The 5e attack-roll mode from combatant effects: "advantage", "disadvantage" or "normal".
+
+    A restrained or prone attacker rolls at disadvantage. A restrained target is attacked with
+    advantage; a prone target with advantage in melee and disadvantage at range. Opposing sources
+    cancel to normal, as the rules do. Pure: it never rolls and never sets a number.
+    """
+    advantage = disadvantage = False
+    if any(e["kind"] in EFFECT_KINDS for e in effects_of(attacker)):
+        disadvantage = True
+    for e in effects_of(target):
+        if e["kind"] == "restrained":
+            advantage = True
+        elif e["kind"] == "prone":
+            if ranged:
+                disadvantage = True
+            else:
+                advantage = True
+    if advantage == disadvantage:
+        return "normal"
+    return "advantage" if advantage else "disadvantage"
 
 
 def apply_player_disposition(player: dict, *, subdued: bool) -> None:
@@ -142,7 +264,18 @@ def view_fields(c: Mapping[str, Any]) -> dict[str, Any]:
         "disposition": disposition,
         "can_act": can_act(c),
         "alive": disposition in LIVING_DISPOSITIONS,
+        "effects": [
+            {"kind": e["kind"], "source": e.get("source"), "applied_round": e.get("applied_round")}
+            for e in effects_of(c)
+        ],
     }
+
+
+def _effects_text(c: Mapping[str, Any]) -> str:
+    return "".join(
+        "; " + _EFFECT_TEXT[e["kind"]].format(source=e.get("source") or "hands")
+        for e in effects_of(c)
+    )
 
 
 def narrator_roster(combatants: Iterable[Mapping[str, Any]], round_actors: Iterable[str]) -> str:
@@ -150,6 +283,7 @@ def narrator_roster(combatants: Iterable[Mapping[str, Any]], round_actors: Itera
     enemies = [c for c in combatants if not c.get("is_player")]
     lines = [
         f'- id "{stable_id(c)}", name "{display_name(c)}": {_STATUS_TEXT[disposition_of(c)]}'
+        f"{_effects_text(c)}"
         for c in enemies
     ]
     able = [display_name(c) for c in enemies if can_act(c)]
