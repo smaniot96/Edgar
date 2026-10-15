@@ -12,7 +12,8 @@ The contract has three parts, all derived from what the engine actually executes
 Runtime enforcement uses the same vocabulary:
 
   * `classify_unsupported_actions` maps a declared action (player text + parser output) to
-    unsupported kinds. Declared spells and spell attacks never reach the dice engine.
+    unsupported kinds. A catalog spell (agent.spells) is executed by the engine and is not
+    unsupported; any other declared spell, or a catalog spell the character cannot cast, is.
   * `apply_adjudication_boundary` strips LLM-proposed conditions, flags and damage that claim
     an unsupported effect, and states the ruling in the engine's mechanical summary.
   * `apply_narration_boundary` removes narration sentences that claim an unsupported effect and
@@ -30,7 +31,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent.combatants import classify_combat_maneuver
 from agent.resolution import normalise_check
+from agent.spells import CATALOG, cast_request
 
 CONTRACT_ID = "edgar.supported-5e-subset"
 CONTRACT_VERSION = 1
@@ -79,8 +82,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "A check or attack rolls two engine d20s and keeps the higher (advantage) or the "
             "lower (disadvantage); both faces are logged. Advantage with disadvantage cancels to "
-            "a normal roll. A mode comes only from the engine's typed sources (currently an attack "
-            "against an unconscious target has advantage). A player's or the model's claim of "
+            "a normal roll. A mode comes only from engine state: an attack against an unconscious target has "
+            "advantage, and the restrained or prone effects of a supported combat maneuver set "
+            "advantage or disadvantage on attacks (see contested_maneuvers). A player's or the model's claim of "
             "advantage is never a source and is not applied."
         ),
         implementation="agent.resolution:resolve_check",
@@ -175,11 +179,28 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         test="tests/agent/test_supported_rules.py::test_supported_consumable_healing_needs_inventory",
     ),
     Mechanic(
+        id="supported_spells",
+        title="Catalog spells: Fire Bolt, Magic Missile, Sacred Flame and Cure Wounds",
+        scope=(
+            "Only these declared spells resolve. Fire Bolt is a spell attack (1d10 fire, two dice "
+            "at 5th level and up, more at 11th and 17th; a critical doubles the dice). Magic Missile "
+            "is three automatic-hit darts of 1d4+1 force, one more dart per slot above 1st. Sacred "
+            "Flame is a DEX save by the target against the caster's spell save DC, with 1d8 radiant "
+            "damage on a failure only. Cure Wounds restores 1d8 plus the spellcasting modifier to the "
+            "caster, one die more per slot above 1st; it cannot target anyone else. Cantrips cost no "
+            "slot. A leveled spell spends the named slot or the lowest one available; slot totals "
+            "follow class and level for the full and half casters, and a long rest restores them. "
+            "Concentration and advantage are not tracked. Other spells get a narrative ruling."
+        ),
+        implementation="agent.spells:resolve_spell",
+        test="tests/agent/test_spells.py::test_catalog_spell_attack_hit_miss_and_crit",
+    ),
+    Mechanic(
         id="long_rest",
         title="Long rest healing",
         scope=(
-            "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum. No other "
-            "long-rest resource is reset by the engine."
+            "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum and every "
+            "expended spell slot. No other long-rest resource is reset by the engine."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_long_rest_restores_hp",
@@ -215,27 +236,45 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         implementation="agent.resolution:decide_completion",
         test="tests/agent/test_supported_rules.py::test_supported_completion_needs_confirmation",
     ),
+    Mechanic(
+        id="contested_maneuvers",
+        title="Grapple, pin and restrain; shove prone (in combat, contested)",
+        scope=(
+            "In combat, against one foe, with rope or bare hands. The player's Athletics check is "
+            "contested by the foe's Dexterity check (Acrobatics without proficiency); the higher "
+            "total wins and a tie fails. Success restrains a grappled or pinned foe: its attacks have "
+            "disadvantage and attacks against it have advantage. Success on a shove prone knocks the "
+            "foe prone: its attacks have disadvantage, and melee attacks against it have advantage "
+            "while ranged attacks have disadvantage. The maneuver replaces that turn's attack. A "
+            "restraint ends when the player declares a release, when the foe is defeated, or when the "
+            "encounter ends. A prone foe does not stand up, and a restrained foe makes no escape "
+            "contest; both are fixed for the rest of the encounter."
+        ),
+        implementation="agent.combatants:add_effect",
+        test="tests/agent/test_supported_rules.py::test_supported_contested_maneuver_applies_effect",
+    ),
 )
 
 UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     UnsupportedMechanic(
-        id="contested_maneuvers",
-        title="Grapple, shove, pin, restrain, trip and knock prone",
+        id="unsupported_maneuvers",
+        title="Shove away, shove back, grappling several foes, escape contests and other maneuvers",
         boundary=(
             "Any check rolled is an ordinary ability check. Its success records no restraint, "
-            "prone state, pin or position."
+            "prone state, pin or position, and no maneuver is applied outside a combat round or when "
+            "its contest is lost."
         ),
-        owner="EDG-021",
+        owner="EDG-044",
     ),
     UnsupportedMechanic(
         id="declared_spells",
-        title="Declared spells and spell attacks",
+        title="Other declared spells and spell effects",
         boundary=(
-            "A declared spell has no engine effect: no damage, healing, saving throw, condition, "
-            "slot, concentration or duration. Spell attacks are not resolved with a representative "
-            "class die."
+            "A declared spell outside the supported list has no engine effect: no damage, healing, "
+            "saving throw, condition, slot, concentration or duration. It is not resolved as a "
+            "weapon or class attack."
         ),
-        owner="EDG-027",
+        owner="EDG-043",
     ),
     UnsupportedMechanic(
         id="condition_effects",
@@ -327,7 +366,7 @@ _KIND_ORDER = (SPELL, FEATURE, MANEUVER, CONDITION, ADVANTAGE, ACTION_ECONOMY, P
 _KIND_MECHANIC = {
     SPELL: "declared_spells",
     FEATURE: "class_features",
-    MANEUVER: "contested_maneuvers",
+    MANEUVER: "unsupported_maneuvers",
     CONDITION: "condition_effects",
     ADVANTAGE: "advantage_disadvantage",
     ACTION_ECONOMY: "action_economy",
@@ -345,9 +384,8 @@ _RULINGS = {
         "uses and recharge are not applied."
     ),
     MANEUVER: (
-        "Narrative ruling: this maneuver has no engine effect. Any check rolled is an ordinary "
-        "ability check; its success does not pin, shove, restrain, grapple or knock anyone prone, "
-        "and no position is tracked."
+        "Narrative ruling: this maneuver has no engine effect this turn. Any check rolled is an "
+        "ordinary ability check, and the engine records no effect from it. No position is tracked."
     ),
     CONDITION: (
         "Narrative ruling: the condition has no engine effect. No penalty, speed change, "
@@ -401,6 +439,18 @@ _CLAIM_WORDS = {
     ),
     POSITIONING: r"\b(?:in\s+cover|take\s+cover|behind\s+cover|high\s+ground|flank\w*)\b",
 }
+
+# Spell names the engine does not resolve. A catalog spell with no such name is executed, not declared.
+_UNCOVERED_SPELL = re.compile(
+    r"\b(?:"
+    + "|".join(
+        name
+        for name in _SPELL_NAMES.split("|")
+        if name not in {spell.name.lower() for spell in CATALOG}
+    )
+    + r")\b",
+    re.IGNORECASE,
+)
 
 _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -473,10 +523,11 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 class UnsupportedAction:
     kind: str
     phrase: str
+    note: str | None = None  # a specific ruling (a refused catalog spell), else the kind's ruling
 
     @property
     def ruling(self) -> str:
-        return _RULINGS[self.kind]
+        return self.note or _RULINGS[self.kind]
 
     @property
     def mechanic_id(self) -> str:
@@ -504,6 +555,12 @@ def _parsed_feature(parsed: Any) -> str | None:
     return feature[:60]
 
 
+def _engine_applied_maneuver(text: str, engine_effects: tuple[str, ...]) -> bool:
+    """True when the declared maneuver is a supported one whose effect the engine applied."""
+    maneuver = classify_combat_maneuver(text)
+    return maneuver is not None and maneuver.kind in engine_effects
+
+
 ENGINE_ROLL_MODE_KEY = "engine_roll_mode"
 
 
@@ -514,37 +571,78 @@ def engine_roll_mode(state: dict[str, Any] | None) -> str:
 
 
 def classify_unsupported_actions(
-    player_input: str | None, parsed: Any = None, *, engine_roll_mode: str = "normal"
+    player_input: str | None,
+    parsed: Any = None,
+    character: dict | None = None,
+    *,
+    engine_roll_mode: str = "normal",
+    engine_effects: tuple[str, ...] = (),
 ) -> tuple[UnsupportedAction, ...]:
     """Deterministic classification of the declared action against the unsupported list.
 
-    Returns at most one entry per kind, in a stable order. Text is matched in English only;
-    a spell attack proposed by the parser is always classified as a declared spell. When the
-    engine applied advantage or disadvantage this turn, an advantage wording describes a real
-    effect and is not an unsupported action.
+    Returns at most one entry per kind, in a stable order. Text is matched in English only.
+    A declared catalog spell that the character can cast is executed by the engine and is not
+    listed; a catalog spell that is refused (no access, no slot) is listed with that refusal as
+    its ruling. Any other declared spell, and a spell attack proposed by the parser, is listed.
+    When the engine applied advantage or disadvantage this turn, an advantage wording describes a
+    real effect and is not an unsupported action. `engine_effects` are the typed effects the
+    engine applied this turn (EDG-021): a supported maneuver that really applied one is not
+    unsupported, so its narration is not stripped.
     """
     text = str(player_input or "")
     found: dict[str, UnsupportedAction] = {}
-    if _parsed_spell(parsed):
+    request = cast_request(text, parsed, character)
+    if request is not None:
+        spell, _plan, refusal = request
+        if refusal:
+            found[SPELL] = UnsupportedAction(
+                SPELL, spell.name.lower(), f"Narrative ruling: {refusal}"
+            )
+    elif _parsed_spell(parsed):
         found[SPELL] = UnsupportedAction(SPELL, "spell (parsed)")
     feature = _parsed_feature(parsed)
     if feature:
         found.setdefault(FEATURE, UnsupportedAction(FEATURE, feature.lower()))
     for kind, pattern in _TEXT_PATTERNS:
+        if (
+            kind == SPELL
+            and request is not None
+            and request[2] is None
+            and not _UNCOVERED_SPELL.search(text)
+        ):
+            continue  # the executed catalog spell; its casting words are not a declared spell
         if kind == ADVANTAGE and engine_roll_mode != "normal":
             continue
         match = pattern.search(text)
-        if match and kind not in found:
-            found[kind] = UnsupportedAction(kind, match.group(0).lower()[:60])
+        if not match or kind in found:
+            continue
+        if kind == MANEUVER and _engine_applied_maneuver(text, engine_effects):
+            continue
+        found[kind] = UnsupportedAction(kind, match.group(0).lower()[:60])
     return tuple(found[kind] for kind in _KIND_ORDER if kind in found)
+
+
+def engine_effects_for_state(state: dict[str, Any]) -> tuple[str, ...]:
+    """Typed effects the engine applied in this turn, as recorded by the combat round."""
+    return tuple(str(kind) for kind in (state.get("engine_effects") or ()))
 
 
 def actions_for_state(state: dict[str, Any]) -> tuple[UnsupportedAction, ...]:
     return classify_unsupported_actions(
         state.get("player_input"),
         state.get("parsed_input"),
+        state.get("character"),
         engine_roll_mode=engine_roll_mode(state),
+        engine_effects=engine_effects_for_state(state),
     )
+
+
+def executed_spell_for_state(state: dict[str, Any]) -> bool:
+    """True when this turn casts a catalog spell the engine executes (no refusal)."""
+    request = cast_request(
+        state.get("player_input"), state.get("parsed_input"), state.get("character")
+    )
+    return request is not None and request[2] is None
 
 
 def has_declared_spell(actions: tuple[UnsupportedAction, ...]) -> bool:
@@ -585,33 +683,49 @@ def boundary_prompt_block(actions: tuple[UnsupportedAction, ...]) -> str | None:
 
 
 def _claim_pattern(
-    actions: tuple[UnsupportedAction, ...], *, engine_roll_mode: str = "normal"
+    actions: tuple[UnsupportedAction, ...],
+    *,
+    engine_roll_mode: str = "normal",
+    executed_spell: bool = False,
+    engine_effects: tuple[str, ...] = (),
 ) -> re.Pattern[str] | None:
     """Claims of every unsupported mechanic, once any unsupported action is declared.
 
     The union is deliberate: a fake or confused provider may describe a different unsupported
     effect than the one the player declared (a spell turn narrating a pin, say), and neither the
-    narrator nor a flag can be trusted to name its own mechanic. The advantage claim is left out
-    when the engine applied a mode this turn, because that wording then describes a real roll.
+    narrator nor a flag can be trusted to name its own mechanic. Three exceptions describe engine
+    facts: a catalog spell the engine executed (its name, dice and slots), an advantage or
+    disadvantage the engine applied this turn, and a restraint or prone effect really applied; those
+    claims are not applied to that turn's text.
     """
     if not actions:
         return None
     patterns = [
         p
         for kind, p in _CLAIM_WORDS.items()
-        if not (kind == ADVANTAGE and engine_roll_mode != "normal")
+        if not (executed_spell and kind == SPELL)
+        and not (kind == ADVANTAGE and engine_roll_mode != "normal")
+        and not (kind == MANEUVER and engine_effects)
     ]
+    if not patterns:
+        return None
     return re.compile("|".join(f"(?:{p})" for p in patterns), re.IGNORECASE)
 
 
 def apply_adjudication_boundary(
-    adj: Any, actions: tuple[UnsupportedAction, ...], *, engine_roll_mode: str = "normal"
+    adj: Any,
+    actions: tuple[UnsupportedAction, ...],
+    *,
+    engine_roll_mode: str = "normal",
+    executed_spell: bool = False,
+    engine_effects: tuple[str, ...] = (),
 ) -> None:
     """Remove LLM-proposed effects that claim an unsupported mechanic. Mutates `adj`.
 
     Conditions are never stored for an unsupported turn. Damage is removed for spell, feature and
     maneuver turns because the engine has no verified effect for them. Flags whose key or value
     claims an unsupported effect are dropped. The ruling is stated in the mechanical summary.
+    `executed_spell` marks a turn whose catalog spell the engine executes (see `_claim_pattern`).
     """
     if not actions:
         return
@@ -625,7 +739,12 @@ def apply_adjudication_boundary(
             cu.damage_dice = None
     if kinds & {SPELL, FEATURE, MANEUVER}:
         adj.damage = None
-    claim = _claim_pattern(actions, engine_roll_mode=engine_roll_mode)
+    claim = _claim_pattern(
+        actions,
+        engine_roll_mode=engine_roll_mode,
+        executed_spell=executed_spell,
+        engine_effects=engine_effects,
+    )
     if claim is not None:
         adj.flags_set = [
             fu
@@ -649,7 +768,12 @@ def _strip_claim_sentences(text: str, claim: re.Pattern[str] | None) -> str:
 
 
 def apply_narration_boundary(
-    narration: str, actions: tuple[UnsupportedAction, ...], *, engine_roll_mode: str = "normal"
+    narration: str,
+    actions: tuple[UnsupportedAction, ...],
+    *,
+    engine_roll_mode: str = "normal",
+    executed_spell: bool = False,
+    engine_effects: tuple[str, ...] = (),
 ) -> str:
     """Drop narration sentences that claim an unsupported effect and state the ruling.
 
@@ -659,7 +783,13 @@ def apply_narration_boundary(
     if not actions:
         return narration
     body = _strip_claim_sentences(
-        narration, _claim_pattern(actions, engine_roll_mode=engine_roll_mode)
+        narration,
+        _claim_pattern(
+            actions,
+            engine_roll_mode=engine_roll_mode,
+            executed_spell=executed_spell,
+            engine_effects=engine_effects,
+        ),
     )
     rulings = " ".join(ruling_lines(actions))
     if not body:
@@ -689,7 +819,8 @@ def contract_payload() -> dict[str, Any]:
         "runtime_boundary": (
             "A declared action that falls in the not-supported list receives a narrative ruling. "
             "Its narration cannot state an engine effect, and no spell, maneuver, condition or "
-            "advantage is applied."
+            "advantage is applied. A supported combat maneuver is applied only when the engine "
+            "rolls its contest and records the effect."
         ),
     }
 

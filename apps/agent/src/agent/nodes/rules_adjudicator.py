@@ -23,7 +23,7 @@ import logging
 
 from agent.history import continuity_context
 from agent.llm import make_chat_model
-from agent.models.adjudication import AdjudicationResult
+from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.nodes.manifest_effects import enforce_manifest_effects
 from agent.nodes.story_effects import (
     committed_facts,
@@ -49,13 +49,16 @@ from agent.resolution_policies import (
     policy_source_is_fresh,
     selected_policy,
 )
+from agent.spells import NO_FOE_NOTE, SpellResult, cast_request, narrate, resolve_spell
 from agent.state import AgentState
 from agent.supported_rules import (
     ENGINE_ROLL_MODE_KEY,
     actions_for_state,
     apply_adjudication_boundary,
     boundary_prompt_block,
+    engine_effects_for_state,
     engine_roll_mode,
+    executed_spell_for_state,
 )
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
@@ -189,6 +192,24 @@ def build_adjudicator_prompt(
     ]
 
 
+def _stamp_spell_outcome(
+    result: AdjudicationResult, outcome: SpellResult, character: dict | None
+) -> None:
+    """Write the engine's spell effect over the model's answer: healing, slots and the line."""
+    cu = result.character_update or CharacterUpdate()
+    if outcome.healing:
+        cu.hp_delta = (cu.hp_delta or 0) + outcome.healing
+    cu.spell_slots_expended = outcome.expended
+    if outcome.attack is None:
+        result.success = True
+    hero = str((character or {}).get("name") or "The hero")
+    line = narrate(outcome, hero=hero, target=None)
+    if outcome.damage:
+        line = f"{line} {NO_FOE_NOTE}"
+    result.character_update = cu
+    result.mechanical_summary = f"{line} {result.mechanical_summary}".strip()
+
+
 async def _invoke_with_retry(messages: list[dict]) -> AdjudicationResult | None:
     llm = make_chat_model(temperature=0)
     structured_llm = llm.with_structured_output(AdjudicationResult, method="function_calling")
@@ -258,9 +279,27 @@ async def adjudicate(
                 completion_status="none",
             )
 
+    # A declared catalog spell is resolved by the same helper the combat round uses (agent.spells).
+    spell_outcome: SpellResult | None = None
+    request = None
+    if not in_combat and selected is None:
+        request = cast_request(player_input, parsed, character)
+    if request is not None:
+        _spell, plan, refusal = request
+        if refusal:
+            return AdjudicationResult(
+                success=False, mechanical_summary=refusal, completion_status="none"
+            )
+        spell_outcome = resolve_spell(character, plan)
+        hero = str((character or {}).get("name") or "The hero")
+        extra_outcome = narrate(spell_outcome, hero=hero, target=None)
+
     check_result = engine_check
     extra_log: list[dict] = []
-    if selected is not None and not in_combat:
+    if spell_outcome is not None:
+        check_result = spell_outcome.attack
+        extra_log = list(spell_outcome.dice_log)
+    elif selected is not None and not in_combat:
         policy = selected["policy"]
         if policy.mode == "check":
             check_result = resolve_check(character, policy.check, dc=policy.dc, hint=player_input)
@@ -290,7 +329,13 @@ async def adjudicate(
 
     # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
     # Runs before the engine's own roll line is stamped on, so engine dice are never stripped.
-    apply_adjudication_boundary(result, actions, engine_roll_mode=engine_roll_mode(state))
+    apply_adjudication_boundary(
+        result,
+        actions,
+        engine_roll_mode=engine_roll_mode(state),
+        executed_spell=spell_outcome is not None or executed_spell_for_state(state),
+        engine_effects=engine_effects_for_state(state),
+    )
 
     # Authoritative numbers: never trust the model's success/dice.
     result.dice_log = list(extra_log)
@@ -322,6 +367,10 @@ async def adjudicate(
         state["authorized_policy_effect_keys"] = list(selected.get("authorized_effect_keys", []))
         state["policy_reveal_authorizations"] = reveal_authorizations
 
+    if spell_outcome is not None and result.character_update is not None:
+        # Engine owns spell damage and healing: model-proposed damage and HP numbers are dropped.
+        result.character_update.damage_dice = None
+        result.character_update.hp_delta = None
     if selected is None:
         enforce_side_effects(
             result,
@@ -335,6 +384,8 @@ async def adjudicate(
             in_combat=in_combat,
             canonical_inventory=state.get("manifest_status") == "reviewed",
         )
+    if spell_outcome is not None:
+        _stamp_spell_outcome(result, spell_outcome, character)
     result = enforce_manifest_effects(result, state)
     if not in_combat and selected is None:
         decide_completion(

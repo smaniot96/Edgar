@@ -88,12 +88,23 @@ simulate (`GET /api/rules/supported-scope`):
   weapon attacks with natural 1 and 20 handling and proficiency only where the class or sheet grants
   it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
   table; initiative; combat rounds in initiative order; Fighter Second Wind (once per encounter);
-  short and long rest healing; healing potions taken from inventory.
-- Not supported: advantage claimed by the player or model without an engine source,
-  grapple/shove/pin/restraint, declared spell effects,
-  spell slots and concentration, condition effects, cover and positioning, bonus actions and
-  reactions, the Hit Dice ledger, and class features beyond Second Wind. A declared action of this
-  kind gets a narrative ruling and no mechanical effect.
+  short and long rest healing (a long rest also restores spell slots); healing potions taken from
+  inventory.
+- Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
+  darts, upcast by slot), Sacred Flame (DEX save) and Cure Wounds (self-heal). Their dice are
+  rolled by the engine, leveled spells spend a slot tracked per character, and a cast with no slot
+  left is refused with no effect.
+- Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
+  are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
+  attacks have disadvantage, attacks against it have advantage) or knocks it prone (its attacks have
+  disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
+  release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
+  are shown in the combat roster and given to the narrator.
+- Not supported: advantage claimed by the player or model without an engine source, shove away and
+  other maneuvers, escape contests, spells outside that catalog, concentration, other condition
+  effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and class
+  features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
+  mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
   with level. Over-budget foes are clamped or left out, exact creature identities are kept, and the
