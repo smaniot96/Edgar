@@ -134,7 +134,9 @@ async def test_apply_adjudication_rejects_junk_scene_and_unknown_flag_clears(db_
 
     keys = {
         f.key: f.value
-        for f in (await db_session.execute(select(WorldFlag).where(WorldFlag.campaign_id == camp.id))).scalars()
+        for f in (
+            await db_session.execute(select(WorldFlag).where(WorldFlag.campaign_id == camp.id))
+        ).scalars()
     }
     assert keys == {"door_unlocked": "yes"}
 
@@ -171,6 +173,67 @@ async def test_completion_flag_only_written_when_engine_accepts(db_session) -> N
     await apply_adjudication(db_session, sess, adj)
     await db_session.commit()
     r = await db_session.execute(
-        select(WorldFlag).where(WorldFlag.campaign_id == camp.id, WorldFlag.key == "campaign_complete")
+        select(WorldFlag).where(
+            WorldFlag.campaign_id == camp.id, WorldFlag.key == "campaign_complete"
+        )
     )
     assert r.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_typed_object_consume_does_not_remove_second_same_name_item(db_session):
+    from edgar_core.story import StoryEffect, StoryRef, accept_story_effect
+
+    target = StoryRef(
+        collection="fixture",
+        source_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        kind="object",
+        canonical_id="cord",
+    )
+    accepted = accept_story_effect(
+        StoryEffect(kind="consume", target=target, status="consumed", quantity=1),
+        turn_id="consume-turn",
+        source_refs=[],
+        display_name="Spare cord",
+    )
+    # The stable object projection already removed the consumed cord. A second same-name
+    # item must survive the legacy resource update generated for that same operation.
+    camp, ass, sess = await _setup(
+        db_session,
+        inventory={
+            "items": [{"name": "Spare cord", "story_object_id": "another-object"}, "Spare cord"]
+        },
+    )
+    adj = AdjudicationResult(
+        success=True,
+        accepted_story_effects=[accepted],
+        character_update=CharacterUpdate(hp_delta=2, inventory_remove=["Spare cord"]),
+    )
+    await apply_adjudication(db_session, sess, adj)
+    assert len(ass.inventory["items"]) == 2
+    assert ass.hp_current == 20
+
+
+@pytest.mark.asyncio
+async def test_resolved_combat_outcome_cannot_regress(db_session):
+    from apps.api.services.combat import persist_combat
+    from db.postgres.models import CombatState
+
+    _, _, sess = await _setup(db_session)
+    resolved = CombatState(
+        session_id=sess.id,
+        initiative_order=["Hero"],
+        round=3,
+        current_turn_index=0,
+        combatants=[],
+        ended=True,
+        outcome="victory",
+    )
+    db_session.add(resolved)
+    await db_session.flush()
+    unchanged = {"id": resolved.id, "ended": True, "outcome": "victory", "round": 3}
+    await persist_combat(db_session, sess.id, unchanged)
+    with pytest.raises(ValueError, match="resolved combat"):
+        await persist_combat(db_session, sess.id, {**unchanged, "ended": False, "outcome": None})
+    assert resolved.ended is True and resolved.outcome == "victory"

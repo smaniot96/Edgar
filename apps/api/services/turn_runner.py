@@ -276,9 +276,12 @@ async def persist_turn(
                     for entity in manifest.get("entities", [])
                     if entity.get("discovery_flag")
                 }
-                await apply_adjudication(
-                    db, game_session, adjudication, session_discovery_keys=discovery_keys
-                )
+                if discovery_keys:
+                    await apply_adjudication(
+                        db, game_session, adjudication, session_discovery_keys=discovery_keys
+                    )
+                else:
+                    await apply_adjudication(db, game_session, adjudication)
 
             for event in result.get("telemetry_events") or []:
                 db.add(
