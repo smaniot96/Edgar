@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
-import { getCampaign, recoverCampaignSource, retryAdventure, setCampaignSourceMode } from "../../api/client";
+import { cancelAdventure, getCampaign, recoverCampaignSource, retryAdventure, setCampaignSourceMode } from "../../api/client";
 import type { CampaignRead } from "../../api/types";
+import { isJobActive, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
 import { Button } from "../ui/Button";
 import { ErrorNotice } from "../ui/ErrorNotice";
 import { ExtractionPreview } from "./ExtractionPreview";
@@ -14,7 +15,8 @@ export function SourceRecovery({ campaign, onUpdated }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const sources = campaign.sources ?? [];
-  const processing = sources.some((s) => s.status === "processing");
+  const processing = sources.some((s) => s.status === "processing" || isJobActive(s.job));
+  const failedJob = sources.some((s) => s.job && ["interrupted", "failed", "cancelled"].includes(s.job.state));
   useEffect(() => {
     if (!processing) return;
     const timer = window.setTimeout(() => {
@@ -23,7 +25,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
     return () => window.clearTimeout(timer);
   }, [processing, campaign, onUpdated]);
 
-  if (!campaign.retrieval_degraded && campaign.source_mode !== "homebrew") return null;
+  if (!campaign.retrieval_degraded && !processing && !failedJob && campaign.source_mode !== "homebrew") return null;
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -40,21 +42,47 @@ export function SourceRecovery({ campaign, onUpdated }: {
 
   return (
     <section aria-label="Campaign source recovery" className="m-3 space-y-3 rounded-card border border-warning bg-surface-sunken p-4 text-sm">
-      <h2 className="font-semibold">{campaign.source_mode === "homebrew" ? "Homebrew play selected" : "Adventure sources need recovery"}</h2>
+      <h2 className="font-semibold">{campaign.source_mode === "homebrew" ? "Homebrew play selected" : processing && !campaign.retrieval_degraded ? "Source preparation in progress" : campaign.retrieval_degraded ? "Adventure sources need recovery" : "Adventure source update needs attention"}</h2>
       <p className="text-ink-muted">
         {campaign.source_mode === "homebrew"
           ? "The DM is improvising from your saved story. Your original source bindings are preserved for recovery."
-          : "Module play is paused until every bound adventure source is usable. Recover your source PDF, or explicitly choose homebrew play to let the DM improvise."}
+          : campaign.retrieval_degraded
+            ? "Module play is paused until every bound adventure source is usable. Recover your source PDF, or explicitly choose homebrew play to let the DM improvise."
+            : failedJob
+              ? "The latest preparation attempt stopped. The last published source remains available for play."
+              : "A source update is running while the last published campaign remains available for play."}
       </p>
       {sources.length === 0 ? <p>No adventure source is bound to this campaign.</p> : null}
       {sources.map((source) => (
         <div key={source.slug} className="space-y-2 border-t border-line pt-2">
           <p className="font-medium">{source.title} — {source.status}</p>
           <p className="text-ink-muted">{source.message ?? "The source is ready for module play."}</p>
-          {source.extraction_preview_available ? <ExtractionPreview slug={source.slug} onUsePreview={["failed", "partial"].includes(source.status) && source.ingestion?.source_kind === "pdf" ? (sourceHash, extractionHash) => run(() => retryAdventure(source.slug, { reviewed_source_sha256: sourceHash, reviewed_extraction_sha256: extractionHash })) : undefined} /> : null}
+          {isJobActive(source.job) ? (
+            <div role="status" className="space-y-2 rounded-control border border-info/30 bg-info-soft px-3 py-2">
+              <p className="font-medium">{preparationProgress(source.job)}</p>
+              {source.job?.explanation ? <p className="text-xs text-ink-muted">{source.job.explanation}</p> : null}
+              {source.job?.state === "cancel_requested" ? (
+                <p className="text-xs text-ink-muted">Cancellation requested…</p>
+              ) : (
+                <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(() => cancelAdventure(source.slug))}>Cancel preparation</Button>
+              )}
+            </div>
+          ) : null}
+          {source.job && ["interrupted", "failed", "cancelled"].includes(source.job.state) ? (
+            <div role="status" className="space-y-1 rounded-control border border-warning/30 bg-warning-soft px-3 py-2">
+              <p className="font-medium">{jobFailureHeading(source.job)}</p>
+              {source.job.explanation ? <p className="text-xs text-ink-muted">{source.job.explanation}</p> : null}
+              {source.job.retryable ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(() => retryAdventure(source.slug))}>{source.job.action_label ?? "Retry preparation"}</Button> : null}
+            </div>
+          ) : null}
+          {source.extraction_preview_available ? <ExtractionPreview slug={source.slug} onUsePreview={source.extraction_preview_current && (source.job ? source.job.retryable && ["interrupted", "failed", "cancelled"].includes(source.job.state) && source.job.kind === "ingestion" : ["failed", "partial"].includes(source.status) && source.ingestion?.source_kind === "pdf") ? (sourceHash, extractionHash) => run(() => retryAdventure(source.slug, { reviewed_source_sha256: sourceHash, reviewed_extraction_sha256: extractionHash })) : undefined} /> : null}
           {source.status !== "ready" ? (
             <p className="text-xs text-ink-muted">
-              {source.source_pdf_available ? "A retained source PDF is available." : "The original source PDF is not available here. Recovery requires a PDF you provide."}
+              {source.job?.kind === "generation"
+                ? source.job.explanation ?? "Saved generation work may be resumed without uploading a PDF."
+                : source.source_pdf_available
+                  ? "A retained source PDF is available."
+                  : "The original source PDF is not available here. Recovery requires a PDF you provide."}
             </p>
           ) : null}
           {["missing", "empty", "partial", "failed"].includes(source.status) ? (
@@ -68,7 +96,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
                     if (file) void run(() => recoverCampaignSource(campaign.id, source.slug, file));
                   }} />
               </label>
-              {source.source_pdf_available ? (
+              {source.source_pdf_available && !source.job ? (
                 <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(() => retryAdventure(source.slug))}>Retry retained PDF</Button>
               ) : null}
             </div>

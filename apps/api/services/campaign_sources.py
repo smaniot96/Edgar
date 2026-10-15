@@ -199,13 +199,42 @@ def source_read(slug: str) -> SourceRead:
         "processing": "The adventure source is being prepared.",
         "failed": "The adventure source could not be prepared. Provide its source PDF again.",
     }
-    from .adventures_meta import ADVENTURES_DIR, attempt_dir
+    from .adventures_meta import ADVENTURES_DIR, attempt_dir, candidate_pdf_path
 
+    job = raw_meta.get("job") or {}
+    candidate_id = job.get("retained_source_attempt_id") or job.get("attempt_id")
+    candidate_preview = attempt_dir(slug, candidate_id) if isinstance(candidate_id, str) else None
     token = meta.get("artifact_attempt")
-    preview_dir = attempt_dir(slug, token) if token else ADVENTURES_DIR / slug
-    preview_available = (preview_dir / f"{slug}.extraction.json").is_file() and (
-        preview_dir / f"{slug}.md"
-    ).is_file()
+    preview_dir = (
+        candidate_preview
+        if candidate_preview is not None
+        and (candidate_preview / f"{slug}.extraction.json").is_file()
+        and (candidate_preview / f"{slug}.md").is_file()
+        else attempt_dir(slug, token) if token else ADVENTURES_DIR / slug
+    )
+    preview_path = preview_dir / f"{slug}.extraction.json"
+    preview_available = preview_path.is_file() and (preview_dir / f"{slug}.md").is_file()
+    preview_current = preview_available and live["source_file_matches"]
+    if preview_available and candidate_preview == preview_dir:
+        try:
+            import json
+
+            preview_data = json.loads(preview_path.read_text(encoding="utf-8"))
+            readiness = preview_data.get("readiness") if isinstance(preview_data, dict) else None
+            if not isinstance(readiness, dict):
+                preview_current = False
+            elif readiness.get("source_kind", "pdf") == "generated":
+                expected_hash = (meta.get("ingestion") or {}).get("source_sha256")
+                preview_current = expected_hash == preview_data.get("source_sha256")
+            else:
+                from ingestion.artifacts import source_digest
+
+                candidate_pdf = candidate_pdf_path(slug, candidate_id)
+                if not candidate_pdf.is_file():
+                    candidate_pdf = source_pdf_path(slug, meta)
+                preview_current = source_digest(candidate_pdf) == preview_data.get("source_sha256")
+        except (OSError, ValueError):
+            preview_current = False
     return SourceRead(
         **live,
         title=meta.get("title") or slug.replace("_", " ").title(),
@@ -215,7 +244,7 @@ def source_read(slug: str) -> SourceRead:
         else messages.get(live["status"]),
         failure_code=meta.get("failure_code"),
         extraction_preview_available=preview_available,
-        extraction_preview_current=preview_available and live["source_file_matches"],
+        extraction_preview_current=preview_current,
         ingestion=ingestion if isinstance(ingestion, dict) else None,
         job=safe_job_read(raw_meta, slug),
     )

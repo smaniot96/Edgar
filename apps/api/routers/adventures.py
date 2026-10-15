@@ -161,7 +161,7 @@ def _extraction_path(
     raw_meta = load_adventure_metadata(slug)
     if candidate_attempt_id is None:
         job = raw_meta.get("job") or {}
-        candidate_attempt_id = job.get("retained_source_attempt_id")
+        candidate_attempt_id = job.get("retained_source_attempt_id") or job.get("attempt_id")
     if isinstance(candidate_attempt_id, str):
         candidate = attempt_dir(slug, candidate_attempt_id) / name
         if candidate.is_file():
@@ -268,7 +268,8 @@ def _preview_source_current(slug: str, data: dict) -> bool:
     if readiness.get("source_kind", "pdf") == "pdf":
         try:
             raw = load_adventure_metadata(slug)
-            candidate_id = (raw.get("job") or {}).get("retained_source_attempt_id")
+            job = raw.get("job") or {}
+            candidate_id = job.get("retained_source_attempt_id") or job.get("attempt_id")
             candidate = candidate_pdf_path(slug, candidate_id) if isinstance(candidate_id, str) else None
             if candidate is not None and candidate.is_file():
                 return source_digest(candidate) == data.get("source_sha256")
@@ -313,7 +314,6 @@ def _ingest_adventure(
         store.update_job(
             slug,
             token,
-            stage="embedding",
             retained_work=("inspected_extraction" if reviewed_extraction else "source_pdf"),
             source_version=value.get("index_version"),
         )

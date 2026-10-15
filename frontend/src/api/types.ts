@@ -22,6 +22,7 @@ export interface SourceRead {
   extraction_preview_available?: boolean;
   extraction_preview_current?: boolean;
   ingestion?: IngestionSummary | null;
+  job?: AdventureJobRead | null;
 }
 
 export interface IngestionSummary {

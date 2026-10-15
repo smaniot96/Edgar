@@ -629,7 +629,7 @@ def finish_attempt(slug: str, token: str, updates: dict, *, success: bool = Fals
                 candidate_pdf = candidate_pdf_path(slug, token)
                 job.update(
                     state="completed" if success else "failed",
-                    stage="completed" if success else "failed",
+                    stage="completed" if success else job.get("stage", "failed"),
                     retryable=not success
                     and not job.get("checkpoint_corrupt")
                     and (
