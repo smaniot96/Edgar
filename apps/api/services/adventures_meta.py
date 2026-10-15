@@ -184,7 +184,13 @@ def _restore_generation_title(meta: dict) -> None:
     """Replace the queued placeholder with a stable, non-content title on failure."""
     if (meta.get("generation") or {}).get("kind") == "ai":
         title_hint = (meta.get("generation") or {}).get("title_hint")
-        meta["title"] = title_hint if isinstance(title_hint, str) and title_hint.strip() else "AI campaign"
+        title = meta.get("title")
+        placeholder = title_hint if isinstance(title_hint, str) and title_hint.strip() else "AI campaign"
+        if isinstance(title, str) and title.strip() and title not in (
+            f"{placeholder} (generating…)", f"{placeholder} (generating...)"
+        ):
+            return
+        meta["title"] = placeholder
 
 
 def ensure_job(slug: str, token: str, *, kind: str, stage: str) -> dict[str, Any]:

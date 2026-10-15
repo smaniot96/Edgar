@@ -281,3 +281,26 @@ def test_restart_during_ingestion_stage_retries_from_retained_pdf(
     with pytest.raises(HTTPException) as duplicate:
         adventures.retry_adventure(slug, BackgroundTasks())
     assert duplicate.value.status_code == 409
+
+
+@pytest.mark.parametrize("title_hint", ["", "An earlier working title"])
+def test_failed_generated_replacement_preserves_the_published_title(recovery_store, title_hint):
+    store.save_meta(
+        "published_keep",
+        {
+            "status": "ready",
+            "title": "The Accepted Keep",
+            "chunks": 3,
+            "generation": {"kind": "ai", "size": "small", "title_hint": title_hint},
+        },
+    )
+    token = store.begin_attempt("published_keep", job_attempt=True, job_kind="generation")
+    store.ensure_job("published_keep", token, kind="generation", stage="outline")
+    assert store.finish_attempt(
+        "published_keep", token, {"status": "failed", "error": "Synthetic provider failure"}
+    )
+
+    failed_replacement = store.load_meta("published_keep")
+    assert failed_replacement["status"] == "ready"
+    assert failed_replacement["title"] == "The Accepted Keep"
+    assert failed_replacement["job"]["state"] == "failed"
