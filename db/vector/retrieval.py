@@ -5,11 +5,13 @@ narrator can pull in module-specific story text. Every function returns the same
 (`{text, source, page, kind, collection, score}`, plus `section` / `chapter` / `heading_path`
 when the payload was produced by the heading-aware chunker) so callers can merge or label them.
 
-Ranking: the query is embedded once (memoised across the turn by `embed_query`), every
+General search: the query is embedded once (memoised across the turn by `embed_query`), every
 *existing* candidate collection is searched for `limit_per_collection` hits, and the union is
 sorted globally by score, filtered by `min_score`, de-duplicated (exact or near-identical text,
 e.g. the same PDF ingested under a legacy and a canonical name) and capped at `limit`. Callers
-therefore get the best chunks first regardless of which book they came from.
+therefore get the best chunks first regardless of which book they came from. Targeted rules
+queries additionally use exact headings/lexical fallback, exclude unrelated hits and optional
+material, and expand only verified same-section continuations.
 
 Errors: collections that do not exist are skipped *before* querying (cached collection list).
 A collection that fails to query is logged as a warning with the collection name and exception
@@ -25,7 +27,7 @@ import re
 from typing import Any
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchText, MatchValue
 
 from db.vector.client import get_qdrant_client
 from db.vector.collections import (
@@ -36,6 +38,7 @@ from db.vector.collections import (
     existing_collection_names,
 )
 from db.vector.embeddings import embed_query, get_embeddings  # noqa: F401  (re-exported)
+from db.vector.references import normalize_reference, reference_matches
 from db.vector.versions import active_index_read
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import ManifestError, require_published, select_scene_context
@@ -73,6 +76,9 @@ _OPTIONAL_PAYLOAD_KEYS = (
     "span_start",
     "span_end",
     "text_sha256",
+    "source_version",
+    "index_version",
+    "rule_policy",
 )
 
 
@@ -135,19 +141,224 @@ def search_rules_context(
     limit: int | None = DEFAULT_RULES_LIMIT,
     min_score: float | None = DEFAULT_MIN_SCORE,
     rules_edition: str | None = None,
+    references: list[str] | None = None,
+    include_optional: bool = False,
 ) -> list[dict[str, Any]]:
-    """PHB + DMG + MM (canonical `rules_*` plus legacy aliases that exist), best first."""
+    """Core-book evidence, optionally targeted to independent named rule references.
+
+    Targeted queries combine vector candidates with a bounded lexical lookup. Exact
+    headings beat mentions, and unrelated vector hits cannot fill a targeted query. A
+    matching continuation may be added only from the same section and source lineage.
+    Optional/variant sections are labelled and excluded unless explicitly requested.
+    """
+    if not query_text.strip():
+        return []
+    refs = list(dict.fromkeys(r.strip() for r in references or [] if r.strip()))[:4]
     names = effective_rules_collection_names(include_legacy=include_legacy_collections)
-    return search_collections(
-        query_text,
-        names,
-        limit_per_collection=limit_per_collection,
-        kind="rules",
-        client=client,
-        limit=limit,
-        min_score=min_score,
-        rules_edition=rules_edition,
+    vector_error = None
+    try:
+        hits = search_collections(
+            query_text,
+            names,
+            limit_per_collection=limit_per_collection,
+            kind="rules",
+            client=client,
+            limit=None,
+            min_score=None,
+            dedupe=False,
+            rules_edition=rules_edition,
+        )
+    except Exception as exc:
+        if not refs:
+            raise
+        vector_error = exc
+        hits = []
+    q = _client(client)
+    if refs:
+        for name in _existing_only(q, names):
+            hits.extend(_lookup_rule_candidates(q, name, refs, rules_edition))
+    if vector_error is not None and not hits:
+        raise RetrievalError(
+            "Vector retrieval failed and no exact rule evidence was available."
+        ) from vector_error
+    candidates = []
+    for hit in hits:
+        policy = rule_policy(hit)
+        if not include_optional and policy != "core":
+            continue
+        hit = {"retrieval_method": "vector", **hit, "rule_policy": policy}
+        match = _rule_reference_match(hit, refs) if refs else 0
+        if refs and not match:
+            continue
+        if min_score is not None and (hit.get("score") or 0) < min_score and match != 2:
+            # A verified lexical lookup has no vector score; it is independent evidence.
+            if hit.get("retrieval_method") != "lexical":
+                continue
+        hit["reference_match"] = "exact" if match == 2 else "lexical" if match else "semantic"
+        candidates.append(hit)
+    candidates.sort(
+        key=lambda c: (
+            {"exact": 2, "lexical": 1, "semantic": 0}[c["reference_match"]],
+            bool(rules_edition and c.get("rules_edition") == rules_edition),
+            c.get("score") or 0,
+        ),
+        reverse=True,
     )
+    seeds = _rank(candidates, limit=limit, min_score=None, dedupe=True, presorted=True)
+    if not refs:
+        return seeds
+    expanded = []
+    for seed in seeds:
+        expanded.append(seed)
+        # At most one continuation for each leading exact reference; never page adjacency.
+        if seed["reference_match"] == "exact" and len(expanded) < (limit or DEFAULT_RULES_LIMIT):
+            expanded.extend(_rule_neighbors(q, seed, include_optional=include_optional))
+    return _rank(expanded, limit=limit, min_score=None, dedupe=True, presorted=True)
+
+
+def rule_policy(chunk: dict[str, Any]) -> str:
+    """Explicit classification wins; conservative heading markers cover legacy payloads."""
+    declared = chunk.get("rule_policy")
+    if declared in ("optional", "variant"):
+        return declared
+    headings = " ".join(str(chunk.get(k) or "") for k in ("chapter", "section", "heading_path"))
+    # A legacy sidebar may carry its title only in the leading text line.
+    headings += " " + str(chunk.get("text") or "").split("\n", 1)[0]
+    normalized = normalize_reference(headings)
+    if re.search(r"\b(variant|variants|variante|varianti)\b", normalized):
+        return "variant"
+    if re.search(r"\b(optional|opzionale|opzionali)\b", normalized) or any(
+        title in normalized
+        for title in (
+            "combat options",
+            "rest variants",
+            "gritty realism",
+            "epic heroism",
+            "customization options",
+        )
+    ):
+        return "optional"
+    if re.search(
+        r"(?:^|\n)\s*(?:#+\s*)?(?:optional|variant)\s+(?:rule|rules)\b",
+        str(chunk.get("text") or "")[:600],
+        re.I,
+    ):
+        return "optional"
+    return "core"
+
+
+def _rule_reference_match(chunk: dict[str, Any], references: list[str]) -> int:
+    headings = [str(chunk.get("section") or "")]
+    headings.extend(re.split(r"\s*[>›]\s*", str(chunk.get("heading_path") or "")))
+    headings.append(str(chunk.get("text") or "").split("\n", 1)[0].strip("# *_"))
+    if any(reference_matches(h, ref) for h in headings for ref in references):
+        return 2
+    text = " " + normalize_reference(str(chunk.get("text") or "")) + " "
+    return int(any(" " + normalize_reference(ref) + " " in text for ref in references))
+
+
+def _edition_filter(rules_edition: str | None) -> Filter | None:
+    if rules_edition not in ("2014", "2024"):
+        return None
+    return Filter(
+        must_not=[
+            FieldCondition(
+                key="rules_edition",
+                match=MatchValue(value="2024" if rules_edition == "2014" else "2014"),
+            )
+        ]
+    )
+
+
+def _scroll_rule_candidates(q: Any, collection: str, query_filter: Filter, *, limit: int) -> list:
+    # Version pinning spans the whole read, including future pagination if the bound changes.
+    from db.vector.versions import active_index_read
+
+    with active_index_read(q, collection, query_filter) as active_filter:
+        points, _offset = q.scroll(
+            collection_name=collection,
+            scroll_filter=active_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+    return [
+        {
+            **_chunk_from_payload(p.payload or {}, kind="rules"),
+            "collection": collection,
+            "score": None,
+        }
+        for p in points
+    ]
+
+
+def _lookup_rule_candidates(q: Any, collection: str, refs: list[str], edition: str | None) -> list:
+    if not hasattr(q, "scroll"):
+        return []  # Older injected clients may expose vector search only.
+    edition_filter = _edition_filter(edition)
+    try:
+        exact_filter = Filter(
+            must=[edition_filter] if edition_filter else None,
+            should=[
+                FieldCondition(key=key, match=MatchValue(value=ref))
+                for ref in refs
+                for key in ("section", "heading_path")
+            ],
+        )
+        candidates = _scroll_rule_candidates(q, collection, exact_filter, limit=16)
+        # Exact metadata avoids a common name being drowned out by incidental mentions.
+        if not any(_rule_reference_match(c, refs) == 2 for c in candidates):
+            lexical_filter = Filter(
+                must=[edition_filter] if edition_filter else None,
+                should=[FieldCondition(key="text", match=MatchText(text=ref)) for ref in refs],
+            )
+            candidates.extend(_scroll_rule_candidates(q, collection, lexical_filter, limit=64))
+        return [
+            {**c, "retrieval_method": "lexical"}
+            for c in candidates
+            if _rule_reference_match(c, refs)
+            and (not edition or c.get("rules_edition") in (None, "unspecified", edition))
+        ]
+    except Exception as exc:
+        # A vector answer remains useful when an older server cannot perform text lookup.
+        logger.warning(
+            "retrieval: rule reference lookup failed for %s (%s)", collection, type(exc).__name__
+        )
+        return []
+
+
+def _rule_neighbors(q: Any, seed: dict, *, include_optional: bool) -> list[dict]:
+    index = seed.get("chunk_index")
+    section = seed.get("heading_path") or seed.get("section")
+    if not hasattr(q, "scroll") or type(index) is not int or not section or not seed.get("source"):
+        return []
+    key = "heading_path" if seed.get("heading_path") else "section"
+    # Legacy source names alone do not establish that adjacent indices share a version.
+    lineage = ("source_sha256", "extraction_sha256")
+    if not all(seed.get(k) for k in lineage):
+        return []
+    fields = ("source", *lineage, "rules_edition", "source_version", "index_version")
+    expected = {k: seed[k] for k in fields if seed.get(k) is not None}
+    expected[key] = section
+    query_filter = Filter(
+        must=[
+            *(FieldCondition(key=k, match=MatchValue(value=v)) for k, v in expected.items()),
+            FieldCondition(key="chunk_index", match=MatchAny(any=[index - 1, index + 1])),
+        ]
+    )
+    try:
+        neighbors = _scroll_rule_candidates(q, seed["collection"], query_filter, limit=2)
+    except Exception as exc:
+        logger.warning("retrieval: rule continuation lookup failed (%s)", type(exc).__name__)
+        return []
+    return [
+        {**c, "rule_policy": rule_policy(c), "retrieval_method": "same_section_neighbor"}
+        for c in neighbors
+        if all(c.get(k) == v for k, v in expected.items())
+        and all(c.get(k) == seed.get(k) for k in fields)
+        and c.get("chunk_index") in (index - 1, index + 1)
+        and (include_optional or rule_policy(c) == "core")
+    ][:1]
 
 
 def retrieve_active_scene(
@@ -361,16 +572,7 @@ def _gather_hits(
     last_error: Exception | None = None
     for collection_name in names:
         try:
-            edition_filter = None
-            if rules_edition in ("2014", "2024"):
-                edition_filter = Filter(
-                    must_not=[
-                        FieldCondition(
-                            key="rules_edition",
-                            match=MatchValue(value="2024" if rules_edition == "2014" else "2014"),
-                        )
-                    ]
-                )
+            edition_filter = _edition_filter(rules_edition)
             results = _query_collection(
                 q, collection_name, vector, limit_per_collection, edition_filter
             )
@@ -442,7 +644,7 @@ def _rank(
 
 
 def _normalize(text: str) -> str:
-    return re.sub(r"\W+", " ", text.lower()).strip()
+    return normalize_reference(text)
 
 
 def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:

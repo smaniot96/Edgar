@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
     # Produced by nodes
     parsed_input: ParsedInput  # InputParser
     rules_context: list  # WorldRetriever (rules bucket)
+    rule_queries: list[dict]  # independent mechanics/reference retrieval plan
     adventure_context: list  # WorldRetriever (adventure bucket)
     planner_context: list  # relevant reviewed private passages; never narrator/player context
     allowed_scene_ids: list[str]  # current scene and prerequisite-unlocked branch destinations

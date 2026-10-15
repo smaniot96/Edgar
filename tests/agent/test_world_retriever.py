@@ -1,5 +1,7 @@
 import pytest
 
+from agent.models.parsed_input import ParsedInput
+
 
 @pytest.fixture(autouse=True)
 def available_corpus(monkeypatch):
@@ -16,7 +18,7 @@ async def test_world_retriever_accepts_fake_client_and_does_not_certify_legacy_c
     from agent.nodes import world_retriever as wr
 
     def _rules(q, **_kw):
-        assert "hello" in q
+        assert q == "Investigation rules"
         return [{"text": "r", "source": "PHB", "kind": "rules"}]
 
     monkeypatch.setattr(wr, "search_rules_context", _rules)
@@ -24,8 +26,8 @@ async def test_world_retriever_accepts_fake_client_and_does_not_certify_legacy_c
     fake_client = object()
     out = await wr.world_retriever_node(
         {
-            "player_input": "hello",
-            "parsed_input": None,
+            "player_input": "I inspect the ledger",
+            "parsed_input": ParsedInput(check="investigation"),
             "campaign_id": 1,
             "adventure_collections": [],
             "qdrant_client": fake_client,
@@ -50,21 +52,34 @@ async def test_world_retriever_returns_empty_without_input() -> None:
 
 
 @pytest.mark.asyncio
-async def test_world_retriever_uses_retrieval_query_for_rules_only(monkeypatch) -> None:
+async def test_world_retriever_separates_core_queries_from_story_names(monkeypatch) -> None:
     from agent.models.parsed_input import ParsedInput
     from agent.nodes import world_retriever as wr
 
-    seen: list[str] = []
-
-    def _rules(q, **_kw):
-        seen.append(q)
-        return []
-
-    monkeypatch.setattr(wr, "search_rules_context", _rules)
-    parsed = ParsedInput(intent="combat", retrieval_query="goblin ambush trail grapple rules")
+    seen = []
+    monkeypatch.setattr(
+        wr, "search_rules_context", lambda q, **kw: seen.append((q, kw["references"])) or []
+    )
+    parsed = ParsedInput(
+        intent="combat", check="athletics", retrieval_query="goblin ambush trail grapple rules"
+    )
     await wr.world_retriever_node({"player_input": "I grab him", "parsed_input": parsed})
-    # Adventure scope comes from canonical scene state, never a broad semantic query.
-    assert seen == ["goblin ambush trail grapple rules"]
+    assert seen == [("Grappling rules", ["Grappling"]), ("Athletics rules", ["Athletics"])]
+
+
+async def test_casual_conversation_does_not_retrieve_arbitrary_rules(monkeypatch):
+    from agent.models.parsed_input import ParsedInput
+    from agent.nodes import world_retriever as wr
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("trivial conversation has no mechanics query")
+
+    monkeypatch.setattr(wr, "search_rules_context", unexpected)
+    out = await wr.world_retriever_node(
+        {"player_input": "Hello Odo", "parsed_input": ParsedInput(intent="rp")}
+    )
+    assert out["rules_context"] == [] and out["rule_queries"] == []
+    assert not out["retrieval_degraded"]
 
 
 @pytest.mark.asyncio
@@ -75,7 +90,7 @@ async def test_world_retriever_degrades_instead_of_failing(monkeypatch) -> None:
         raise RuntimeError("qdrant down")
 
     monkeypatch.setattr(wr, "search_rules_context", _boom)
-    out = await wr.world_retriever_node({"player_input": "hello", "parsed_input": None})
+    out = await wr.world_retriever_node({"player_input": "Explore", "parsed_input": None})
     assert "error" not in out
     assert out["retrieval_degraded"] is True
     assert out["rules_context"] == [] and out["adventure_context"] == []
@@ -208,3 +223,35 @@ async def test_module_manifest_error_is_distinct_from_vector_unavailability(monk
     assert out["error_code"] == "adventure_manifest_review_required"
     assert out["source_status"][0]["status"] == "ready"
     assert not out["adventure_context"] and not out["planner_context"]
+
+
+def test_named_spell_and_feature_have_independent_queries_beyond_action_aliases():
+    from agent.nodes.world_retriever import build_rule_queries
+
+    queries = build_rule_queries(
+        {
+            "player_input": "I cast Feather Fall after using Action Surge",
+            "parsed_input": ParsedInput(
+                intent="combat", entities={"spell": "Feather Fall", "feature": "Action Surge"}
+            ),
+        }
+    )
+    assert queries == [
+        {"query": "Feather Fall rules", "references": ["Feather Fall"]},
+        {"query": "Action Surge rules", "references": ["Action Surge"]},
+    ]
+
+
+async def test_one_failed_focus_preserves_other_evidence_and_marks_degraded(monkeypatch):
+    from agent.nodes import world_retriever as wr
+
+    def focused(query, **kwargs):
+        if "Second Wind" in query:
+            raise RuntimeError("unavailable")
+        return [{"text": "A short rest takes one hour.", "source": "PHB"}]
+
+    monkeypatch.setattr(wr, "search_rules_context", focused)
+    result = await wr.world_retriever_node(
+        {"player_input": "short rest and Second Wind", "source_mode": "homebrew"}
+    )
+    assert result["retrieval_degraded"] and len(result["rules_context"]) == 1

@@ -32,6 +32,7 @@ from agent.resolution import (
     resolve_from_parsed,
 )
 from agent.state import AgentState
+from db.vector.retrieval import rule_policy
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
 
 log = logging.getLogger(__name__)
@@ -44,7 +45,10 @@ def _rules_context(state: AgentState) -> list:
     rules_context = state.get("rules_context", [])
     if not rules_context:
         rules_context = [c for c in state.get("retrieved_context", []) if c.get("kind") == "rules"]
-    return eligible_context(rules_context, state.get("rules_edition", "2014"))
+    return eligible_context(
+        [c for c in rules_context if rule_policy(c) == "core"],
+        state.get("rules_edition", "2014"),
+    )
 
 
 def build_adjudicator_prompt(
@@ -108,7 +112,9 @@ def build_adjudicator_prompt(
 
     rules_context = _rules_context(state)
     if rules_context:
-        parts.append("Official rules excerpts (Player Handbook, DMG, Monster Manual):")
+        parts.append(
+            "Core rules excerpts (Player Handbook, DMG, Monster Manual; optional/variant rules excluded):"
+        )
         for c in rules_context:
             parts.append(cited_excerpt(c, state.get("rules_edition", "2014")))
     if state.get("manifest_status") == "reviewed" and state.get("adventure_context"):

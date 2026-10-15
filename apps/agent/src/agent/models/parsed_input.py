@@ -65,8 +65,8 @@ class ParsedInput(BaseModel):
     retrieval_query: str | None = Field(
         default=None,
         description=(
-            "Short search query (<= 15 words) for rules + adventure lookup, enriched with the "
-            "scene, target and relevant rule (e.g. 'goblin ambush forest trail grapple rules')."
+            "Short mechanics query (<= 15 words) for rules lookup, naming the "
+            "skill, spell or feature without story/scene names (e.g. 'Grappling Athletics')."
         ),
     )
     uses_item: str | None = Field(
@@ -101,7 +101,9 @@ class ParsedInput(BaseModel):
     def _null_entities(cls, value: object) -> dict:
         return value if isinstance(value, dict) else {}
 
-    @field_validator("check", "target", "retrieval_query", "uses_item", "dice_expression", mode="before")
+    @field_validator(
+        "check", "target", "retrieval_query", "uses_item", "dice_expression", mode="before"
+    )
     @classmethod
     def _blank_to_none(cls, value: object) -> str | None:
         if value is None:
