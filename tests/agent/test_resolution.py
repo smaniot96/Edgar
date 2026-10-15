@@ -266,3 +266,23 @@ def test_completion_flagged_honours_engine_status() -> None:
     assert _completion_flagged(adj) is False
     adj.flags_set.append(FlagUpdate(key=COMPLETION_FLAG, value="true"))  # LLM sneaks it back
     assert _completion_flagged(adj) is False
+
+
+def test_canonical_inventory_rejects_legacy_grants_but_keeps_engine_consumable_cost():
+    adj = AdjudicationResult(
+        success=True,
+        character_update=CharacterUpdate(
+            inventory_add=["Lens note", "trophy"], inventory_remove=["rope"]
+        ),
+    )
+    enforce_side_effects(
+        adj,
+        character={**WIZARD, "hp_current": 2},
+        check_result=None,
+        player_input="I drink my potion of healing.",
+        canonical_inventory=True,
+        rng=random.Random(2),
+    )
+    assert adj.character_update.inventory_add == []
+    assert adj.character_update.inventory_remove == ["Potion of Healing"]
+    assert adj.character_update.hp_delta > 0

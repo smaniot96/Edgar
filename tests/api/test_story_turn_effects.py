@@ -7,7 +7,7 @@ import json
 import pytest
 from sqlalchemy import func, select
 
-from agent.models.adjudication import AdjudicationResult
+from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.models.parsed_input import ParsedInput
 from db.postgres.models import EventLog
 from edgar_core.artifacts import text_digest
@@ -183,6 +183,10 @@ async def test_story_pickup_environment_reload_and_rejection(
             success=True,
             story_effects=proposals,
             mechanical_summary="REJECTED CLAIM OF COMPLETED FACT",
+            character_update=CharacterUpdate(
+                inventory_add=["Lens note", "unreviewed trophy"],
+                inventory_remove=["shortsword"],
+            ),
         )
         fake_llm_schema.narration = narration
         response = await api_client.post(
@@ -205,6 +209,7 @@ async def test_story_pickup_environment_reload_and_rejection(
         [effect("discover", "lens_note", target_kind="entity"), pickup, pickup],
         f"You recover the Lens note: “{NOTE}”",
     )
+    assert "unreviewed trophy" not in str(first["character"]["inventory"])
     stable_id = story_target_id(pickup.target)
     assert (
         sum(

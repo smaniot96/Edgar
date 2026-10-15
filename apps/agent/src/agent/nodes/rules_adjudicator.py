@@ -253,6 +253,7 @@ async def adjudicate(
         player_input=player_input,
         parsed=parsed,
         in_combat=in_combat,
+        canonical_inventory=state.get("manifest_status") == "reviewed",
     )
     result = enforce_manifest_effects(result, state)
     if not in_combat:

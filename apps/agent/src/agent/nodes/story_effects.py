@@ -435,6 +435,20 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             display_name=(
                 candidate["title"]
                 if any(candidate["title"] in c["text"] for c in public)
+                or (
+                    proposal.kind in _OBJECT_KINDS
+                    and any(
+                        (
+                            entry.get("name", "") if isinstance(entry, dict) else str(entry)
+                        ).casefold()
+                        == candidate["title"].casefold()
+                        for entries in (
+                            (state.get("character") or {}).get("inventory") or {}
+                        ).values()
+                        if isinstance(entries, list)
+                        for entry in entries
+                    )
+                )
                 else proposal.target.kind.capitalize()
             ),
         )

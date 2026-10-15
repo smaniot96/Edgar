@@ -423,7 +423,11 @@ def normalise_check(raw: str | None) -> tuple[str, str, str | None] | None:
 def choose_weapon(character: dict | None, hint: str = "", *, prefer_ranged: bool = False) -> Weapon:
     inv = (character or {}).get("inventory") or {}
     weapons = inv.get("weapons") if isinstance(inv, dict) else None
-    names = [str(w) for w in weapons] if isinstance(weapons, list) else ([str(weapons)] if weapons else [])
+    names = (
+        [str(w) for w in weapons]
+        if isinstance(weapons, list)
+        else ([str(weapons)] if weapons else [])
+    )
     known: list[Weapon] = []
     for n in names:
         nl = n.lower()
@@ -483,8 +487,10 @@ def check_spec(character: dict | None, check: str | None, *, hint: str = "") -> 
     elif kind == "save":
         proficient = ability in save_proficiencies(character)
     elif kind == "tool":
-        proficient = cls == "rogue" or "thieves_tools" in _listed_proficiencies(character) or has_tool(
-            character, "thieves tools"
+        proficient = (
+            cls == "rogue"
+            or "thieves_tools" in _listed_proficiencies(character)
+            or has_tool(character, "thieves tools")
         )
     return CheckSpec(name, kind, ability, mod + (prof if proficient else 0), proficient)
 
@@ -494,7 +500,9 @@ def d20_expression(modifier: int) -> str:
 
 
 def dc_for(difficulty: str | None) -> int:
-    return DIFFICULTY_DC.get(str(difficulty or DEFAULT_DIFFICULTY), DIFFICULTY_DC[DEFAULT_DIFFICULTY])
+    return DIFFICULTY_DC.get(
+        str(difficulty or DEFAULT_DIFFICULTY), DIFFICULTY_DC[DEFAULT_DIFFICULTY]
+    )
 
 
 def resolve_check(
@@ -644,7 +652,10 @@ _USE_VERBS = re.compile(
     r"consumes|imbibe|eat|eats|apply|applies|pour)\b",
     re.IGNORECASE,
 )
-_ITEM_MENTION = re.compile(r"\b((?:\w+\s+){0,3}(?:potion|elixir|draught|goodberry)(?:\s+of(?:\s+\w+){1,2})?)", re.IGNORECASE)
+_ITEM_MENTION = re.compile(
+    r"\b((?:\w+\s+){0,3}(?:potion|elixir|draught|goodberry)(?:\s+of(?:\s+\w+){1,2})?)",
+    re.IGNORECASE,
+)
 
 
 def healing_dice_for(item: str | None) -> str | None:
@@ -720,7 +731,10 @@ _LONG_REST = re.compile(
     r"rest (?:for )?(?:the )?night|rest until (?:dawn|morning))\b",
     re.IGNORECASE,
 )
-_SHORT_REST = re.compile(r"\b(short rest|rest for (?:an|1|one) hour|catch (?:my|our) breath for an hour)\b", re.IGNORECASE)
+_SHORT_REST = re.compile(
+    r"\b(short rest|rest for (?:an|1|one) hour|catch (?:my|our) breath for an hour)\b",
+    re.IGNORECASE,
+)
 
 
 def detect_rest(text: str | None) -> str | None:
@@ -873,7 +887,9 @@ def validate_flags_cleared(
     return out
 
 
-def known_scene_ids(current_scene_id: str | None, adventure_context: Iterable[dict] | None) -> set[str]:
+def known_scene_ids(
+    current_scene_id: str | None, adventure_context: Iterable[dict] | None
+) -> set[str]:
     known: set[str] = set()
     if current_scene_id:
         known.add(current_scene_id)
@@ -947,6 +963,7 @@ def enforce_side_effects(
     parsed: Any = None,
     in_combat: bool = False,
     rng: random.Random | None = None,
+    canonical_inventory: bool = False,
 ) -> AdjudicationResult:
     """Keep only the LLM-proposed side effects the engine can justify. Mutates and returns adj."""
     adj.conditions = normalise_conditions(adj.conditions)
@@ -957,14 +974,18 @@ def enforce_side_effects(
     if cu is not None:
         cu.add_conditions = normalise_conditions(cu.add_conditions)
         cu.remove_conditions = normalise_conditions(cu.remove_conditions)
-        cu.inventory_add = sanitize_inventory_add(cu.inventory_add, context_text=context_text)
+        cu.inventory_add = (
+            []
+            if canonical_inventory
+            else sanitize_inventory_add(cu.inventory_add, context_text=context_text)
+        )
         removals: list[str] = []
         for name in cu.inventory_remove:
             found = match_inventory_item(items, name)
             if found and found not in removals:
                 removals.append(found)
         proposed_removals = list(cu.inventory_remove)
-        cu.inventory_remove = removals
+        cu.inventory_remove = [] if canonical_inventory else removals
     else:
         proposed_removals = []
 
@@ -988,7 +1009,9 @@ def enforce_side_effects(
             adj.dice_log = [*adj.dice_log, outcome.to_log("damage taken")]
             cu.damage_dice = expr
         elif proposed_damage:
-            log.info("dropped_unbacked_damage", extra={"hp_delta": cu.hp_delta, "dice": cu.damage_dice})
+            log.info(
+                "dropped_unbacked_damage", extra={"hp_delta": cu.hp_delta, "dice": cu.damage_dice}
+            )
             cu.damage_dice = None
         hp_delta -= damage_taken
 
@@ -1048,7 +1071,8 @@ def completion_proposed(adj: AdjudicationResult | None) -> bool:
     if adj is None:
         return False
     return any(
-        fu.key == COMPLETION_FLAG and str(fu.value).strip().lower() in _TRUTHY for fu in adj.flags_set
+        fu.key == COMPLETION_FLAG and str(fu.value).strip().lower() in _TRUTHY
+        for fu in adj.flags_set
     )
 
 
