@@ -176,6 +176,37 @@ def test_stored_coverage_is_validated_before_activation(corpus, monkeypatch):
     assert [p.payload["text"] for p in active_points(corpus)] == ["Usable previous version"]
 
 
+@pytest.mark.parametrize("vector", [{}, [0.0] * VECTOR_SIZE])
+def test_retry_repairs_missing_or_zero_staged_dense_vectors(corpus, monkeypatch, vector):
+    embed._embed_and_upsert(chunks("Previous ready"), "books")
+    upsert = corpus.upsert
+
+    def response_lost(**kwargs):
+        result = upsert(**kwargs)
+        if kwargs["points"][0].id != INDEX_STATE_ID:
+            raise ConnectionError("accepted staging response lost")
+        return result
+
+    monkeypatch.setattr(corpus, "upsert", response_lost)
+    replacement = chunks("Staged replacement")
+    with pytest.raises(ConnectionError):
+        embed._embed_and_upsert(replacement, "books")
+    monkeypatch.setattr(corpus, "upsert", upsert)
+    staged = next(
+        p
+        for p in corpus.scroll("books", with_payload=True)[0]
+        if (p.payload or {}).get("text") == "Staged replacement"
+    )
+    upsert("books", [PointStruct(id=staged.id, vector=vector, payload=staged.payload)])
+    calls = []
+    monkeypatch.setattr(
+        embed, "get_embeddings", lambda texts: calls.extend(texts) or [VECTOR for _ in texts]
+    )
+    embed._embed_and_upsert(replacement, "books")
+    assert calls == ["Staged replacement"]
+    assert [p.payload["text"] for p in active_points(corpus)] == ["Staged replacement"]
+
+
 @pytest.mark.parametrize(
     "vectors", [[], [[0.0] * VECTOR_SIZE], [[1.0]], [[float("nan")] * VECTOR_SIZE]]
 )
@@ -278,4 +309,30 @@ def test_disposable_qdrant_http_lost_response_and_active_nested_filter(tmp_path,
                 ).points
                 assert [p.payload["text"] for p in points] == ["Replacement ready"]
                 assert client.count(name, count_filter=route, exact=True).count == 1
+            assert client.count(name, exact=True).count == 2
+            monkeypatch.setattr(embed, "get_embeddings", lambda texts: [VECTOR for _ in texts])
+            started, finished = threading.Event(), threading.Event()
+
+            def replace_while_reading():
+                started.set()
+                embed._embed_and_upsert(chunks("Accepted after reader", manifest="latest"), name)
+                finished.set()
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                with active_index_read(client, name) as route:
+                    future = pool.submit(replace_while_reading)
+                    assert started.wait(2)
+                    assert not finished.wait(0.1)
+                    assert (
+                        client.query_points(
+                            name, query=VECTOR, query_filter=route, with_payload=True
+                        )
+                        .points[0]
+                        .payload["text"]
+                        == "Replacement ready"
+                    )
+                future.result(timeout=5)
+            assert [p.payload["text"] for p in active_points(client, name)] == [
+                "Accepted after reader"
+            ]
             assert client.count(name, exact=True).count == 2

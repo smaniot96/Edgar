@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from db.vector.collections import is_campaign_lore_collection, is_rules_collection
 from db.vector.source_status import inspect_source
+from db.vector.versions import active_index_version
 
 from ..schemas.campaign import CampaignRead, SourceRead
 from .adventures_meta import PDF_DIR, load_meta
@@ -65,12 +66,16 @@ def active_metadata(slug: str, meta: dict | None = None) -> dict:
     meta = load_meta(slug) if meta is None else meta
     receipts = meta.get("index_receipts") or {}
     if receipts:
-        live = inspect_source(slug)
-        if meta.get("status") == "ready" and (meta.get("ingestion") or {}).get(
-            "index_version"
-        ) == live.get("index_version"):
+        try:
+            version = active_index_version(slug)
+        except Exception:
+            version = None
+        if (
+            meta.get("status") == "ready"
+            and (meta.get("ingestion") or {}).get("index_version") == version
+        ):
             return meta
-        receipt = receipts.get(live.get("index_version"))
+        receipt = receipts.get(version)
         if receipt is not None:
             return receipt
     if meta.get("ready_receipt") and meta.get("status") in ("processing", "failed"):

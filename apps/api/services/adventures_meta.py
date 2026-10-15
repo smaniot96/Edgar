@@ -95,6 +95,14 @@ def begin_attempt(slug: str) -> str:
     """Reserve a worker before dispatch; retain the complete last ready receipt."""
     with lifecycle_lock(slug):
         meta = load_meta(slug)
+        if meta.get("index_receipts"):
+            from .campaign_sources import active_metadata
+
+            active = active_metadata(slug, meta)
+            if active is not meta:
+                # A preceding process may have activated its index and exited before
+                # final JSON/canonical-file publication. Preserve that accepted receipt.
+                meta = {**active, "index_receipts": meta["index_receipts"]}
         if meta.get("status") == "ready":
             meta["ready_receipt"] = {
                 k: v

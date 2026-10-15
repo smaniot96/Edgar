@@ -130,6 +130,20 @@ def version_filter(source: str, index_version: str) -> Filter:
     )
 
 
+def active_index_version(collection_name: str, *, client=None) -> str | None:
+    """Read a module's active version receipt without scanning corpus payloads."""
+    if client is None:
+        from db.vector.client import get_qdrant_client
+
+        client = get_qdrant_client()
+    with index_lock(collection_name, shared=True):
+        state = read_index_state(client, collection_name)
+        entry = state["sources"].get(collection_name)
+        if entry is None and len(state["sources"]) == 1:
+            entry = next(iter(state["sources"].values()))
+        return (entry.get("active") or {}).get("index_version") if entry else None
+
+
 def index_version(payloads: list[dict]) -> str:
     """Include full text, chunk boundaries, manifests, editions and embedding model."""
     canonical = json.dumps(
@@ -181,10 +195,3 @@ def promote_index(
             _write_state(client, collection_name, state)
             if cleanup is not None:
                 cleanup()
-
-
-def assert_index_attempt(client, collection_name: str, source: str, token: str) -> None:
-    with index_lock(collection_name, shared=True):
-        state = read_index_state(client, collection_name)
-        if (state["sources"].get(source, {}).get("pending") or {}).get("token") != token:
-            raise SupersededIngestion("This source ingestion was superseded by a newer attempt.")

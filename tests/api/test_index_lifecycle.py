@@ -15,7 +15,7 @@ from apps.api.services import (
 )
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.source_status import inspect_source
-from db.vector.versions import SupersededIngestion, read_index_state
+from db.vector.versions import SupersededIngestion, active_index_version, read_index_state
 from ingestion import embed
 
 VECTOR = [1.0] + [0.0] * (VECTOR_SIZE - 1)
@@ -33,6 +33,11 @@ def isolated_lifecycle(tmp_path, monkeypatch):
     ]:
         monkeypatch.setattr(module, field, tmp_path / "pdfs")
     with closing(QdrantClient(":memory:")) as client:
+        monkeypatch.setattr(
+            campaign_sources,
+            "active_index_version",
+            lambda slug: active_index_version(slug, client=client),
+        )
         monkeypatch.setattr(embed, "get_qdrant_client", lambda: client)
         monkeypatch.setattr(embed, "get_embeddings", lambda texts: [VECTOR for _ in texts])
         monkeypatch.setattr(client, "create_payload_index", lambda **_: None)
@@ -94,6 +99,14 @@ async def test_failed_reauthored_generation_retains_previous_receipt_and_canonic
         == active_before
     )
     assert not (store.PDF_DIR / "authored.pdf").exists()
+    from fastapi import BackgroundTasks, HTTPException
+
+    background = BackgroundTasks()
+    assert adventures._retry_adventure("authored", background).status == "processing"
+    assert background.tasks[0].kwargs.get("attempt_id")
+    with pytest.raises(HTTPException) as caught:
+        adventures._retry_adventure("authored", BackgroundTasks())
+    assert caught.value.status_code == 409
 
 
 async def test_generation_finishing_late_cannot_replace_newer_manuscript_or_metadata(
@@ -173,6 +186,33 @@ async def test_restart_before_activation_preserves_ready_receipt_and_fences_old_
     with pytest.raises(SupersededIngestion):
         with store.attempt_guard("authored", token):
             pytest.fail("An obsolete process retained ownership after startup reconciliation")
+
+
+async def test_failed_attempt_after_recovered_activation_preserves_the_new_accepted_receipt(
+    isolated_lifecycle, monkeypatch
+):
+    store.save_meta("authored", {"status": "processing", "rules_edition": "2014"})
+    await generate(monkeypatch, "original")
+    finish = store.finish_attempt
+
+    def crash(*args, **kwargs):
+        if kwargs.get("success"):
+            raise SystemExit("accepted before worker exit")
+        return finish(*args, **kwargs)
+
+    monkeypatch.setattr(store, "finish_attempt", crash)
+    with pytest.raises(SystemExit):
+        await generate(monkeypatch, "accepted")
+    monkeypatch.setattr(store, "finish_attempt", finish)
+    monkeypatch.setattr(
+        embed,
+        "get_embeddings",
+        lambda _: (_ for _ in ()).throw(ConnectionError("third attempt failed")),
+    )
+    await generate(monkeypatch, "rejected")
+    assert campaign_sources.active_metadata("authored")["title"] == "accepted"
+    assert campaign_sources.source_read("authored").status == "ready"
+    assert "accepted" in adventures._extraction_path("authored", "authored.md").read_text()
 
 
 def test_compose_vector_callers_share_one_lock_mount():

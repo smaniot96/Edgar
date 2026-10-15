@@ -65,12 +65,6 @@ BATCH_SIZE = 50
 BATCH_DELAY_SEC = 0.5
 
 
-def _stable_chunk_id(source: str, page: int, index: int, text: str) -> int:
-    """64-bit int derived from sha256 of identity fields. Collisions are astronomically rare."""
-    h = hashlib.sha256(f"{source}:{page}:{index}:{text[:100]}".encode()).hexdigest()
-    return int(h[:16], 16)
-
-
 def run_pipeline(
     pdf_path: str | Path,
     collection_name: str,
@@ -248,7 +242,6 @@ def _chunk_payload(c: dict) -> dict:
         "heading_path",
         "stat_block",
         "rule_policy",
-        "rules_edition",
         "manifest_sha256",
         "passage_id",
         "scene_id",
