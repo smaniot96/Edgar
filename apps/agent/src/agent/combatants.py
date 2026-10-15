@@ -15,6 +15,8 @@ the kinds in `EFFECT_KINDS` are read. Restraint (`restrained`) and `prone` come 
 contested maneuver, persist in this same JSONB list, and end explicitly: a declared release,
 the foe's defeat, or the end of the encounter. `attack_roll_mode` turns them into the 5e
 advantage/disadvantage state of an attack. Missing or malformed `effects` reads as none.
+`dodging` (EDG-044) is the Dodge action: attacks against that combatant have disadvantage. It
+ends when the combatant's next turn starts (see `agent.graph_combat`), not at the end of a round.
 
 Spell conditions (EDG-043, see `agent.conditions`) add `blinded` and `marked` to the same list. They
 may also carry `expires_after_round` (the last round in force) and `save` (`{ability, dc}`: the
@@ -53,7 +55,7 @@ _STATUS_TEXT = {
     "dead": "dead, cannot act",
     "defeated": "defeated, cannot act",
 }
-EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone", "blinded", "marked")
+EFFECT_KINDS: tuple[str, ...] = ("restrained", "prone", "dodging", "blinded", "marked")
 # Kinds that give the bearer's own attack rolls disadvantage, and kinds that give attacks against
 # the bearer advantage (a prone bearer is the exception: its melee/ranged split is in attack_roll_mode).
 _OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded"})
@@ -71,6 +73,7 @@ _EFFECT_TEXT = {
         "blinded by {source}: its attacks have disadvantage and attacks against it have advantage"
     ),
     "marked": "marked by {source}: the next attack roll against it has advantage",
+    "dodging": "dodging (Dodge action): attacks against it have disadvantage until its next turn",
 }
 
 # The player's own declared intent, read from their words. Nonlethal wins when both appear
@@ -258,8 +261,8 @@ def attack_roll_mode(
 
     A restrained, prone or blinded attacker rolls at disadvantage. A restrained, blinded or marked
     target is attacked with advantage; a prone target with advantage in melee and disadvantage at
-    range. Opposing sources cancel to normal, as the rules do. Pure: it never rolls and never sets a
-    number.
+    range; a dodging target with disadvantage. Opposing sources cancel to normal, as the rules do.
+    Pure: it never rolls and never sets a number.
     """
     advantage = disadvantage = False
     if any(e["kind"] in _OWN_ATTACK_DISADVANTAGE for e in effects_of(attacker)):
@@ -267,6 +270,8 @@ def attack_roll_mode(
     for e in effects_of(target):
         if e["kind"] in _AGAINST_ADVANTAGE:
             advantage = True
+        elif e["kind"] == "dodging":
+            disadvantage = True
         elif e["kind"] == "prone":
             if ranged:
                 disadvantage = True

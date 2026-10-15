@@ -84,6 +84,18 @@ export function CharacterSheet({
             ) : null}
           </section>
 
+          {c.hitDice ? (
+            <section
+              className="flex items-baseline justify-between text-sm"
+              title="A short rest spends one Hit Die; a long rest recovers half your level (minimum one)."
+            >
+              <span className="text-xs text-ink-subtle">Hit Dice</span>
+              <span className="font-mono text-ink">
+                {c.hitDice.remaining}/{c.hitDice.total} {c.hitDice.die}
+              </span>
+            </section>
+          ) : null}
+
           {c.abilities.length ? (
             <section>
               <SectionTitle>Abilities</SectionTitle>

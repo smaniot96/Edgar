@@ -1,4 +1,4 @@
-import type { AdjudicationResult, DiceLogEntry } from "../../api/types";
+import type { AdjudicationResult, DiceLogEntry, RestRecord, RollRecord } from "../../api/types";
 
 export interface RollParts {
   check: string;
@@ -87,4 +87,41 @@ export function rollSummary(p: RollParts): string {
   s += ` → ${p.success ? "Success" : "Failure"}`;
   if (p.damage != null) s += ` · ${p.damage} dmg`;
   return s;
+}
+
+/**
+ * One-line rest evidence (EDG-026), e.g. "Short rest · 1d10+2 = 7 · healed 7 HP · Hit Dice 0/1 d10 left".
+ * Shows the engine's numbers only; a refused rest says so and rolls nothing.
+ */
+export function restSummary(rest: RestRecord): string {
+  const left = `Hit Dice ${rest.hit_dice_remaining}/${rest.hit_dice_total} ${rest.die} left`;
+  if (rest.kind === "long") {
+    const recovered = rest.hit_dice_recovered ?? 0;
+    return `Long rest · HP restored · ${recovered > 0 ? `recovered ${recovered} Hit ${recovered === 1 ? "Die" : "Dice"} · ` : ""}${left}`;
+  }
+  if (rest.refused) return `Short rest · no Hit Dice left · no healing · ${left}`;
+  const roll = rest.expression && rest.rolled != null ? `${rest.expression} = ${rest.rolled} · ` : "";
+  return `Short rest · ${roll}healed ${rest.healed} HP · ${left}`;
+}
+
+/**
+ * The roll card's input for a stored turn (EDG-030): the same numbers the live turn showed.
+ * Only the fields the card and its dev details read are copied.
+ */
+export function adjudicationFromRoll(roll: RollRecord): AdjudicationResult {
+  return {
+    success: roll.success,
+    damage: roll.damage,
+    conditions: roll.conditions,
+    mechanical_summary: roll.mechanical_summary,
+    dice_result: roll.dice_result,
+    check: roll.check,
+    dc: roll.dc,
+    against: roll.against,
+    modifier: roll.modifier,
+    roll_expression: roll.roll_expression,
+    natural_roll: roll.natural_roll,
+    dice_log: roll.dice_log,
+    rest_record: roll.rest ?? null,
+  };
 }

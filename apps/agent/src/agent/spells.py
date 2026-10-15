@@ -22,11 +22,15 @@ Slots: a cantrip (level 0) costs no slot. A leveled spell spends the slot the pl
 (5th, 11th and 17th). Expended counts are stored in the sheet's `stats["spell_slots_expended"]`;
 the totals are derived from class and level, and a long rest clears the expended count.
 
+Casting time: `action` is "action" (the default) or "bonus_action" (Healing Word). A bonus-action
+spell uses the turn's bonus action slot (agent.action_economy), so the same turn may also attack.
+
 Deliberately absent: concentration spells (no concentration tracking exists), Burning Hands (an
-area effect), Healing Word (a bonus action) and Hold Person (concentration, humanoid-only). Blindness
-and Deafness is cast here as blindness only, at one target: a declaration that names deafness alone
-is refused, and the upcast extra targets are not modelled. A spell is added here only with its effect,
-cost and targeting implemented.
+area effect) and Hold Person (concentration, humanoid-only). Blindness/Deafness is cast here as
+blindness only, at one target: a declaration that names deafness alone is refused, and the upcast
+extra targets are not modelled. Healing Word heals only its caster, as Cure Wounds does; a creature
+other than the hero is not a target. A spell is added here only with its effect, cost and
+targeting implemented.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent.action_economy import ACTION, BONUS_ACTION
 from agent.resolution import (
     CASTING_ABILITY,
     CheckResult,
@@ -66,6 +71,7 @@ class SpellSpec:
     condition: str | None = None  # the condition the spell applies (agent.conditions)
     duration_rounds: int = 0  # rounds the condition lasts, counting the round it is applied
     aliases: tuple[str, ...] = ()  # other names the player may use for the spell
+    action: str = ACTION  # the turn slot the cast uses: ACTION or BONUS_ACTION
     source: str = ""
 
 
@@ -148,6 +154,19 @@ CATALOG: tuple[SpellSpec, ...] = (
             f"{_PHB}, Blindness/Deafness: the target makes a Constitution save or is blinded for one "
             "minute, and repeats the save at the end of each of its turns"
         ),
+    ),
+    SpellSpec(
+        name="Healing Word",
+        level=1,
+        kind="heal",
+        dice=1,
+        die=4,
+        damage_type=None,
+        classes=("bard", "cleric", "druid"),
+        upcast_dice=1,
+        ability_bonus=True,
+        action=BONUS_ACTION,
+        source=f"{_PHB}, Healing Word: bonus action, 1d4 plus the spellcasting modifier, one die more per slot above 1st",
     ),
 )
 

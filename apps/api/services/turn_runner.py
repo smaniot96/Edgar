@@ -58,6 +58,7 @@ from edgar_core.sources import citations_for, public_citations
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
+from .roll_record import build_roll_record, roll_status_for
 from .world_writes import (
     MissingCharacterAssignmentError,
     apply_adjudication,
@@ -149,6 +150,9 @@ async def persist_turn(
         }.values()
     )
     ruling_citation_ids = [ref["reference_id"] for ref in ruling_refs]
+    # The original dice, stored on the narration row so reload never re-rolls (EDG-030).
+    turn_roll = build_roll_record(adjudication, result.get("turn_id"))
+    roll_status = roll_status_for(turn_roll)
     async with db_session_module.async_session_factory() as db:
         try:
             game_session = (
@@ -326,6 +330,8 @@ async def persist_turn(
                     "ruling_citation_ids": ruling_citation_ids,
                     "rules_edition": edition,
                     "turn_id": turn_id,
+                    "roll_status": roll_status,
+                    "roll": turn_roll,
                 },
             )
             db.add(narration_event)
@@ -377,6 +383,8 @@ async def persist_turn(
                 "retrieval_degraded": bool(result.get("retrieval_degraded")),
                 "source_status": result.get("source_status", []),
                 "source_mode": result.get("source_mode", "module"),
+                "roll_status": roll_status,
+                "roll": turn_roll,
             }
             narration_event.payload = {**narration_event.payload, "done": done}
             await db.commit()
@@ -434,6 +442,9 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         # Additive (EDG-148): whether the engine fitted this roster to the solo budget, and why.
         "solo_budget": combat_state.get("solo_budget"),
         "second_wind_uses_remaining": combat_state.get("second_wind_uses_remaining"),
+        # Additive (EDG-044): what the hero's last turn spent (action, bonus action, Dodge).
+        "economy": combat_state.get("economy"),
+        "raging": bool(combat_state.get("raging", False)),
     }
 
 

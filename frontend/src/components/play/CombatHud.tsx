@@ -1,6 +1,6 @@
 import type { CombatState } from "../../api/types";
 import { cn } from "../../lib/cn";
-import { orderCombatants } from "./gameState";
+import { economyLine, orderCombatants } from "./gameState";
 import { HpBar } from "../ui/HpBar";
 
 /** Plain-language label for a non-standing combatant. `defeated` never claims death or capture. */
@@ -15,6 +15,7 @@ const DISPOSITION_LABEL: Record<string, string> = {
 export function CombatHud({ combat }: { combat: CombatState }) {
   const rows = orderCombatants(combat);
   const current = rows.find((r) => r.isCurrent);
+  const economy = economyLine(combat.economy);
   return (
     <section
       aria-label="Combat"
@@ -30,6 +31,11 @@ export function CombatHud({ combat }: { combat: CombatState }) {
             </span>
           ) : null}
         </div>
+        {economy && !combat.ended ? (
+          <p className="mb-1.5 text-[0.7rem] text-ink-muted" aria-label="Hero action economy">
+            {economy}
+          </p>
+        ) : null}
         <ol className="flex gap-2 overflow-x-auto pb-1">
           {rows.map((c) => (
             <li

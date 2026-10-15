@@ -16,9 +16,14 @@ Design (solo-playable, finishable, engine-decided):
     player's Athletics is contested by the foe's Dexterity; a won contest records a typed effect in
     `combatants[].effects`, which sets advantage/disadvantage on attacks (`attack_roll_mode`) until a
     declared release, the foe's defeat or the end of the encounter.
+  * Action economy (EDG-044): one action and one bonus action per player turn, classified by
+    `agent.action_economy` from a code-owned table. A second action or bonus action in the same
+    turn is refused before any roll, and the round does not advance. Dodge (an action) gives the
+    hero `dodging` until its next turn starts; Second Wind and Healing Word are bonus actions.
   * HP only changes through engine rolls: enemy attacks, Second Wind (fighter; one use, restored
     by a short or long rest, persisted on the character sheet), or a healing consumable that is
-    actually in inventory (and is then removed).
+    actually in inventory (and is then removed). Class features (EDG-145) add engine-rolled
+    damage only: Action Surge's extra swing, Sneak Attack dice and Rage's bonus.
     The adjudicator LLM's `hp_delta` is ignored in combat (no double counting).
   * NPC dispositions are respected: friendly NPCs are never statted as enemies unless the
     player explicitly attacks them by name.
@@ -53,7 +58,28 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from agent.action_economy import (
+    ACTION,
+    BONUS_ACTION,
+    DODGE,
+    SECOND_WIND,
+    Declared,
+    dodge_declared,
+    economy_record,
+    has_attack_words,
+    refusal_for,
+)
 from agent.captives import CaptiveTurn, captive_turn, is_attack_text
+from agent.class_features import (
+    ACTION_SURGE,
+    RAGE,
+    SNEAK_ATTACK,
+    rage_damage_bonus,
+    requested_features,
+    resource_uses,
+    sneak_attack_roll,
+    spend_use,
+)
 from agent.combat_telemetry import combat_round_event
 from agent.combatants import (
     INERT_NPC_DISPOSITIONS,
@@ -124,6 +150,7 @@ from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
     has_declared_spell,
+    parsed_feature_name,
     ruling_lines,
 )
 from db.vector.creatures import CreatureResolutionError, resolve_creature
@@ -135,8 +162,9 @@ log = logging.getLogger(__name__)
 # Hard cap so a runaway encounter cannot loop forever; reaching it ends combat as a stalemate.
 MAX_COMBAT_ROUNDS = 12
 
-# Second Wind is used by the player's action only. The rules have no automatic rally at 0 HP, so
-# this code-owned switch stays False; enabling it requires a documented game mode (EDG-025).
+# Second Wind is a bonus action (2014 PHB) that the player may use in the same turn as an action
+# (EDG-044). The rules have no automatic rally at 0 HP, so this code-owned switch stays False;
+# enabling it requires a documented game mode (EDG-025).
 SECOND_WIND_AUTO_AT_ZERO_HP = False
 
 # Defaults used when the encounter builder LLM call is unavailable or returns nothing usable.
@@ -763,6 +791,14 @@ async def combat_round_node(state: AgentState) -> dict:
     # Second Wind uses come from the sheet, never from the encounter: they persist across fights.
     sw_before = second_wind_remaining(character)
     sw_left = sw_before
+    # Class feature uses (EDG-145) come from the sheet as well; a sheet without them is full.
+    cf_before = resource_uses(character)
+    cf_left = dict(cf_before)
+    cf_requested = () if fled else requested_features(player_input, parsed_feature_name(parsed))
+    sneak_used = False
+    # Dice of Action Surge's extra swing. The adjudicator logs only the round's first attack, and the
+    # merge below drops entries equal to one already logged, so these are appended unmerged.
+    later_swing_dice: list[dict] = []
 
     # --- Decide the player's action BEFORE any dice, so a bad target never burns a round ---
     is_attack, is_spell = (False, False) if fled else _is_attack_action(parsed, named)
@@ -777,8 +813,24 @@ async def combat_round_node(state: AgentState) -> dict:
         if refusal:
             # Refused cast: no roll, no round, no state change (a transparent engine refusal).
             return _ask_player(state, refusal, combat_state=combat_state)
-    if spell_declared or spell_plan is not None:
+    # EDG-044: a bonus-action spell (Healing Word) is not an action, so it leaves the attack alone.
+    bonus_spell = spell_plan if spell_plan is not None and spell_plan.spell.action == BONUS_ACTION else None
+    if spell_declared or (spell_plan is not None and bonus_spell is None):
         is_attack, is_spell = False, False
+    dodge = not fled and dodge_declared(player_input)
+    # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
+    wants_second_wind = (
+        not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
+    )
+    rage_declared = (
+        not fled
+        and RAGE in cf_requested
+        and not player.get("raging")
+        and cf_left.get(RAGE, 0) > 0
+    )
+    if dodge or wants_second_wind or bonus_spell is not None or rage_declared:
+        # A bonus action or Dodge sits beside an attack only when the player's own words name one.
+        is_attack = is_attack and has_attack_words(player_input)
     heal_item = None
     missing_item = False
     if not fled and spell_plan is None:
@@ -787,19 +839,33 @@ async def combat_round_node(state: AgentState) -> dict:
             # Using an item is the action; if it isn't carried, the action simply fails.
             missing_item = heal_item is None
             is_attack = False
-    wants_second_wind = (
-        not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
-    )
-    if wants_second_wind and not heal_item and not missing_item:
-        is_attack = False
-    else:
-        wants_second_wind = False
     # A supported contested maneuver (EDG-021) or a declared release replaces the attack this turn.
     combat_action = None
-    if not (fled or spell_declared or heal_item or missing_item or wants_second_wind):
+    if not (fled or spell_declared or heal_item or missing_item or dodge):
         combat_action = classify_combat_maneuver(player_input)
     if combat_action is not None:
         is_attack, is_spell = False, False
+    # EDG-044: the slots this turn declares. Two of one slot are refused with no roll and no round.
+    declared: list[Declared] = []
+    if dodge:
+        declared.append(DODGE)
+    if is_attack:
+        declared.append(Declared("attack", ACTION, "attack"))
+    if combat_action is not None and combat_action.kind != "release":
+        declared.append(Declared("maneuver", ACTION, f"{combat_action.kind} maneuver"))
+    if heal_item or missing_item:
+        declared.append(Declared("item", ACTION, "item use"))
+    if spell_plan is not None:
+        declared.append(Declared("spell", spell_plan.spell.action, spell_plan.spell.name))
+    elif spell_declared:
+        declared.append(Declared("spell", ACTION, "spell"))
+    if wants_second_wind:
+        declared.append(SECOND_WIND)
+    if rage_declared:
+        declared.append(Declared("rage", BONUS_ACTION, "Rage"))
+    refusal = refusal_for(declared, hero)
+    if refusal:
+        return _ask_player(state, refusal, combat_state=combat_state)
     target: dict | None = None
     release_target: dict | None = None
     if combat_action is not None and combat_action.kind == "release":
@@ -964,6 +1030,61 @@ async def combat_round_node(state: AgentState) -> dict:
     extra_outcome = ""
     player_action: dict = {"action": "none", "result": "down"}
     spell_expended: dict[str, int] | None = None
+    # EDG-044: a Dodge lasts until the hero's next turn starts, which is here (after the foes that
+    # act ahead of the hero in initiative). A Dodge declared this turn applies to the foes after.
+    release_effect(player, "dodging")
+    # Bonus action first (Second Wind, Healing Word): it sits beside the turn's action, not in place of it.
+    bonus_text = ""
+    bonus_record: dict | None = None
+    if player_acted and wants_second_wind:
+        sw = spend_second_wind(character, remaining=sw_left)
+        if sw is None:
+            # Refused without a roll: no uses left until a short or long rest. No bonus action is spent.
+            bonus_text = SECOND_WIND_REFUSAL.format(hero=hero)
+            bonus_record = {"action": "second_wind", "result": "already_used"}
+            declared = [d for d in declared if d is not SECOND_WIND]
+        else:
+            dice_log.append(sw.dice.to_log("second wind"))
+            hp = min(player_hp_max, hp + sw.amount)
+            sw_left -= 1
+            bonus_text = f"{hero} uses Second Wind and regains {sw.amount} HP."
+            bonus_record = {"action": "second_wind", "result": "used", "recovered": sw.amount}
+            round_effects.append("bonus_action")
+        log_lines.append(bonus_text)
+    if player_acted and bonus_spell is not None:
+        heal_result = resolve_spell(character, bonus_spell)
+        dice_log += heal_result.dice_log
+        spell_expended = heal_result.expended
+        hp = min(player_hp_max, hp + heal_result.healing)
+        bonus_text = narrate(heal_result, hero=hero, target=None)
+        bonus_record = {
+            "action": "catalog_spell",
+            "spell": heal_result.spec.name,
+            "healing": heal_result.healing,
+        }
+        round_effects.append("bonus_action")
+        log_lines.append(bonus_text)
+    # Class features (EDG-145). Rage is a bonus action (EDG-044): it sits beside the turn's attack.
+    # Action Surge adds a second swing, and only when the player attacks a foe.
+    if player_acted and not fled and RAGE in cf_requested and not player.get("raging"):
+        if cf_left.get(RAGE, 0) > 0:
+            cf_left[RAGE] = spend_use(character, RAGE, cf_left[RAGE])
+            player["raging"] = True
+            round_effects.append(RAGE)
+            log_lines.append(f"{hero} flies into a rage!")
+            bonus_record = bonus_record or {"action": "rage", "result": "started"}
+    surge_swing = bool(
+        player_acted
+        and not fled
+        and is_attack
+        and target is not None
+        and ACTION_SURGE in cf_requested
+        and cf_left.get(ACTION_SURGE, 0) > 0
+    )
+    if surge_swing:
+        cf_left[ACTION_SURGE] = spend_use(character, ACTION_SURGE, cf_left[ACTION_SURGE])
+        round_effects.append(ACTION_SURGE)
+        log_lines.append(f"{hero} uses Action Surge and gets one more attack.")
     if not player_acted:
         log_lines.append(f"{hero} is down before they can act.")
     elif fled:
@@ -986,20 +1107,12 @@ async def combat_round_node(state: AgentState) -> dict:
             log_lines.append(extra_outcome)
         else:
             player_action = {"action": "item", "item": heal_item, "result": "no_effect"}
-    elif wants_second_wind:
-        sw = spend_second_wind(character, remaining=sw_left)
-        if sw is None:
-            # Refused without a roll: no uses left until a short or long rest.
-            extra_outcome = SECOND_WIND_REFUSAL.format(hero=hero)
-            player_action = {"action": "second_wind", "result": "already_used"}
-        else:
-            dice_log.append(sw.dice.to_log("second wind"))
-            hp = min(player_hp_max, hp + sw.amount)
-            sw_left -= 1
-            extra_outcome = f"{hero} uses Second Wind and regains {sw.amount} HP."
-            player_action = {"action": "second_wind", "result": "used", "recovered": sw.amount}
+    elif dodge:
+        add_effect(player, "dodging", source="dodge", round_applied=int(combat_state.get("round", 1) or 1))
+        round_effects.append("dodge")
+        extra_outcome = f"{hero} takes the Dodge action: attacks against {hero} have disadvantage until {hero}'s next turn."
         log_lines.append(extra_outcome)
-    elif spell_plan is not None:
+    elif spell_plan is not None and spell_plan.spell.action == ACTION:
         # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
         # chosen foe the same way a weapon hit does.
         target_stats = stats_of(spell_target) if spell_target else None
@@ -1135,36 +1248,72 @@ async def combat_round_node(state: AgentState) -> dict:
         log_lines.append(f"{contest_line}. {extra_outcome}")
     elif is_attack and target is not None:
         ranged = bool(_RANGED_HINT.search(player_input))
-        mode = attack_roll_mode(player, target, ranged=ranged)
-        check_result = resolve_attack(
-            character,
-            int(target.get("ac", 12)),
-            spell=is_spell,
-            hint=player_input,
-            roll_mode=mode,
-        )
-        round_modes.append(mode)
-        consume_mark(target)  # the attack roll spends a mark it was made against
-        if check_result.success:
-            dealt, dmg_roll = roll_attack_damage(character, check_result, hint=player_input)
-            dice_log.append(dmg_roll.to_log("player damage"))
-            weapon = check_result.weapon or choose_weapon(character, player_input)
-            damage_type = weapon_damage_type(weapon.name)
-            dealt, resist_note = adjust_monster_damage(target, dealt, damage_type, magical=False)
-            status = _strike(target, dealt, parsed, player_input, damage_type=damage_type)
-            crit = "Critical hit! " if check_result.critical else ""
-            extra_outcome = f"{crit}{hero} hits {target['name']} for {dealt} damage{resist_note} {status}"
-        else:
-            extra_outcome = f"{hero} misses {target['name']}."
+        # One swing, or two with Action Surge (EDG-145). Each swing rolls its own engine d20.
+        any_hit = False
+        for swing in range(2 if surge_swing else 1):
+            if swing and not can_act(target):
+                # The first swing finished the foe; the surged swing has nothing to hit.
+                log_lines.append(f"{hero}'s extra attack finds no foe left standing.")
+                break
+            mode = attack_roll_mode(player, target, ranged=ranged)
+            attack = resolve_attack(
+                character,
+                int(target.get("ac", 12)),
+                spell=is_spell,
+                hint=player_input,
+                roll_mode=mode,
+            )
+            round_modes.append(mode)
+            consume_mark(target)  # the attack roll spends a mark it was made against
+            if check_result is None:
+                check_result = attack
+            swing_log = dice_log if swing == 0 else later_swing_dice
+            if swing:
+                later_swing_dice.extend(attack.dice_log)
+            if attack.success:
+                any_hit = True
+                rage_bonus = rage_damage_bonus(character, attack, raging=bool(player.get("raging")))
+                swing_dealt, dmg_roll = roll_attack_damage(
+                    character, attack, hint=player_input, bonus=rage_bonus
+                )
+                swing_log.append(dmg_roll.to_log("player damage"))
+                sneak = sneak_attack_roll(character, attack, mode=mode, used=sneak_used)
+                notes = ""
+                if sneak is not None:
+                    swing_log.append(sneak.to_log("sneak attack"))
+                    swing_dealt += sneak.total
+                    sneak_used = True
+                    round_effects.append(SNEAK_ATTACK)
+                    notes += f" Sneak Attack adds {sneak.total}."
+                if rage_bonus:
+                    notes += f" Rage adds {rage_bonus}."
+                weapon = attack.weapon or choose_weapon(character, player_input)
+                damage_type = weapon_damage_type(weapon.name)
+                swing_dealt, resist_note = adjust_monster_damage(
+                    target, swing_dealt, damage_type, magical=False
+                )
+                dealt += swing_dealt
+                status = _strike(target, swing_dealt, parsed, player_input, damage_type=damage_type)
+                crit = "Critical hit! " if attack.critical else ""
+                swing_text = (
+                    f"{crit}{hero} hits {target['name']} for {swing_dealt} damage{resist_note} "
+                    f"{status}{notes}"
+                )
+            else:
+                swing_text = f"{hero} misses {target['name']}."
+            mode_text = "" if mode == "normal" else f" (at {mode})"
+            log_lines.append(f"{attack.describe()}{mode_text}. {swing_text}")
+            extra_outcome = " ".join(part for part in (extra_outcome, swing_text) if part)
         player_action = {
             "action": "spell" if is_spell else "attack",
             "target": stable_id(target),
-            "hit": bool(check_result.success),
+            "hit": any_hit,
             "damage": dealt,
             "target_disposition": disposition_of(target),
         }
-        mode_text = "" if mode == "normal" else f" (at {mode})"
-        log_lines.append(f"{check_result.describe()}{mode_text}. {extra_outcome}")
+    elif wants_second_wind or bonus_spell is not None or rage_declared:
+        # Only a bonus action was declared and is already resolved above; the action stays free.
+        pass
     else:
         check_result, extra = resolve_from_parsed(character, parsed, player_input=player_input)
         dice_log += extra
@@ -1176,6 +1325,7 @@ async def combat_round_node(state: AgentState) -> dict:
             log_lines.append(check_result.describe() + ".")
 
     # --- Adjudicator: describes consequences of the known outcome (flags/scene/items) ---
+    extra_outcome = " ".join(part for part in (bonus_text, extra_outcome) if part)
     if player_acted and not fled:
         t_stage = time.monotonic()
         adj = await adjudicate(
@@ -1232,7 +1382,11 @@ async def combat_round_node(state: AgentState) -> dict:
     if ended:
         # Typed effects end with the encounter (EDG-021): nothing carries into a later fight.
         clear_effects(combatants)
+        player.pop("raging", None)  # rage, too, lasts only for this encounter (EDG-145)
 
+    # EDG-044: what this turn spent, kept on the player row (persisted with the combatants).
+    spent = declared if player_acted and not fled else []
+    player["action_economy"] = economy_record(round_num, spent, dodging=has_effect(player, "dodging"))
     view = initiative_view(combatants)
     player_view_index = next((i for i, c in enumerate(view) if c["is_player"]), 0)
     combat_state.update(
@@ -1240,12 +1394,14 @@ async def combat_round_node(state: AgentState) -> dict:
             "combatants": combatants,
             "initiative_order": [c["name"] for c in combatants],
             "initiative": view,
+            "economy": player["action_economy"],
             "round": round_num if ended else round_num + 1,
             "ended": ended,
             "outcome": outcome,
             "player_ac": player_ac,
             "second_wind_used": second_wind_used,
             "second_wind_uses_remaining": sw_left,
+            "raging": bool(player.get("raging")),
             "current_turn_index": player_view_index,
             "current_turn": None if ended else _display(player),
         }
@@ -1258,13 +1414,21 @@ async def combat_round_node(state: AgentState) -> dict:
     if sw_left != sw_before:
         # Only a spent use is written; a sheet without the key keeps deriving its full uses.
         cu.second_wind_uses_remaining = sw_left
+    cf_changed = {f: left for f, left in cf_left.items() if left != cf_before.get(f)}
+    if cf_changed:
+        # Class feature uses (EDG-145): only the spent features are written, as for Second Wind.
+        cu.class_feature_uses = cf_changed
     cu.spell_slots_expended = spell_expended
     for item in inventory_used:
         if item not in cu.inventory_remove:
             cu.inventory_remove.append(item)
     adj.character_update = cu
     adj.damage = dealt or None
-    adj.dice_log = [*adj.dice_log, *[d for d in dice_log if d not in adj.dice_log]]
+    adj.dice_log = [
+        *adj.dice_log,
+        *[d for d in dice_log if d not in adj.dice_log],
+        *later_swing_dice,
+    ]
     # Declared unsupported mechanics are ruled on in the round summary (no engine effect).
     summary_text = " ".join(line for line in log_lines if line)
     engine_effects = tuple(round_effects)
@@ -1330,7 +1494,7 @@ async def combat_round_node(state: AgentState) -> dict:
         ended=ended,
         outcome=outcome,
         actors=actors,
-        player_action=player_action,
+        player_action={**player_action, **({"bonus_action": bonus_record} if bonus_record else {})},
         outcomes=outcomes,
         dispositions=[
             {

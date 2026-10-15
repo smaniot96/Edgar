@@ -4,6 +4,7 @@ import type {
   CharacterRead,
   CombatEffect,
   CombatState,
+  HitDiceStatus,
   SecondWindState,
   SpellSlotState,
   TurnCharacter,
@@ -30,6 +31,8 @@ export interface SheetCharacter {
   abilities: { key: string; score: number }[];
   conditions: string[];
   inventory: InventoryGroup[];
+  /** Remaining and total Hit Dice (EDG-026); null until the server reports them. */
+  hitDice: HitDiceStatus | null;
   /** Engine Second Wind counter; null for non-fighters and legacy payloads. */
   secondWind: SecondWindState | null;
   /** Engine spell slots by level; null for non-casters and legacy payloads. */
@@ -64,6 +67,16 @@ function num(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
   return null;
+}
+
+/** A server Hit Dice view, or null when absent or malformed. */
+export function hitDiceFrom(v: unknown): HitDiceStatus | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const remaining = num(o.remaining);
+  const total = num(o.total);
+  if (remaining == null || total == null || typeof o.die !== "string") return null;
+  return { remaining, total, die: o.die };
 }
 
 function itemLabel(v: unknown): string | null {
@@ -171,6 +184,7 @@ export function sheetFromLibrary(
     abilities: stats.abilities,
     conditions: stats.conditions,
     inventory: parseInventory(assignment?.inventory ?? c.base_inventory),
+    hitDice: hitDiceFrom(assignment?.hit_dice),
     secondWind: parseSecondWind(assignment?.second_wind),
     spellSlots: parseSpellSlots(assignment?.spell_slots),
   };
@@ -204,6 +218,7 @@ export function mergeTurnCharacter(
     abilities: [],
     conditions: [],
     inventory: [],
+    hitDice: null,
     secondWind: null,
     spellSlots: null,
   };
@@ -222,6 +237,8 @@ export function mergeTurnCharacter(
     if (stats.ac != null) next.ac = stats.ac;
   }
   if (c.inventory && typeof c.inventory === "object") next.inventory = parseInventory(c.inventory);
+  const hitDice = hitDiceFrom(c.hit_dice);
+  if (hitDice) next.hitDice = hitDice;
   // Resources are replaced by every payload that carries them (a spend or recharge shows at once).
   if ("second_wind" in c) next.secondWind = parseSecondWind(c.second_wind);
   if ("spell_slots" in c) next.spellSlots = parseSpellSlots(c.spell_slots);
@@ -254,7 +271,16 @@ export interface CombatEffectView {
 const EFFECT_LABELS = new Map<string, string>([
   ["restrained", "Restrained"],
   ["prone", "Prone"],
+  ["dodging", "Dodging"],
 ]);
+
+/** The hero's last turn in one line (EDG-044), or null when the payload has no record. */
+export function economyLine(economy: CombatState["economy"]): string | null {
+  if (!economy || typeof economy !== "object") return null;
+  const action = typeof economy.action === "string" ? economy.action : "unused";
+  const bonus = typeof economy.bonus_action === "string" ? economy.bonus_action : "unused";
+  return `Last turn: action ${action} · bonus action ${bonus}`;
+}
 
 /** Engine `effects` mapped to display labels; unknown or narrative kinds are dropped. */
 export function mechanicalEffects(effects: CombatEffect[] | null | undefined): CombatEffectView[] {

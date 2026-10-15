@@ -61,7 +61,13 @@ function DmLabel() {
 const DmRow = memo(function DmRow({ line, isDev }: { line: DmLine; isDev: boolean }) {
   return (
     <article className="flex flex-col items-start gap-2" aria-label="Dungeon Master">
-      <RollCard adj={line.adjudication} />
+      {line.rollStatus === "not_captured" ? (
+        <p className="text-xs italic text-ink-subtle" data-roll-status="not_captured">
+          Roll details were not captured for this turn.
+        </p>
+      ) : (
+        <RollCard adj={line.adjudication} />
+      )}
       <div className="w-full max-w-[65ch]">
         <DmLabel />
         <div
