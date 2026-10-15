@@ -108,6 +108,13 @@ simulate (`GET /api/rules/supported-scope`):
   darts, upcast by slot), Sacred Flame (DEX save), Cure Wounds (self-heal) and Healing Word (bonus
   action, self-heal). Their dice are rolled by the engine, leveled spells spend a slot tracked per
   character, and a cast with no slot left is refused with no effect.
+- Spell conditions in combat: Guiding Bolt (a spell attack for 4d6 radiant) marks a foe it hits, so
+  the next attack roll against it has advantage; the mark is spent by that roll or ends at the end
+  of the caster's next turn. Blindness/Deafness (a Constitution save against the spell save DC) blinds
+  a foe that fails it, for one minute: the foe's own attacks have disadvantage, attacks against it
+  have advantage, and it repeats the save at the end of each of its turns. Blindness only, at one
+  foe; a declaration naming deafness is refused. The condition is stored on the foe, shown in the
+  roster and ends with the foe's defeat or the encounter. Concentration is not tracked.
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage) or knocks it prone (its attacks have
@@ -120,12 +127,13 @@ simulate (`GET /api/rules/supported-scope`):
   declaration starts no combat and receives a ruling asking whether to release, question or kill.
   Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
-  other maneuvers, escape contests, spells outside that catalog, concentration, other condition
-  effects, cover and positioning, Dash, Disengage, Help, reactions, opportunity attacks, other bonus
-  actions, declared counts of Hit Dice, and class features other than Second Wind, Action Surge,
-  Sneak Attack and Rage (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild
-  Shape, sorcery and ki points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts;
-  Rage's damage resistance). A declared action of this kind gets a narrative ruling and no
+  other maneuvers, escape contests, spells outside that catalog, concentration, other conditions
+  (poisoned, frightened, paralyzed, stunned and the rest have no engine effect), cover and
+  positioning, Dash, Disengage, Help, reactions, opportunity attacks, other bonus actions, declared
+  counts of Hit Dice, and class features other than Second Wind, Action Surge, Sneak Attack and Rage
+  (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery and ki
+  points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's damage
+  resistance). A declared action of this kind gets a narrative ruling and no
   mechanical effect.
 - Exact monster records (EDG-004): a creature identified by its verified record uses that record's
   armor class, hit points, DEX initiative bonus, saving-throw bonuses (for a spell's save), attacks

@@ -239,7 +239,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="supported_spells",
-        title="Catalog spells: Fire Bolt, Magic Missile, Sacred Flame, Cure Wounds and Healing Word",
+        title=(
+            "Catalog spells: Fire Bolt, Magic Missile, Sacred Flame, Cure Wounds, Healing Word, "
+            "Guiding Bolt and Blindness/Deafness"
+        ),
         scope=(
             "Only these declared spells resolve. Fire Bolt is a spell attack (1d10 fire, two dice "
             "at 5th level and up, more at 11th and 17th; a critical doubles the dice). Magic Missile "
@@ -248,13 +251,33 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "damage on a failure only. Cure Wounds restores 1d8 plus the spellcasting modifier to the "
             "caster, one die more per slot above 1st; it cannot target anyone else. Healing Word is a "
             "bonus action: 1d4 plus the spellcasting modifier to the caster, one die more per slot above "
-            "1st, and the same turn may also attack. Cantrips cost no "
-            "slot. A leveled spell spends the named slot or the lowest one available; slot totals "
-            "follow class and level for the full and half casters, and a long rest restores them. "
-            "Concentration and advantage are not tracked. Other spells get a narrative ruling."
+            "1st, and the same turn may also attack. Guiding Bolt is a spell attack for 4d6 radiant, one "
+            "die more per slot above 1st, and a hit marks the foe (see condition_effects). "
+            "Blindness/Deafness is a Constitution save against the spell save DC, with no damage; it "
+            "casts blindness only, at one foe (a declaration naming deafness is refused), and does not "
+            "scale to extra targets. Cantrips cost no slot. A leveled spell spends the named slot or the "
+            "lowest one available; slot totals follow class and level for the full and half casters, and "
+            "a long rest restores them. Concentration and advantage are not tracked. Other spells get a "
+            "narrative ruling."
         ),
         implementation="agent.spells:resolve_spell",
         test="tests/agent/test_spells.py::test_catalog_spell_attack_hit_miss_and_crit",
+    ),
+    Mechanic(
+        id="condition_effects",
+        title="Blinded and marked foes from catalog spells (engine-applied conditions)",
+        scope=(
+            "Blindness/Deafness blinds a foe that fails its Constitution save, for one minute (10 "
+            "rounds). A blinded foe's own attacks have disadvantage and attacks against it have "
+            "advantage. At the end of each of its turns the foe repeats the Constitution save, and a "
+            "success ends the effect. Guiding Bolt marks a foe it hits: the next attack roll against "
+            "that foe has advantage, the roll spends the mark, and an unspent mark ends at the end of "
+            "the caster's next turn. The condition is stored on the foe, shown in the combat roster and "
+            "given to the narrator; it ends with the foe's defeat or the encounter. Concentration is not "
+            "tracked. No other condition has an engine effect."
+        ),
+        implementation="agent.conditions:apply_spell_condition",
+        test="tests/agent/test_conditions.py::test_blindness_failed_save_blinds_and_the_repeat_save_ends_it",
     ),
     Mechanic(
         id="long_rest",
@@ -299,7 +322,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         title="Official condition names as narrative tags",
         scope=(
             "Only the 15 official condition names are stored; common aliases are normalised. The "
-            "stored name is a narrative tag: it has no engine effect."
+            "stored name is a narrative tag: it has no engine effect on a player character. The "
+            "engine applies blinded and marked to foes only, from catalog spells (see condition_effects)."
         ),
         implementation="agent.resolution:normalise_conditions",
         test="tests/agent/test_supported_rules.py::test_supported_conditions_are_tags_only",
@@ -449,9 +473,12 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         owner="EDG-043",
     ),
     UnsupportedMechanic(
-        id="condition_effects",
-        title="Mechanical effects of conditions",
-        boundary="Stored condition names do not penalise rolls, speed, actions or senses.",
+        id="other_conditions",
+        title="Mechanical effects of other conditions (poisoned, frightened, paralyzed, stunned and the rest)",
+        boundary=(
+            "Such a condition has no engine effect: it does not penalise rolls, speed, actions or "
+            "senses, and no foe is poisoned, frightened, paralyzed or stunned by the engine."
+        ),
         owner="EDG-043",
     ),
     UnsupportedMechanic(
@@ -541,7 +568,7 @@ _KIND_MECHANIC = {
     SPELL: "declared_spells",
     FEATURE: "class_features",
     MANEUVER: "unsupported_maneuvers",
-    CONDITION: "condition_effects",
+    CONDITION: "other_conditions",
     ADVANTAGE: "advantage_disadvantage",
     ACTION_ECONOMY: "action_economy_remainder",
     POSITIONING: "positioning_cover",
@@ -583,13 +610,19 @@ _SPELL_NAMES = (
     "magic missile|fire bolt|eldritch blast|cure wounds|healing word|hold person|thunderwave|"
     "burning hands|mage armor|misty step|guiding bolt|sacred flame|detect magic|faerie fire|"
     "feather fall|fireball|lightning bolt|color spray|witch bolt|ray of frost|chill touch|"
-    "shocking grasp|acid splash|vicious mockery|dissonant whispers|spiritual weapon|hunter's mark"
+    "shocking grasp|acid splash|vicious mockery|dissonant whispers|spiritual weapon|hunter's mark|"
+    "blindness/deafness"
 )
 # Features the engine does not execute. Action Surge, Sneak Attack and Rage are implemented
 # (agent.class_features) and are ruled on by their own helper, not by these names.
 _FEATURE_NAMES = (
     "divine smite|lay on hands|bardic inspiration|channel divinity|wild shape|sorcery points?|"
     "ki points?|flurry of blows|stunning strike|superiority dice|martial arts"
+)
+# Condition claims other than blinded. Blinded is engine-applied from Blindness/Deafness and is
+# exempt only when the engine actually applied it this turn (see `_claim_pattern`).
+_OTHER_CONDITION_CLAIMS = (
+    r"\b(?:stunned|poisoned|paralyzed|petrified|charmed|frightened|deafened|incapacitated)\b"
 )
 _BONUS_ACTION_CLAIM = r"bonus\s+action"
 _DODGE_CLAIM = r"dodg\w*"
@@ -610,10 +643,7 @@ _CLAIM_WORDS = {
         r"shov\w*|prone|held\s+(?:fast|down|in\s+place|still)|knocked\s+(?:down|prone|over)|"
         r"(?:can|could)(?:n't|\s+not)\s+(?:move|escape|get\s+up|stand))\b"
     ),
-    CONDITION: (
-        r"\b(?:stunned|blinded|poisoned|paralyzed|petrified|charmed|frightened|deafened|"
-        r"incapacitated)\b"
-    ),
+    CONDITION: r"\bblinded\b|" + _OTHER_CONDITION_CLAIMS,
     ADVANTAGE: r"\b(?:advantage|disadvantage|with an edge)\b",
     ACTION_ECONOMY: _ACTION_ECONOMY_CLAIM,
     POSITIONING: r"\b(?:in\s+cover|take\s+cover|behind\s+cover|high\s+ground|flank\w*)\b",
@@ -628,6 +658,15 @@ _UNCOVERED_SPELL = re.compile(
         if name not in {spell.name.lower() for spell in CATALOG}
     )
     + r")\b",
+    re.IGNORECASE,
+)
+
+# Condition words in declared text. The blind words are read separately so that a blinded condition the
+# engine applied is not stripped, while every other condition word keeps its ruling.
+_TEXT_CONDITION_OTHER = re.compile(
+    r"\b(?:stun|stuns|stunned|stunning|poison|poisons|poisoned|poisoning|paralyze|paralyzes|"
+    r"paralyzed|paralyse|paralysed|petrify|petrifies|petrified|charm|charms|charmed|frighten|"
+    r"frightens|frightened|deafen|deafened|incapacitate|incapacitated)\b",
     re.IGNORECASE,
 )
 
@@ -746,6 +785,10 @@ def _engine_applied_maneuver(text: str, engine_effects: tuple[str, ...]) -> bool
     return maneuver is not None and maneuver.kind in engine_effects
 
 
+# Spell conditions the executed spell records on a foe; when the engine recorded none, the narrated
+# claim is ruled on (agent.conditions). A marked foe has no claim word in the narration.
+_CONDITION_RECORDED = frozenset({"blinded"})
+
 ENGINE_ROLL_MODE_KEY = "engine_roll_mode"
 
 
@@ -783,6 +826,15 @@ def classify_unsupported_actions(
             found[SPELL] = UnsupportedAction(
                 SPELL, spell.name.lower(), f"Narrative ruling: {refusal}"
             )
+        elif spell.condition in _CONDITION_RECORDED and spell.condition not in engine_effects:
+            # The executed spell recorded no condition (the save succeeded, or no foe was in the
+            # fight): a narrated blindness would be a claim without an engine effect, so it is ruled on.
+            found[CONDITION] = UnsupportedAction(
+                CONDITION,
+                spell.condition,
+                f"{spell.name} recorded no {spell.condition} condition this turn: the target's save "
+                "succeeded or no foe was in the fight, so none is applied.",
+            )
     elif _parsed_spell(parsed):
         found[SPELL] = UnsupportedAction(SPELL, "spell (parsed)")
     # Implemented class features (EDG-145) the engine executed this turn are not declared. Any
@@ -809,6 +861,8 @@ def classify_unsupported_actions(
             continue  # the executed catalog spell; its casting words are not a declared spell
         if kind == ADVANTAGE and engine_roll_mode != "normal":
             continue
+        if kind == CONDITION and "blinded" in engine_effects:
+            pattern = _TEXT_CONDITION_OTHER  # the engine blinded a foe: that word is not a claim
         if kind in found:
             continue
         match = next(
@@ -945,14 +999,18 @@ def _claim_pattern(
     """
     if not actions:
         return None
-    maneuver_applied = bool(set(engine_effects) - FEATURE_EFFECTS)
-    patterns = [
-        p
-        for kind, p in _claim_words(engine_effects).items()
-        if not (executed_spell and kind == SPELL)
-        and not (kind == ADVANTAGE and engine_roll_mode != "normal")
-        and not (kind == MANEUVER and maneuver_applied)
-    ]
+    maneuver_applied = bool({"restrained", "prone"} & set(engine_effects))
+    patterns = []
+    for kind, p in _claim_words(engine_effects).items():
+        if executed_spell and kind == SPELL:
+            continue
+        if kind == ADVANTAGE and engine_roll_mode != "normal":
+            continue
+        if kind == MANEUVER and maneuver_applied:
+            continue
+        if kind == CONDITION and "blinded" in engine_effects:
+            p = _OTHER_CONDITION_CLAIMS  # the engine's blinded is real; other conditions still ruled
+        patterns.append(p)
     # An implemented class feature is a claim only while the engine has not executed it this turn.
     executed = set(engine_effects) & FEATURE_EFFECTS
     patterns += [NARRATION_CLAIMS[f] for f in IMPLEMENTED_FEATURES if f not in executed]
