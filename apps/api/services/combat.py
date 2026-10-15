@@ -104,14 +104,23 @@ async def persist_combat(db: AsyncSession, session_id: int, combat_state: dict |
         return
     if combat_state.get("id"):
         result = await db.execute(
-            select(CombatState).where(
+            select(CombatState)
+            .where(
                 CombatState.id == combat_state["id"],
                 CombatState.session_id == session_id,
-            ).with_for_update()
+            )
+            .with_for_update()
         )
         cs = result.scalar_one()
         if cs.ended:
-            fields = ("initiative_order", "round", "current_turn_index", "ended", "combatants", "outcome")
+            fields = (
+                "initiative_order",
+                "round",
+                "current_turn_index",
+                "ended",
+                "combatants",
+                "outcome",
+            )
             if any(combat_state.get(key, getattr(cs, key)) != getattr(cs, key) for key in fields):
                 raise ValueError("A resolved combat outcome cannot be rewritten")
             return
