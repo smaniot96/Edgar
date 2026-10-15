@@ -202,7 +202,9 @@ def source_read(slug: str) -> SourceRead:
     from .adventures_meta import ADVENTURES_DIR, attempt_dir, candidate_pdf_path
 
     job = raw_meta.get("job") or {}
-    candidate_id = job.get("retained_source_attempt_id") or job.get("attempt_id")
+    candidate_id = job.get("retained_source_attempt_id")
+    if candidate_id is None and job.get("kind") == "ingestion":
+        candidate_id = job.get("attempt_id")
     candidate_preview = attempt_dir(slug, candidate_id) if isinstance(candidate_id, str) else None
     token = meta.get("artifact_attempt")
     preview_dir = (

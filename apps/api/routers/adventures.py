@@ -161,7 +161,11 @@ def _extraction_path(
     raw_meta = load_adventure_metadata(slug)
     if candidate_attempt_id is None:
         job = raw_meta.get("job") or {}
-        candidate_attempt_id = job.get("retained_source_attempt_id") or job.get("attempt_id")
+        candidate_attempt_id = job.get("retained_source_attempt_id")
+        # PDF recovery inspects the candidate before retry. Generated replacements keep
+        # the accepted extraction visible while their private checkpoint is recoverable.
+        if candidate_attempt_id is None and job.get("kind") == "ingestion":
+            candidate_attempt_id = job.get("attempt_id")
     if isinstance(candidate_attempt_id, str):
         candidate = attempt_dir(slug, candidate_attempt_id) / name
         if candidate.is_file():
