@@ -67,3 +67,20 @@ it("shows real chapter progress and lets the owner cancel while the published so
   expect(cancelAdventure).toHaveBeenCalledWith("bridge");
   expect(onRetried).toHaveBeenCalledOnce();
 });
+
+it("does not offer cancellation after validated-source publication begins", async () => {
+  const adventure: AdventureRead = {
+    slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null,
+    status: "ready",
+    job: {
+      version: 1, job_id: "c".repeat(32), kind: "ingestion", state: "running",
+      stage: "publishing", completed_chapters: 0, total_chapters: null,
+      checkpoint_available: false, retryable: false, retained_work: "source_pdf",
+      action_label: null, explanation: null, source_version: "index-v2",
+    },
+  };
+  const card = buildCards([adventure], [], [], 1)[0];
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  expect(container.textContent).toContain("Finishing publication of the validated source.");
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Cancel preparation"))).toBe(false);
+});

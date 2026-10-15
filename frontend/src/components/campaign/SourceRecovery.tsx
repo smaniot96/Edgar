@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { cancelAdventure, getCampaign, recoverCampaignSource, retryAdventure, setCampaignSourceMode } from "../../api/client";
 import type { CampaignRead } from "../../api/types";
-import { isJobActive, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
+import { isJobActive, isPublicationCommitting, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
 import { Button } from "../ui/Button";
 import { ErrorNotice } from "../ui/ErrorNotice";
 import { ExtractionPreview } from "./ExtractionPreview";
@@ -17,6 +17,11 @@ export function SourceRecovery({ campaign, onUpdated }: {
   const sources = campaign.sources ?? [];
   const processing = sources.some((s) => s.status === "processing" || isJobActive(s.job));
   const failedJob = sources.some((s) => s.job && ["interrupted", "failed", "cancelled"].includes(s.job.state));
+  const resumableGeneration = sources.some((s) => s.job?.kind === "generation" && s.job.retryable);
+  const needsPdfUpload = sources.some((s) =>
+    ["missing", "empty", "partial", "failed"].includes(s.status) &&
+    !(s.job?.kind === "generation" && s.job.retryable),
+  );
   useEffect(() => {
     if (!processing) return;
     const timer = window.setTimeout(() => {
@@ -47,7 +52,11 @@ export function SourceRecovery({ campaign, onUpdated }: {
         {campaign.source_mode === "homebrew"
           ? "The DM is improvising from your saved story. Your original source bindings are preserved for recovery."
           : campaign.retrieval_degraded
-            ? "Module play is paused until every bound adventure source is usable. Recover your source PDF, or explicitly choose homebrew play to let the DM improvise."
+            ? resumableGeneration && needsPdfUpload
+              ? "Module play is paused until every bound source is usable. Resume saved generation where available and provide a PDF for other sources that need recovery, or choose homebrew play."
+              : resumableGeneration
+                ? "Module play is paused until the generated source is ready. Resume its saved preparation below, or choose homebrew play."
+                : "Module play is paused until every bound adventure source is usable. Recover your source PDF, or explicitly choose homebrew play to let the DM improvise."
             : failedJob
               ? "The latest preparation attempt stopped. The last published source remains available for play."
               : "A source update is running while the last published campaign remains available for play."}
@@ -63,6 +72,8 @@ export function SourceRecovery({ campaign, onUpdated }: {
               {source.job?.explanation ? <p className="text-xs text-ink-muted">{source.job.explanation}</p> : null}
               {source.job?.state === "cancel_requested" ? (
                 <p className="text-xs text-ink-muted">Cancellation requested…</p>
+              ) : isPublicationCommitting(source.job) ? (
+                <p className="text-xs text-ink-muted">Finishing publication of the validated source. Cancellation is no longer available at this stage.</p>
               ) : (
                 <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(() => cancelAdventure(source.slug))}>Cancel preparation</Button>
               )}
@@ -85,7 +96,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
                   : "The original source PDF is not available here. Recovery requires a PDF you provide."}
             </p>
           ) : null}
-          {["missing", "empty", "partial", "failed"].includes(source.status) ? (
+          {["missing", "empty", "partial", "failed"].includes(source.status) && !(source.job?.kind === "generation" && source.job.retryable) ? (
             <div className="flex flex-wrap items-center gap-3">
               <label className="space-y-1">
                 <span className="block">Re-upload the PDF for {source.title}</span>

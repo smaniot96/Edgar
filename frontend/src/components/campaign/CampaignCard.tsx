@@ -4,7 +4,7 @@ import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { AdventureRead } from "../../api/types";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
-import { jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
+import { isPublicationCommitting, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/format";
 import { Pill } from "../Pill";
@@ -159,6 +159,8 @@ export function CampaignCard({
             {job?.explanation ? <p className="mt-1 text-xs text-ink-muted">{job.explanation}</p> : null}
             {job.state === "cancel_requested" ? (
               <p className="mt-2 text-xs text-ink-muted">Cancellation requested…</p>
+            ) : isPublicationCommitting(job) ? (
+              <p className="mt-2 text-xs text-ink-muted">Finishing publication of the validated source. Cancellation is no longer available at this stage.</p>
             ) : (
               <Button variant="secondary" size="sm" loading={cancelling} onClick={() => void cancel()} className="mt-2">Cancel preparation</Button>
             )}

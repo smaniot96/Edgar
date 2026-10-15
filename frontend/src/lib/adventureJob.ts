@@ -4,6 +4,10 @@ export function isJobActive(job?: AdventureJobRead | null): boolean {
   return !!job && ["queued", "running", "cancel_requested"].includes(job.state);
 }
 
+export function isPublicationCommitting(job?: AdventureJobRead | null): boolean {
+  return !!job && job.stage === "publishing";
+}
+
 export function preparationProgress(job?: AdventureJobRead | null): string | null {
   if (!job) return null;
   if (job.state === "cancel_requested") return "Cancellation requested; finishing at the next safe checkpoint.";

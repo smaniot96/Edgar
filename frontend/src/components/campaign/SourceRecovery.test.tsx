@@ -73,3 +73,50 @@ it("shows replacement progress and cancellation while the last ready source rema
   expect(cancelAdventure).toHaveBeenCalledWith("lost_module");
   expect(onUpdated).toHaveBeenCalledWith(updating);
 });
+
+it("does not offer cancellation once validated-source publication begins", async () => {
+  const publishing: CampaignRead = {
+    ...missing,
+    retrieval_degraded: false,
+    play_allowed: true,
+    sources: [{
+      slug: "lost_module", title: "Lost module", status: "ready", usable_chunks: 4,
+      expected_chunks: 4, collection_exists: true, source_pdf_available: false,
+      message: "The source is ready for module play.",
+      job: {
+        version: 1, job_id: "d".repeat(32), kind: "ingestion", state: "running",
+        stage: "publishing", completed_chapters: 0, total_chapters: null,
+        checkpoint_available: false, retryable: false, retained_work: "source_pdf",
+        action_label: null, explanation: null, source_version: "index-v2",
+      },
+    }],
+  };
+  vi.mocked(getCampaign).mockResolvedValue(publishing);
+  await act(() => root.render(<SourceRecovery campaign={publishing} onUpdated={vi.fn()} />));
+  expect(container.textContent).toContain("Finishing publication of the validated source.");
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Cancel preparation"))).toBe(false);
+});
+
+it("offers saved generation recovery without presenting PDF upload as required", async () => {
+  const failed: CampaignRead = {
+    ...missing,
+    sources: [{
+      slug: "lost_module", title: "Lost module", status: "failed", usable_chunks: 0,
+      expected_chunks: null, collection_exists: false, source_pdf_available: false,
+      message: "Generation was interrupted.",
+      job: {
+        version: 1, job_id: "e".repeat(32), kind: "generation", state: "failed",
+        stage: "generating_chapters", completed_chapters: 2, total_chapters: 6,
+        checkpoint_available: true, retryable: true, retained_work: "outline_and_chapters",
+        action_label: "Resume saved chapters", explanation: "The outline and 2 of 6 chapters are saved.",
+        source_version: null,
+      },
+    }],
+  };
+  vi.mocked(getCampaign).mockResolvedValue(failed);
+  await act(() => root.render(<SourceRecovery campaign={failed} onUpdated={vi.fn()} />));
+  expect(container.textContent).toContain("Resume its saved preparation below");
+  expect(container.textContent).toContain("Resume saved chapters");
+  expect(container.textContent).not.toContain("Recover your source PDF");
+  expect(container.querySelector('input[type="file"]')).toBeNull();
+});

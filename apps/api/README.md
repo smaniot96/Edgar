@@ -86,6 +86,31 @@ PDF for a missing, empty, partial or failed index (or retry an explicitly AI-gen
 a missing uploaded PDF returns 410. Historical logs and metadata cannot recreate a lost PDF.
 Recovery uses the existing ingestion pipeline and extraction readiness checks described below.
 
+### Adventure preparation jobs
+
+Upload and generation work still runs in-process. The API does not automatically restart a
+worker after a process restart; startup changes unfinished jobs to `interrupted` and preserves
+their durable recovery state. `GET /api/adventures` and `GET /api/adventures/{slug}` expose a
+safe `job` projection: job kind and state, the actual stage, saved/total generation chapters,
+whether retained work is retryable, and a short recovery action/explanation. The projection
+never includes an outline, chapter text or manuscript content. Stage information is not an
+overall percentage or an ETA.
+
+Generation checkpoints persist the outline before chapter expansion and persist each completed
+chapter before reporting it as saved. `POST /api/adventures/{slug}/retry` resumes missing
+chapters; when the complete manuscript is already saved, it rebuilds the index without another
+generation call. If no valid checkpoint exists, retry explicitly restarts generation. Uploaded
+PDF retry reuses the retained candidate or canonical source and reruns extraction/indexing; an
+inspected-preview retry includes the preview's source and extraction hashes. Repeated retry
+requests while a job is active return a conflict rather than starting duplicate work.
+
+`POST /api/adventures/{slug}/cancel` requests cooperative cancellation. It returns the safe job
+projection with `cancel_requested`; cancellation takes effect at a safe checkpoint and can be
+retried later when retained work is available. A cancellation request is rejected once source
+publication is committing. When replacing a ready source, its last published receipt remains
+available for play until a validated replacement is activated. Failed or cancelled replacement
+work therefore does not make that previous source unavailable.
+
 # Extraction readiness and local previews
 
 PDF upload and generated manuscripts keep a local extraction bundle beside their adventure
@@ -109,11 +134,11 @@ Poor extraction and missing source/chunk coverage fail before embeddings or vect
 New ready sources must also match the validated source/extraction hashes, expected chunk count
 and exact contributing pages in the live index. Specific `failure_code` and readable errors
 remain in existing adventure metadata; the source PDF/manuscript preview is retained for recovery.
-Generated-source retries prune the previous source chunks only after the complete replacement
-has embedded and upserted successfully. A failed embedding attempt retains the previous index
-and marks the source failed with its manuscript available for inspection and retry.
-Legacy sources without extraction evidence retain the live coverage checks introduced by EDG-001.
-Atomic index promotion and concurrent retry isolation remain EDG-015 work.
+Replacement attempts stage their source and artifacts by attempt, and activation keeps the last
+published index receipt available until the validated new version becomes active. If a retry fails,
+the prior ready source remains ready for play; only a source with no prior published version is
+reported as failed. Legacy sources without extraction evidence retain the live coverage checks
+introduced by EDG-001.
 
 For a generated source, authors can export the exact retained original Markdown locally with
 `docker compose exec api python -m apps.api.services.manuscript <slug> /data/exports/<file>.md`.
