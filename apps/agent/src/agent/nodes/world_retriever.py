@@ -11,26 +11,131 @@ import logging
 from agent.state import AgentState
 from db.vector import search_rules_context
 from db.vector.collections import effective_adventure_collection_names
-from db.vector.retrieval import retrieve_active_scene
+from db.vector.references import normalize_reference
+from db.vector.retrieval import RetrievalError, retrieve_active_scene
 from db.vector.source_status import inspect_source
 from edgar_core.manifests import ManifestError
+from edgar_core.sources import source_citation
 
 log = logging.getLogger(__name__)
 
 _LIMIT_PER_COLLECTION = 5
 _MERGED_TOP_K = 20
-_MAX_QUERY_LEN = 300
+_MAX_RULE_QUERIES = 4
 
 
-def build_retrieval_query(state: AgentState) -> str:
-    player_input = state.get("player_input") or ""
+# Canonical rulebook headings, with action-language aliases used by the existing UI.
+# These are retrieval topics, never implementations of mechanics or spell effects.
+_RULE_TOPICS = (
+    ("Second Wind", ("second wind", "recuperare energie")),
+    ("Short Rest", ("short rest", "riposo breve")),
+    ("Long Rest", ("long rest", "riposo lungo")),
+    ("Magic Missile", ("magic missile", "dardo incantato", "dardi incantati")),
+    ("Grappling", ("grapple", "grappling", "afferrare", "afferro", "lotta")),
+    ("Hiding", ("hide", "hiding", "nascondo", "nascondersi")),
+)
+_SKILLS = {
+    "athletics": "Athletics",
+    "acrobatics": "Acrobatics",
+    "stealth": "Stealth",
+    "sleight_of_hand": "Sleight of Hand",
+    "perception": "Perception",
+    "investigation": "Investigation",
+    "insight": "Insight",
+    "survival": "Survival",
+    "medicine": "Medicine",
+    "arcana": "Arcana",
+    "history": "History",
+    "nature": "Nature",
+    "religion": "Religion",
+    "animal_handling": "Animal Handling",
+    "persuasion": "Persuasion",
+    "deception": "Deception",
+    "intimidation": "Intimidation",
+    "performance": "Performance",
+    "str": "Strength",
+    "dex": "Dexterity",
+    "con": "Constitution",
+    "int": "Intelligence",
+    "wis": "Wisdom",
+    "cha": "Charisma",
+    "thieves_tools": "Using Ability Scores",
+    "attack": "Making an Attack",
+    "spell_attack": "Spellcasting",
+}
+
+
+def build_rule_queries(state: AgentState) -> list[dict]:
+    """Plan independent mechanics/feature queries; story names never enter core queries.
+
+    The parser's enriched scene query can identify a known topic, but does not become the
+    core query itself. Trivial conversation needs no rules. Reviewed story scope continues
+    to come exclusively from current_scene_id and its manifest.
+    """
     parsed = state.get("parsed_input")
-    query = (getattr(parsed, "retrieval_query", None) or "").strip()
-    if not query:
-        query = player_input
-        if parsed is not None and getattr(parsed, "target", None):
-            query = f"{query} {parsed.target}"
-    return query[:_MAX_QUERY_LEN]
+    text = normalize_reference(
+        f"{state.get('player_input') or ''} {getattr(parsed, 'retrieval_query', '') or ''}"
+    )
+    topics = [
+        title
+        for title, aliases in _RULE_TOPICS
+        if any(f" {normalize_reference(alias)} " in f" {text} " for alias in aliases)
+    ]
+    # Exact named entities have their own focused lookup, independent of rest/check topics.
+    entities = getattr(parsed, "entities", {}) or {}
+    for key in ("spell", "spell_name", "feature", "feature_name"):
+        value = entities.get(key)
+        if isinstance(value, str) and 0 < len(value.split()) <= 8:
+            topics.append(value.strip()[:100])
+    check = getattr(parsed, "check", None)
+    if check in _SKILLS:
+        topics.append(_SKILLS[check])
+    elif check and check.endswith("_save"):
+        topics.append("Saving Throws")
+    elif not topics and getattr(parsed, "intent", None) == "combat":
+        topics.append("Making an Attack")
+    elif not topics and any(
+        word in text.split() for word in ("explore", "exploration", "esploro", "esplorazione")
+    ):
+        topics.append("Perception")
+    return [{"query": f"{title} rules", "references": [title]} for title in dict.fromkeys(topics)][
+        :_MAX_RULE_QUERIES
+    ]
+
+
+def _search_rule_queries(queries: list[dict], *, client, rules_edition: str) -> tuple[list, bool]:
+    """Keep evidence from each focus instead of letting one high vector score crowd it out."""
+    buckets = []
+    failures = 0
+    for query in queries:
+        try:
+            buckets.append(
+                search_rules_context(
+                    query["query"],
+                    references=query["references"],
+                    limit_per_collection=_LIMIT_PER_COLLECTION,
+                    limit=3,
+                    client=client,
+                    rules_edition=rules_edition,
+                )
+            )
+        except Exception as exc:
+            failures += 1
+            log.warning("retrieval: focused rule query failed (%s)", type(exc).__name__)
+    if failures and failures == len(queries):
+        raise RetrievalError("Every focused rule query failed.")
+    merged = []
+    seen = set()
+    # Round robin gives each independent mechanic its leading evidence before continuations.
+    for rank in range(3):
+        for bucket in buckets:
+            if rank < len(bucket):
+                chunk = bucket[rank]
+                identity = source_citation(chunk, rules_edition)["reference_id"]
+                if identity not in seen:
+                    merged.append(chunk)
+                    seen.add(identity)
+    return merged[:6], bool(failures)
 
 
 async def world_retriever_node(state: AgentState) -> dict:
@@ -42,7 +147,7 @@ async def world_retriever_node(state: AgentState) -> dict:
     if not player_input:
         return {"rules_context": [], "adventure_context": [], "retrieved_context": []}
 
-    query = build_retrieval_query(state)
+    queries = build_rule_queries(state)
     client = state.get("qdrant_client")
 
     previous_sources = {s["slug"]: s for s in state.get("source_status", [])}
@@ -84,9 +189,8 @@ async def world_retriever_node(state: AgentState) -> dict:
 
     results = await asyncio.gather(
         asyncio.to_thread(
-            search_rules_context,
-            query,
-            limit_per_collection=_LIMIT_PER_COLLECTION,
+            _search_rule_queries,
+            queries,
             client=client,
             rules_edition=state.get("rules_edition", "2014"),
         ),
@@ -127,13 +231,16 @@ async def world_retriever_node(state: AgentState) -> dict:
                 scene_context = res
                 buckets.append(res["adventure_context"])
             else:
-                buckets.append(list(res or []))
+                hits, rules_degraded = res
+                degraded = degraded or rules_degraded
+                buckets.append(hits)
     rules_context, adventure_context = buckets
 
     out: dict = {
         "source_status": statuses or state.get("source_status", []),
         "retrieval_degraded": degraded,
         "rules_context": rules_context,
+        "rule_queries": queries,
         "adventure_context": adventure_context,
         "retrieved_context": (rules_context + adventure_context)[:_MERGED_TOP_K],
         "planner_context": scene_context.get("planner_context", []),

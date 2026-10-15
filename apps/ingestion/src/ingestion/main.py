@@ -85,8 +85,8 @@ def main() -> None:
     parser.add_argument(
         "--replace",
         action="store_true",
-        help="After a successful ingest, delete this PDF's points that the run did not write "
-        "(stale chunks from an older chunker). Other sources in the collection are kept.",
+        help="Explicit PDF replacement requires a reviewed extraction. All ingests activate a "
+        "validated source version atomically and remove only its obsolete points.",
     )
     parser.add_argument(
         "--no-save-markdown",

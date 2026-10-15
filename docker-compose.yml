@@ -45,6 +45,7 @@ services:
       - DB_HOST=db
       - REDIS_HOST=redis
       - QDRANT_HOST=qdrant
+      - EDGAR_INDEX_LOCK_DIR=/index-locks
     # Localhost only: the API has no authentication yet, so don't expose it to the network.
     ports:
       - "127.0.0.1:8000:8000"
@@ -52,6 +53,7 @@ services:
     # service's /data). Without this, UI uploads would be lost on container recreate.
     volumes:
       - ./data:/data
+      - ./data/.index-locks:/index-locks
     depends_on:
       db:
         condition: service_healthy
@@ -85,9 +87,11 @@ services:
     environment:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
+      - EDGAR_INDEX_LOCK_DIR=/index-locks
     volumes:
       - ./data/pdfs:/data
       - ./data/markdown:/output/markdown
+      - ./data/.index-locks:/index-locks
     depends_on:
       db:
         condition: service_healthy
@@ -103,10 +107,13 @@ services:
       dockerfile: Dockerfile
       target: rules_engine
     container_name: dnd-rules-engine
+    volumes:
+      - ./data/.index-locks:/index-locks
     env_file: .env
     environment:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
+      - EDGAR_INDEX_LOCK_DIR=/index-locks
     depends_on:
       db:
         condition: service_healthy

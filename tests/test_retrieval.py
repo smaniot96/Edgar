@@ -48,6 +48,21 @@ class FakeQdrant:
         hits = sorted(candidates, key=lambda h: h[0], reverse=True)[:limit]
         return SimpleNamespace(points=[SimpleNamespace(score=s, payload=p) for s, p in hits])
 
+    def scroll(self, collection_name, scroll_filter=None, limit=256, offset=None, **_kwargs):
+        from qdrant_client.local.payload_filters import check_filter
+
+        self.queried.append(collection_name)
+        if collection_name in self.fail:
+            raise ConnectionError("qdrant down")
+        points = [
+            SimpleNamespace(id=i, payload=p)
+            for i, (_score, p) in enumerate(self.data[collection_name])
+            if scroll_filter is None or check_filter(scroll_filter, p, i, {})
+        ]
+        start = offset or 0
+        end = start + limit
+        return points[start:end], end if end < len(points) else None
+
 
 def _p(text: str, source: str = "book", page: int = 1, **extra: Any) -> dict[str, Any]:
     return {"text": text, "source": source, "page": page, **extra}
@@ -242,11 +257,12 @@ def test_retrieve_monster_prefers_named_stat_block() -> None:
             "rules_player_handbook": [(0.95, _p("goblin mentioned in the PHB"))],
         }
     )
-    out = retrieval.retrieve_monster("Goblins", client=client)
+    out = retrieval.retrieve_monster("Goblin", client=client)
     assert out[0]["section"] == "Goblin"
     assert out[0]["kind"] == "rules"
     assert all(c["collection"] == "rules_monster_manual" for c in out)
-    assert len(out) == retrieval.DEFAULT_MONSTER_LIMIT
+    assert len(out) == 1
+    assert retrieval.retrieve_monster("Goblins", client=client) == []
     assert "rules_player_handbook" not in client.queried
 
 

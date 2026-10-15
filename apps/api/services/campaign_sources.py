@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from db.vector.collections import is_campaign_lore_collection, is_rules_collection
 from db.vector.source_status import inspect_source
+from db.vector.versions import active_index_version
 
 from ..schemas.campaign import CampaignRead, SourceRead
 from .adventures_meta import PDF_DIR, load_meta
@@ -56,6 +57,32 @@ def inspect_ingestion_source(slug: str, meta: dict) -> dict:
     return live
 
 
+def active_metadata(slug: str, meta: dict | None = None) -> dict:
+    """Select the durable receipt matching Qdrant's atomic activation after a restart.
+
+    Receipts are written before promotion. Until promotion the previous ready receipt
+    remains authoritative; afterward a crash before the final JSON update is recoverable.
+    """
+    meta = load_meta(slug) if meta is None else meta
+    receipts = meta.get("index_receipts") or {}
+    if receipts:
+        try:
+            version = active_index_version(slug)
+        except Exception:
+            version = None
+        if (
+            meta.get("status") == "ready"
+            and (meta.get("ingestion") or {}).get("index_version") == version
+        ):
+            return meta
+        receipt = receipts.get(version)
+        if receipt is not None:
+            return receipt
+    if meta.get("ready_receipt") and meta.get("status") in ("processing", "failed"):
+        return meta["ready_receipt"]
+    return meta
+
+
 def source_read(slug: str) -> SourceRead:
     try:
         validate_binding(slug)
@@ -66,7 +93,7 @@ def source_read(slug: str) -> SourceRead:
             status="unavailable",
             message="This legacy source binding is invalid. Bind a valid adventure source or choose homebrew play.",
         )
-    meta = load_meta(slug)
+    meta = active_metadata(slug)
     ingestion = meta.get("ingestion")
     live = inspect_ingestion_source(slug, meta)
     if meta.get("status") in ("processing", "failed") and live["status"] != "unavailable":
@@ -79,10 +106,12 @@ def source_read(slug: str) -> SourceRead:
         "processing": "The adventure source is being prepared.",
         "failed": "The adventure source could not be prepared. Provide its source PDF again.",
     }
-    from .adventures_meta import ADVENTURES_DIR
+    from .adventures_meta import ADVENTURES_DIR, attempt_dir
 
-    preview_available = (ADVENTURES_DIR / slug / f"{slug}.extraction.json").is_file() and (
-        ADVENTURES_DIR / slug / f"{slug}.md"
+    token = meta.get("artifact_attempt")
+    preview_dir = attempt_dir(slug, token) if token else ADVENTURES_DIR / slug
+    preview_available = (preview_dir / f"{slug}.extraction.json").is_file() and (
+        preview_dir / f"{slug}.md"
     ).is_file()
     return SourceRead(
         **live,

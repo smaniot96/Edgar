@@ -1,14 +1,12 @@
 """Extract -> chunk -> embed -> upsert a PDF into a Qdrant collection.
 
-Idempotency: each chunk's Qdrant point id is a stable hash of (source, page, index, prefix).
-Re-running the same PDF into the same collection upserts the same ids, so we never duplicate
-points; you can re-ingest after fixing a bug or updating a PDF without cleanup.
-
-Re-chunking caveat: point ids depend on the chunk boundaries, so after a chunker change
-re-ingesting into an existing collection would leave the old points next to the new ones.
-Pass `replace=True` (CLI `--replace`): once every new chunk has been upserted successfully,
-points of the *same source* that this run did not write are deleted. Nothing is removed if
-embedding/upsert fails midway, and other sources sharing the collection are untouched.
+Each attempt stages points under a digest of the complete source payloads, chunk boundaries,
+reviewed manifest, edition and embedding model. Existing verified points of exactly that version
+are reused on retry. All stored payloads/vectors are validated before one unembedded Qdrant
+control point activates the version. Readers use the active route; partial stages stay hidden.
+Failures keep the previous route and unrelated sources intact. After activation obsolete points
+of only the replaced source are pruned. ``replace`` remains an explicit PDF review flag; safe
+source replacement and resume apply to every ingestion entry point.
 
 Payload: `{text, page, page_end, source, chunk_index, section, chapter, heading_path,
 stat_block}`; retrieval treats every field except `text`/`page`/`source` as optional so older
@@ -21,6 +19,7 @@ between batches as a courtesy to OpenAI rate limits. The retry policy lives in
 """
 
 import hashlib
+import math
 import re
 import time
 from collections.abc import Callable
@@ -38,6 +37,17 @@ from qdrant_client.models import (
 
 from db.vector import ensure_collection, get_embeddings, get_qdrant_client
 from db.vector.collections import is_rules_collection
+from db.vector.creatures import creature_payload_fields
+from db.vector.embeddings import VECTOR_SIZE
+from db.vector.versions import (
+    SupersededIngestion,
+    begin_index,
+    index_lock,
+    index_version,
+    promote_index,
+    read_index_state,
+    version_filter,
+)
 from edgar_core.sources import SourceEdition
 from ingestion.chunk import chunk_pages
 from ingestion.extract import (
@@ -55,12 +65,6 @@ BATCH_SIZE = 50
 BATCH_DELAY_SEC = 0.5
 
 
-def _stable_chunk_id(source: str, page: int, index: int, text: str) -> int:
-    """64-bit int derived from sha256 of identity fields. Collisions are astronomically rare."""
-    h = hashlib.sha256(f"{source}:{page}:{index}:{text[:100]}".encode()).hexdigest()
-    return int(h[:16], 16)
-
-
 def run_pipeline(
     pdf_path: str | Path,
     collection_name: str,
@@ -75,6 +79,7 @@ def run_pipeline(
     reviewed_identity: tuple[str, str] | None = None,
     rules_edition: SourceEdition | None = None,
     reviewed_manifest: dict | None = None,
+    publication_guard: Callable | None = None,
 ) -> int:
     """Validate and persist the selected extraction before any embedding or client write."""
     pdf_path = Path(pdf_path)
@@ -124,7 +129,9 @@ def run_pipeline(
             "Rulebook indexing and PDF replacement require a reviewed extraction preview. "
             f"Inspect {out_path} and {report_path}, then pass --reviewed-extraction {report_path}."
         )
-    return _embed_and_upsert(chunks, collection_name, replace=replace)
+    return _embed_and_upsert(
+        chunks, collection_name, replace=replace, publication_guard=publication_guard
+    )
 
 
 def ingest_pages(
@@ -138,6 +145,7 @@ def ingest_pages(
     on_prepared: Callable[[dict], None] | None = None,
     expected_pages: int | None = None,
     rules_edition: SourceEdition = "unspecified",
+    publication_guard: Callable | None = None,
 ) -> int:
     """Chunk + embed + upsert already-extracted `(page, text)` pages (e.g. AI-generated text).
 
@@ -172,7 +180,9 @@ def ingest_pages(
         on_prepared,
         issues,
     )
-    return _embed_and_upsert(chunks, collection_name, replace=replace)
+    return _embed_and_upsert(
+        chunks, collection_name, replace=replace, publication_guard=publication_guard
+    )
 
 
 def _prepare_extraction(
@@ -202,13 +212,15 @@ def _prepare_extraction(
     except ValueError as exc:
         issues.append({"code": "stat_chunk_integrity", "message": str(exc)})
     report = prepare_report(extraction, source_kind=source_kind, chunks=chunks, extra_issues=issues)
+    if report["quality_passed"]:
+        stamp_chunks(chunks, report)
+        report["index_version"] = index_version([_chunk_payload(c) for c in chunks])
     if preview_dir is not None:
         out_path, report_path = save_extraction(extraction, preview_dir, readiness=report)
         logger.info("Saved extraction preview to {} and {}", out_path, report_path)
     if on_prepared is not None:
         on_prepared(report)
     require_ready(report)
-    stamp_chunks(chunks, report)
     return chunks
 
 
@@ -229,7 +241,7 @@ def _chunk_payload(c: dict) -> dict:
         "chapter",
         "heading_path",
         "stat_block",
-        "rules_edition",
+        "rule_policy",
         "manifest_sha256",
         "passage_id",
         "scene_id",
@@ -240,9 +252,11 @@ def _chunk_payload(c: dict) -> dict:
         "span_start",
         "span_end",
         "text_sha256",
+        "index_version",
     ):
         if c.get(key) is not None:
             payload[key] = c[key]
+    payload.update(creature_payload_fields(c))
     return payload
 
 
@@ -288,42 +302,126 @@ def _prune_stale(client, collection_name: str, source: str, keep_ids: set[int]) 
     return len(stale)
 
 
-def _embed_and_upsert(chunks: list[dict], collection_name: str, *, replace: bool = False) -> int:
-    """Embed chunks in batches and upsert into Qdrant; create the collection if missing.
+def _embed_and_upsert(
+    chunks: list[dict],
+    collection_name: str,
+    *,
+    replace: bool = False,
+    publication_guard: Callable | None = None,
+) -> int:
+    """Stage one immutable source version, validate its stored points, then activate it.
 
-    With `replace=True`, stale points of the same source(s) are pruned after a full success.
+    Replacement is always source-scoped; ``replace`` remains a compatibility/review flag.
+    Failed and interrupted stages never enter the active read route. An identical retry
+    reuses verified points, including batches accepted before an interrupted response.
     """
+    sources = {c["source"] for c in chunks}
+    if len(sources) != 1 or not chunks:
+        raise ValueError("An index attempt must contain exactly one nonempty source.")
+    source = next(iter(sources))
+    payloads = [_chunk_payload(c) for c in chunks]
+    version = index_version(payloads)
+    payloads = [{**p, "index_version": version} for p in payloads]
+    ids = [
+        int(hashlib.sha256(f"{version}:{i}".encode()).hexdigest()[:16], 16)
+        for i in range(len(chunks))
+    ]
     client = get_qdrant_client()
     _ensure_collection(client, collection_name)
-    written_ids: set[int] = set()
+    token = begin_index(client, collection_name, source, version, guard=publication_guard)
+
+    def usable(point, payload):
+        vector = point.vector
+        return (
+            point.payload == payload
+            and isinstance(vector, list)
+            and len(vector) == VECTOR_SIZE
+            and any(vector)
+            and all(math.isfinite(v) for v in vector)
+        )
+
+    def validate():
+        points = []
+        offset = None
+        while True:
+            batch, offset = client.scroll(
+                collection_name=collection_name,
+                scroll_filter=version_filter(source, version),
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+            points.extend(batch)
+            if offset is None:
+                break
+        expected = dict(zip(ids, payloads, strict=True))
+        if len(points) != len(ids) or any(
+            p.id not in expected or not usable(p, expected[p.id]) for p in points
+        ):
+            raise ValueError("Staged index does not match its complete source version.")
+
+    def cleanup():
+        try:
+            _prune_stale(client, collection_name, source, set(ids))
+        except Exception:
+            # The active route already excludes obsolete points. Cleanup can be retried by
+            # the next identical ingest; it must not report a successful promotion as failed.
+            logger.exception("Inactive source point cleanup failed for {}", source)
 
     total_ingested = 0
     for i in range(0, len(chunks), BATCH_SIZE):
         batch = chunks[i : i + BATCH_SIZE]
-        texts = [c["text"] for c in batch]
+        batch_ids = ids[i : i + BATCH_SIZE]
+        batch_payloads = payloads[i : i + BATCH_SIZE]
+        stored = {
+            p.id: p
+            for p in client.retrieve(
+                collection_name=collection_name, ids=batch_ids, with_payload=True, with_vectors=True
+            )
+        }
+        missing = [
+            (pid, payload)
+            for pid, payload in zip(batch_ids, batch_payloads, strict=True)
+            if pid not in stored or not usable(stored[pid], payload)
+        ]
+        texts = [p["text"] for _, p in missing]
 
         try:
-            embeddings = get_embeddings(texts)
+            embeddings = get_embeddings(texts) if texts else []
+            if len(embeddings) != len(texts) or any(
+                len(v) != VECTOR_SIZE or not all(math.isfinite(x) for x in v) or not any(v)
+                for v in embeddings
+            ):
+                raise ValueError(
+                    "Embedding response does not cover every chunk with a usable vector."
+                )
         except Exception as e:
             logger.error("Embedding failed for batch {}: {}", i, e)
             raise
 
         points = [
             PointStruct(
-                id=_stable_chunk_id(c["source"], c["page"], c["index"], c["text"]),
+                id=pid,
                 vector=embeddings[j],
-                payload=_chunk_payload(c),
+                payload=payload,
             )
-            for j, c in enumerate(batch)
+            for j, (pid, payload) in enumerate(missing)
         ]
 
         try:
-            client.upsert(collection_name=collection_name, points=points)
+            with index_lock(collection_name):
+                state = read_index_state(client, collection_name)
+                if (state["sources"][source].get("pending") or {}).get("token") != token:
+                    raise SupersededIngestion(
+                        "This source ingestion was superseded by a newer attempt."
+                    )
+                if points:
+                    client.upsert(collection_name=collection_name, points=points, wait=True)
         except Exception as e:
             logger.error("Upsert failed for batch {}: {}", i, e)
             raise
 
-        written_ids.update(p.id for p in points)
         total_ingested += len(batch)
         logger.info("Upserted batch {}-{} ({} chunks)", i, i + len(batch), total_ingested)
 
@@ -331,9 +429,21 @@ def _embed_and_upsert(chunks: list[dict], collection_name: str, *, replace: bool
         if i + BATCH_SIZE < len(chunks):
             time.sleep(BATCH_DELAY_SEC)
 
-    if replace:
-        for source in sorted({c["source"] for c in chunks}):
-            n = _prune_stale(client, collection_name, source, written_ids)
-            logger.info("Pruned {} stale points of source {} from {}", n, source, collection_name)
+    receipt = {
+        key: payloads[0].get(key)
+        for key in ("source_sha256", "extraction_sha256", "manifest_sha256", "rules_edition")
+    }
+    receipt["chunk_count"] = len(chunks)
+    promote_index(
+        client,
+        collection_name,
+        source,
+        version,
+        token,
+        receipt,
+        validate=validate,
+        guard=publication_guard,
+        cleanup=cleanup,
+    )
 
     return total_ingested

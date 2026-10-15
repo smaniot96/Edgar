@@ -12,6 +12,7 @@ from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchVa
 
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.retrieval import _chunk_from_payload, retrieve_active_scene
+from db.vector.versions import active_index_read
 from edgar_core.manifests import (
     AdventureManifest,
     ManifestError,
@@ -122,7 +123,15 @@ def approve(extraction, draft):
 
 @pytest.fixture
 def isolated_index(monkeypatch):
+    from apps.api.services import campaign_sources
+    from db.vector.versions import active_index_version
+
     with closing(QdrantClient(":memory:")) as client:
+        monkeypatch.setattr(
+            campaign_sources,
+            "active_index_version",
+            lambda slug: active_index_version(slug, client=client),
+        )
         monkeypatch.setattr(embed, "get_qdrant_client", lambda: client)
         monkeypatch.setattr(
             embed,
@@ -169,7 +178,10 @@ def test_long_pdf_compile_edit_publish_and_active_state_retrieval(source_bundle,
     manifest = load_published_manifest(metadata)
     assert {e.kind for e in manifest.entities} == {"actor", "clue", "hazard", "ending"}
     assert {e.entity_id for e in manifest.entities if e.kind == "ending"} == {"peace", "ruin"}
-    points, _ = isolated_index.scroll("branching", limit=500, with_payload=True)
+    with active_index_read(isolated_index, "branching") as active_filter:
+        points, _ = isolated_index.scroll(
+            "branching", limit=500, with_payload=True, scroll_filter=active_filter
+        )
     assert len(points) == len(manifest.passages)
     assert {p.payload["passage_id"] for p in points} == {p.passage_id for p in manifest.passages}
     assert any(p.payload.get("scene_id") == "broken_oath_ending" for p in points)
@@ -368,8 +380,76 @@ def test_failed_publication_retains_reviewable_draft_without_certifying_index(
             "branching", reviewed_digest=edited["reviewed_digest"], reviewer="Reader"
         )
     metadata = store.load_meta("branching")
-    assert metadata["status"] == "failed" and "manifest" not in metadata
+    assert metadata["status"] == "ready" and "manifest" not in metadata
+    assert metadata["last_attempt"]["status"] == "failed"
     assert metadata["manifest_draft"]["reviewed_sha256"] is None
+
+
+@pytest.mark.parametrize("previous_publication", [False, True])
+def test_publication_crash_after_activation_uses_the_accepted_manifest_and_extraction(
+    source_bundle, isolated_index, monkeypatch, previous_publication
+):
+    from apps.api.routers import adventures
+    from apps.api.services import (
+        adventure_manifests as service,
+        adventures_meta as store,
+        campaign_sources,
+    )
+    from db.vector.source_status import inspect_source
+
+    _, extraction, draft = source_bundle
+    monkeypatch.setattr(campaign_sources, "PDF_DIR", store.PDF_DIR)
+    monkeypatch.setattr(
+        campaign_sources,
+        "inspect_source",
+        lambda slug, **kwargs: inspect_source(slug, client=isolated_index, **kwargs),
+    )
+    monkeypatch.setattr(adventures, "_ADVENTURES_DIR", store.ADVENTURES_DIR)
+    monkeypatch.setattr(adventures, "_PDF_DIR", store.PDF_DIR)
+    edited = service.edit_draft("branching", edited_manifest(extraction, draft))
+    previous = None
+    if previous_publication:
+        previous = service.publish_manifest(
+            "branching", reviewed_digest=edited["reviewed_digest"], reviewer="Reader"
+        )
+        changed = AdventureManifest.model_validate(
+            service.inspect_manifest("branching")["manifest"]
+        )
+        changed.scenes[0].title = "The revised village square"
+        edited = service.edit_draft("branching", changed)
+    else:
+        metadata = store.load_meta("branching")
+        metadata["status"] = "failed"
+        store.save_meta("branching", metadata)
+    finish = store.finish_attempt
+
+    def crash(*args, **kwargs):
+        if kwargs.get("success"):
+            raise SystemExit("process exited after index activation")
+        return finish(*args, **kwargs)
+
+    monkeypatch.setattr(store, "finish_attempt", crash)
+    with pytest.raises(SystemExit):
+        service.publish_manifest(
+            "branching", reviewed_digest=edited["reviewed_digest"], reviewer="Reader"
+        )
+    assert store.load_meta("branching")["status"] == "processing"
+    accepted = service.campaign_manifests(["branching"])["branching"]
+    assert accepted["reviewed_sha256"] == edited["reviewed_digest"]
+    if previous is not None:
+        assert accepted["reviewed_sha256"] != previous["manifest_sha256"]
+    inspected = service.inspect_manifest("branching")
+    assert inspected["manifest"]["reviewed_sha256"] == accepted["reviewed_sha256"]
+    assert campaign_sources.source_read("branching").status == "ready"
+    assert adventures.get_extraction_preview("branching")["source_current"]
+    scene = retrieve_active_scene(
+        {"branching": accepted}, accepted["opening_scene_id"], client=isolated_index
+    )
+    assert scene["adventure_context"]
+    assert all(
+        c["manifest_sha256"] == accepted["reviewed_sha256"]
+        for c in scene["adventure_context"] + scene["planner_context"]
+    )
 
 
 def test_scene_and_discovery_effects_are_bound_to_reviewed_current_state(source_bundle):

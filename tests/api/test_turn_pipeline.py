@@ -295,6 +295,35 @@ async def test_combat_stream_parses_input_once(monkeypatch, fake_llm_turn, fake_
     assert calls.count(ParsedInput) == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_unknown_creature_returns_recovery_error_without_saving_turn(
+    fake_llm_turn, fake_retrieval, api_client, stream
+) -> None:
+    from agent.models.parsed_input import ParsedInput
+
+    _fake_chat()._parsed = ParsedInput(intent="combat", target="Captain Vellum")
+    sid = (await _seed(api_client))["session_id"]
+    hp_before = await _assignment_hp(sid)
+    suffix = "/stream" if stream else ""
+    response = await api_client.post(
+        f"/api/sessions/{sid}/turn{suffix}", json={"message": "I attack Captain Vellum"}
+    )
+    if stream:
+        assert response.status_code == 200
+        events = _sse_events(response.text)
+        assert events[-1][0] == "error"
+        error = events[-1][1]
+        assert "done" not in [event for event, _ in events]
+    else:
+        assert response.status_code == 409
+        error = response.json()
+    assert error["code"] == "creature_identity_unresolved"
+    assert "exact verified creature name" in error["message"]
+    assert await _count_events(sid, "narration") == 0
+    assert await _assignment_hp(sid) == hp_before
+
+
 # --- Memory summary ------------------------------------------------------------------------
 
 

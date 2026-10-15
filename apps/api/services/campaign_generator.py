@@ -191,23 +191,31 @@ async def generate_campaign(
     return outline.title, outline.premise, pages
 
 
-async def build_generated_campaign(slug: str, title_hint: str, theme: str, size: str) -> None:
+async def build_generated_campaign(
+    slug: str, title_hint: str, theme: str, size: str, *, attempt_id: str | None = None
+) -> None:
     """Background worker: generate the campaign, embed it, flip metadata to ready/failed."""
+    from db.vector.versions import SupersededIngestion
     from ingestion.embed import ingest_pages
     from ingestion.readiness import IngestionRejected, report_summary
 
-    from .adventures_meta import ADVENTURES_DIR, load_meta, save_meta
+    from . import adventures_meta as store
+    from .adventures_meta import load_meta
 
-    def prepared(report: dict) -> None:
-        meta = load_meta(slug)
-        meta.update({"ingestion": report_summary(report), "failure_code": None})
-        save_meta(slug, meta)
+    token = attempt_id or store.begin_attempt(slug)
+    report = {}
+    receipt_updates = {}
+
+    def prepared(value: dict) -> None:
+        report.update(value)
+        store.prepare_attempt(slug, token, value, receipt_updates)
 
     structlog.contextvars.bind_contextvars(adventure_slug=slug)
     try:
         title, description, pages = await generate_campaign(
             title_hint, theme, size, load_meta(slug).get("rules_edition", "2014")
         )
+        receipt_updates.update(title=title, description=description)
         n = await asyncio.to_thread(
             ingest_pages,
             pages,
@@ -215,17 +223,23 @@ async def build_generated_campaign(slug: str, title_hint: str, theme: str, size:
             slug,
             expected_pages=SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"]),
             rules_edition=load_meta(slug).get("rules_edition", "unspecified"),
-            preview_dir=ADVENTURES_DIR / slug,
+            preview_dir=store.attempt_dir(slug, token),
             on_prepared=prepared,
             replace=True,
+            publication_guard=lambda: store.attempt_guard(slug, token),
         )
         meta = load_meta(slug)
         from .campaign_sources import inspect_ingestion_source
 
-        report = meta.get("ingestion") or {}
-        coverage = await asyncio.to_thread(inspect_ingestion_source, slug, {**meta, "chunks": n})
+        coverage = await asyncio.to_thread(
+            inspect_ingestion_source,
+            slug,
+            {**meta, "chunks": n, "ingestion": report_summary(report)},
+        )
         ready = n > 0 and report.get("quality_passed") and coverage["status"] == "ready"
-        meta.update(
+        store.finish_attempt(
+            slug,
+            token,
             {
                 "title": title or meta.get("title"),
                 "description": description,
@@ -235,46 +249,48 @@ async def build_generated_campaign(slug: str, title_hint: str, theme: str, size:
                 "error": None
                 if ready
                 else "The generated index does not match its validated text. Inspect the preview and retry generation.",
-            }
+            },
+            success=bool(ready),
         )
-        save_meta(slug, meta)
         log.info("campaign_generated", slug=slug, chunks=n, size=size)
+    except SupersededIngestion:
+        log.info("campaign_generation_superseded", slug=slug)
     except IngestionRejected as exc:
-        meta = load_meta(slug)
-        meta.update(
+        store.finish_attempt(
+            slug,
+            token,
             {
                 "status": "failed",
                 "chunks": 0,
                 "failure_code": exc.code,
                 "error": str(exc),
                 "ingestion": report_summary(exc.report),
-            }
+            },
         )
-        save_meta(slug, meta)
         log.warning("campaign_quality_rejected", slug=slug, code=exc.code)
     except IncompleteGeneration as exc:
-        meta = load_meta(slug)
-        meta.update(
+        store.finish_attempt(
+            slug,
+            token,
             {
                 "status": "failed",
                 "chunks": 0,
                 "failure_code": "generation_incomplete",
                 "error": str(exc),
-            }
+            },
         )
-        save_meta(slug, meta)
         log.warning("campaign_generation_incomplete", slug=slug)
     except Exception as exc:
         log.exception("campaign_generation_failed", slug=slug)
-        meta = load_meta(slug)
         # Raw exception text can carry provider internals; the full trace is in the logs.
-        meta.update(
+        store.finish_attempt(
+            slug,
+            token,
             {
                 "status": "failed",
                 "failure_code": "generation_error",
                 "error": f"Generation failed ({type(exc).__name__}); retry generation or see server logs.",
-            }
+            },
         )
-        save_meta(slug, meta)
     finally:
         structlog.contextvars.unbind_contextvars("adventure_slug")

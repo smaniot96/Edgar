@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
+from db.vector.retrieval import rule_policy
 from edgar_core.sources import cited_excerpt, eligible_context
 
 _NARRATOR_TEMPERATURE = 0.7
@@ -48,7 +49,9 @@ def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
         adventure_context = [c for c in merged if c.get("kind") == "adventure"]
 
     edition = state.get("rules_edition", "2014")
-    rules_context = eligible_context(rules_context, edition)
+    rules_context = eligible_context(
+        [c for c in rules_context if rule_policy(c) == "core"], edition
+    )
     adventure_context = eligible_context(adventure_context, edition)
     if state.get("manifest_status") == "reviewed":
         adventure_context = [c for c in adventure_context if c.get("audience") == "player"]

@@ -8,15 +8,18 @@ from edgar_core.manifests import (
 )
 
 from . import adventures_meta as store
-from .campaign_sources import validate_binding
+from .campaign_sources import active_metadata, validate_binding
 
 
 def _bundle(slug: str):
     from ingestion.extract import load_reviewed_extraction
 
     validate_binding(slug)
-    meta = store.load_meta(slug)
-    if meta.get("status") == "processing":
+    raw_meta = store.load_meta(slug)
+    meta = active_metadata(slug, raw_meta)
+    if raw_meta.get("status") == "processing" and meta.get("artifact_attempt") != (
+        raw_meta.get("attempt") or {}
+    ).get("id"):
         raise ManifestError(
             "Adventure processing is in progress; wait before reviewing its manifest."
         )
@@ -26,7 +29,7 @@ def _bundle(slug: str):
         raise ManifestError("Source kind is unverified. Recover its canonical extraction first.")
     extraction = load_reviewed_extraction(
         store.PDF_DIR / f"{slug}.pdf" if kind == "pdf" else None,
-        store.ADVENTURES_DIR / slug / f"{slug}.extraction.json",
+        _active_extraction_path(slug, meta),
     )
     if (
         ingestion.get("source_sha256") != extraction.source_sha256
@@ -38,9 +41,19 @@ def _bundle(slug: str):
     return meta, extraction
 
 
+def _active_extraction_path(slug: str, meta: dict):
+    token = meta.get("artifact_attempt")
+    staged = store.attempt_dir(slug, token) / f"{slug}.extraction.json" if token else None
+    return (
+        staged
+        if staged is not None and staged.is_file()
+        else store.ADVENTURES_DIR / slug / f"{slug}.extraction.json"
+    )
+
+
 def campaign_manifests(slugs: list[str]) -> dict[str, dict]:
     """Caller already enforces live bound-source guards; load source-pinned review receipts."""
-    return {slug: load_published_manifest(store.load_meta(slug)).model_dump() for slug in slugs}
+    return {slug: load_published_manifest(active_metadata(slug)).model_dump() for slug in slugs}
 
 
 def inspect_manifest(slug: str) -> dict:
@@ -107,11 +120,11 @@ def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
     )
     if manifest.rules_edition != meta.get("rules_edition", "unspecified"):
         raise ManifestError("The source edition changed. Inspect and review the current draft.")
-    meta.update(status="processing", error=None)
-    store.save_meta(slug, meta)
+    token = store.begin_attempt(slug)
 
     def prepared(report):
         meta["ingestion"] = report_summary(report)
+        store.prepare_attempt(slug, token, report, {"manifest": manifest.model_dump()})
 
     try:
         if meta["ingestion"]["source_kind"] == "pdf":
@@ -119,12 +132,13 @@ def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
                 store.PDF_DIR / f"{slug}.pdf",
                 slug,
                 replace=True,
-                reviewed_extraction=store.ADVENTURES_DIR / slug / f"{slug}.extraction.json",
+                reviewed_extraction=_active_extraction_path(slug, meta),
                 reviewed_identity=(manifest.source_sha256, manifest.extraction_sha256),
                 reviewed_manifest=manifest.model_dump(),
                 rules_edition=manifest.rules_edition,
                 save_markdown=False,
                 on_prepared=prepared,
+                publication_guard=lambda: store.attempt_guard(slug, token),
             )
         else:
             extraction.rules_edition = manifest.rules_edition
@@ -137,18 +151,33 @@ def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
                 prepared,
                 prepared_chunks=manifest_chunks(extraction, manifest),
             )
-            chunks = _embed_and_upsert(payloads, slug, replace=True)
+            chunks = _embed_and_upsert(
+                payloads,
+                slug,
+                replace=True,
+                publication_guard=lambda: store.attempt_guard(slug, token),
+            )
     except Exception:
-        meta.update(
-            status="failed",
-            failure_code="manifest_index_failed",
-            error="Reviewed manifest indexing failed. Inspect the draft and retry publication.",
+        store.finish_attempt(
+            slug,
+            token,
+            {
+                "status": "failed",
+                "failure_code": "manifest_index_failed",
+                "error": "Reviewed manifest indexing failed. Inspect the draft and retry publication.",
+            },
         )
-        store.save_meta(slug, meta)
         raise
-    meta.update(
-        status="ready", chunks=chunks, manifest=manifest.model_dump(), error=None, failure_code=None
+    store.finish_attempt(
+        slug,
+        token,
+        {
+            "status": "ready",
+            "chunks": chunks,
+            "manifest": manifest.model_dump(),
+            "error": None,
+            "failure_code": None,
+        },
+        success=True,
     )
-    meta.pop("manifest_draft", None)
-    store.save_meta(slug, meta)
     return {"status": "ready", "manifest_sha256": manifest.reviewed_sha256, "chunks": chunks}

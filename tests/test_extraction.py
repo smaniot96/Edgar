@@ -291,7 +291,7 @@ def test_reviewed_pipeline_indexes_the_exact_preview_once(native_pdf, tmp_path, 
         save_markdown=False,
     )
     assert count == len(calls[0][0])
-    assert calls[0][2] == {"replace": True}
+    assert calls[0][2] == {"replace": True, "publication_guard": None}
     expected = chunk_pages(result.text_pages(), "prepared")
     for chunk in expected:
         chunk["source_sha256"] = result.source_sha256

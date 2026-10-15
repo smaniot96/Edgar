@@ -24,10 +24,10 @@ Return:
 - check: the single ability/skill the attempted action tests, or null if the action is trivial or certain (walking, talking casually, looking at something in plain sight). Use: an ability (str, dex, con, int, wis, cha); a skill (athletics, acrobatics, stealth, sleight_of_hand, perception, investigation, insight, survival, medicine, arcana, history, nature, religion, animal_handling, persuasion, deception, intimidation, performance); a saving throw like "dex_save"; "thieves_tools" for locks/traps; "attack" for a weapon attack; "spell_attack" for an attack spell.
 - difficulty: easy | medium | hard | very_hard for the task (ignored for attacks). Use medium when unsure.
 - target: the creature/object acted on, if any (e.g. "goblin"), else null.
-- retrieval_query: a short search query (<= 15 words) to look up the relevant rules and adventure text — combine the action, the target, the current scene and the rule involved (e.g. "grapple goblin forest trail ambush athletics contest rules").
+- retrieval_query: a short mechanics query (<= 15 words) naming the relevant rule, skill, spell or feature. Keep NPC names, rooms and story clues out of this rules query; reviewed scene state supplies adventure context.
 - uses_item: the inventory item the player consumes/uses this turn (e.g. "potion of healing"), else null.
 - confirms_ending: true ONLY if the player explicitly agrees to end the adventure/campaign now (typically answering a question about concluding the story). Otherwise false.
-- entities: optional extra details (e.g. {{"weapon": "longsword"}}).
+- entities: optional extra details (e.g. {{"weapon": "longsword"}}). When the player explicitly names a spell or class feature, include "spell" or "feature" with its canonical English rulebook name; preserve qualifiers and do not infer an unmentioned spell or feature.
 
 Do NOT invent dice expressions, modifiers or DCs; the engine computes them from the character sheet."""
 
@@ -38,7 +38,9 @@ RULES_ADJUDICATOR = f"""You are a D&D 5e rules referee working alongside a deter
 The engine has ALREADY rolled any check and decided success or failure (shown as "Engine
 outcome"). You must not change it: describe the consequences of that known outcome. Use only
 the provided **official rules excerpts** (core D&D books) for mechanics; do not use adventure
-story text for rulings.
+story text for rulings. Optional and variant material is not enabled by default; never
+promote a sidebar or a legacy unverified edition to an authoritative core ruling. If the
+provided evidence does not establish a rule, state that limitation instead of inventing it.
 
 Fill out:
 - mechanical_summary: one or two sentences stating what mechanically happens given the outcome.

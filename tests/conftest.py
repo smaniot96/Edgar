@@ -226,6 +226,23 @@ def fake_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         q.upsert(
             slug, [PointStruct(id=1, vector=[1.0] + [0.0] * (VECTOR_SIZE - 1), payload=payload)]
         )
+    # Combat integration must resolve a real exact record in the disposable corpus.
+    # Synthetic values only; this fixture never consults the installed rulebooks.
+    q.create_collection(
+        "rules_monster_manual", vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
+    )
+    q.upsert(
+        "rules_monster_manual",
+        [PointStruct(
+            id=1, vector=[1.0] + [0.0] * (VECTOR_SIZE - 1),
+            payload={
+                "text": "Goblin\nSmall synthetic creature\nArmor Class 12\nHit Points 9\nActions\nSynthetic strike.",
+                "section": "Goblin", "creature_name": "Goblin", "creature_key": "goblin",
+                "stat_block": True, "rules_edition": "2014", "source": "synthetic_fixture",
+                "source_sha256": "b" * 64, "extraction_sha256": "c" * 64, "page": 1,
+            },
+        )],
+    )
     monkeypatch.setattr(
         "apps.api.services.adventure_manifests.campaign_manifests",
         lambda slugs: {slug: manifests[slug] for slug in slugs},
@@ -369,6 +386,12 @@ def fake_llm_schema(monkeypatch: pytest.MonkeyPatch) -> SchemaKeyedFakeLLM:
         "agent.graph_combat",
     ):
         monkeypatch.setattr(f"{mod}.make_chat_model", _factory, raising=False)
-    # Monster Manual lookups would hit Qdrant/OpenAI; default to "no stat block found".
-    monkeypatch.setattr("agent.graph_combat.retrieve_monster", lambda *_a, **_kw: [], raising=False)
+
+    # Exact creature resolution must never hit a live source in fake-provider tests.
+    def unresolved(*_a, **_kw):
+        from db.vector.creatures import CreatureResolutionError
+
+        raise CreatureResolutionError("No fake exact creature record was installed.")
+
+    monkeypatch.setattr("agent.graph_combat.resolve_creature", unresolved)
     return fake

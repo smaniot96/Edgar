@@ -18,8 +18,8 @@ Strategy:
   5. Sections may span pages: `page` is the page the chunk starts on, `page_end` where it ends.
 
 Each chunk dict carries `{"text", "page", "page_end", "index", "source", "section", "chapter",
-"heading_path", "stat_block"}`. `index` is a global counter so `embed._stable_chunk_id` can hash
-it into an idempotent Qdrant point id. `section`/`chapter`/`heading_path` are None for text
+"heading_path", "stat_block"}`. `index` is a global counter included in the immutable index
+identity and idempotent Qdrant point ids. `section`/`chapter`/`heading_path` are None for text
 before the first heading.
 """
 
