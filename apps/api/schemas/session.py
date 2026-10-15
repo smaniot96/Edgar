@@ -33,6 +33,8 @@ class ChatMessageRead(BaseModel):
 
     role: Literal["user", "dm"]
     content: str
+    # Accessible narration origin within this session, without canonical source identifiers.
+    event_id: int | None = None
     citations: list[dict] = Field(default_factory=list)
     rules_edition: str | None = None
     ruling_citation_ids: list[str] = Field(default_factory=list)

@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -41,6 +41,7 @@ from ..services.session_messages import (
     maybe_update_memory_summary,
 )
 from ..services.story_state import load_story_state, session_story_flags
+from ..services.turn_receipts import load_turn_receipt
 from ..services.turn_runner import (
     TurnError,
     combat_round_from_events,
@@ -49,6 +50,7 @@ from ..services.turn_runner import (
     persist_turn,
     public_adjudication,
     run_turn,
+    sse_event,
     stream_session_turn,
 )
 from ..services.world_flags import load_world_flags
@@ -198,6 +200,7 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
                 ChatMessageRead(
                     role="user",
                     content=str(p["player_input"]),
+                    event_id=e.id,
                     created_at=e.created_at,
                 )
             )
@@ -208,6 +211,7 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
                 ChatMessageRead(
                     role="dm",
                     content=str(p["narration"]),
+                    event_id=e.id,
                     citations=public_citations(p.get("citations", [])),
                     rules_edition=p.get("rules_edition"),
                     ruling_citation_ids=[
@@ -348,6 +352,51 @@ def _turn_error_response(err: TurnError) -> JSONResponse:
     return JSONResponse(status_code=err.status_code, content=error_body(err.code))
 
 
+async def _replayed_turn(
+    db: AsyncSession, session_id: int, body: TurnRequest
+) -> TurnResponse | None:
+    if body.request_id is None:
+        return None
+    await get_or_404(db, SessionModel, session_id, "Session")
+    receipt = await load_turn_receipt(db, session_id, body.request_id)
+    if receipt is None:
+        return None
+    original_input, result = receipt
+    if original_input != body.message:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "turn_identity_conflict", "message": "This action identity was already used."},
+        )
+    return result
+
+
+@router.get("/sessions/{session_id}/turns/{request_id}")
+async def get_turn_receipt(
+    session_id: int,
+    response: Response,
+    request_id: str = Path(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
+    db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
+):
+    """Resolve a lost acknowledgment without generating or applying an action.
+
+    Lock contention means the original turn may still commit: absence must never be
+    reported as final while that writer is active. Clients retry only by explicit action.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    lock = await acquire_turn_lock(session_id, redis)
+    if lock is None:
+        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+    try:
+        await get_or_404(db, SessionModel, session_id, "Session")
+        receipt = await load_turn_receipt(db, session_id, request_id)
+        if receipt is None:
+            raise HTTPException(status_code=404, detail="No committed turn with this identity.")
+        return {"status": "committed", "result": receipt[1]}
+    finally:
+        await lock.release()
+
+
 @router.post("/sessions/{session_id}/turn", response_model=TurnResponse)
 async def session_turn(
     session_id: int,
@@ -369,7 +418,12 @@ async def session_turn(
 
     structlog.contextvars.bind_contextvars(session_id=session_id)
     try:
+        replay = await _replayed_turn(db, session_id, body)
+        if replay is not None:
+            return replay
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
+        if body.request_id is not None:
+            initial_state["turn_id"] = body.request_id
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
 
         result = {**initial_state, **await run_turn(initial_state)}
@@ -378,6 +432,7 @@ async def session_turn(
 
         adjudication = result.get("adjudication_result")
         return TurnResponse(
+            event_id=done.get("event_id"),
             narration=done["narration"],
             retrieval_degraded=done["retrieval_degraded"],
             source_status=done["source_status"],
@@ -426,7 +481,18 @@ async def session_turn_stream(
     if lock is None:
         raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
     try:
+        replay = await _replayed_turn(db, session_id, body)
+        if replay is not None:
+            await db.commit()
+            await lock.release()
+            return StreamingResponse(
+                iter([sse_event("done", replay.model_dump())]),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
+        if body.request_id is not None:
+            initial_state["turn_id"] = body.request_id
     except BaseException:
         await lock.release()
         raise

@@ -372,6 +372,7 @@ async def persist_turn(
             )
             current_scene_id = game_session.current_scene_id
             done = {
+                "event_id": narration_event.id,
                 "narration": narration,
                 "citations": citations,
                 "ruling_citation_ids": ruling_citation_ids,

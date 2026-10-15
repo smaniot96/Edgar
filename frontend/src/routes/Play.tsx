@@ -9,26 +9,27 @@ import { CampaignEndPanel } from "../components/play/CampaignEndPanel";
 import { CharacterSheet } from "../components/play/CharacterSheet";
 import { CombatHud } from "../components/play/CombatHud";
 import { DevPipeline } from "../components/play/DevPipeline";
+import { PlayRecap } from "../components/play/PlayRecap";
+import { PlayIdeas } from "../components/play/PlayIdeas";
 import { PlayHeader } from "../components/play/PlayHeader";
+import { PlayToolBar, PlayToolPanel } from "../components/play/PlayTools";
 import { linesFromHistory } from "../components/play/turnState";
+import { useJournal } from "../components/journal/api";
 import { usePlaySession } from "../components/play/usePlaySession";
+import { useSessionDraft } from "../components/play/useSessionDraft";
 import { useTurn } from "../components/play/useTurn";
+import { useNarrowViewport } from "../components/play/useNarrowViewport";
+import { usePlayWorkspaceState, type PlayTool } from "../components/play/usePlayWorkspaceState";
 import { ButtonLink } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
 import { OfflineState } from "../components/ui/ErrorNotice";
 import { useMode } from "../dev/ModeContext";
 
-const SHEET_PREF_KEY = "edgar_sheet_open";
-
-function initialSheetOpen(): boolean {
-  try {
-    const v = localStorage.getItem(SHEET_PREF_KEY);
-    if (v === "1") return true;
-    if (v === "0") return false;
-  } catch {
-    /* storage unavailable */
-  }
-  return typeof window !== "undefined" && window.matchMedia?.("(min-width: 1024px)").matches === true;
+function journalSnapshot(data: import("../components/journal/types").JournalRead) {
+  return new Map(data.entries.map((entry) => [
+    entry.id,
+    JSON.stringify([entry.status, entry.history.map((change) => [change.status, change.turn_number])]),
+  ]));
 }
 
 /**
@@ -65,11 +66,23 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const game = usePlaySession(sessionId);
   const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign } = game;
 
-  const [draft, setDraft] = useState("");
-  const [sheetOpen, setSheetOpen] = useState(initialSheetOpen);
+  const sessionDraft = useSessionDraft(sessionId);
+  const draft = sessionDraft.draft;
+  const [workspace, setWorkspace] = usePlayWorkspaceState(sessionId, null);
+  const activeTool = workspace.activeTool;
+  const narrow = useNarrowViewport();
+  const journal = useJournal(sessionId);
+  const { data: journalData, refresh: refreshJournal, settledRevision: journalSettledRevision } = journal;
   const [introPending, setIntroPending] = useState(false);
+  const [openEventId, setOpenEventId] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
+  const historyOverlayRef = useRef(typeof window !== "undefined" && window.history.state?.__edgarPlayTool === true);
+  const knownRequestRef = useRef<string | null>(null);
+  const recoveredRequestRef = useRef<string | null>(null);
+  const pendingJournalFeedbackRef = useRef<{ before: Map<string, string>; afterRevision: number } | null>(null);
+  const [journalFeedback, setJournalFeedback] = useState("");
+  const [journalFeedbackEntryId, setJournalFeedbackEntryId] = useState<string | null>(null);
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() => {
@@ -79,23 +92,109 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     });
   }, []);
 
+  const setActiveTool = useCallback((tool: PlayTool) => {
+    if (workspace.activeTool !== null && tool === null && historyOverlayRef.current) {
+      historyOverlayRef.current = false;
+      window.history.back();
+    }
+    setWorkspace((current) => ({ ...current, activeTool: tool }));
+  }, [setWorkspace, workspace.activeTool]);
+  const toggleTool = useCallback((tool: Exclude<PlayTool, null>) => {
+    const next = activeTool === tool ? null : tool;
+    setActiveTool(next);
+  }, [activeTool, setActiveTool]);
+  const closeTool = useCallback(() => setActiveTool(null), [setActiveTool]);
+  const openJournalEntry = useCallback((entryId: string) => {
+    setActiveTool("journal");
+    setWorkspace((current) => ({ ...current, activeTool: "journal", query: "", category: "all", selectedEntryId: entryId }));
+  }, [setActiveTool, setWorkspace]);
+  const resumeAdventure = useCallback(() => {
+    closeTool();
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [closeTool]);
+  const openJournalHistory = useCallback((eventId: number) => {
+    setOpenEventId(eventId);
+    closeTool();
+  }, [closeTool]);
+  const clearOpenedHistory = useCallback((eventId: number) => {
+    setOpenEventId((current) => current === eventId ? null : current);
+  }, []);
+
+  useEffect(() => {
+    const onPopState = (event: PopStateEvent) => {
+      if (!historyOverlayRef.current || event.state?.__edgarPlayTool === true) return;
+      historyOverlayRef.current = false;
+      setWorkspace((current) => ({ ...current, activeTool: null }));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [setWorkspace]);
+
+  useEffect(() => {
+    if (!activeTool || historyOverlayRef.current) return;
+    window.history.pushState({ ...(window.history.state ?? {}), __edgarPlayTool: true }, "", window.location.href);
+    historyOverlayRef.current = true;
+  }, [activeTool]);
+  const handleCommittedResult = useCallback((result: import("../api/types").TurnResult) => {
+    applyTurnResult(result);
+    pendingJournalFeedbackRef.current = journalData
+      ? { before: journalSnapshot(journalData), afterRevision: journalSettledRevision + 1 }
+      : null;
+    setJournalFeedback("");
+    setJournalFeedbackEntryId(null);
+    refreshJournal();
+  }, [applyTurnResult, journalData, refreshJournal, journalSettledRevision]);
   const turn = useTurn(sessionId, {
     debug: isDev,
-    onResult: applyTurnResult,
+    onResult: handleCommittedResult,
+    onRequestStarted: (request) => {
+      knownRequestRef.current = request.requestId;
+      sessionDraft.beginRequest(request);
+    },
+    onAcknowledged: (revision, requestId) => {
+      sessionDraft.clearIfRevision(revision);
+      sessionDraft.clearRequest(requestId);
+    },
     onCampaignEnded: () => setCampaignComplete(true),
     onSourcesUnavailable: () => {
       if (game.campaignId) void getCampaign(game.campaignId).then(updateCampaign).catch(() => {});
     },
-    onFailed: (input) => setDraft((d) => (d.trim() ? d : input)),
     onSettled: focusInput,
   });
-  const { dispatch, send, stop, retry, busy } = turn;
+  const { dispatch, send, stop, retry, recover: recoverTurn, busy } = turn;
   const { lines, pending, announcement } = turn.state;
+  const hasUncertainAction = lines.some((line) => line.role === "error" && line.uncertain);
+
+  useEffect(() => {
+    const pendingFeedback = pendingJournalFeedbackRef.current;
+    if (!pendingFeedback || journal.loading || journal.settledRevision < pendingFeedback.afterRevision) return;
+    pendingJournalFeedbackRef.current = null;
+    if (journal.error || !journal.data) return;
+    const changed = journal.data.entries.filter((entry) => {
+      const after = JSON.stringify([entry.status, entry.history.map((change) => [change.status, change.turn_number])]);
+      return pendingFeedback.before.get(entry.id) !== after;
+    });
+    const removed = [...pendingFeedback.before.keys()].filter((id) => !journal.data!.entries.some((entry) => entry.id === id));
+    if (!changed.length && !removed.length) return;
+    const titles = [...changed.map((entry) => entry.title), ...removed.map(() => "an entry")].slice(0, 2);
+    const suffix = changed.length + removed.length > titles.length ? ` and ${changed.length + removed.length - titles.length} more` : "";
+    setJournalFeedbackEntryId(changed[0]?.id ?? null);
+    setJournalFeedback(`Journal updated: ${titles.join(", ")}${suffix}.`);
+  }, [journal.data, journal.error, journal.loading, journal.settledRevision]);
 
   // History seeding depends only on boot, so changing source readiness preserves live chat.
   useEffect(() => {
     if (boot) dispatch({ type: "reset", lines: linesFromHistory(boot.history) });
   }, [boot, dispatch]);
+
+  // A browser can close after the server commits but before the stream acknowledges it.
+  // Resume by checking the durable receipt before offering a retry or another action.
+  useEffect(() => {
+    const request = sessionDraft.pendingRequest;
+    if (!boot || !turn.state.historyReady || !request || busy || knownRequestRef.current === request.requestId || recoveredRequestRef.current === request.requestId) return;
+    recoveredRequestRef.current = request.requestId;
+    void recoverTurn(request);
+  }, [boot, busy, sessionDraft.pendingRequest, recoverTurn, turn.state.historyReady]);
 
   const introRequested = useRef(false);
   useEffect(() => {
@@ -125,45 +224,23 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     })();
   }, [boot, sessionId, dispatch, setSceneId, campaign, updateCampaign]);
 
-  const toggleSheet = useCallback(() => {
-    setSheetOpen((o) => {
-      try {
-        localStorage.setItem(SHEET_PREF_KEY, o ? "0" : "1");
-      } catch {
-        /* best-effort */
-      }
-      return !o;
-    });
-  }, []);
-  const closeSheet = useCallback(() => {
-    setSheetOpen(false);
-    try {
-      localStorage.setItem(SHEET_PREF_KEY, "0");
-    } catch {
-      /* best-effort */
-    }
-  }, []);
-
   const handleSend = useCallback(() => {
     const msg = draft.trim();
-    if (!msg || busy || campaignComplete || game.campaign?.play_allowed === false) return;
-    setDraft("");
-    void send(msg);
-  }, [draft, busy, campaignComplete, send, game.campaign?.play_allowed]);
+    if (!msg || busy || hasUncertainAction || campaignComplete || game.campaign?.play_allowed === false) return;
+    void send(msg, sessionDraft.revision);
+  }, [draft, busy, hasUncertainAction, campaignComplete, send, game.campaign?.play_allowed, sessionDraft.revision]);
 
   const handleQuickReply = useCallback(
     (text: string) => {
-      if (busy || campaignComplete || game.campaign?.play_allowed === false) return;
+      if (busy || hasUncertainAction || campaignComplete || game.campaign?.play_allowed === false) return;
       void send(text);
     },
-    [busy, campaignComplete, send, game.campaign?.play_allowed],
+    [busy, hasUncertainAction, campaignComplete, send, game.campaign?.play_allowed],
   );
 
   const handleRetry = useCallback(
-    (turnId: string, input: string) => {
-      // The failed input was restored to the composer; don't leave a duplicate there.
-      setDraft((d) => (d.trim() === input ? "" : d));
-      retry(turnId, input);
+    (turnId: string, input: string, requestId?: string, draftRevision?: number) => {
+      retry(turnId, input, requestId, draftRevision);
     },
     [retry],
   );
@@ -192,67 +269,132 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     game.character && game.character.ac == null && typeof playerAc === "number"
       ? { ...game.character, ac: playerAc }
       : game.character;
+  const clueEntriesByTitle = new Map<string, string[]>();
+  for (const entry of journal.data?.entries ?? []) {
+    if (entry.category !== "clue" || !entry.text?.trim()) continue;
+    const key = entry.title;
+    clueEntriesByTitle.set(key, [...(clueEntriesByTitle.get(key) ?? []), entry.id]);
+  }
+  const readableItems = new Map([...clueEntriesByTitle.entries()]
+    .filter(([, ids]) => ids.length === 1)
+    .map(([title, ids]) => [title, ids[0]]));
 
   return (
     <div className={SCREEN}>
-      <PlayHeader
-        title={game.title}
-        campaignId={game.campaignId}
-        character={character}
-        sheetOpen={sheetOpen}
-        onToggleSheet={toggleSheet}
-        isDev={isDev}
-        sessionId={sessionId}
-        sceneId={game.sceneId}
-      />
-      {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={game.updateCampaign} /> : null}
-      {isDev ? <DevPipeline stage={pending?.stage ?? null} /> : null}
-
       <div className="flex min-h-0 flex-1">
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {game.combat ? <CombatHud combat={game.combat} /> : null}
-
-          {game.loading ? (
-            <div className="flex flex-1 items-center justify-center">
-              <p className="animate-pulse font-serif italic text-ink-muted motion-reduce:animate-none">
-                Unrolling the map…
-              </p>
-            </div>
-          ) : (
-            <MessageList
-              messages={lines}
-              pending={
-                pending ??
-                (introPending
-                  ? { turnId: "intro", input: "", stage: null, text: "", adjudication: null, debug: null }
-                  : null)
-              }
-              onRetry={handleRetry}
-              canRetry={!busy && !campaignComplete && game.campaign?.play_allowed !== false}
-              forceScrollKey={pending?.turnId ?? null}
-              onQuickReply={campaignComplete || game.campaign?.play_allowed === false ? undefined : handleQuickReply}
-            />
-          )}
-
-          <div ref={composerRef} className="shrink-0">
-            {campaignComplete ? (
-              <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
-            ) : (
-              <ComposerBar
-                inputRef={inputRef}
-                value={draft}
-                onChange={setDraft}
-                onSend={handleSend}
-                onStop={stop}
-                busy={busy}
-                canStop={pending?.stage !== "saving"}
-                disabled={game.loading || introPending || game.campaign?.play_allowed === false}
-              />
-            )}
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          inert={narrow && activeTool !== null}
+          aria-hidden={narrow && activeTool !== null ? true : undefined}
+        >
+          <PlayHeader
+            title={game.title}
+            campaignId={game.campaignId}
+            character={character}
+            sheetOpen={activeTool === "character"}
+            onToggleSheet={() => toggleTool("character")}
+            isDev={isDev}
+            sessionId={sessionId}
+            sceneId={game.sceneId}
+          />
+          {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={game.updateCampaign} /> : null}
+          {isDev ? <DevPipeline stage={pending?.stage ?? null} /> : null}
+          <PlayRecap
+            data={journal.data}
+            loading={journal.loading}
+            error={journal.error}
+            onOpenEntry={openJournalEntry}
+            onResume={resumeAdventure}
+          />
+          <div aria-label="Current adventure context" className="mx-3 mb-2 flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-control bg-surface/60 px-3 py-2 text-xs sm:mx-4">
+            <p><span className="font-semibold text-ink-subtle">Place: </span>{journal.data?.current_place ? <button type="button" className="text-left text-ember-700 underline decoration-ember-400 underline-offset-2" onClick={() => openJournalEntry(journal.data!.current_place!.id)}>{journal.data.current_place.title}</button> : <span className="text-ink-muted">Unknown</span>}</p>
+            <p><span className="font-semibold text-ink-subtle">Goal: </span>{journal.data?.active_goal ? <button type="button" className="text-left text-ember-700 underline decoration-ember-400 underline-offset-2" onClick={() => openJournalEntry(journal.data!.active_goal!.id)}>{journal.data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}</p>
           </div>
-        </main>
+          <PlayIdeas
+            data={journal.data}
+            hasDraft={draft.trim().length > 0}
+            onAppend={(idea) => sessionDraft.edit(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${idea}`)}
+          />
+          <PlayToolBar activeTool={activeTool} onToggle={toggleTool} />
+          {journalFeedback ? (
+            <p role="status" className="mx-3 my-2 flex shrink-0 items-center justify-between gap-3 rounded-control bg-success-soft px-3 py-2 text-sm text-success sm:mx-4">
+              <span>{journalFeedback}</span>
+              <button type="button" className="shrink-0 font-medium underline underline-offset-2" onClick={() => { if (journalFeedbackEntryId) openJournalEntry(journalFeedbackEntryId); else setActiveTool("journal"); setJournalFeedback(""); }}>Open Journal</button>
+            </p>
+          ) : null}
 
-        <CharacterSheet character={character} open={sheetOpen} onClose={closeSheet} />
+          <div className="flex min-h-0 flex-1">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {game.combat ? <CombatHud combat={game.combat} /> : null}
+
+              {game.loading ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <p className="animate-pulse font-serif italic text-ink-muted motion-reduce:animate-none">
+                    Unrolling the map…
+                  </p>
+                </div>
+              ) : (
+                <MessageList
+                  messages={lines}
+                  pending={
+                    pending ??
+                    (introPending
+                      ? { turnId: "intro", requestId: "intro", input: "", stage: null, text: "", adjudication: null, debug: null }
+                      : null)
+                  }
+                  onRetry={handleRetry}
+                  onCheckReceipt={turn.checkReceipt}
+                  canRetry={!busy}
+                  layoutKey={activeTool ?? "none"}
+                  storageKey={`edgar_play_anchor:v1:${sessionId}`}
+                  restoreReady={!game.loading && !!boot && turn.state.historyReady}
+                  openEventId={openEventId}
+                  onHistoryOpened={clearOpenedHistory}
+                  onQuickReply={campaignComplete || game.campaign?.play_allowed === false ? undefined : handleQuickReply}
+                />
+              )}
+
+              <div ref={composerRef} className="shrink-0">
+                {campaignComplete ? (
+                  <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
+                ) : (
+                  <ComposerBar
+                    inputRef={inputRef}
+                    value={draft}
+                    onChange={sessionDraft.edit}
+                    onSend={handleSend}
+                    onStop={stop}
+                    busy={busy}
+                    canStop={pending?.stage !== "saving"}
+                    allowSend={!hasUncertainAction}
+                    disabled={game.loading || introPending || game.campaign?.play_allowed === false}
+                  />
+                )}
+              </div>
+            </main>
+          </div>
+        </div>
+
+        <CharacterSheet
+          character={character}
+          open={activeTool === "character"}
+          onClose={closeTool}
+          readableItems={readableItems}
+          onReadItem={openJournalEntry}
+        />
+        <PlayToolPanel
+          activeTool={activeTool}
+          journal={{ data: journal.data, loading: journal.loading, error: journal.error, stale: journal.stale }}
+          query={workspace.query}
+          onQueryChange={(query) => setWorkspace((current) => ({ ...current, query }))}
+          category={workspace.category}
+          onCategoryChange={(category) => setWorkspace((current) => ({ ...current, category }))}
+          selectedEntryId={workspace.selectedEntryId}
+          onSelectedEntryChange={(selectedEntryId) => setWorkspace((current) => ({ ...current, selectedEntryId }))}
+          onRefresh={journal.refresh}
+          onClose={closeTool}
+          onOpenHistory={openJournalHistory}
+        />
       </div>
 
       {/* Single polite live region: announces completed narration / errors, not every token. */}

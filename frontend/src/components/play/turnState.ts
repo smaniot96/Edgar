@@ -17,6 +17,10 @@ interface BaseLine {
   id: string;
   /** Turn that produced this line (absent for history/intro lines). */
   turnId?: string;
+  /** Player-safe narration event used to open this line from a journal entry. */
+  eventId?: number;
+  /** Transport ended before the server's saved outcome could be confirmed. */
+  uncertain?: boolean;
 }
 
 export interface UserLine extends BaseLine {
@@ -48,6 +52,11 @@ export interface ErrorLine extends BaseLine {
   code?: string;
   /** Player input to re-send when the user hits Retry. */
   retryInput?: string;
+  /** Stable client ID reused if this action needs a post-disconnect retry. */
+  retryRequestId?: string;
+  draftRevision?: number;
+  /** An authoritative receipt check is needed before this line can be retried. */
+  uncertain?: boolean;
 }
 
 export interface NoticeLine extends BaseLine {
@@ -59,6 +68,8 @@ export type Line = UserLine | DmLine | ErrorLine | NoticeLine;
 
 export interface PendingTurn {
   turnId: string;
+  requestId: string;
+  draftRevision?: number;
   input: string;
   stage: string | null;
   /** Narration streamed so far. */
@@ -68,6 +79,8 @@ export interface PendingTurn {
 }
 
 export interface TurnState {
+  /** Boot transcript has reached this reducer, so reading anchors may be restored. */
+  historyReady: boolean;
   lines: Line[];
   pending: PendingTurn | null;
   /** Latest message for the screen-reader status region (completed narration / errors). */
@@ -79,7 +92,8 @@ export type FailReason = "error" | "stopped" | "ended";
 export type TurnAction =
   | { type: "reset"; lines: Line[] }
   | { type: "append"; line: Line }
-  | { type: "start"; turnId: string; input: string }
+  | { type: "recover"; turnId: string; requestId: string; input: string; draftRevision?: number }
+  | { type: "start"; turnId: string; requestId: string; draftRevision?: number; input: string }
   | { type: "status"; turnId: string; stage: string }
   | { type: "token"; turnId: string; text: string }
   | { type: "adjudication"; turnId: string; result: AdjudicationResult }
@@ -91,11 +105,15 @@ export type TurnAction =
       reason: FailReason;
       message: string;
       code?: string;
+      uncertain?: boolean;
     }
+  | { type: "markRetryable"; turnId: string; message: string }
+  | { type: "receiptCommitted"; turnId: string; result: TurnResult }
+  | { type: "receiptPending"; turnId: string; message: string }
   /** Remove every line produced by a (failed) turn, e.g. before retrying it. */
   | { type: "clearTurn"; turnId: string };
 
-export const initialTurnState: TurnState = { lines: [], pending: null, announcement: "" };
+export const initialTurnState: TurnState = { lines: [], pending: null, announcement: "", historyReady: false };
 
 export function linesFromHistory(msgs: ChatMessageRead[]): Line[] {
   return msgs.map((m, i) => {
@@ -107,6 +125,7 @@ export function linesFromHistory(msgs: ChatMessageRead[]): Line[] {
       id: `h${i}`,
       role: "dm",
       content: m.content,
+      eventId: (m as ChatMessageRead & { event_id?: number }).event_id,
       citations: m.citations,
       ruling_citation_ids: m.ruling_citation_ids,
       adjudication: m.roll ? adjudicationFromRoll(m.roll) : null,
@@ -121,9 +140,17 @@ const CAMPAIGN_ENDED_TEXT = "This campaign has ended. The adventure is complete.
 export function turnReducer(state: TurnState, action: TurnAction): TurnState {
   switch (action.type) {
     case "reset":
-      return { ...initialTurnState, lines: action.lines };
+      return { ...initialTurnState, lines: action.lines, historyReady: true };
     case "append":
       return { ...state, lines: [...state.lines, action.line] };
+    case "recover":
+      return {
+        ...state,
+        lines: [...state.lines,
+          { id: `${action.turnId}:user`, turnId: action.turnId, role: "user", content: action.input, failed: true, uncertain: true },
+          { id: `${action.turnId}:error`, turnId: action.turnId, role: "error", content: "Checking whether this action was saved…", retryInput: action.input, retryRequestId: action.requestId, draftRevision: action.draftRevision, uncertain: true },
+        ],
+      };
     case "clearTurn":
       return { ...state, lines: state.lines.filter((l) => l.turnId !== action.turnId) };
     case "start":
@@ -135,6 +162,8 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         ],
         pending: {
           turnId: action.turnId,
+          requestId: action.requestId,
+          draftRevision: action.draftRevision,
           input: action.input,
           stage: "parsing",
           text: "",
@@ -142,6 +171,49 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
           debug: null,
         },
       };
+  }
+
+  if (action.type === "markRetryable") {
+    return {
+      ...state,
+      lines: state.lines.map((line) => line.turnId === action.turnId
+        ? { ...line, ...(line.role === "error" ? { content: action.message } : {}), uncertain: false }
+        : line),
+    };
+  }
+
+  if (action.type === "receiptCommitted") {
+    const r = action.result;
+    const eventId = (r as TurnResult & { event_id?: number }).event_id;
+    const narration = typeof r.narration === "string" && r.narration.trim() ? r.narration : "[no narration]";
+    const existingUser = state.lines.find((line) => line.turnId === action.turnId && line.role === "user");
+    const lines = state.lines.filter((line) => line.turnId !== action.turnId);
+    const alreadyInHistory = eventId != null && lines.some((line) => line.role === "dm" && line.eventId === eventId);
+    if (alreadyInHistory) return { ...state, lines, pending: null, announcement: "Saved action confirmed." };
+    if (existingUser?.role === "user") lines.push({ ...existingUser, failed: false, uncertain: false });
+    lines.push({
+      id: `${action.turnId}:dm`,
+      turnId: action.turnId,
+      role: "dm",
+      content: narration,
+      eventId,
+      citations: r.citations,
+      ruling_citation_ids: r.ruling_citation_ids,
+      adjudication: r.roll ? adjudicationFromRoll(r.roll) : null,
+      rollStatus: r.roll_status ?? "not_captured",
+      combatOutcome: r.combat_state?.ended ? r.combat_state.outcome : undefined,
+      isTurn: true,
+    });
+    return { ...state, lines, pending: null, announcement: narration };
+  }
+
+  if (action.type === "receiptPending") {
+    return {
+      ...state,
+      lines: state.lines.map((line) => line.role === "error" && line.turnId === action.turnId
+        ? { ...line, content: action.message }
+        : line),
+    };
   }
 
   // Everything below applies to the in-flight turn only; ignore stale events.
@@ -159,14 +231,14 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       return { ...state, pending: { ...p, debug: action.payload } };
     case "done": {
       const r = action.result;
-      const fallback =
+      const content =
         typeof r.narration === "string" && r.narration.trim() ? r.narration : "[no narration]";
-      const content = p.text.trim() ? p.text : fallback;
       const line: DmLine = {
         id: `${p.turnId}:dm`,
         turnId: p.turnId,
         role: "dm",
         content,
+        eventId: (r as TurnResult & { event_id?: number }).event_id,
         citations: r.citations,
         ruling_citation_ids: r.ruling_citation_ids,
         adjudication: p.adjudication,
@@ -174,11 +246,12 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         combatOutcome: r.combat_state?.ended ? r.combat_state.outcome : undefined,
         isTurn: true,
       };
-      return { lines: [...state.lines, line], pending: null, announcement: content };
+      return { ...state, lines: [...state.lines, line], pending: null, announcement: content };
     }
     case "fail": {
       if (action.reason === "ended") {
         return {
+          ...state,
           lines: [
             ...state.lines.filter((l) => l.turnId !== p.turnId),
             { id: `${p.turnId}:notice`, role: "notice", content: CAMPAIGN_ENDED_TEXT },
@@ -188,7 +261,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         };
       }
       const lines: Line[] = state.lines.map((l) =>
-        l.turnId === p.turnId && l.role === "user" ? { ...l, failed: true } : l,
+        l.turnId === p.turnId && l.role === "user" ? { ...l, failed: true, uncertain: action.uncertain } : l,
       );
       if (p.text.trim()) {
         lines.push({
@@ -200,6 +273,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
           debug: p.debug,
           isTurn: true,
           interrupted: true,
+          uncertain: action.uncertain,
         });
       }
       lines.push({
@@ -209,8 +283,11 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         content: action.message,
         code: action.code,
         retryInput: p.input,
+        retryRequestId: p.requestId,
+        draftRevision: p.draftRevision,
+        uncertain: action.uncertain,
       });
-      return { lines, pending: null, announcement: action.message };
+      return { ...state, lines, pending: null, announcement: action.message };
     }
   }
   return state;

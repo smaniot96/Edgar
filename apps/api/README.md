@@ -10,6 +10,15 @@ See [`frontend/README.md`](../../frontend/README.md). Build with `make frontend-
 
 Two endpoints share the same lock and persistence path; they differ in transport.
 
+Both accept an optional `request_id` (1–100 ASCII letters, digits, `_` or `-`, beginning
+with a letter or digit). Retrying the same message with that identity returns the original
+committed receipt before any provider call; reusing it for another message returns409
+`turn_identity_conflict`. Old clients can omit it. `GET /api/sessions/{session_id}/turns/{request_id}`
+resolves a lost acknowledgment as `{status: "committed", result: <turn response>}`. It returns409
+while the session has an active writer, and404 when no matching receipt exists after acquiring
+the session lock. Reads never submit/retry an action. A retry remains an explicit client action
+using the same identity; receipts are scoped to a single session.
+
 `POST /api/sessions/{session_id}/turn`. One JSON response after the agent finishes. Use this for `curl`, scripts, and tests. Errors are JSON `{code, message, detail}` with a generic, player-safe message; the real exception is only logged server-side. Status codes: `404` if the session is missing, `409` if another turn holds the lock (or `character_not_assigned` / the campaign has ended), `503` `llm_unavailable` when an agent call fails, `500` `turn_save_failed` / `turn_failed` otherwise.
 
 `POST /api/sessions/{session_id}/turn/stream`. Server-Sent Events. Used by the UI. Frame types are `status` (stages: `parsing`, `retrieving`, `adjudicating`, `narrating`, `saving`), `token` (narration chunks; concatenated they form the full narration), `adjudication` (the structured `AdjudicationResult` once), `done` (`{narration, character, current_scene_id, combat_state, campaign_complete, roll_status, roll}`; `roll` is the turn's original ruling and dice, the same record `GET /api/sessions/{session_id}/messages` returns on reload, and null when no dice were rolled), and `error` (`{code, message, detail}`). Lock contention (409) is returned as a normal JSON error before the stream opens; failures after streaming begins arrive as an `error` event and the connection then closes.

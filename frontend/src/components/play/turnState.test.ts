@@ -17,12 +17,12 @@ const adj: AdjudicationResult = {
 describe("turnReducer", () => {
   it("start → status → tokens → done commits one DM line and clears pending", () => {
     const s = run([
-      { type: "start", turnId: "t1", input: "I attack" },
+      { type: "start", turnId: "t1", requestId: "r1", input: "I attack" },
       { type: "status", turnId: "t1", stage: "narrating" },
       { type: "adjudication", turnId: "t1", result: adj },
       { type: "token", turnId: "t1", text: "You " },
       { type: "token", turnId: "t1", text: "hit." },
-      { type: "done", turnId: "t1", result: { narration: "ignored", combat_state: null } },
+      { type: "done", turnId: "t1", result: { narration: "You hit.", combat_state: null } },
     ]);
     expect(s.pending).toBeNull();
     expect(s.lines).toHaveLength(2);
@@ -31,9 +31,29 @@ describe("turnReducer", () => {
     expect(s.announcement).toBe("You hit.");
   });
 
+  it("replaces provisional tokens with the authoritative committed narration", () => {
+    const s = run([
+      { type: "start", turnId: "t1", requestId: "r1", input: "look" },
+      { type: "token", turnId: "t1", text: "The door begins to" },
+      { type: "done", turnId: "t1", result: { narration: "The door opens completely." } },
+    ]);
+    expect(s.lines[1]).toMatchObject({ role: "dm", content: "The door opens completely." });
+    expect(s.announcement).toBe("The door opens completely.");
+  });
+
+  it("confirms an already loaded receipt without announcing historical narration as new", () => {
+    const s = run([
+      { type: "reset", lines: linesFromHistory([{ role: "dm", content: "Old saved narration.", created_at: "", event_id: 7 }]) },
+      { type: "recover", turnId: "t1", requestId: "r1", input: "look" },
+      { type: "receiptCommitted", turnId: "t1", result: { narration: "Old saved narration.", event_id: 7 } },
+    ]);
+    expect(s.lines).toHaveLength(1);
+    expect(s.announcement).toBe("Saved action confirmed.");
+  });
+
   it("falls back to the done payload's narration when no tokens streamed", () => {
     const s = run([
-      { type: "start", turnId: "t1", input: "look" },
+      { type: "start", turnId: "t1", requestId: "r1", input: "look" },
       { type: "done", turnId: "t1", result: { narration: "A dark room." } },
     ]);
     expect(s.lines[1]).toMatchObject({ role: "dm", content: "A dark room." });
@@ -41,7 +61,7 @@ describe("turnReducer", () => {
 
   it("records the combat outcome when combat ended this turn", () => {
     const s = run([
-      { type: "start", turnId: "t1", input: "strike" },
+      { type: "start", turnId: "t1", requestId: "r1", input: "strike" },
       {
         type: "done",
         turnId: "t1",
@@ -53,7 +73,7 @@ describe("turnReducer", () => {
 
   it("on failure keeps partial narration as interrupted, marks the user line, adds a retryable error", () => {
     const s = run([
-      { type: "start", turnId: "t1", input: "open door" },
+      { type: "start", turnId: "t1", requestId: "r1", input: "open door" },
       { type: "token", turnId: "t1", text: "The door creaks" },
       { type: "fail", turnId: "t1", reason: "error", message: "Connection lost", code: "incomplete" },
     ]);
@@ -67,7 +87,7 @@ describe("turnReducer", () => {
 
   it("on failure without partial text adds no empty DM line", () => {
     const s = run([
-      { type: "start", turnId: "t1", input: "go" },
+      { type: "start", turnId: "t1", requestId: "r1", input: "go" },
       { type: "fail", turnId: "t1", reason: "stopped", message: "Stopped" },
     ]);
     expect(s.lines.map((l) => l.role)).toEqual(["user", "error"]);
@@ -75,7 +95,7 @@ describe("turnReducer", () => {
 
   it("campaign-ended failure drops the orphan user line and shows a notice", () => {
     const s = run([
-      { type: "start", turnId: "t1", input: "go" },
+      { type: "start", turnId: "t1", requestId: "r1", input: "go" },
       { type: "fail", turnId: "t1", reason: "ended", message: "Campaign has ended" },
     ]);
     expect(s.lines).toHaveLength(1);
@@ -86,7 +106,7 @@ describe("turnReducer", () => {
     const base = run([{ type: "reset", lines: linesFromHistory([{ role: "dm", content: "Hi", created_at: "" }]) }]);
     const s = run(
       [
-        { type: "start", turnId: "t1", input: "go" },
+        { type: "start", turnId: "t1", requestId: "r1", input: "go" },
         { type: "token", turnId: "t1", text: "par" },
         { type: "fail", turnId: "t1", reason: "error", message: "x" },
         { type: "clearTurn", turnId: "t1" },
@@ -97,7 +117,7 @@ describe("turnReducer", () => {
   });
 
   it("ignores events from a stale/unknown turn", () => {
-    const s1 = run([{ type: "start", turnId: "t2", input: "go" }]);
+    const s1 = run([{ type: "start", turnId: "t2", requestId: "r2", input: "go" }]);
     const s2 = run(
       [
         { type: "token", turnId: "t1", text: "stale" },

@@ -14,6 +14,7 @@ export function ComposerBar({
   onStop,
   busy,
   canStop = true,
+  allowSend = true,
   disabled = false,
   inputRef,
 }: {
@@ -23,12 +24,14 @@ export function ComposerBar({
   onStop?: () => void;
   busy: boolean;
   canStop?: boolean;
+  /** Keep editing enabled while a pending action must be reconciled before another send. */
+  allowSend?: boolean;
   disabled?: boolean;
   inputRef?: Ref<HTMLTextAreaElement>;
 }) {
   const id = useId();
   const hintId = `${id}-hint`;
-  const canSend = !busy && !disabled && value.trim().length > 0;
+  const canSend = allowSend && !busy && !disabled && value.trim().length > 0;
   return (
     <footer className="shrink-0 border-t border-line bg-canvas/80 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:px-4">
       <form
@@ -78,6 +81,19 @@ export function ComposerBar({
           </Button>
         )}
       </form>
+      <div className="mx-auto mt-1 flex w-full max-w-3xl items-center justify-between gap-3 px-1">
+        <p className="text-[0.65rem] text-ink-subtle">Enter to send · Shift+Enter for a new line.</p>
+        {value ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onChange("")}
+            className="text-[0.7rem] font-medium text-ink-muted underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Clear draft
+          </button>
+        ) : null}
+      </div>
     </footer>
   );
 }
