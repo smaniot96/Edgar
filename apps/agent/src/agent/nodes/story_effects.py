@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from agent.models.adjudication import AdjudicationResult
+from agent.resolution_policies import policy_effect_key
 from agent.state import AgentState
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import require_published, select_scene_context
@@ -311,6 +312,11 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     evidence = {source_citation(c, edition)["reference_id"]: c for c in chunks}
     facts = committed_facts(state)
     known_ids = {identity for f in facts for identity in (f.fact_id, f.effect_id)}
+    authorized_policy_effects = set(state.get("authorized_policy_effect_keys") or [])
+    policy_reveals = {
+        row.get("effect_key"): set(row.get("passage_ids") or [])
+        for row in state.get("policy_reveal_authorizations") or []
+    }
     accepted: list[AcceptedStoryEffect] = []
     seen_effects = {f.effect_id for f in facts}
     for proposal in adj.story_effects[:20]:
@@ -325,6 +331,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 )
             continue
         candidate = candidates.get(proposal.target.model_dump_json())
+        policy_key = policy_effect_key(proposal)
         if candidate is None or not _kind_matches(proposal, candidate):
             continue
         if proposal.kind == "visit" and proposal.target.canonical_id != state.get(
@@ -373,12 +380,24 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 and c.get("source_sha256") == proposal.target.source_sha256
                 and c.get("audience") == "player"
                 and c.get("passage_id") in candidate.get("reveal_passage_ids", [])
+                and (
+                    policy_key not in policy_reveals
+                    or c.get("passage_id") in policy_reveals[policy_key]
+                )
                 and _reviewed_chunk(c, state)
             ]
             public = list({source_citation(c, edition)["reference_id"]: c for c in public}.values())
+            if policy_key in policy_reveals:
+                public = [c for c in public if c.get("passage_id") in policy_reveals[policy_key]]
+                if not policy_reveals[policy_key] <= {c.get("passage_id") for c in public}:
+                    continue
         if not public:
             continue
-        if candidate.get("reveal_on", "success") == "success" and not adj.success:
+        if (
+            candidate.get("reveal_on", "success") == "success"
+            and not adj.success
+            and policy_key not in authorized_policy_effects
+        ):
             continue
         if (
             proposal.kind not in _OBJECT_KINDS
@@ -507,13 +526,27 @@ async def prepare_story_validation_state(adj: AdjudicationResult, state: AgentSt
     changed = False
     for effect in adj.story_effects[:20]:
         candidate = candidates.get(effect.target.model_dump_json())
+        policy_key = policy_effect_key(effect)
+        authorized_policy_effects = set(state.get("authorized_policy_effect_keys") or [])
+        authorized_reveals = next(
+            (
+                set(row.get("passage_ids") or [])
+                for row in state.get("policy_reveal_authorizations") or []
+                if row.get("effect_key") == policy_key
+            ),
+            None,
+        )
         if (
             effect.kind != "discover"
             or effect.status != "discovered"
             or not candidate
             or not candidate.get("reveal_passage_ids")
             or not candidate.get("discovery_flag")
-            or (not adj.success and candidate.get("reveal_on") != "always")
+            or (
+                not adj.success
+                and candidate.get("reveal_on") != "always"
+                and policy_key not in authorized_policy_effects
+            )
             or not effect.source_reference_ids
             or not set(effect.source_reference_ids) <= evidence.keys()
         ):
@@ -524,6 +557,10 @@ async def prepare_story_validation_state(adj: AdjudicationResult, state: AgentSt
             or evidence[rid].get("source_sha256") != effect.target.source_sha256
             or evidence[rid].get("passage_id") not in candidate["passage_ids"]
             for rid in effect.source_reference_ids
+        ):
+            continue
+        if authorized_reveals is not None and not set(candidate["reveal_passage_ids"]).intersection(
+            authorized_reveals
         ):
             continue
         flags[candidate["discovery_flag"]] = "discovered"
@@ -542,4 +579,14 @@ async def prepare_story_validation_state(adj: AdjudicationResult, state: AgentSt
     except Exception:
         # No quotation, no discovery. Never substitute private model prose on read failure.
         return
+    reveal_allowlists = [
+        set(row.get("passage_ids") or []) for row in state.get("policy_reveal_authorizations") or []
+    ]
+    if reveal_allowlists:
+        allowed_passages = set.union(*reveal_allowlists)
+        refreshed["adventure_context"] = [
+            chunk
+            for chunk in refreshed["adventure_context"]
+            if chunk.get("passage_id") in allowed_passages
+        ]
     state["story_reveal_context"] = refreshed["adventure_context"]

@@ -37,7 +37,12 @@ from sqlalchemy import select
 import db.postgres.session as db_session_module
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
-from agent.nodes.narrator import build_narrator_prompt, make_narrator_model, narrator_context
+from agent.nodes.narrator import (
+    build_narrator_prompt,
+    deterministic_narration,
+    make_narrator_model,
+    narrator_context,
+)
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
 from edgar_core.sources import citations_for, public_citations
@@ -420,7 +425,11 @@ def _debug_payload(
     the RAG chunks actually retrieved (the silently-dead-RAG class of bug), full combat
     internals (enemy AC/attack/damage/HP, initiative, second wind), stage timings, and model."""
     return {
-        "parsed_input": parsed.model_dump() if parsed is not None else None,
+        # Policy selectors and earned-clue IDs can encode reviewed internal names. They are
+        # model-only routing data, so omit them from the optional client developer stream.
+        "parsed_input": parsed.model_dump(exclude={"resolution_policy_id", "recall_fact_id"})
+        if parsed is not None
+        else None,
         "rules_context": _truncate_ctx(rules_ctx),
         "adventure_context": _truncate_ctx(adv_ctx),
         "rules_context_count": len(rules_ctx or []),
@@ -520,6 +529,9 @@ async def stream_session_turn(
     if is_combat:
         # The combat subgraph already narrated the round; pseudo-stream it word by word.
         narration = state.get("narration") or ""
+        for piece in _yield_narration_tokens(narration):
+            yield sse_event("token", {"text": piece})
+    elif (narration := deterministic_narration(state)) is not None:
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
     else:

@@ -19,6 +19,10 @@ INPUT_PARSER = f"""You classify a solo D&D 5e player's message for a rules engin
 
 {UNTRUSTED_INPUT_NOTICE}
 
+Committed player-known facts, exact saved quotations and recorded combat outcomes are
+authoritative over conflicting older prose. Do not classify rereading an earned quotation
+as a new uncertain discovery or reopen a resolved combat.
+
 Return:
 - intent: "combat" (attacking or fighting), "rp" (talking, social interaction) or "exploration" (anything else).
 - check: the single ability/skill the attempted action tests, or null if the action is trivial or certain (walking, talking casually, looking at something in plain sight). Use: an ability (str, dex, con, int, wis, cha); a skill (athletics, acrobatics, stealth, sleight_of_hand, perception, investigation, insight, survival, medicine, arcana, history, nature, religion, animal_handling, persuasion, deception, intimidation, performance); a saving throw like "dex_save"; "thieves_tools" for locks/traps; "attack" for a weapon attack; "spell_attack" for an attack spell.
@@ -27,6 +31,8 @@ Return:
 - retrieval_query: a short mechanics query (<= 15 words) naming the relevant rule, skill, spell or feature. Keep NPC names, rooms and story clues out of this rules query; reviewed scene state supplies adventure context.
 - uses_item: the inventory item the player consumes/uses this turn (e.g. "potion of healing"), else null.
 - confirms_ending: true ONLY if the player explicitly agrees to end the adventure/campaign now (typically answering a question about concluding the story). Otherwise false.
+- resolution_policy_id: an exact collection-qualified key from the reviewed current-scene action choices only when the player's stated approach matches that choice; otherwise null. Never invent or expose a key.
+- recall_fact_id: an exact fact_id from the session-earned public clues only when the player explicitly asks to reread/quote/recall that clue; otherwise null. Never select a clue merely because it is the only one.
 - entities: optional extra details (e.g. {{"weapon": "longsword"}}). When the player explicitly names a spell or class feature, include "spell" or "feature" with its canonical English rulebook name; preserve qualifiers and do not infer an unmentioned spell or feature.
 
 Do NOT invent dice expressions, modifiers or DCs; the engine computes them from the character sheet."""
@@ -34,6 +40,10 @@ Do NOT invent dice expressions, modifiers or DCs; the engine computes them from 
 RULES_ADJUDICATOR = f"""You are a D&D 5e rules referee working alongside a deterministic rules engine.
 
 {UNTRUSTED_INPUT_NOTICE}
+
+Committed session facts and recorded combat outcomes are authoritative over conflicting
+older prose. Preserve exact earned quotations and their source; do not erase earned knowledge
+or reopen a resolved combat because a summary or prior narration disagrees.
 
 The engine has ALREADY rolled any check and decided success or failure (shown as "Engine
 outcome"). You must not change it: describe the consequences of that known outcome. Use only
@@ -89,7 +99,9 @@ NARRATOR = f"""You are the Dungeon Master of a solo D&D 5e game. Narrate what ha
 - Use the story-so-far summary (if given) for continuity. Prepared module text is background,
   not evidence that a discovery or objective has been earned. Describe new discoveries, promises,
   object changes and accomplishments only from validated story consequences this turn; do not
-  invent additional persistent facts. Never disclose private branches or future milestones.
+  invent additional persistent facts. Committed player-known facts, their exact source quotations,
+  and recorded combat outcomes are authoritative over conflicting older prose. Never disclose
+  private branches or future milestones.
 - Write immersive second-person prose, 1-3 short paragraphs. End by inviting the player's next
   action.
 - Do NOT print HP, stat blocks, inventories, dice math, bullet lists of status, or markdown

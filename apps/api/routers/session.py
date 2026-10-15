@@ -31,8 +31,7 @@ from ..services.combat import load_active_combat, load_resolved_combat_outcomes
 from ..services.npcs import load_npcs
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
-    load_memory_summary,
-    load_session_messages,
+    load_session_context,
     maybe_update_memory_summary,
 )
 from ..services.story_state import load_story_state, session_story_flags
@@ -100,7 +99,7 @@ async def _load_turn_initial_state(
         story_state, manifests, await load_world_flags(db, session.campaign_id)
     )
 
-    prior_messages = await load_session_messages(db, session_id)
+    memory_summary, prior_messages = await load_session_context(db, session_id)
     character = None
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
@@ -133,7 +132,7 @@ async def _load_turn_initial_state(
         or (next(iter(manifests.values()))["opening_scene_id"] if manifests else None),
         "character": character,
         "npcs": npc_summaries,
-        "memory_summary": await load_memory_summary(db, session_id),
+        "memory_summary": memory_summary,
     }
     combat = await load_active_combat(db, session_id)
     if combat:

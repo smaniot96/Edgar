@@ -10,14 +10,17 @@ output fails (provider hiccup, malformed tool call) the turn still proceeds as p
 exploration with no check, rather than failing.
 """
 
+import json
 import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.history import continuity_context, public_earned_facts
 from agent.llm import make_chat_model
 from agent.models.parsed_input import ParsedInput
 from agent.prompts import INPUT_PARSER, wrap_player_action
 from agent.resolution import PENDING_COMPLETION_FLAG
+from agent.resolution_policies import parser_earned_clues, parser_policy_choices
 from agent.state import AgentState
 from edgar_core.config import OPENAI_API_KEY
 
@@ -30,7 +33,9 @@ def _parser_context(state: AgentState) -> str:
     scene = state.get("current_scene_id")
     if scene:
         parts.append(f"Current scene id: {scene}")
-    npcs = [n.get("name") for n in (state.get("npcs") or []) if isinstance(n, dict) and n.get("name")]
+    npcs = [
+        n.get("name") for n in (state.get("npcs") or []) if isinstance(n, dict) and n.get("name")
+    ]
     if npcs:
         parts.append(f"Known NPCs: {', '.join(npcs[:12])}")
     combat = state.get("combat_state") or {}
@@ -43,8 +48,33 @@ def _parser_context(state: AgentState) -> str:
         if foes:
             parts.append(f"Combat in progress against: {', '.join(foes)}")
     if (state.get("world_flags") or {}).get(PENDING_COMPLETION_FLAG):
+        parts.append("The DM just asked the player whether they want to end the adventure here.")
+    policies = parser_policy_choices(state)
+    if policies:
         parts.append(
-            "The DM just asked the player whether they want to end the adventure here."
+            "Reviewed current-scene action choices (select a policy key only when it directly matches the player's approach; unavailable choices must not be selected): "
+            + str(policies)
+        )
+    clues = parser_earned_clues(state)
+    if clues:
+        parts.append(
+            "Session-earned public clues, available only for an explicit reread request; choose the exact fact_id when the player names or refers to that clue: "
+            + str(clues)
+        )
+    continuity = continuity_context(state)
+    if continuity:
+        parts.append(continuity)
+    facts = public_earned_facts(state)
+    if facts:
+        parts.append(f"Committed player-known story facts and exact source quotations: {json.dumps(facts)}")
+    outcomes = [
+        {"id": outcome.get("id"), "outcome": outcome.get("outcome"), "round": outcome.get("round")}
+        for outcome in state.get("resolved_combat_outcomes") or []
+    ]
+    if outcomes:
+        parts.append(
+            "Authoritative resolved combat outcomes (never reopen or contradict): "
+            + json.dumps(outcomes)
         )
     return "\n".join(parts)
 

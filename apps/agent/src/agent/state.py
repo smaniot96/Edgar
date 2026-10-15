@@ -16,12 +16,17 @@ class AgentState(TypedDict, total=False):
     # Inputs from the API
     story_reveal_context: list  # Exact reviewed self-gated player spans; validator-only
     story_state: dict  # Serialized edgar_core.story.StoryState; committed session facts only
+    exact_recall: dict  # Exact text/source from one committed public clue, narrator-only
+    policy_rejection: bool  # Safe generic rejection for unavailable reviewed actions
+    policy_narration: str  # Deterministic narration for an engine-resolved reviewed policy
+    authorized_policy_effect_keys: list[str]  # Validator-only policy consequence receipts
+    policy_reveal_authorizations: list[dict]  # Exact policy-authorized player reveal passages
     turn_id: str  # Server-generated per-turn provenance identity
     turn_snapshot: dict  # Initial position/active character used for atomic stale-state checks
     player_input: str
     session_id: int
     campaign_id: int
-    messages: list  # langchain BaseMessage list, oldest first; rebuilt per turn from event_log
+    messages: list  # Uncovered narration events after memory_summary coverage, oldest first
     character: dict | None  # {id, name, class, level, hp_current, hp_max, stats, inventory}
     adventure_collections: list[str]  # campaigns.adventure_collections
     world_flags: dict[str, str]
@@ -31,7 +36,7 @@ class AgentState(TypedDict, total=False):
     npcs: list  # [{name, disposition}] loaded from DB; used to keep allies out of enemy rosters
     resolved_combat_outcomes: list[dict]  # Session-owned authoritative ended combat rows
     combat_state: dict  # loaded from DB if an encounter is in progress
-    memory_summary: str | None  # rolling "story so far" for turns older than `messages`
+    memory_summary: str | None  # rolling story summary immediately before `messages`
 
     # Produced by nodes
     parsed_input: ParsedInput  # InputParser

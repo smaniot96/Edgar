@@ -11,7 +11,7 @@ from typing import Literal
 
 import structlog
 from langchain_core.messages import AIMessage, HumanMessage
-from sqlalchemy import BigInteger, case, cast, func, select
+from sqlalchemy import BigInteger, and_, case, cast, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -40,6 +40,34 @@ def _events_to_messages(events: list[EventLog]) -> list[HumanMessage | AIMessage
     return messages
 
 
+def _summary_coverage_query(session_id: int, summary: EventLog):
+    """Select each nonempty summary with the verified narration id it actually covers."""
+    narration = aliased(EventLog)
+    raw_through = summary.payload["through_event_id"].astext
+    parsed_through = case(
+        (raw_through.op("~")("^[0-9]{1,18}$"), cast(raw_through, BigInteger)),
+        else_=0,
+    )
+    coverage = func.coalesce(narration.id, 0)
+    query = (
+        select(summary, coverage)
+        .outerjoin(
+            narration,
+            (narration.id == parsed_through)
+            & (narration.session_id == summary.session_id)
+            & (narration.event_type == "narration")
+            & (narration.id < summary.id),
+        )
+        .where(
+            summary.session_id == session_id,
+            summary.event_type == MEMORY_SUMMARY_EVENT,
+            func.jsonb_typeof(summary.payload["summary"]) == "string",
+            summary.payload["summary"].astext.op("~")("[^[:space:]]"),
+        )
+    )
+    return query, coverage
+
+
 async def load_session_messages(
     db: AsyncSession,
     session_id: int,
@@ -59,6 +87,55 @@ async def load_session_messages(
     return _events_to_messages(list(reversed(result.scalars().all())))
 
 
+async def load_session_context(
+    db: AsyncSession, session_id: int
+) -> tuple[str | None, list[HumanMessage | AIMessage]]:
+    """Load the summary and every narration event it does not cover in one statement.
+
+    Prompt history must start immediately after the selected summary's validated boundary.
+    A fixed recent-turn limit would silently drop events when generation is delayed or fails.
+    The single statement also prevents a summary publication between separate summary/history
+    reads from producing a context with a gap.
+    """
+    summary = aliased(EventLog)
+    summary_query, coverage = _summary_coverage_query(session_id, summary)
+    latest_summary = (
+        summary_query.with_only_columns(
+            summary.id.label("id"),
+            summary.payload["summary"].astext.label("summary"),
+            coverage.label("through_event_id"),
+        )
+        .order_by(coverage.desc(), summary.id.desc())
+        .limit(1)
+        .subquery()
+    )
+    rows = await db.execute(
+        select(
+            latest_summary.c.summary,
+            latest_summary.c.through_event_id,
+            EventLog,
+        )
+        .select_from(SessionModel)
+        .outerjoin(latest_summary, true())
+        .outerjoin(
+            EventLog,
+            and_(
+                EventLog.session_id == SessionModel.id,
+                EventLog.event_type == "narration",
+                EventLog.id > func.coalesce(latest_summary.c.through_event_id, 0),
+            ),
+        )
+        .where(SessionModel.id == session_id)
+        .order_by(EventLog.id.asc())
+    )
+    result = rows.all()
+    if not result:
+        return None, []
+    summary_text = result[0][0]
+    events = [row[2] for row in result if row[2] is not None]
+    return summary_text, _events_to_messages(events)
+
+
 async def _latest_summary_row(db: AsyncSession, session_id: int) -> tuple[EventLog, int] | None:
     """Choose maximum *valid* narration coverage, with insertion order only breaking ties.
 
@@ -66,28 +143,9 @@ async def _latest_summary_row(db: AsyncSession, session_id: int) -> tuple[EventL
     but cannot claim coverage or seed incremental generation. Validate the pointer against
     this session's narration, so unrelated event ids cannot hide unsummarized history.
     """
-    raw_through = EventLog.payload["through_event_id"].astext
-    parsed_through = case(
-        (raw_through.op("~")("^[0-9]{1,18}$"), cast(raw_through, BigInteger)),
-        else_=0,
-    )
-    narration = aliased(EventLog)
-    coverage = func.coalesce(narration.id, 0)
+    summary_query, coverage = _summary_coverage_query(session_id, EventLog)
     result = await db.execute(
-        select(EventLog, coverage)
-        .outerjoin(
-            narration,
-            (narration.id == parsed_through)
-            & (narration.session_id == EventLog.session_id)
-            & (narration.event_type == "narration")
-            & (narration.id < EventLog.id),
-        )
-        .where(
-            EventLog.session_id == session_id,
-            EventLog.event_type == MEMORY_SUMMARY_EVENT,
-            func.jsonb_typeof(EventLog.payload["summary"]) == "string",
-            EventLog.payload["summary"].astext.op("~")("[^[:space:]]"),
-        )
+        summary_query
         .order_by(coverage.desc(), EventLog.id.desc())
         .limit(1)
     )

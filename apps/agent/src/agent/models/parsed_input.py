@@ -80,6 +80,22 @@ class ParsedInput(BaseModel):
             "now (e.g. after being asked whether to conclude the story)."
         ),
     )
+    resolution_policy_id: str | None = Field(
+        default=None,
+        max_length=265,
+        description=(
+            "A collection-qualified reviewed policy key from the current-scene choices, or null. "
+            "Never invent a key."
+        ),
+    )
+    recall_fact_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "The exact committed earned-clue fact ID the player explicitly asks to reread, or null. "
+            "Choose only from the supplied session-earned clue choices."
+        ),
+    )
     dice_expression: str | None = None  # legacy; e.g. "1d20+3". Engine prefers `check`.
 
     @field_validator("intent", mode="before")
@@ -102,7 +118,12 @@ class ParsedInput(BaseModel):
         return value if isinstance(value, dict) else {}
 
     @field_validator(
-        "check", "target", "retrieval_query", "uses_item", "dice_expression", mode="before"
+        "check",
+        "target",
+        "retrieval_query",
+        "uses_item",
+        "dice_expression",
+        mode="before",
     )
     @classmethod
     def _blank_to_none(cls, value: object) -> str | None:
@@ -112,6 +133,16 @@ class ParsedInput(BaseModel):
         if not text or text.lower() in {"none", "null", "n/a"}:
             return None
         return text[:200]
+
+    @field_validator("resolution_policy_id", "recall_fact_id", mode="before")
+    @classmethod
+    def _normalise_selector(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {"none", "null", "n/a"}:
+            return None
+        return text
 
     @field_validator("confirms_ending", mode="before")
     @classmethod
