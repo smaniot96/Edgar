@@ -226,6 +226,20 @@ async def test_legacy_session_tracking_state_and_earned_name_refresh(api_client,
     legacy = await api_client.get(f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}")
     assert legacy.headers["x-npc-tracking"] == "legacy_untracked"
 
+    private = effect("discover", "secret", "discovered", player_text="A private ending.")
+    private = accept_story_effect(
+        StoryEffect.model_validate(private.model_dump(include=set(StoryEffect.model_fields))),
+        turn_id="turn-one",
+        display_name="secret ending",
+        source_refs=[{**private.source_refs[0], "audience": "planner"}],
+    )
+    await persist_story_effects(db_session, sessions[0], [private], event_id=events[0].id)
+    await db_session.commit()
+    still_legacy = await api_client.get(
+        f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}"
+    )
+    assert still_legacy.headers["x-npc-tracking"] == "legacy_untracked"
+
     unnamed = effect(
         "encounter",
         "odo",
@@ -248,6 +262,32 @@ async def test_legacy_session_tracking_state_and_earned_name_refresh(api_client,
     )
     assert refreshed.headers["x-npc-tracking"] == "available"
     assert [npc["name"] for npc in refreshed.json()] == ["Known person"]
+
+
+async def test_selected_session_people_are_not_crowded_out_by_campaign_notes(
+    api_client, db_session
+):
+    from apps.api.routers._common import DEFAULT_PAGE_SIZE
+
+    campaign, sessions, events = await setup(db_session)
+    db_session.add_all(
+        [
+            NPC(campaign_id=campaign.id, name=f"Manual note {index}", disposition="friendly")
+            for index in range(DEFAULT_PAGE_SIZE)
+        ]
+    )
+    encounter = effect("encounter", "odo", "encountered", player_text="Known person is here.")
+    await persist_story_effects(db_session, sessions[0], [encounter], event_id=events[0].id)
+    await db_session.commit()
+
+    response = await api_client.get(
+        f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}"
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == DEFAULT_PAGE_SIZE
+    assert any(npc["session_id"] == sessions[0].id for npc in response.json())
+    assert response.json()[0]["session_id"] == sessions[0].id
 
 
 def test_projection_hides_unearned_name_ids_and_private_metadata():
