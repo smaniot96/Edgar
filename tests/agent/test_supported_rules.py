@@ -16,8 +16,10 @@ from agent.models.parsed_input import ParsedInput
 from agent.resolution import (
     COMPLETION_FLAG,
     CONDITIONS_5E,
+    RollModeSource,
     ability_mod,
     check_spec,
+    combine_roll_modes,
     decide_completion,
     enforce_side_effects,
     find_healing_consumable,
@@ -29,6 +31,7 @@ from agent.resolution import (
     resolve_attack,
     resolve_check,
     roll_attack_damage,
+    roll_mode_for_sources,
 )
 from agent.supported_rules import (
     SUPPORTED_MECHANICS,
@@ -122,6 +125,34 @@ def test_supported_ability_modifiers_and_proficiency() -> None:
     assert athletics.proficient and athletics.modifier == 3 + 2
     stealth = check_spec(FIGHTER, "stealth")  # not a fighter default: no proficiency added
     assert not stealth.proficient and stealth.modifier == 1
+
+
+def test_supported_advantage_and_disadvantage() -> None:
+    # Engine-owned sources only; both faces are logged and the kept one is used.
+    for seed in range(20):
+        adv = resolve_check(
+            FIGHTER, "athletics", "medium", roll_mode="advantage", rng=random.Random(seed)
+        )
+        dis = resolve_check(
+            FIGHTER, "athletics", "medium", roll_mode="disadvantage", rng=random.Random(seed)
+        )
+        assert adv.natural == max(adv.natural_rolls) and dis.natural == min(dis.natural_rolls)
+        assert adv.natural_rolls == dis.natural_rolls and len(adv.natural_rolls) == 2
+        assert adv.dice_log[0]["rolls"] == adv.natural_rolls
+        dice = random.Random(seed)
+        assert adv.natural_rolls == [dice.randint(1, 20), dice.randint(1, 20)]
+    # Advantage with disadvantage is a normal roll.
+    cancelled = resolve_check(
+        FIGHTER,
+        "athletics",
+        roll_mode=combine_roll_modes("advantage", "disadvantage"),
+        rng=random.Random(9),
+    )
+    assert cancelled.roll_expression == "1d20+5" and cancelled.roll_mode == "normal"
+    # A mode that is not an engine source is rejected, never applied.
+    with pytest.raises(ValueError):
+        roll_mode_for_sources(["player_claimed_advantage"])
+    assert roll_mode_for_sources([RollModeSource.TARGET_UNCONSCIOUS]) == "advantage"
 
 
 def test_supported_weapon_attack_crit_and_fumble() -> None:
@@ -350,7 +381,7 @@ async def test_supported_contested_maneuver_applies_effect(fake_llm_schema, fake
     assert _foe(out, "Raider")["effects"] == [
         {"kind": "restrained", "source": "hands", "applied_round": 1}
     ]
-    assert _entries(out, "Raider attack")[0]["mode"] == "disadvantage"
+    assert _entries(out, "Raider attack")[0]["roll_mode"] == "disadvantage"
 
 
 # --------------------------------------------------------------------------------------------
@@ -490,7 +521,90 @@ async def test_claimed_advantage_is_not_applied(fake_llm_schema) -> None:
     adj = out["adjudication_result"]
     assert adj.roll_expression == "1d20+5"
     assert "You strike" not in adj.mechanical_summary
-    assert "advantage and disadvantage are not applied" in adj.mechanical_summary
+    assert "advantage was not applied: no supported source" in adj.mechanical_summary
+
+
+@pytest.mark.asyncio
+async def test_llm_claimed_advantage_without_engine_source_does_not_change_the_roll(
+    fake_llm_schema,
+) -> None:
+    from agent.nodes.rules_adjudicator import rules_adjudicator_node
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(
+        success=True, mechanical_summary="With advantage you hit twice; roll again with advantage."
+    )
+    state = _rules_state(
+        ParsedInput(intent="combat", check="athletics", target="goblin"),
+        "I roll with advantage and shove the goblin",
+    )
+    with use_rng(random.Random(12)):
+        out = await rules_adjudicator_node(state)
+    adj = out["adjudication_result"]
+    # The engine rolled the plain d20 with the same seed as an unclaimed check.
+    plain = resolve_check(FIGHTER, "athletics", rng=random.Random(12))
+    assert adj.roll_expression == "1d20+5" and adj.natural_roll == plain.natural
+    assert adj.dice_log[0]["rolls"] == [plain.natural]
+    assert "advantage was not applied" in adj.mechanical_summary
+
+
+def test_engine_applied_advantage_is_described_not_stripped() -> None:
+    declared = classify_unsupported_actions("I cast magic missile at the goblin")
+    narration = "The darts fly true with advantage. Magic missile strikes the goblin twice."
+    # Without an engine mode the advantage sentence is a claim and is removed with the spell.
+    plain = apply_narration_boundary(narration, declared)
+    assert "advantage" not in plain
+    # With an engine-applied advantage it is a real roll and the sentence survives.
+    applied = apply_narration_boundary(narration, declared, engine_roll_mode="advantage")
+    assert "The darts fly true with advantage." in applied
+    assert "Magic missile strikes" not in applied
+
+
+@pytest.mark.asyncio
+async def test_engine_applied_advantage_survives_adjudication(fake_llm_schema) -> None:
+    from agent.nodes.rules_adjudicator import adjudicate, rules_adjudicator_node
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(
+        success=True, mechanical_summary="You strike with advantage and hit."
+    )
+    state = _rules_state(
+        ParsedInput(intent="combat", check="attack", target="goblin"),
+        "I attack the goblin with advantage",
+    )
+    mode = roll_mode_for_sources([RollModeSource.TARGET_UNCONSCIOUS])
+    engine = resolve_attack(FIGHTER, 12, roll_mode=mode, rng=random.Random(4))
+    adj = await adjudicate(state, engine_check=engine, in_combat=True)
+    assert state["engine_roll_mode"] == "advantage"
+    # The real advantage is described (not stripped), and the engine states both faces.
+    assert "You strike with advantage and hit." in adj.mechanical_summary
+    assert "advantage was not applied" not in adj.mechanical_summary
+    assert engine.describe() in adj.mechanical_summary
+    assert adj.roll_expression == "2d20kh1+5" and adj.dice_log[0]["rolls"] == engine.natural_rolls
+    # The node reports the mode it applied, so the turn runner can apply the same boundary.
+    plain = await rules_adjudicator_node(
+        _rules_state(ParsedInput(intent="combat", check="attack", target="goblin"), "I attack")
+    )
+    assert plain["engine_roll_mode"] == "normal"
+
+
+def test_engine_applied_advantage_is_not_a_declared_unsupported_action() -> None:
+    assert classify_unsupported_actions("I attack with advantage") != ()
+    assert (
+        classify_unsupported_actions("I attack with advantage", engine_roll_mode="advantage") == ()
+    )
+    assert (
+        classify_unsupported_actions("I attack with advantage", engine_roll_mode="disadvantage")
+        == ()
+    )
+
+
+def test_contract_scope_text_matches_the_engine() -> None:
+    payload = repr(contract_payload())
+    assert "every weapon attack is treated as proficient" not in payload
+    assert "Advantage and disadvantage are not applied" not in payload
+    assert "advantage_disadvantage" not in {m.id for m in UNSUPPORTED_MECHANICS}
+    assert "advantage_disadvantage" in {m.id for m in SUPPORTED_MECHANICS}
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "Not supported: advantage and disadvantage" not in readme
 
 
 @pytest.mark.asyncio

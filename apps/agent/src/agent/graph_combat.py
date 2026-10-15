@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import random
 import re
 from typing import Any
 
@@ -89,10 +88,14 @@ from agent.resolution import (
     roll_attack_damage,
 )
 from agent.state import AgentState
-from agent.supported_rules import actions_for_state, has_declared_spell, ruling_lines
+from agent.supported_rules import (
+    actions_for_state,
+    has_declared_spell,
+    ruling_lines,
+)
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference, reference_matches
-from tools.dice import DiceOutcome, current_rng, parse_dice, roll
+from tools.dice import DiceOutcome, parse_dice, roll
 
 log = logging.getLogger(__name__)
 
@@ -516,30 +519,16 @@ def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | No
 
 
 # --------------------------------------------------------------------------------------------
-# d20 mode and contest adapters (EDG-021 until EDG-024 lands)
+# d20 mode helpers (EDG-021)
 #
-# EDG-024 owns advantage/disadvantage (`roll_mode` on resolve_check/resolve_attack,
-# `combine_roll_modes`, `resolve_contest`). Until it merges, these three functions are the only
-# place that rolls a d20 pair or a contest, and they use engine dice only. When EDG-024 lands,
-# swap their bodies for its API; callers and the pure `attack_roll_mode` stay unchanged.
+# The player's attack goes through `resolve_attack(roll_mode=...)` (EDG-024). Enemy attacks have no
+# character sheet, so `_roll_with_mode` rolls their d20 pair with engine dice; `_contest` is the
+# maneuver contest against a foe's Dexterity bonus (a tie leaves the attacker without the effect,
+# matching `resolution.resolve_contest`). Neither lets model output choose a die or a number.
 # --------------------------------------------------------------------------------------------
 
 # Mirrors the ranged test in resolution.resolve_attack, so the mode matches the weapon used.
 _RANGED_HINT = re.compile(r"\b(?:shoot|shoots|fire|fires|loose|looses)\b", re.IGNORECASE)
-
-
-class _D20Pair:
-    """Random source for a single d20: the higher (advantage) or lower (disadvantage) of two."""
-
-    def __init__(self, mode: str) -> None:
-        self.mode = mode
-        self.draws: list[int] = []
-
-    def randint(self, a: int, b: int) -> int:
-        base = current_rng() or random.SystemRandom()
-        first, second = base.randint(a, b), base.randint(a, b)
-        self.draws = [first, second]
-        return max(first, second) if self.mode == "advantage" else min(first, second)
 
 
 def _roll_with_mode(expression: str, mode: str) -> tuple[DiceOutcome, list[int]]:
@@ -557,22 +546,7 @@ def _mode_log(outcome: DiceOutcome, purpose: str, mode: str, draws: list[int]) -
     entry = outcome.to_log(purpose)
     if mode == "normal":
         return entry
-    return {**entry, "rolls": list(draws), "kept": outcome.rolls[0], "mode": mode}
-
-
-def _attack_with_mode(
-    character: dict | None, target_ac: int, *, mode: str, spell: bool, hint: str
-) -> CheckResult:
-    """The player's attack roll at `mode`, resolved by the existing attack resolver."""
-    if mode == "normal":
-        return resolve_attack(character, target_ac, spell=spell, hint=hint)
-    pair = _D20Pair(mode)
-    result = resolve_attack(character, target_ac, spell=spell, hint=hint, rng=pair)
-    if result.dice_log:
-        result.dice_log = [
-            {**result.dice_log[0], "rolls": list(pair.draws), "kept": result.natural, "mode": mode}
-        ]
-    return result
+    return {**entry, "rolls": list(draws), "kept": outcome.rolls[0], "roll_mode": mode}
 
 
 def _contest(attacker_bonus: int, defender_bonus: int) -> tuple[bool, DiceOutcome, DiceOutcome]:
@@ -712,6 +686,7 @@ async def combat_round_node(state: AgentState) -> dict:
             return _ask_player(state, question, combat_state=combat_state)
     # Typed effects this round's engine applied; the boundary and narrator read them.
     round_effects: list[str] = []
+    round_modes: list[str] = []  # d20 mode of every attack rolled this round
 
     # --- Shared HP bookkeeping (engine only) ---
     hp = player_hp
@@ -734,6 +709,7 @@ async def combat_round_node(state: AgentState) -> dict:
             return
         round_actors.append(_display(e))
         mode = attack_roll_mode(e, player)
+        round_modes.append(mode)
         atk, draws = _roll_with_mode(f"1d20{int(e.get('attack_bonus', 3)):+d}", mode)
         dice_log.append(_mode_log(atk, f"{e['name']} attack", mode, draws))
         mode_text = "" if mode == "normal" else f" at {mode}"
@@ -836,9 +812,14 @@ async def combat_round_node(state: AgentState) -> dict:
     elif is_attack and target is not None:
         ranged = bool(_RANGED_HINT.search(player_input))
         mode = attack_roll_mode(player, target, ranged=ranged)
-        check_result = _attack_with_mode(
-            character, int(target.get("ac", 12)), mode=mode, spell=is_spell, hint=player_input
+        check_result = resolve_attack(
+            character,
+            int(target.get("ac", 12)),
+            spell=is_spell,
+            hint=player_input,
+            roll_mode=mode,
         )
+        round_modes.append(mode)
         if check_result.success:
             dealt, dmg_roll = roll_attack_damage(character, check_result, hint=player_input)
             dice_log.append(dmg_roll.to_log("player damage"))
@@ -945,7 +926,16 @@ async def combat_round_node(state: AgentState) -> dict:
     # Declared unsupported mechanics are ruled on in the round summary (no engine effect).
     summary_text = " ".join(line for line in log_lines if line)
     engine_effects = tuple(round_effects)
-    actions = actions_for_state({**state, "engine_effects": engine_effects})
+    round_roll_mode = (
+        "advantage"
+        if "advantage" in round_modes
+        else "disadvantage"
+        if "disadvantage" in round_modes
+        else "normal"
+    )
+    actions = actions_for_state(
+        {**state, "engine_effects": engine_effects, "engine_roll_mode": round_roll_mode}
+    )
     for ruling in ruling_lines(actions):
         if ruling not in summary_text:
             log_lines.append(ruling)
@@ -968,6 +958,7 @@ async def combat_round_node(state: AgentState) -> dict:
         "adjudication_result": adj,
         "combat_state": combat_state,
         "engine_effects": engine_effects,
+        "engine_roll_mode": round_roll_mode,
     }
     narr_updates = await narrator_node(narr_state)
     if narr_updates.get("error"):
@@ -995,6 +986,7 @@ async def combat_round_node(state: AgentState) -> dict:
         "messages": list(narr_updates.get("messages", state.get("messages", []))),
         "narration": narration,
         "adjudication_result": adj,
+        "engine_roll_mode": round_roll_mode,
         "rules_context": state.get("rules_context", []),
         "adventure_context": state.get("adventure_context", []),
     }

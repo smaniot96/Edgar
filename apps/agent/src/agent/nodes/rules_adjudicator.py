@@ -51,10 +51,12 @@ from agent.resolution_policies import (
 )
 from agent.state import AgentState
 from agent.supported_rules import (
+    ENGINE_ROLL_MODE_KEY,
     actions_for_state,
     apply_adjudication_boundary,
     boundary_prompt_block,
     engine_effects_for_state,
+    engine_roll_mode,
 )
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
@@ -228,7 +230,6 @@ async def adjudicate(
     parsed = state.get("parsed_input")
     character = state.get("character")
     player_input = state.get("player_input", "")
-    actions = actions_for_state(state)
 
     recall = exact_recall_fact(state, parsed)
     if recall is not None:
@@ -277,6 +278,10 @@ async def adjudicate(
     elif check_result is None and not in_combat:
         check_result, extra_log = resolve_from_parsed(character, parsed, player_input=player_input)
 
+    # The roll mode is engine-owned; record what was applied before the boundary reads it.
+    state[ENGINE_ROLL_MODE_KEY] = check_result.roll_mode if check_result is not None else "normal"
+    actions = actions_for_state(state)
+
     messages = build_adjudicator_prompt(
         state, check_result, extra_outcome=extra_outcome, dice_log=extra_log
     )
@@ -286,7 +291,12 @@ async def adjudicate(
 
     # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
     # Runs before the engine's own roll line is stamped on, so engine dice are never stripped.
-    apply_adjudication_boundary(result, actions, engine_effects=engine_effects_for_state(state))
+    apply_adjudication_boundary(
+        result,
+        actions,
+        engine_roll_mode=engine_roll_mode(state),
+        engine_effects=engine_effects_for_state(state),
+    )
 
     # Authoritative numbers: never trust the model's success/dice.
     result.dice_log = list(extra_log)
@@ -422,4 +432,5 @@ async def rules_adjudicator_node(state: AgentState) -> dict:
         "policy_narration": state.get("policy_narration"),
         "authorized_policy_effect_keys": state.get("authorized_policy_effect_keys", []),
         "policy_reveal_authorizations": state.get("policy_reveal_authorizations", []),
+        ENGINE_ROLL_MODE_KEY: engine_roll_mode(state),
     }

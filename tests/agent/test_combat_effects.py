@@ -205,7 +205,7 @@ async def test_won_grapple_restrains_and_the_foe_attacks_at_disadvantage(
     assert "contest: Eda athletics" in _summary(out)
     # Restrained creatures still attack (5e), but with disadvantage: the kept die is the lower one.
     attack = _entries(out, "Raider attack")[0]
-    assert attack["mode"] == "disadvantage"
+    assert attack["roll_mode"] == "disadvantage"
     assert attack["kept"] == min(attack["rolls"]) and len(attack["rolls"]) == 2
     assert attack["total"] == attack["kept"] + attack["modifier"]
     assert "(rolled" in _summary(out) and " at disadvantage vs AC" in _summary(out)
@@ -258,8 +258,8 @@ async def test_restraint_persists_across_rounds_and_the_players_attack_gets_adva
         {"kind": "restrained", "source": "rope", "applied_round": 1}
     ]
     player_attack = _entries(second, "attack check")[0]
-    assert player_attack["mode"] == "advantage"
-    assert _entries(second, "Raider attack")[0]["mode"] == "disadvantage"
+    assert player_attack["roll_mode"] == "advantage"
+    assert _entries(second, "Raider attack")[0]["roll_mode"] == "disadvantage"
 
 
 @pytest.mark.asyncio
@@ -320,7 +320,7 @@ async def test_shove_prone_gives_melee_advantage_and_ranged_disadvantage(
         {"kind": "prone", "source": "shove", "applied_round": 1}
     ]
     assert "shoves Raider prone." in _summary(won)
-    assert _entries(won, "Raider attack")[0]["mode"] == "disadvantage"  # prone attackers
+    assert _entries(won, "Raider attack")[0]["roll_mode"] == "disadvantage"  # prone attackers
 
     # Each round mutates its combatants in place, so every follow-up gets its own copy.
     saved = won["combat_state"]["combatants"]
@@ -331,7 +331,7 @@ async def test_shove_prone_gives_melee_advantage_and_ranged_disadvantage(
         ParsedInput(intent="combat", check="attack", target="raider"),
         seed=6,
     )
-    assert _entries(melee, "attack check")[0]["mode"] == "advantage"
+    assert _entries(melee, "attack check")[0]["roll_mode"] == "advantage"
     ranged = await _round(
         fake_llm_schema,
         copy.deepcopy(saved),
@@ -339,7 +339,7 @@ async def test_shove_prone_gives_melee_advantage_and_ranged_disadvantage(
         ParsedInput(intent="combat", check="attack", target="raider"),
         seed=6,
     )
-    assert _entries(ranged, "attack check")[0]["mode"] == "disadvantage"
+    assert _entries(ranged, "attack check")[0]["roll_mode"] == "disadvantage"
 
 
 @pytest.mark.asyncio
