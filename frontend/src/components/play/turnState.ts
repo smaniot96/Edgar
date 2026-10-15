@@ -187,7 +187,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
     const existingUser = state.lines.find((line) => line.turnId === action.turnId && line.role === "user");
     const lines = state.lines.filter((line) => line.turnId !== action.turnId);
     const alreadyInHistory = eventId != null && lines.some((line) => line.role === "dm" && line.eventId === eventId);
-    if (alreadyInHistory) return { ...state, lines, pending: null, announcement: narration };
+    if (alreadyInHistory) return { ...state, lines, pending: null, announcement: "Saved action confirmed." };
     if (existingUser?.role === "user") lines.push({ ...existingUser, failed: false, uncertain: false });
     lines.push({
       id: `${action.turnId}:dm`,

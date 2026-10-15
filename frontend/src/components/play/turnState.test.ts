@@ -41,6 +41,16 @@ describe("turnReducer", () => {
     expect(s.announcement).toBe("The door opens completely.");
   });
 
+  it("confirms an already loaded receipt without announcing historical narration as new", () => {
+    const s = run([
+      { type: "reset", lines: linesFromHistory([{ role: "dm", content: "Old saved narration.", created_at: "", event_id: 7 }]) },
+      { type: "recover", turnId: "t1", requestId: "r1", input: "look" },
+      { type: "receiptCommitted", turnId: "t1", result: { narration: "Old saved narration.", event_id: 7 } },
+    ]);
+    expect(s.lines).toHaveLength(1);
+    expect(s.announcement).toBe("Saved action confirmed.");
+  });
+
   it("falls back to the done payload's narration when no tokens streamed", () => {
     const s = run([
       { type: "start", turnId: "t1", requestId: "r1", input: "look" },
