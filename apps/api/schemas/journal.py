@@ -29,6 +29,10 @@ JournalStatus = Literal[
     "neutral",
     "hostile",
     "changed",
+    "captive",
+    "released",
+    "dead",
+    "defeated",
 ]
 
 

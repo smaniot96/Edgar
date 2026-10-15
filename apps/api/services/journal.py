@@ -55,6 +55,10 @@ _ALLOWED_STATUS = {
     "neutral",
     "hostile",
     "changed",
+    "captive",
+    "released",
+    "dead",
+    "defeated",
 }
 
 

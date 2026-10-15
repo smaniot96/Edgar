@@ -81,3 +81,13 @@ def test_private_clock_updates_cannot_reorder_visible_entries():
     note = fact("discover", "Lens note", event=2)
     terminal = fact("clock", "Rising water", event=3, text="Water is rising.", status="completed", quantity=9)
     assert project([initial, note]).model_dump() == project([initial, note, terminal]).model_dump()
+
+
+def test_known_people_keep_committed_engine_outcomes_from_concurrent_combat_work():
+    met = fact("encounter", "Mara Quill", status="encountered")
+    for outcome in ("captive", "released", "dead", "defeated"):
+        later = fact("encounter", "Mara Quill", event=2, status=outcome)
+        person = project([met, later]).entries[0]
+        assert person.status == outcome
+        assert [change.status for change in person.history] == ["encountered", outcome]
+        assert person.title == "Mara Quill"

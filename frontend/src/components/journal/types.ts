@@ -22,7 +22,11 @@ export type JournalStatus =
   | "friendly"
   | "neutral"
   | "hostile"
-  | "changed";
+  | "changed"
+  | "captive"
+  | "released"
+  | "dead"
+  | "defeated";
 
 export interface JournalStatusChange {
   status: JournalStatus;
