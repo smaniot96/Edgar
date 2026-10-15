@@ -1,0 +1,11 @@
+# CI security checks
+
+The `security` job audits the Python environment after `uv sync --locked --group dev`, which installs the exact runtime and development versions selected by `uv.lock`. `pip-audit --local --skip-editable` omits only editable workspace projects because they do not have published package versions; it still audits the third-party packages installed from the lock. A synthetic vulnerable Starlette pin verifies that pip-audit detects an advisory before the clean environment is audited.
+
+The frontend audit covers the full `package-lock.json`, including development dependencies. Tailwind CSS is pinned at 4.3.3 because the locked Tailwind 3 dependency tree had unresolved high-severity advisories. The Vite build, lint, and tests run in the frontend job to check that the migration preserves the UI build.
+
+Bandit blocks medium-or-higher severity findings when confidence is high (`-ll -iii`). Before scanning the repository, the CI checker confirms that a synthetic unsafe `pickle.loads` call produces a `B301` finding at medium severity and high confidence and exits with failure. The current baseline contains no findings at that scope. The gate deliberately leaves low-confidence reports outside the blocking policy, and the thresholds are explicit so a future scope change can be reviewed.
+
+Gitleaks 8.28.0 is installed from a release archive whose SHA-256 is checked in CI. It scans a `git archive` of `HEAD`, so the scan covers the checked-out tracked tree without traversing Git history, ignored local files, or build/dependency directories. Output is fully redacted. A generated synthetic GitHub token must produce exactly one finding and remain absent from scanner output before the tracked-tree scan runs.
+
+The readiness type check proves that the production `Extraction` satisfies the structural ingestion contract and that invalid source kinds and digest values fail static checking. Coverage is reported for `ingestion.readiness` with a 90% minimum. The existing `edgar-tests` job keeps `CI=true`, so unavailable Docker-backed Postgres or Qdrant fixtures fail instead of silently skipping; migration and API/migration image build jobs remain separate required CI gates.

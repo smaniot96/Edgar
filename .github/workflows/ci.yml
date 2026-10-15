@@ -145,3 +145,55 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Sync locked Python workspace and dev tools
+        run: uv sync --locked --group dev
+
+      - name: Audit locked Python dependencies
+        run: uv run python tools/check_python_dependencies.py
+
+      - name: Check ingestion readiness type contracts
+        run: uv run python tools/check_readiness_types.py
+
+      - name: Bandit SAST
+        # Gate medium/high severity findings only at high confidence; see docs/ci-security.md.
+        run: uv run python tools/check_bandit.py
+
+      - name: Report readiness coverage
+        run: >-
+          uv run pytest tests/test_ingestion_readiness.py
+          --cov=ingestion.readiness --cov-report=term-missing --cov-fail-under=90
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Audit frontend lockfile
+        working-directory: frontend
+        run: npm audit --audit-level=moderate
+
+      - name: Install pinned Gitleaks
+        run: |
+          archive="$RUNNER_TEMP/gitleaks_8.28.0_linux_x64.tar.gz"
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz -o "$archive"
+          printf '%s  %s\n' a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Verify secret detection and scan tracked tree
+        run: uv run python tools/check_tracked_secrets.py

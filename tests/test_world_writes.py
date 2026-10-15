@@ -294,3 +294,78 @@ async def test_combat_dispositions_persist_to_npc_rows_and_survive_reload(db_ses
     assert by_name["Raider"]["disposition"] == "captured"
     assert by_name["Raider Captain"]["disposition"] == "dead"
     assert "disposition" not in by_name["Cultist"]
+
+
+@pytest.mark.asyncio
+async def test_spell_slot_ledger_persists_and_reloads(db_session) -> None:
+    """EDG-027: the expended-slot count is written to the assignment and survives a reload."""
+    u = User(email="slots@example.com")
+    db_session.add(u)
+    await db_session.flush()
+    camp = Campaign(title="Slots", system="dnd5e", created_by=u.id)
+    db_session.add(camp)
+    await db_session.flush()
+    char = Character(
+        owner_user_id=u.id,
+        name="Ilse",
+        character_class="Wizard",
+        level=3,
+        hp_max=12,
+        base_stats={"conditions": []},
+        base_inventory={"items": []},
+    )
+    db_session.add(char)
+    await db_session.flush()
+    ass = CharacterAssignment(
+        character_id=char.id,
+        campaign_id=camp.id,
+        hp_current=12,
+        hp_max=12,
+        stats={"conditions": []},
+        inventory={"items": []},
+    )
+    db_session.add(ass)
+    await db_session.flush()
+    sess = SessionModel(
+        campaign_id=camp.id,
+        active_character_id=char.id,
+        current_scene_id="a",
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(sess)
+    await db_session.flush()
+
+    await apply_adjudication(
+        db_session,
+        sess,
+        AdjudicationResult(
+            success=True,
+            character_update=CharacterUpdate(spell_slots_expended={"1": 1}),
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(ass)
+    assert ass.stats["spell_slots_expended"] == {"1": 1}
+    assert ass.stats["conditions"] == [] and ass.hp_current == 12
+
+    # A second cast spends the next slot; a long rest writes an empty ledger.
+    await apply_adjudication(
+        db_session,
+        sess,
+        AdjudicationResult(
+            success=True,
+            character_update=CharacterUpdate(spell_slots_expended={"1": 2, "2": 1}),
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(ass)
+    assert ass.stats["spell_slots_expended"] == {"1": 2, "2": 1}
+
+    await apply_adjudication(
+        db_session,
+        sess,
+        AdjudicationResult(success=True, character_update=CharacterUpdate(spell_slots_expended={})),
+    )
+    await db_session.commit()
+    await db_session.refresh(ass)
+    assert ass.stats["spell_slots_expended"] == {}

@@ -35,11 +35,13 @@ The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session
 `GET /api/rules/supported-scope` is read-only and static. It returns the code-owned contract
 (`agent.supported_rules`): the mechanics the engine executes, the rules it does not execute, and
 the solo-play adaptations. A declared action that falls in the unsupported list receives a narrative
-ruling. Its narration and adjudication cannot state an engine effect, so spells, maneuvers,
-advantage without an engine source, positioning and similar claims never change HP, conditions or
-flags. The one exception is a combat maneuver the engine actually applied (a won grapple, restraint
-or shove prone): its effect is recorded in the combatant's `effects` and is not stripped from the
-narration. The scope is also summarised in the rules and narrator prompts.
+ruling. Its narration and adjudication cannot state an engine effect, so spells outside the catalog,
+maneuvers, advantage without an engine source, positioning and similar claims never change HP,
+conditions or flags. The exceptions are engine facts: a catalog spell (`agent.spells`) is executed
+by the engine, its dice, damage and healing come from the roll, and the spell-slot count is
+persisted in the assignment's `stats["spell_slots_expended"]`; a combat maneuver the engine actually
+applied (a won grapple, restraint or shove prone) is recorded in the combatant's `effects` and is
+not stripped from the narration. The scope is also summarised in the rules and narrator prompts.
 
 ## Health
 
@@ -88,6 +90,31 @@ PDF for a missing, empty, partial or failed index (or retry an explicitly AI-gen
 a missing uploaded PDF returns 410. Historical logs and metadata cannot recreate a lost PDF.
 Recovery uses the existing ingestion pipeline and extraction readiness checks described below.
 
+### Adventure preparation jobs
+
+Upload and generation work still runs in-process. The API does not automatically restart a
+worker after a process restart; startup changes unfinished jobs to `interrupted` and preserves
+their durable recovery state. `GET /api/adventures` and `GET /api/adventures/{slug}` expose a
+safe `job` projection: job kind and state, the actual stage, saved/total generation chapters,
+whether retained work is retryable, and a short recovery action/explanation. The projection
+never includes an outline, chapter text or manuscript content. Stage information is not an
+overall percentage or an ETA.
+
+Generation checkpoints persist the outline before chapter expansion and persist each completed
+chapter before reporting it as saved. `POST /api/adventures/{slug}/retry` resumes missing
+chapters; when the complete manuscript is already saved, it rebuilds the index without another
+generation call. If no valid checkpoint exists, retry explicitly restarts generation. Uploaded
+PDF retry reuses the retained candidate or canonical source and reruns extraction/indexing; an
+inspected-preview retry includes the preview's source and extraction hashes. Repeated retry
+requests while a job is active return a conflict rather than starting duplicate work.
+
+`POST /api/adventures/{slug}/cancel` requests cooperative cancellation. It returns the safe job
+projection with `cancel_requested`; cancellation takes effect at a safe checkpoint and can be
+retried later when retained work is available. A cancellation request is rejected once source
+publication is committing. When replacing a ready source, its last published receipt remains
+available for play until a validated replacement is activated. Failed or cancelled replacement
+work therefore does not make that previous source unavailable.
+
 # Extraction readiness and local previews
 
 PDF upload and generated manuscripts keep a local extraction bundle beside their adventure
@@ -111,11 +138,18 @@ Poor extraction and missing source/chunk coverage fail before embeddings or vect
 New ready sources must also match the validated source/extraction hashes, expected chunk count
 and exact contributing pages in the live index. Specific `failure_code` and readable errors
 remain in existing adventure metadata; the source PDF/manuscript preview is retained for recovery.
-Generated-source retries prune the previous source chunks only after the complete replacement
-has embedded and upserted successfully. A failed embedding attempt retains the previous index
-and marks the source failed with its manuscript available for inspection and retry.
-Legacy sources without extraction evidence retain the live coverage checks introduced by EDG-001.
-Atomic index promotion and concurrent retry isolation remain EDG-015 work.
+Replacement attempts stage their source and artifacts by attempt, and activation keeps the last
+published index receipt available until the validated new version becomes active. If a retry fails,
+the prior ready source remains ready for play; only a source with no prior published version is
+reported as failed. Legacy sources without extraction evidence retain the live coverage checks
+introduced by EDG-001.
+
+For a generated source, authors can export the exact retained original Markdown locally with
+`docker compose exec api python -m apps.api.services.manuscript <slug> /data/exports/<file>.md`.
+The command verifies the retained file's SHA-256 before publishing the export; the output path
+must be in a directory available inside the API container. It reports legacy sources and missing
+or modified originals as unavailable instead of rebuilding text from index chunks. There is no
+player-facing manuscript download route.
 
 This contract uses the existing adventure JSON directories for metadata and extraction bundles,
 and optional `source_pages`, `source_sha256` and `extraction_sha256` fields in Qdrant chunk

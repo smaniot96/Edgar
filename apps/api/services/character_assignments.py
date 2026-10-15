@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agent.resolution import second_wind_status
 from db.postgres.models import Character, CharacterAssignment
 
 
@@ -56,7 +57,7 @@ async def character_play_state(
     if assignment is None:
         return None
     char = assignment.character
-    return {
+    out = {
         "id": char.id,
         "name": char.name,
         "class": char.character_class,
@@ -66,3 +67,8 @@ async def character_play_state(
         "stats": assignment.stats,
         "inventory": assignment.inventory,
     }
+    # Additive, derived view of the Second Wind resource (fighters only).
+    second_wind = second_wind_status(out)
+    if second_wind is not None:
+        out["second_wind"] = second_wind
+    return out
