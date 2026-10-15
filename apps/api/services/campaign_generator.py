@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -148,7 +150,13 @@ async def _expand_chapter(
 
 
 async def generate_campaign(
-    title_hint: str, theme: str, size: str, rules_edition: str = "2014"
+    title_hint: str,
+    theme: str,
+    size: str,
+    rules_edition: str = "2014",
+    *,
+    checkpoint: dict[str, Any] | None = None,
+    on_checkpoint: Callable[[dict[str, Any], str], None] | None = None,
 ) -> tuple[str, str, list[tuple[int, str]]]:
     """Returns (title, description, pages) where pages are `(page_no, markdown)` for embedding.
 
@@ -156,20 +164,88 @@ async def generate_campaign(
     reads the earliest pages) starts the player at the true beginning.
     """
     n_chapters = SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"])
-    outline = await _generate_outline(title_hint, theme, size, n_chapters, rules_edition)
+    saved = checkpoint or {}
+    saved_outline = saved.get("outline")
+    outline = (
+        CampaignOutline.model_validate(saved_outline)
+        if isinstance(saved_outline, dict)
+        else await _generate_outline(title_hint, theme, size, n_chapters, rules_edition)
+    )
     if len(outline.chapters) != n_chapters:
         raise IncompleteGeneration(
             f"The generated outline contains {len(outline.chapters)} of {n_chapters} required chapters. Retry generation."
         )
     total = len(outline.chapters) or 1
 
+    chapters = dict(saved.get("chapters") or {})
+    if any(not key.isdigit() or int(key) >= total for key in chapters):
+        raise ValueError("Saved chapter checkpoint does not match the requested campaign size.")
     sem = asyncio.Semaphore(_MAX_CONCURRENT)
-    chapter_texts = await asyncio.gather(
-        *[
-            _expand_chapter(outline, i, total, sem, rules_edition)
-            for i in range(len(outline.chapters))
-        ]
-    )
+    if on_checkpoint and saved_outline is None:
+        on_checkpoint(
+            {"version": 1, "outline": outline.model_dump(), "chapters": chapters},
+            "generating_chapters",
+        )
+    tasks = {
+        asyncio.create_task(_expand_chapter(outline, i, total, sem, rules_edition)): i
+        for i in range(total)
+        if str(i) not in chapters
+    }
+    pending = set(tasks)
+    failure: BaseException | None = None
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                index = tasks[task]
+                try:
+                    chapters[str(index)] = task.result()
+                except BaseException as exc:
+                    failure = failure or exc
+            if on_checkpoint and done and failure is None:
+                try:
+                    on_checkpoint(
+                        {"version": 1, "outline": outline.model_dump(), "chapters": chapters},
+                        "generating_chapters",
+                    )
+                except BaseException as exc:
+                    failure = failure or exc
+            if failure is not None:
+                break
+    except BaseException as exc:
+        # External cancellation and callback/provider errors must not leave paid provider
+        # tasks running after this attempt has returned to the request handler.
+        failure = failure or exc
+    finally:
+        pending_tasks = [task for task in tasks if not task.done()]
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            settled = await asyncio.gather(*pending_tasks, return_exceptions=True)
+            # Keep the task/outcome association deterministic. A set's iteration order
+            # must never decide which chapter receives another task's successful result.
+            for task, outcome in zip(pending_tasks, settled, strict=True):
+                if isinstance(outcome, str):
+                    chapters[str(tasks[task])] = outcome
+        for task, index in tasks.items():
+            if task.done() and not task.cancelled():
+                try:
+                    result = task.result()
+                except BaseException:
+                    continue
+                if isinstance(result, str):
+                    chapters[str(index)] = result
+        if on_checkpoint and tasks:
+            try:
+                on_checkpoint(
+                    {"version": 1, "outline": outline.model_dump(), "chapters": chapters},
+                    "generating_chapters",
+                )
+            except BaseException as exc:
+                failure = failure or exc
+    if failure is not None:
+        raise failure
+    chapter_texts = [chapters[str(i)] for i in range(total)]
 
     front_matter = (
         f"# {outline.title}\n\n"
@@ -202,9 +278,47 @@ async def build_generated_campaign(
     from . import adventures_meta as store
     from .adventures_meta import load_meta
 
-    token = attempt_id or store.begin_attempt(slug)
+    token = attempt_id or store.begin_attempt(slug, job_attempt=True, job_kind="generation")
+    job = store.ensure_job(slug, token, kind="generation", stage="outline")
+    job_id = job["job_id"]
     report = {}
     receipt_updates = {}
+
+    try:
+        checkpoint = store.load_generation_checkpoint(
+            slug, job_id, expected_chapters=SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"])
+        )
+    except (OSError, ValueError) as exc:
+        store.update_job(
+            slug,
+            token,
+            state="failed",
+            stage="failed",
+            retryable=False,
+            checkpoint_corrupt=True,
+        )
+        store.finish_attempt(
+            slug,
+            token,
+            {
+                "status": "failed",
+                "failure_code": "checkpoint_unreadable",
+                "error": "Saved generation progress is unreadable. Create a new campaign to generate again.",
+            },
+        )
+        log.warning("campaign_checkpoint_unreadable", slug=slug, error=type(exc).__name__)
+        return
+
+    def checkpointed(value: dict[str, Any], stage: str) -> None:
+        from .adventures_meta import save_generation_checkpoint
+
+        save_generation_checkpoint(
+            slug,
+            token,
+            {"version": 1, "job_id": job_id, **value},
+            stage=stage,
+            total_chapters=SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"]),
+        )
 
     def prepared(value: dict) -> None:
         report.update(value)
@@ -212,14 +326,32 @@ async def build_generated_campaign(
 
     structlog.contextvars.bind_contextvars(adventure_slug=slug)
     try:
+        store.check_job_running(slug, token)
         title, description, pages = await generate_campaign(
-            title_hint, theme, size, load_meta(slug).get("rules_edition", "2014")
+            title_hint,
+            theme,
+            size,
+            load_meta(slug).get("rules_edition", "2014"),
+            checkpoint=checkpoint,
+            on_checkpoint=checkpointed,
         )
+        store.update_job(slug, token, stage="indexing", retained_work="complete_manuscript")
         from .manuscript import save_candidate_manuscript
 
         manuscript = "\n\n".join(text for _, text in sorted(pages))
         save_candidate_manuscript(slug, token, manuscript)
         receipt_updates.update(title=title, description=description)
+        publication_attempt = 0
+
+        def publication_guard():
+            nonlocal publication_attempt
+            publication_attempt += 1
+            return store.publication_guard(
+                slug,
+                token,
+                stage="embedding" if publication_attempt == 1 else "publishing",
+            )
+
         n = await asyncio.to_thread(
             ingest_pages,
             pages,
@@ -230,7 +362,7 @@ async def build_generated_campaign(
             preview_dir=store.attempt_dir(slug, token),
             on_prepared=prepared,
             replace=True,
-            publication_guard=lambda: store.attempt_guard(slug, token),
+            publication_guard=publication_guard,
         )
         meta = load_meta(slug)
         from .campaign_sources import inspect_ingestion_source
@@ -257,6 +389,9 @@ async def build_generated_campaign(
             success=bool(ready),
         )
         log.info("campaign_generated", slug=slug, chunks=n, size=size)
+    except store.JobCancelled:
+        store.cancel_attempt(slug, token)
+        log.info("campaign_generation_cancelled", slug=slug)
     except SupersededIngestion:
         log.info("campaign_generation_superseded", slug=slug)
     except IngestionRejected as exc:
