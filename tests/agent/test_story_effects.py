@@ -367,3 +367,126 @@ def test_visit_is_current_only_and_a_turn_accepts_one_move():
     )
     assert [effect.target.canonical_id for effect in adj.accepted_story_effects] == ["vault"]
     assert adj.scene_id == "vault"
+
+
+def _known_actor_promise_state():
+    state, _, _ = fixture_state()
+    manifest = state["adventure_manifests"]["module"]
+    actor = StoryRef(
+        collection="module",
+        source_sha256="a" * 64,
+        manifest_sha256=manifest["reviewed_sha256"],
+        kind="entity",
+        canonical_id="mara",
+    )
+    source = source_citation(state["adventure_context"][0])
+    encounter = accept_story_effect(
+        StoryEffect(
+            kind="encounter",
+            target=actor,
+            status="encountered",
+            source_reference_ids=[source["reference_id"]],
+            player_text="Mara greets you.",
+        ),
+        turn_id="meeting",
+        source_refs=[source],
+        display_name="Mara",
+    )
+    fact = StoryFact(**encounter.model_dump(), fact_id=story_target_id(actor), event_id=17)
+    state["story_state"]["facts"] = [fact.model_dump()]
+    state["player_input"] = "Mara, I promise to bring the note tomorrow."
+    candidate = next(c for c in story_candidates(state) if c.get("promise_actor"))
+    effect = StoryEffect(
+        kind="promise",
+        target=StoryRef.model_validate(candidate["target"]),
+        status="active",
+        promise_actor=actor,
+        knowledge_fact_ids=candidate["knowledge_fact_ids"],
+        source_reference_ids=candidate["source_reference_ids"],
+        player_text="Invented promise.",
+    )
+    return state, effect
+
+
+def test_actual_player_promise_is_exact_event_quotation_and_survives_scene_change():
+    state, effect = _known_actor_promise_state()
+    accepted = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[effect]), state
+    ).accepted_story_effects[0]
+    quotation = state["player_input"]
+    assert accepted.player_text == quotation
+    assert accepted.evidence_kind == "player_utterance" and accepted.origin_turn_id == "turn-1"
+    assert accepted.display_name == "Player promise"
+    fact = StoryFact(**accepted.model_dump(), fact_id=story_target_id(accepted.target), event_id=18)
+    state["story_state"]["facts"].append(fact.model_dump())
+    state.update(
+        current_scene_id="vault",
+        adventure_context=[],
+        planner_context=[],
+        turn_id="turn-2",
+        player_input="I deliver the note as promised.",
+    )
+    candidates = [c for c in story_candidates(state) if c.get("promise_actor")]
+    assert candidates[0]["target"] == accepted.target.model_dump()
+    fulfilled = effect.model_copy(
+        update={"status": "fulfilled", "knowledge_fact_ids": [fact.fact_id]}
+    )
+    result = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[fulfilled]), state
+    )
+    done = result.accepted_story_effects[0]
+    assert done.player_text == quotation and done.origin_turn_id == "turn-1"
+    assert done.turn_id == "turn-2" and done.target == accepted.target
+    state["story_state"]["facts"].append(
+        StoryFact(**done.model_dump(), fact_id=fact.fact_id, event_id=19).model_dump()
+    )
+    assert not validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[effect, fulfilled]), state
+    ).accepted_story_effects
+
+
+def test_unspoken_or_unanchored_promises_and_failed_fulfillment_rejected():
+    state, effect = _known_actor_promise_state()
+    absent = {**state, "story_state": {"facts": []}}
+    assert not validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[effect]), absent
+    ).accepted_story_effects
+    for utterance in (
+        "I don't promise Mara anything.",
+        "Mara says I promise to bring a note.",
+        "I find a golden sword.",
+    ):
+        assert not validate_story_effects(
+            AdjudicationResult(success=True, story_effects=[effect]),
+            {**state, "player_input": utterance},
+        ).accepted_story_effects
+    forged = effect.model_copy(update={"kind": "discover"})
+    assert not validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[forged]), state
+    ).accepted_story_effects
+    active = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[effect]), state
+    ).accepted_story_effects[0]
+    fact = StoryFact(**active.model_dump(), fact_id=story_target_id(active.target))
+    state["story_state"]["facts"].append(fact.model_dump())
+    failed_fulfillment = effect.model_copy(
+        update={"status": "fulfilled", "knowledge_fact_ids": [fact.fact_id]}
+    )
+    assert not validate_story_effects(
+        AdjudicationResult(success=False, story_effects=[failed_fulfillment]), state
+    ).accepted_story_effects
+
+
+def test_absent_promise_anchor_preserves_existing_effect_hash():
+    import hashlib
+    import json
+
+    state, _, _ = fixture_state()
+    effect = proposal(state)
+    legacy_body = effect.model_dump(exclude={"promise_actor"})
+    legacy_body["source_reference_ids"] = sorted(set(legacy_body["source_reference_ids"]))
+    legacy_body["knowledge_fact_ids"] = sorted(set(legacy_body["knowledge_fact_ids"]))
+    expected = hashlib.sha256(
+        json.dumps(legacy_body, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert accept_story_effect(effect, turn_id="turn", source_refs=[]).effect_id == expected

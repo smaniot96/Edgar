@@ -63,7 +63,11 @@ Fill out:
   may reference committed facts only. Definitions and recent conversation are not earned knowledge.
   Never invent promises, completion, source IDs, object availability or clock progress. Private
   planner material must never appear in player_text or mechanical_summary. The validator supplies
-  exact reviewed player text after acceptance. Engine outcomes/numbers are not story proposals.
+  exact reviewed player text after acceptance. For an actual explicit first-person player promise,
+  use a supplied Player promise candidate and its promise_actor/knowledge/source references.
+  Its quotation comes from this player event, not from a source book. Later fulfilled/broken
+  updates must reference that committed promise; preserve the original quotation and never
+  treat speech as evidence of a discovery or object ownership. Engine outcomes/numbers are not story proposals.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
 

@@ -6,6 +6,8 @@ planner prose can guide a decision but can never become a discovered player quot
 
 from __future__ import annotations
 
+import re
+
 from agent.models.adjudication import AdjudicationResult
 from agent.state import AgentState
 from edgar_core.artifacts import text_digest
@@ -14,9 +16,11 @@ from edgar_core.sources import eligible_context, source_citation
 from edgar_core.story import (
     AcceptedStoryEffect,
     StoryEffect,
+    StoryFact,
     StoryRef,
     StoryState,
     accept_story_effect,
+    player_promise_ref,
     story_target_id,
 )
 
@@ -149,7 +153,126 @@ def story_candidates(state: AgentState) -> list[dict]:
                         initial_owner=definition.initial_owner,
                         operations=definition.operations,
                     )
-    return candidates
+    return candidates + _player_promise_candidates(state)
+
+
+def _explicit_player_promise(text: str) -> bool:
+    # Bounded first-person utterance, including "Mara, I promise..."; quoted NPC speech
+    # and negated promises cannot establish an actual promise by the player.
+    return len(text) <= 12000 and bool(
+        re.search(
+            r"(?:^|[,;:\n]\s*)(?:I\s+(?:promise|swear)|(?:io\s+)?(?:prometto|giuro))\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _player_promise_candidates(state: AgentState) -> list[dict]:
+    facts = committed_facts(state)
+    text = state.get("player_input", "")
+    candidates = {}
+    for fact in facts:
+        if (
+            fact.kind == "encounter"
+            and fact.status == "encountered"
+            and _explicit_player_promise(text)
+        ):
+            target = player_promise_ref(fact.target, text)
+            candidate = {
+                "target": target.model_dump(),
+                "promise_actor": fact.target.model_dump(),
+                "title": "Player promise",
+                "statuses": ["active"],
+                "knowledge_fact_ids": [fact.fact_id],
+                "source_reference_ids": [r["reference_id"] for r in fact.source_refs],
+            }
+        elif fact.kind == "promise" and fact.promise_actor is not None:
+            candidate = {
+                "target": fact.target.model_dump(),
+                "promise_actor": fact.promise_actor.model_dump(),
+                "title": "Player promise",
+                "statuses": ["fulfilled", "broken"] if fact.status == "active" else [],
+                "knowledge_fact_ids": [fact.fact_id],
+                "source_reference_ids": fact.source_reference_ids,
+                "original_quotation": fact.player_text,
+            }
+        else:
+            continue
+        candidates[
+            target.model_dump_json() if fact.kind == "encounter" else fact.target.model_dump_json()
+        ] = candidate
+    return list(candidates.values())
+
+
+def _validate_player_promise(proposal: StoryEffect, state: AgentState, facts: list, success: bool):
+    """An exact player utterance is event evidence, never a newly discovered book fact."""
+    if (
+        proposal.kind != "promise"
+        or proposal.target.kind != "promise"
+        or proposal.promise_actor is None
+        or proposal.promise_actor.kind != "entity"
+        or proposal.quantity is not None
+        or proposal.destination
+        or proposal.operation
+    ):
+        return None
+    previous = [fact for fact in facts if fact.kind == "promise" and fact.target == proposal.target]
+    if previous:
+        original = previous[0]
+        if (
+            previous[-1].status != "active"
+            or proposal.status not in {"fulfilled", "broken"}
+            or original.promise_actor != proposal.promise_actor
+            or not success
+        ):
+            return None
+        anchor = original
+        quotation = original.player_text
+        origin_turn_id = original.origin_turn_id or original.turn_id
+    else:
+        quotation = state.get("player_input", "")
+        if (
+            proposal.status != "active"
+            or not _explicit_player_promise(quotation)
+            or proposal.target != player_promise_ref(proposal.promise_actor, quotation)
+        ):
+            return None
+        anchor = next(
+            (
+                fact
+                for fact in committed_facts(state)
+                if fact.kind == "encounter"
+                and fact.status == "encountered"
+                and fact.target == proposal.promise_actor
+            ),
+            None,
+        )
+        if anchor is None:
+            return None
+        origin_turn_id = state["turn_id"]
+    if (
+        not {anchor.fact_id, anchor.effect_id}.intersection(proposal.knowledge_fact_ids)
+        or not proposal.source_reference_ids
+        or not set(proposal.source_reference_ids) <= {r["reference_id"] for r in anchor.source_refs}
+        or not any(r.get("audience") == "player" for r in anchor.source_refs)
+    ):
+        return None
+    effect = proposal.model_copy(
+        update={
+            "player_text": quotation,
+            "source_reference_ids": anchor.source_reference_ids,
+            "knowledge_fact_ids": [anchor.fact_id],
+        }
+    )
+    return accept_story_effect(
+        effect,
+        turn_id=state["turn_id"],
+        source_refs=anchor.source_refs,
+        display_name="Player promise",
+        evidence_kind="player_utterance",
+        origin_turn_id=origin_turn_id,
+    )
 
 
 def _kind_matches(effect: StoryEffect, candidate: dict) -> bool:
@@ -206,6 +329,16 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     accepted: list[AcceptedStoryEffect] = []
     seen_effects = {f.effect_id for f in facts}
     for proposal in adj.story_effects[:20]:
+        if proposal.promise_actor is not None:
+            sealed = _validate_player_promise(proposal, state, facts, adj.success)
+            if sealed is not None and sealed.effect_id not in seen_effects:
+                seen_effects.add(sealed.effect_id)
+                accepted.append(sealed)
+                # Full fact identity is needed for later proposals in this same turn.
+                facts.append(
+                    StoryFact(**sealed.model_dump(), fact_id=story_target_id(sealed.target))
+                )
+            continue
         candidate = candidates.get(proposal.target.model_dump_json())
         if candidate is None or not _kind_matches(proposal, candidate):
             continue

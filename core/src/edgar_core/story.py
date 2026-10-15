@@ -75,6 +75,7 @@ class StoryEffect(StoryRecord):
     quantity: int | None = Field(default=None, ge=0, le=1000)
     destination: str | None = Field(default=None, max_length=200)
     operation: Identifier | None = None
+    promise_actor: StoryRef | None = None
 
 
 class AcceptedStoryEffect(StoryEffect):
@@ -83,6 +84,8 @@ class AcceptedStoryEffect(StoryEffect):
     display_name: str = Field(default="", max_length=200)
     # Full existing citation records, copied by the validator, never model supplied.
     source_refs: list[dict] = Field(default_factory=list)
+    evidence_kind: Literal["source", "player_utterance"] = "source"
+    origin_turn_id: str | None = None
 
 
 class StoryFact(AcceptedStoryEffect):
@@ -102,13 +105,21 @@ def story_target_id(target: StoryRef) -> str:
 
 
 def accept_story_effect(
-    effect: StoryEffect, *, turn_id: str, source_refs: list[dict], display_name: str = ""
+    effect: StoryEffect,
+    *,
+    turn_id: str,
+    source_refs: list[dict],
+    display_name: str = "",
+    evidence_kind: Literal["source", "player_utterance"] = "source",
+    origin_turn_id: str | None = None,
 ) -> AcceptedStoryEffect:
     """Seal a previously validated effect; identity deduplicates static facts and per-turn mutable operations."""
     body = effect.model_dump()
     body["source_reference_ids"] = sorted(set(body["source_reference_ids"]))
     body["knowledge_fact_ids"] = sorted(set(body["knowledge_fact_ids"]))
     identity = dict(body)
+    if identity["promise_actor"] is None:
+        identity.pop("promise_actor")
     if effect.kind in {
         "acquire",
         "consume",
@@ -132,4 +143,12 @@ def accept_story_effect(
         turn_id=turn_id,
         source_refs=source_refs,
         display_name=display_name,
+        evidence_kind=evidence_kind,
+        origin_turn_id=origin_turn_id,
     )
+
+
+def player_promise_ref(actor: StoryRef, quotation: str) -> StoryRef:
+    """An event-authored promise identity, rooted in an already encountered actor."""
+    identity = hashlib.sha256((actor.model_dump_json() + "\n" + quotation).encode()).hexdigest()
+    return actor.model_copy(update={"kind": "promise", "canonical_id": "promise_" + identity[:48]})
