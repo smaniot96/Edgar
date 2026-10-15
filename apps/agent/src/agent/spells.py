@@ -31,6 +31,7 @@ from typing import Any
 from agent.resolution import (
     CASTING_ABILITY,
     CheckResult,
+    RollMode,
     ability_modifier,
     character_class,
     proficiency_bonus,
@@ -306,6 +307,7 @@ def resolve_spell(
     target_ac: int | None = None,
     target_save_bonus: int = 0,
     rng: Any = None,
+    roll_mode: RollMode = "normal",
 ) -> SpellResult:
     """Roll and resolve a planned cast. `target_ac` set means a combat target; None means no foe.
 
@@ -321,7 +323,7 @@ def resolve_spell(
         if target_ac is None:
             check = resolve_check(character, "spell_attack", rng=rng)
         else:
-            check = resolve_attack(character, target_ac, spell=True, rng=rng)
+            check = resolve_attack(character, target_ac, spell=True, rng=rng, roll_mode=roll_mode)
         result.attack = check
         result.dice_log.extend(check.dice_log)
         if check.success:

@@ -56,6 +56,7 @@ from agent.supported_rules import (
     actions_for_state,
     apply_adjudication_boundary,
     boundary_prompt_block,
+    engine_effects_for_state,
     engine_roll_mode,
     executed_spell_for_state,
 )
@@ -333,6 +334,7 @@ async def adjudicate(
         actions,
         engine_roll_mode=engine_roll_mode(state),
         executed_spell=spell_outcome is not None or executed_spell_for_state(state),
+        engine_effects=engine_effects_for_state(state),
     )
 
     # Authoritative numbers: never trust the model's success/dice.

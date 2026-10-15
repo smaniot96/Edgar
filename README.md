@@ -94,10 +94,17 @@ simulate (`GET /api/rules/supported-scope`):
   darts, upcast by slot), Sacred Flame (DEX save) and Cure Wounds (self-heal). Their dice are
   rolled by the engine, leveled spells spend a slot tracked per character, and a cast with no slot
   left is refused with no effect.
-- Not supported: advantage claimed by the player or model without an engine source,
-  grapple/shove/pin/restraint, spells outside that catalog, concentration, condition effects, cover
-  and positioning, bonus actions and reactions, the Hit Dice ledger, and class features beyond
-  Second Wind. A declared action of this kind gets a narrative ruling and no mechanical effect.
+- Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
+  are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
+  attacks have disadvantage, attacks against it have advantage) or knocks it prone (its attacks have
+  disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
+  release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
+  are shown in the combat roster and given to the narrator.
+- Not supported: advantage claimed by the player or model without an engine source, shove away and
+  other maneuvers, escape contests, spells outside that catalog, concentration, other condition
+  effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and class
+  features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
+  mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   scaled down for a single level-1 hero.
 

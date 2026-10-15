@@ -316,6 +316,25 @@ async def test_catalog_spell_attack_hit_miss_and_crit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("effect", "mode"), [("restrained", "advantage"), ("prone", "disadvantage")]
+)
+async def test_fire_bolt_uses_the_engine_roll_mode_from_foe_effects(
+    fake_llm_schema, fake_retrieval, effect, mode
+) -> None:
+    """Fire Bolt is a ranged spell attack: a restrained foe grants advantage, a prone one disadvantage."""
+    state = _combat_state(WIZARD, "I cast Fire Bolt at the goblin", parsed=_cast("I cast"))
+    foe = next(c for c in state["combat_state"]["combatants"] if not c["is_player"])
+    foe["effects"] = [{"kind": effect, "source": "hands", "applied_round": 1}]
+    with use_rng(ScriptedDice([3, 18, 7, 2, 2])):
+        out = await combat_round_node(state)
+    adj = out["adjudication_result"]
+    attack = next(d for d in adj.dice_log if d.get("purpose") == "spell_attack check")
+    assert attack.get("roll_mode") == mode and attack["rolls"] == [3, 18]
+    assert out["engine_roll_mode"] == mode
+
+
+@pytest.mark.asyncio
 async def test_magic_missile_auto_hits_and_spends_a_first_level_slot(
     fake_llm_schema, fake_retrieval
 ) -> None:

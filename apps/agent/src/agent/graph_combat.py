@@ -12,6 +12,10 @@ Design (solo-playable, finishable, engine-decided):
     never consumed by an enemy slot.
   * Player attacks: d20 + attack bonus (ability mod + proficiency, from the sheet) vs the
     target's AC; nat 20 crits (double dice), nat 1 misses. Damage is engine-rolled.
+  * Contested maneuvers (EDG-021): a grapple/pin/restrain or shove prone replaces the attack. The
+    player's Athletics is contested by the foe's Dexterity; a won contest records a typed effect in
+    `combatants[].effects`, which sets advantage/disadvantage on attacks (`attack_roll_mode`) until a
+    declared release, the foe's defeat or the end of the encounter.
   * HP only changes through engine rolls: enemy attacks, Second Wind (fighter, once per
     encounter), or a healing consumable that is actually in inventory (and is then removed).
     The adjudicator LLM's `hp_delta` is ignored in combat (no double counting).
@@ -48,12 +52,18 @@ from pydantic import BaseModel, Field
 
 from agent.combatants import (
     INERT_NPC_DISPOSITIONS,
+    add_effect,
     apply_defeat,
     apply_player_disposition,
+    attack_roll_mode,
     can_act,
+    classify_combat_maneuver,
+    clear_effects,
     declared_lethality,
     disposition_of,
     finish_victory,
+    has_effect,
+    release_effect,
     roster_violations,
     view_fields,
 )
@@ -66,6 +76,7 @@ from agent.resolution import (
     CheckResult,
     ability_modifier,
     character_class,
+    check_spec,
     decide_completion,
     find_healing_consumable,
     heal_from_consumable,
@@ -80,13 +91,12 @@ from agent.spells import CastPlan, cast_request, narrate, resolve_spell
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
-    engine_roll_mode,
     has_declared_spell,
     ruling_lines,
 )
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference, reference_matches
-from tools.dice import parse_dice, roll
+from tools.dice import DiceOutcome, parse_dice, roll
 
 log = logging.getLogger(__name__)
 
@@ -508,6 +518,52 @@ def _strike(target: dict, amount: int, parsed: Any, player_input: str) -> str:
             return "and it is knocked unconscious!"
         return "and it falls!"
     return f"({target['hp_current']}/{target['hp_max']} HP left)"
+def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | None:
+    """The restrained foe a player's declared release refers to (the only one when unnamed)."""
+    bound = [e for e in enemies_in_order if has_effect(e, "restrained")]
+    for n in named:
+        for e in bound:
+            if _name_matches(n, e["name"]):
+                return e
+    return bound[0] if bound and not named else None
+
+
+# --------------------------------------------------------------------------------------------
+# d20 mode helpers (EDG-021)
+#
+# The player's attack goes through `resolve_attack(roll_mode=...)` (EDG-024). Enemy attacks have no
+# character sheet, so `_roll_with_mode` rolls their d20 pair with engine dice; `_contest` is the
+# maneuver contest against a foe's Dexterity bonus (a tie leaves the attacker without the effect,
+# matching `resolution.resolve_contest`). Neither lets model output choose a die or a number.
+# --------------------------------------------------------------------------------------------
+
+# Mirrors the ranged test in resolution.resolve_attack, so the mode matches the weapon used.
+_RANGED_HINT = re.compile(r"\b(?:shoot|shoots|fire|fires|loose|looses)\b", re.IGNORECASE)
+
+
+def _roll_with_mode(expression: str, mode: str) -> tuple[DiceOutcome, list[int]]:
+    """A d20 expression at `mode`: returns the kept roll and both natural d20 values."""
+    first = roll(expression)
+    if mode == "normal":
+        return first, [first.rolls[0]]
+    second = roll(expression)
+    pick = max if mode == "advantage" else min
+    kept = pick(first, second, key=lambda outcome: outcome.rolls[0])
+    return kept, [first.rolls[0], second.rolls[0]]
+
+
+def _mode_log(outcome: DiceOutcome, purpose: str, mode: str, draws: list[int]) -> dict:
+    entry = outcome.to_log(purpose)
+    if mode == "normal":
+        return entry
+    return {**entry, "rolls": list(draws), "kept": outcome.rolls[0], "roll_mode": mode}
+
+
+def _contest(attacker_bonus: int, defender_bonus: int) -> tuple[bool, DiceOutcome, DiceOutcome]:
+    """A contested check: the higher total wins, so a tie leaves the attacker without the effect."""
+    mine = roll(f"1d20{attacker_bonus:+d}")
+    theirs = roll(f"1d20{defender_bonus:+d}")
+    return mine.total > theirs.total, mine, theirs
 
 
 def _is_attack_action(parsed: Any, named: list[str]) -> tuple[bool, bool]:
@@ -632,8 +688,17 @@ async def combat_round_node(state: AgentState) -> dict:
         is_attack = False
     else:
         wants_second_wind = False
+    # A supported contested maneuver (EDG-021) or a declared release replaces the attack this turn.
+    combat_action = None
+    if not (fled or spell_declared or heal_item or missing_item or wants_second_wind):
+        combat_action = classify_combat_maneuver(player_input)
+    if combat_action is not None:
+        is_attack, is_spell = False, False
     target: dict | None = None
-    if is_attack:
+    release_target: dict | None = None
+    if combat_action is not None and combat_action.kind == "release":
+        release_target = _release_target(enemies, named)
+    elif is_attack or combat_action is not None:
         target, question = select_target(enemies, named)
         if question:
             return _ask_player(state, question, combat_state=combat_state)
@@ -646,6 +711,9 @@ async def combat_round_node(state: AgentState) -> dict:
             return _ask_player(
                 state, f"Who do you cast {spell_plan.spell.name} at?", combat_state=combat_state
             )
+    # Typed effects this round's engine applied; the boundary and narrator read them.
+    round_effects: list[str] = []
+    round_modes: list[str] = []  # d20 mode of every attack rolled this round
 
     # --- Shared HP bookkeeping (engine only) ---
     hp = player_hp
@@ -667,8 +735,11 @@ async def combat_round_node(state: AgentState) -> dict:
         if not can_act(e) or hp <= 0 or fled:
             return
         round_actors.append(_display(e))
-        atk = roll(f"1d20{int(e.get('attack_bonus', 3)):+d}")
-        dice_log.append(atk.to_log(f"{e['name']} attack"))
+        mode = attack_roll_mode(e, player)
+        round_modes.append(mode)
+        atk, draws = _roll_with_mode(f"1d20{int(e.get('attack_bonus', 3)):+d}", mode)
+        dice_log.append(_mode_log(atk, f"{e['name']} attack", mode, draws))
+        mode_text = "" if mode == "normal" else f" at {mode}"
         natural = atk.rolls[0]
         if natural == 20 or (natural != 1 and atk.total >= player_ac):
             expr = _enemy_damage_expr(e.get("damage_dice", "1d6+1"))
@@ -679,10 +750,10 @@ async def combat_round_node(state: AgentState) -> dict:
             dice_log.append(dmg_roll.to_log(f"{e['name']} damage"))
             dmg = max(1, dmg_roll.total)
             crit = " Critical hit!" if natural == 20 else ""
-            log_lines.append(f"{e['name']} hits {hero} for {dmg} damage (rolled {atk.total} vs AC {player_ac}).{crit}")
+            log_lines.append(f"{e['name']} hits {hero} for {dmg} damage (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}")
             damage_player(dmg)
         else:
-            log_lines.append(f"{e['name']} misses {hero} (rolled {atk.total} vs AC {player_ac}).")
+            log_lines.append(f"{e['name']} misses {hero} (rolled {atk.total}{mode_text} vs AC {player_ac}).")
 
     player_index = combatants.index(player)
     before = [c for c in combatants[:player_index] if not c.get("is_player")]
@@ -730,11 +801,19 @@ async def combat_round_node(state: AgentState) -> dict:
         # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
         # chosen foe the same way a weapon hit does.
         save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
+        # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
+        spell_mode = (
+            attack_roll_mode(player, spell_target, ranged=True)
+            if spell_target is not None and spell_plan.spell.kind == "attack"
+            else "normal"
+        )
+        round_modes.append(spell_mode)
         spell_result = resolve_spell(
             character,
             spell_plan,
             target_ac=int(spell_target.get("ac", 12)) if spell_target else None,
             target_save_bonus=save_bonus,
+            roll_mode=spell_mode,
         )
         dice_log += spell_result.dice_log
         spell_expended = spell_result.expended
@@ -754,8 +833,54 @@ async def combat_round_node(state: AgentState) -> dict:
     elif spell_declared:
         # Narrative ruling only; appended to the round summary below.
         extra_outcome = ""
+    elif combat_action is not None and combat_action.kind == "release":
+        if release_target is None:
+            extra_outcome = f"{hero} has nothing bound to release."
+        else:
+            release_effect(release_target, "restrained")
+            extra_outcome = f"{hero} releases {release_target['name']}; it is no longer restrained."
+        log_lines.append(extra_outcome)
+    elif combat_action is not None and target is not None:
+        # Contested Athletics against the foe's Dexterity (EDG-021). Engine dice decide it.
+        won, mine, theirs = _contest(
+            check_spec(character, "athletics").modifier, int(target.get("initiative_bonus", 0) or 0)
+        )
+        dice_log += [mine.to_log("athletics contest"), theirs.to_log(f"{target['name']} contest")]
+        verdict = "success" if won else "failure"
+        contest_line = (
+            f"contest: {hero} athletics {mine.expression} = {mine.total} "
+            f"(d20 rolled {mine.rolls[0]}) vs {target['name']} {theirs.expression} = {theirs.total} "
+            f"(d20 rolled {theirs.rolls[0]}) -> {verdict}"
+        )
+        target_name = target["name"]
+        kind = combat_action.kind
+        if not won:
+            extra_outcome = f"{hero} fails to hold {target_name}."
+        elif add_effect(
+            target,
+            kind,
+            source=combat_action.source,
+            round_applied=int(combat_state.get("round", 1) or 1),
+        ):
+            round_effects.append(kind)
+            if kind == "restrained":
+                extra_outcome = f"{hero} restrains {target_name} with {combat_action.source}."
+            else:
+                extra_outcome = f"{hero} shoves {target_name} prone."
+        else:
+            extra_outcome = f"{target_name} is already {'restrained' if kind == 'restrained' else 'prone'}."
+        log_lines.append(f"{contest_line}. {extra_outcome}")
     elif is_attack and target is not None:
-        check_result = resolve_attack(character, int(target.get("ac", 12)), spell=is_spell, hint=player_input)
+        ranged = bool(_RANGED_HINT.search(player_input))
+        mode = attack_roll_mode(player, target, ranged=ranged)
+        check_result = resolve_attack(
+            character,
+            int(target.get("ac", 12)),
+            spell=is_spell,
+            hint=player_input,
+            roll_mode=mode,
+        )
+        round_modes.append(mode)
         if check_result.success:
             dealt, dmg_roll = roll_attack_damage(character, check_result, hint=player_input)
             dice_log.append(dmg_roll.to_log("player damage"))
@@ -764,7 +889,8 @@ async def combat_round_node(state: AgentState) -> dict:
             extra_outcome = f"{crit}{hero} hits {target['name']} for {dealt} damage {status}"
         else:
             extra_outcome = f"{hero} misses {target['name']}."
-        log_lines.append(f"{check_result.describe()}. {extra_outcome}")
+        mode_text = "" if mode == "normal" else f" (at {mode})"
+        log_lines.append(f"{check_result.describe()}{mode_text}. {extra_outcome}")
     else:
         check_result, extra = resolve_from_parsed(character, parsed, player_input=player_input)
         dice_log += extra
@@ -774,7 +900,10 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Adjudicator: describes consequences of the known outcome (flags/scene/items) ---
     if player_acted and not fled:
         adj = await adjudicate(
-            state, engine_check=check_result, in_combat=True, extra_outcome=extra_outcome or None
+            {**state, "engine_effects": tuple(round_effects)},
+            engine_check=check_result,
+            in_combat=True,
+            extra_outcome=extra_outcome or None,
         )
         if adj.mechanical_summary and check_result is None:
             log_lines.append(adj.mechanical_summary)
@@ -815,6 +944,9 @@ async def combat_round_node(state: AgentState) -> dict:
         apply_player_disposition(player, subdued=True)
     if outcome == "victory":
         finish_victory(combatants)
+    if ended:
+        # Typed effects end with the encounter (EDG-021): nothing carries into a later fight.
+        clear_effects(combatants)
 
     view = initiative_view(combatants)
     player_view_index = next((i for i, c in enumerate(view) if c["is_player"]), 0)
@@ -846,6 +978,17 @@ async def combat_round_node(state: AgentState) -> dict:
     adj.dice_log = [*adj.dice_log, *[d for d in dice_log if d not in adj.dice_log]]
     # Declared unsupported mechanics are ruled on in the round summary (no engine effect).
     summary_text = " ".join(line for line in log_lines if line)
+    engine_effects = tuple(round_effects)
+    round_roll_mode = (
+        "advantage"
+        if "advantage" in round_modes
+        else "disadvantage"
+        if "disadvantage" in round_modes
+        else "normal"
+    )
+    actions = actions_for_state(
+        {**state, "engine_effects": engine_effects, "engine_roll_mode": round_roll_mode}
+    )
     for ruling in ruling_lines(actions):
         if ruling not in summary_text:
             log_lines.append(ruling)
@@ -863,7 +1006,13 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Narrate the whole round in one call ---
     combat_state["round_actors"] = round_actors
-    narr_state = {**state, "adjudication_result": adj, "combat_state": combat_state}
+    narr_state = {
+        **state,
+        "adjudication_result": adj,
+        "combat_state": combat_state,
+        "engine_effects": engine_effects,
+        "engine_roll_mode": round_roll_mode,
+    }
     narr_updates = await narrator_node(narr_state)
     if narr_updates.get("error"):
         return {**retr, "error": narr_updates["error"]}
@@ -890,7 +1039,7 @@ async def combat_round_node(state: AgentState) -> dict:
         "messages": list(narr_updates.get("messages", state.get("messages", []))),
         "narration": narration,
         "adjudication_result": adj,
-        "engine_roll_mode": engine_roll_mode(state),
+        "engine_roll_mode": round_roll_mode,
         "rules_context": state.get("rules_context", []),
         "adventure_context": state.get("adventure_context", []),
     }
