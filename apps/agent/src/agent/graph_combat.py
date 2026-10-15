@@ -23,9 +23,13 @@ Design (solo-playable, finishable, engine-decided):
     over an enemy flagged `is_boss` can accept/queue it; a non-killing swing never completes.
 
 `combat_state` public keys (for the HUD): `round`, `ended`, `outcome`, `combatants`,
-`initiative_order` (names), `initiative` ([{name, init, is_player, hp, hp_max, ac, alive}],
-highest first), `current_turn` (display name of who acts next, i.e. the player, or None when
-ended), `current_turn_index` (index into `initiative`), `player_ac`, `second_wind_used`.
+`initiative_order` (names), `initiative` ([{name, id, init, is_player, hp, hp_max, ac, alive,
+disposition, can_act}], highest first), `current_turn` (display name of who acts next, i.e. the
+player, or None when ended), `current_turn_index` (index into `initiative`), `player_ac`,
+`second_wind_used`. Disposition semantics live in `agent.combatants`: `alive` means living
+(active, unconscious or captured), and only an `active` combatant above 0 HP can act. A declared
+nonlethal knockout is `unconscious`, a declared lethal one `dead`, and an undeclared one
+`defeated`. An unconscious foe becomes `captured` when the fight is won.
 
 The subgraph is a single node; the multi-round loop is driven by repeated player turns through
 the API. `combat_state.id` is preserved across turns by spreading the existing dict so
@@ -42,6 +46,17 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from agent.combatants import (
+    INERT_NPC_DISPOSITIONS,
+    apply_defeat,
+    apply_player_disposition,
+    can_act,
+    declared_lethality,
+    disposition_of,
+    finish_victory,
+    roster_violations,
+    view_fields,
+)
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.nodes import narrator_node, world_retriever_node
@@ -244,6 +259,17 @@ def _npc_groups(state: AgentState) -> tuple[list[str], list[str]]:
     return allies, hostiles
 
 
+def _inert_npc_names(state: AgentState) -> list[str]:
+    """Captives and dead foes from earlier fights: they never join a new roster as attackers."""
+    return [
+        n["name"]
+        for n in state.get("npcs") or []
+        if isinstance(n, dict)
+        and n.get("name")
+        and str(n.get("disposition") or "").strip().lower() in INERT_NPC_DISPOSITIONS
+    ]
+
+
 async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
     """Full exact records per named foe. An outage or unresolved identity blocks setup."""
     out = []
@@ -301,11 +327,15 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
     adv_ctx = state.get("adventure_context", []) or []
     player_input = state.get("player_input", "")
     allies, hostiles = _npc_groups(state)
+    inert = _inert_npc_names(state)
     # Allies the player explicitly attacks by name become fair game (player's choice).
     allies = [a for a in allies if not any(_name_matches(a, t) for t in targets)]
 
     candidate_names = [
-        n for n in (targets or hostiles) if not any(_name_matches(n, a) for a in allies)
+        n
+        for n in (targets or hostiles)
+        if not any(_name_matches(n, a) for a in allies)
+        and not any(_name_matches(n, i) for i in inert)
     ]
     if not candidate_names:
         return []
@@ -363,6 +393,7 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
                     "initiative_bonus": e.initiative_bonus,
                     "is_boss": bool(e.is_boss),
                     "is_player": False,
+                    "disposition": "active",
                     "alive": True,
                 }
             )
@@ -391,6 +422,7 @@ async def _build_enemy_roster(state: AgentState, targets: list[str]) -> list[dic
                     "hp_current": _DEFAULT_ENEMY["hp_max"],
                     "is_boss": False,
                     "is_player": False,
+                    "disposition": "active",
                     "alive": True,
                 }
             )
@@ -439,7 +471,7 @@ def initiative_view(combatants: list[dict]) -> list[dict]:
             "hp": c.get("hp_current"),
             "hp_max": c.get("hp_max"),
             "ac": c.get("ac"),
-            "alive": bool(c.get("alive", True)),
+            **view_fields(c),
         }
         for c in sort_by_initiative(combatants)
     ]
@@ -447,7 +479,7 @@ def initiative_view(combatants: list[dict]) -> list[dict]:
 
 def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict | None, str | None]:
     """Pick a real living enemy for an attack, or return a question for the player."""
-    living = [e for e in enemies_in_order if e.get("alive") and e.get("hp_current", 0) > 0]
+    living = [e for e in enemies_in_order if can_act(e)]
     if not living:
         return None, None
     for n in named:
@@ -513,6 +545,7 @@ async def combat_round_node(state: AgentState) -> dict:
             "hp_current": player_hp,
             "hp_max": player_hp_max,
             "ac": player_ac,
+            "disposition": "active" if player_hp > 0 else "unconscious",
             "alive": player_hp > 0,
             "second_wind_used": False,
         }
@@ -588,9 +621,12 @@ async def combat_round_node(state: AgentState) -> dict:
             second_wind_used = True
             log_lines.append(f"{hero} digs deep and uses Second Wind, recovering {sw.total} HP to stay in the fight!")
 
+    round_actors: list[str] = []
+
     def enemy_turn(e: dict) -> None:
-        if not e.get("alive") or e.get("hp_current", 0) <= 0 or hp <= 0 or fled:
+        if not can_act(e) or hp <= 0 or fled:
             return
+        round_actors.append(_display(e))
         atk = roll(f"1d20{int(e.get('attack_bonus', 3)):+d}")
         dice_log.append(atk.to_log(f"{e['name']} attack"))
         natural = atk.rolls[0]
@@ -656,8 +692,14 @@ async def combat_round_node(state: AgentState) -> dict:
             dice_log.append(dmg_roll.to_log("player damage"))
             target["hp_current"] = max(0, int(target["hp_current"]) - dealt)
             if target["hp_current"] <= 0:
-                target["alive"] = False
-            status = "and it falls!" if not target["alive"] else f"({target['hp_current']}/{target['hp_max']} HP left)"
+                apply_defeat(target, declared_lethality(parsed, player_input))
+                status = (
+                    "and it is knocked unconscious!"
+                    if disposition_of(target) == "unconscious"
+                    else "and it falls!"
+                )
+            else:
+                status = f"({target['hp_current']}/{target['hp_max']} HP left)"
             crit = "Critical hit! " if check_result.critical else ""
             extra_outcome = f"{crit}{hero} hits {target['name']} for {dealt} damage {status}"
         else:
@@ -684,9 +726,9 @@ async def combat_round_node(state: AgentState) -> dict:
         enemy_turn(e)
 
     player["hp_current"] = hp
-    player["alive"] = hp > 0
+    apply_player_disposition(player, subdued=False)
     player["second_wind_used"] = second_wind_used
-    living_enemies = [e for e in enemies if e.get("alive") and e.get("hp_current", 0) > 0]
+    active_enemies = [e for e in enemies if can_act(e)]
 
     # --- End conditions ---
     round_num = int(combat_state.get("round", 1) or 1)
@@ -694,7 +736,7 @@ async def combat_round_node(state: AgentState) -> dict:
     if fled:
         ended, outcome = True, "fled"
         log_lines.append("You break away from the fight and escape.")
-    elif not living_enemies:
+    elif not active_enemies:
         ended, outcome = True, "victory"
         log_lines.append("All enemies are defeated. Victory!")
     elif hp <= 0:
@@ -710,6 +752,9 @@ async def combat_round_node(state: AgentState) -> dict:
         # than a permanent dead-end. Leave them at 1 HP.
         hp = 1
         player["hp_current"] = 1
+        apply_player_disposition(player, subdued=True)
+    if outcome == "victory":
+        finish_victory(combatants)
 
     view = initiative_view(combatants)
     player_view_index = next((i for i, c in enumerate(view) if c["is_player"]), 0)
@@ -751,11 +796,21 @@ async def combat_round_node(state: AgentState) -> dict:
     )
 
     # --- Narrate the whole round in one call ---
+    combat_state["round_actors"] = round_actors
     narr_state = {**state, "adjudication_result": adj, "combat_state": combat_state}
     narr_updates = await narrator_node(narr_state)
     if narr_updates.get("error"):
         return {**retr, "error": narr_updates["error"]}
     narration = narr_updates.get("narration", "")
+    problems = roster_violations(narration, combatants)
+    if problems:
+        # Prose that revives an inactive foe or invents an attacker is replaced by the engine's log.
+        log.warning("narration_roster_violation", extra={"problems": problems[:4]})
+        narration = adj.mechanical_summary or ""
+        messages = narr_updates.get("messages")
+        if messages and isinstance(messages[-1], AIMessage):
+            messages = [*messages[:-1], AIMessage(content=narration)]
+            narr_updates = {**narr_updates, "messages": messages}
     if outcome == "victory":
         narration += "\n\n**Victory!** The way forward is clear."
     elif outcome == "defeat":

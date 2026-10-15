@@ -96,6 +96,14 @@ class ParsedInput(BaseModel):
             "Choose only from the supplied session-earned clue choices."
         ),
     )
+    lethality: Literal["lethal", "nonlethal"] | None = Field(
+        default=None,
+        description=(
+            "Only for an attack in combat: 'nonlethal' when the player declares they want to knock "
+            "out, subdue, stun or capture the target; 'lethal' when they declare they want to kill "
+            "it; null when they state neither. Never guess."
+        ),
+    )
     dice_expression: str | None = None  # legacy; e.g. "1d20+3". Engine prefers `check`.
 
     @field_validator("intent", mode="before")
@@ -143,6 +151,16 @@ class ParsedInput(BaseModel):
         if not text or text.lower() in {"none", "null", "n/a"}:
             return None
         return text
+
+    @field_validator("lethality", mode="before")
+    @classmethod
+    def _normalise_lethality(cls, value: object) -> str | None:
+        key = str(value or "").strip().lower()
+        if key in {"lethal", "kill", "lethal_attack"}:
+            return "lethal"
+        if key in {"nonlethal", "non-lethal", "non_lethal"}:
+            return "nonlethal"
+        return None
 
     @field_validator("confirms_ending", mode="before")
     @classmethod

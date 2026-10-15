@@ -17,6 +17,7 @@ by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI rende
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from agent.combatants import narrator_roster
 from agent.history import continuity_context, public_earned_facts
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action
@@ -144,10 +145,14 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
     combat = state.get("combat_state") or {}
     if combat.get("initiative"):
         order = ", ".join(
-            f"{c.get('name')}{' (fallen)' if not c.get('alive', True) else ''}"
+            f"{c.get('name')}{' ' + c['disposition'] if c.get('disposition') not in (None, 'active') else ''}"
             for c in combat["initiative"]
         )
         context_parts.append(f"Initiative order this round: {order}")
+        if combat.get("combatants"):
+            context_parts.append(
+                narrator_roster(combat["combatants"], combat.get("round_actors") or [])
+            )
     context_parts.append(
         f"Selected rules edition: {edition}. Reference labels are provenance; do not recite hashes or private IDs."
     )

@@ -10,11 +10,13 @@ id flows through unchanged.
 """
 
 import copy
+import hashlib
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import CombatState
+from agent.combatants import NPC_DISPOSITION, disposition_of
+from db.postgres.models import NPC, CombatState
 
 
 async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
@@ -64,7 +66,15 @@ async def load_resolved_combat_outcomes(db: AsyncSession, session_id: int) -> li
         .where(CombatState.session_id == session_id, CombatState.ended.is_(True))
         .order_by(CombatState.id)
     )
-    fields = {"name", "display_name", "creature_id", "is_player", "alive", "source_reference"}
+    fields = {
+        "name",
+        "display_name",
+        "creature_id",
+        "is_player",
+        "alive",
+        "disposition",
+        "source_reference",
+    }
     return [
         {
             "id": row.id,
@@ -89,7 +99,7 @@ def resolved_combat_outcomes_public(outcomes: list[dict]) -> list[dict]:
             "combatants": [
                 {
                     key: copy.deepcopy(combatant[key])
-                    for key in ("name", "display_name", "is_player", "alive")
+                    for key in ("name", "display_name", "is_player", "alive", "disposition")
                     if key in combatant
                 }
                 for combatant in outcome.get("combatants", [])
@@ -99,9 +109,12 @@ def resolved_combat_outcomes_public(outcomes: list[dict]) -> list[dict]:
     ]
 
 
-async def persist_combat(db: AsyncSession, session_id: int, combat_state: dict | None) -> None:
+async def persist_combat(
+    db: AsyncSession, session_id: int, combat_state: dict | None
+) -> int | None:
+    """Insert or update the encounter row (caller commits). Returns the row id."""
     if not combat_state:
-        return
+        return None
     if combat_state.get("id"):
         result = await db.execute(
             select(CombatState)
@@ -123,22 +136,77 @@ async def persist_combat(db: AsyncSession, session_id: int, combat_state: dict |
             )
             if any(combat_state.get(key, getattr(cs, key)) != getattr(cs, key) for key in fields):
                 raise ValueError("A resolved combat outcome cannot be rewritten")
-            return
+            return cs.id
         cs.initiative_order = combat_state.get("initiative_order", cs.initiative_order)
         cs.round = combat_state.get("round", cs.round)
         cs.current_turn_index = combat_state.get("current_turn_index", cs.current_turn_index)
         cs.ended = combat_state.get("ended", cs.ended)
         cs.combatants = combat_state.get("combatants", cs.combatants)
         cs.outcome = combat_state.get("outcome", cs.outcome)
-        return
-    db.add(
-        CombatState(
-            session_id=session_id,
-            initiative_order=combat_state["initiative_order"],
-            round=combat_state["round"],
-            current_turn_index=combat_state.get("current_turn_index", 0),
-            ended=combat_state.get("ended", False),
-            combatants=combat_state.get("combatants", []),
-            outcome=combat_state.get("outcome"),
-        )
+        return cs.id
+    row = CombatState(
+        session_id=session_id,
+        initiative_order=combat_state["initiative_order"],
+        round=combat_state["round"],
+        current_turn_index=combat_state.get("current_turn_index", 0),
+        ended=combat_state.get("ended", False),
+        combatants=combat_state.get("combatants", []),
+        outcome=combat_state.get("outcome"),
     )
+    db.add(row)
+    await db.flush()
+    return row.id
+
+
+def _combat_npc_identity(combat_id: int, combatant_id: str) -> str:
+    digest = hashlib.sha256(combatant_id.encode()).hexdigest()[:16]
+    return f"combat:{combat_id}:{digest}"
+
+
+async def persist_combat_npcs(
+    db: AsyncSession,
+    session_id: int,
+    campaign_id: int,
+    combat_id: int | None,
+    combat_state: dict | None,
+) -> None:
+    """Record captives and dead foes of an ended encounter as session NPC rows (caller commits).
+
+    Only rows owned by this encounter are touched (identity `combat:<id>:<hash>` inside the
+    session), so manual campaign NPCs and story-effect NPCs are never overwritten. Defeated foes
+    with an unknown cause are not recorded: no canonical death or capture is claimed for them.
+    """
+    if not combat_state or not combat_state.get("ended") or combat_id is None:
+        return
+    for c in combat_state.get("combatants") or []:
+        if c.get("is_player"):
+            continue
+        npc_disposition = NPC_DISPOSITION.get(disposition_of(c))
+        if npc_disposition is None:
+            continue
+        combatant_id = str(c.get("name") or "")
+        identity = _combat_npc_identity(combat_id, combatant_id)
+        stat_block = {
+            "life_state": "dead" if npc_disposition == "dead" else "living",
+            "source": "combat",
+            "combat_id": combat_id,
+            "combatant_id": combatant_id,
+        }
+        npc = await db.scalar(
+            select(NPC).where(NPC.session_id == session_id, NPC.story_identity == identity)
+        )
+        if npc is None:
+            db.add(
+                NPC(
+                    campaign_id=campaign_id,
+                    session_id=session_id,
+                    story_identity=identity,
+                    name=str(c.get("display_name") or combatant_id)[:255],
+                    disposition=npc_disposition,
+                    stat_block=stat_block,
+                )
+            )
+        else:
+            npc.disposition = npc_disposition
+            npc.stat_block = stat_block
+    await db.flush()
