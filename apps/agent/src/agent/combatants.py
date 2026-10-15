@@ -186,7 +186,10 @@ def roster_violations(text: str, combatants: Iterable[Mapping[str, Any]]) -> lis
         ]
         guard = f"(?!\\s+(?:{'|'.join(tails)})\\b)" if tails else ""
         pattern = re.compile(
-            rf"(?<![\w]){re.escape(name)}{guard}(?![\w'’-])[^.!?\n]*?\b(?:{_ATTACK_VERBS})\b",
+            # The inactive foe must be the subject of the attack verb itself ("The Raider swings",
+            # "the Raider rises and strikes"). Narrating the blow that felled it ("the Raider
+            # staggers as your blade cuts through") or a second actor in the clause is fine.
+            rf"(?<![\w]){re.escape(name)}{guard}(?![\w'’-])(?:\s+\w+)?(?:\s+and)?\s+(?:{_ATTACK_VERBS})\b",
             re.IGNORECASE,
         )
         if pattern.search(text):

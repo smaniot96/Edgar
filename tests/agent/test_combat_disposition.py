@@ -444,3 +444,28 @@ def test_captive_is_known_to_the_narrator_as_a_person_not_an_attacker() -> None:
     prompt = build_narrator_prompt(state)[1].content
     assert "Bandit: captive" in prompt
     assert "Combatants able to act now" not in prompt
+
+
+_ROSTER = [
+    {"name": "Raider", "is_player": False, "disposition": "dead", "hp_current": 0},
+    {"name": "Raider Captain", "is_player": False, "disposition": "active", "hp_current": 9},
+]
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "The Raider staggers as your blade cuts through his guard. The Raider Captain lunges.",
+        "The Raider drops and the Captain strikes you.",
+    ],
+)
+def test_narrating_the_felling_blow_is_not_a_revival(prose):
+    assert roster_violations(prose, _ROSTER) == []
+
+
+@pytest.mark.parametrize(
+    "prose",
+    ["The Raider rises and strikes you across the shoulder.", "The Raider swings his axe."],
+)
+def test_an_inactive_foe_as_the_attack_subject_is_flagged(prose):
+    assert "Raider" in roster_violations(prose, _ROSTER)
