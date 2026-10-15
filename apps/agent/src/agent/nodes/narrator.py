@@ -26,6 +26,7 @@ from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
     boundary_prompt_block,
+    engine_roll_mode,
 )
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import cited_excerpt, eligible_context
@@ -191,7 +192,11 @@ async def narrator_node(state: AgentState) -> dict:
             response = await llm.ainvoke(prompt)
         except Exception as e:
             return {"narration": "", "error": str(e)}
-        narration = apply_narration_boundary(message_text(response), actions_for_state(state))
+        narration = apply_narration_boundary(
+            message_text(response),
+            actions_for_state(state),
+            engine_roll_mode=engine_roll_mode(state),
+        )
 
     updated_messages = list(messages)
     updated_messages.append(AIMessage(content=narration))

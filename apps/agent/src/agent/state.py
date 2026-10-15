@@ -20,6 +20,7 @@ class AgentState(TypedDict, total=False):
     policy_rejection: bool  # Safe generic rejection for unavailable reviewed actions
     policy_narration: str  # Deterministic narration for an engine-resolved reviewed policy
     authorized_policy_effect_keys: list[str]  # Validator-only policy consequence receipts
+    engine_roll_mode: str  # Advantage/disadvantage the engine applied this turn ("normal" if none)
     policy_reveal_authorizations: list[dict]  # Exact policy-authorized player reveal passages
     turn_id: str  # Server-generated per-turn provenance identity
     turn_snapshot: dict  # Initial position/active character used for atomic stale-state checks
