@@ -26,7 +26,9 @@ A revealed current value alone never implies that its private maximum is known.
 
 Opening seeds support discovered clues/hints, encountered actors, the visited opening,
 explicitly known other places, and earned/announced goals or milestones. They are declared
-by a reviewer, never generated or approved merely to fill the UI. Other prepared branches
+by the private DM preparation workflow and validated against exact source evidence. The
+player never reviews private adventure content. Generation alone does not establish a
+valid review receipt. Other prepared branches
 remain private. Unsupported/ambiguous seeds fail validation rather than inventing facts.
 
 This consumer contract does not itself complete EDG-140's full PDF/AI backbone generation,

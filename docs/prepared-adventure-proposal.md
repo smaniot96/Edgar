@@ -33,21 +33,32 @@ contains that goal, the known tower and the visited ferry steps. It contains no 
 reflection hint, maintenance gate or ending list. Later discoveries add their exact facts
 once; another playthrough has its own knowledge.
 
+## Player experience
+
+Upload PDF → private DM preparation → ready to play. The player sees preparation progress,
+source/setup problems that can be fixed without story spoilers, and the earned opening.
+They never review private branches, endings, ambiguities or suggested content changes.
+The DM owns complete preparation and resolves content gaps privately. The owner reviews
+this system behavior; adventure-content review is an internal DM responsibility.
+
 ## PDF workflow proposal
 
 1. Retain the original PDF/extraction and source/edition/version identity.
 2. Propose canonical structure from exact page/span evidence. Record omissions, uncertain
    connections and mutually exclusive source alternatives explicitly.
-3. Present a review report: supported definitions, unresolved decisions and any suggested
-   generated extension. A generated connection is labelled as an extension, never book text.
-4. Validate references, prerequisites, branch reachability, compatible outcomes, reveal
-   evidence, supported encounter identities and opening seeds.
-5. Publish only after the existing explicit review receipt covers that exact version.
-   Private edits invalidate the affected review; running saves retain their bound identity.
+3. The private DM preparation agent resolves ambiguities and authors any necessary connecting
+   material. Internally retain source provenance, confidence and the distinction between PDF
+   facts and DM-created extensions. Preserve exact quoted clues and published source facts.
+4. An internal validation/review pass checks references, prerequisites, branch reachability,
+   compatible outcomes, reveal evidence, supported encounters and safe opening seeds.
+5. Publish the version-bound prepared bundle when those checks pass. Record the internal
+   DM reviewer/policy and exact digest. Private edits require a new internal validation
+   receipt; running saves retain their bound identity.
 
-Recommendation: require resolution of gameplay-critical ambiguities for verified readiness;
-allow noncritical omissions to remain honestly unavailable. Do not fill missing source
-facts merely to make the preparation report look complete.
+Recommendation: the DM owns all adventure-content decisions privately. It can retry or
+repair failed preparation. A genuinely unreadable/incompatible source or unsupported
+required mechanic yields a safe preparation failure and recovery action, without exposing
+private content or asking the player to author/review the adventure.
 
 ## AI workflow proposal
 
@@ -58,11 +69,14 @@ facts merely to make the preparation report look complete.
    and exact clue text. Significant structure changes become explicit proposed amendments.
 4. Check manuscript/structure agreement, source grounding and branch reachability (EDG-020).
    Unverified mechanics or unresolved critical references prevent verified publication.
-5. Review and publish the version-bound bundle. Produce a small opening seed from its
-   reviewed player passages; the browser never receives the private plan.
+5. The DM runs its internal review and publishes the validated version-bound bundle. Produce
+   a small opening seed from the reviewed player passages; the browser never receives the
+   private plan or a content-review task.
 
-Recommendation: an explicit “draft ready for review” state between generation and verified
-publication. A successful model call is evidence of a draft, not an approval receipt.
+Recommendation: internal draft → validating/repairing → ready states. The player sees
+preparation progress and readiness. A successful generation call alone is insufficient;
+publication requires the recorded validation receipt. No player approval of secret content
+is part of the flow.
 
 ## Unexpected player actions
 
@@ -79,14 +93,15 @@ its own EDG-140 implementation and acceptance.
 - **Recommended: meaningful authored branches plus validated amendments.** This supports
   agency without an impossible all-prompts tree. A stricter authored-only mode would be
   simpler but would constrain unexpected choices.
-- **Recommended: explicit PDF ambiguity and extension review.** Auto-filling ambiguities
-  would be faster but could present inventions as source facts.
+- **Owner-directed: autonomous private PDF preparation.** The DM resolves ambiguities,
+  authors required connecting material and validates the result itself. Internal provenance
+  distinguishes source facts from extensions. Player-facing content-review tasks are excluded.
 - **Recommended: independent clock disclosures.** Current value, maximum and terminal state
   can each be revealed; numeric progress bars appear only when both required values are known.
 - **Recommended: opening seeds committed with the opening narration.** This preserves one
   canonical transaction and idempotent reload/retry behavior.
-- **Recommended: version-bound prepared bundles.** Private edits require review rather than
-  silently changing the adventure behind a running save.
+- **Recommended: version-bound prepared bundles.** Private edits require internal DM
+  validation and a new receipt; running saves retain their bound adventure identity.
 
 ## Implementation and acceptance boundary
 
