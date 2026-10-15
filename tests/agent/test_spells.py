@@ -25,9 +25,10 @@ from agent.spells import (
     spell_save_dc,
 )
 from agent.supported_rules import (
+    EngineApplied,
     apply_narration_boundary,
     classify_unsupported_actions,
-    executed_spell_for_state,
+    engine_applied_for_state,
 )
 from tools.dice import use_rng
 
@@ -580,12 +581,12 @@ def test_attack_damage_helper_never_rolls_a_class_die_for_a_spell() -> None:
 
 def test_executed_catalog_spell_is_not_an_unsupported_action() -> None:
     assert classify_unsupported_actions("I cast Magic Missile at the goblin", None, WIZARD) == ()
-    assert executed_spell_for_state(
+    assert engine_applied_for_state(
         {"player_input": "I cast Magic Missile at the goblin", "character": WIZARD}
-    )
-    assert not executed_spell_for_state(
+    ).executed_spell
+    assert not engine_applied_for_state(
         {"player_input": "I cast Magic Missile at the goblin", "character": FIGHTER}
-    )
+    ).executed_spell
 
 
 def test_refused_catalog_spell_still_gets_a_ruling() -> None:
@@ -604,7 +605,7 @@ def test_executed_spell_narration_survives_the_boundary_with_another_declared_ac
     text = apply_narration_boundary(
         "Magic Missile sends 3 darts for 9 force damage. You gain advantage on the next turn.",
         actions,
-        executed_spell=True,
+        applied=EngineApplied(executed_spell=True),
     )
     assert "Magic Missile sends 3 darts for 9 force damage." in text
     assert "gain advantage" not in text

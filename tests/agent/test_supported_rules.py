@@ -40,10 +40,13 @@ from agent.supported_rules import (
     SOLO_ADAPTATIONS,
     SUPPORTED_MECHANICS,
     UNSUPPORTED_MECHANICS,
+    EngineApplied,
+    actions_for_state,
     apply_narration_boundary,
     boundary_prompt_block,
     classify_unsupported_actions,
     contract_payload,
+    engine_applied_for_state,
     scope_notice,
     verify_references,
 )
@@ -720,7 +723,9 @@ def test_engine_applied_advantage_is_described_not_stripped() -> None:
     plain = apply_narration_boundary(narration, declared)
     assert "advantage" not in plain
     # With an engine-applied advantage it is a real roll and the sentence survives.
-    applied = apply_narration_boundary(narration, declared, engine_roll_mode="advantage")
+    applied = apply_narration_boundary(
+        narration, declared, applied=EngineApplied(roll_mode="advantage")
+    )
     assert "The darts fly true with advantage." in applied
     assert "Magic missile strikes" not in applied
 
@@ -755,12 +760,71 @@ async def test_engine_applied_advantage_survives_adjudication(fake_llm_schema) -
 def test_engine_applied_advantage_is_not_a_declared_unsupported_action() -> None:
     assert classify_unsupported_actions("I attack with advantage") != ()
     assert (
-        classify_unsupported_actions("I attack with advantage", engine_roll_mode="advantage") == ()
-    )
-    assert (
-        classify_unsupported_actions("I attack with advantage", engine_roll_mode="disadvantage")
+        classify_unsupported_actions(
+            "I attack with advantage", applied=EngineApplied(roll_mode="advantage")
+        )
         == ()
     )
+    assert (
+        classify_unsupported_actions(
+            "I attack with advantage", applied=EngineApplied(roll_mode="disadvantage")
+        )
+        == ()
+    )
+
+
+def test_engine_applied_for_state_reads_only_the_recorded_engine_facts() -> None:
+    assert engine_applied_for_state(None) == EngineApplied()
+    assert engine_applied_for_state({}) == EngineApplied()
+    # An unknown roll mode and a missing or null effect list are no engine fact at all.
+    assert (
+        engine_applied_for_state({"engine_roll_mode": "sideways", "engine_effects": None})
+        == EngineApplied()
+    )
+    got = engine_applied_for_state(
+        {
+            "engine_roll_mode": "disadvantage",
+            "engine_effects": ["restrained", "dodge"],
+            "player_input": "I cast Magic Missile at the goblin",
+            "character": WIZARD,
+        }
+    )
+    assert got == EngineApplied(
+        roll_mode="disadvantage", effects=("restrained", "dodge"), executed_spell=True
+    )
+    # A refused catalog spell is not executed by the engine.
+    refused = {"player_input": "I cast Magic Missile at the goblin", "character": FIGHTER}
+    assert not engine_applied_for_state(refused).executed_spell
+
+
+def test_each_engine_fact_exempts_its_claim_through_the_applied_value() -> None:
+    # Advantage: the engine's roll mode makes the advantage wording real, not declared.
+    state = {"player_input": "I attack with advantage", "engine_roll_mode": "advantage"}
+    assert actions_for_state(state) == ()
+    assert actions_for_state({**state, "engine_roll_mode": "normal"})
+
+    # A typed effect: a restraint the engine applied keeps its narration and is not declared.
+    pin = {"player_input": "I pin the goblin", "engine_effects": ["restrained"]}
+    assert actions_for_state(pin) == ()
+    narration = "The goblin is pinned to the wall. What now?"
+    assert apply_narration_boundary(narration, actions_for_state(pin)) == narration
+    unapplied = {"player_input": "I pin the goblin", "engine_effects": []}
+    assert actions_for_state(unapplied)
+    assert "pinned" not in apply_narration_boundary(
+        "The goblin is pinned to the wall. What now?", actions_for_state(unapplied)
+    )
+
+    # An executed spell: its own narration survives when another action is declared.
+    spell = {
+        "player_input": "I cast Magic Missile at the goblin with advantage",
+        "character": WIZARD,
+    }
+    spell_actions = actions_for_state(spell)
+    assert [a.kind for a in spell_actions] == ["advantage"]
+    magic = "Magic Missile sends 3 darts for 9 force damage. You gain advantage on the next turn."
+    kept = apply_narration_boundary(magic, spell_actions, applied=engine_applied_for_state(spell))
+    assert "Magic Missile sends 3 darts for 9 force damage." in kept
+    assert "gain advantage" not in kept
 
 
 def test_contract_scope_text_matches_the_engine() -> None:
