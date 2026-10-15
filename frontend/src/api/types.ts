@@ -226,6 +226,9 @@ export interface DiceLogEntry {
   modifier: number;
   total: number;
   purpose?: string | null;
+  /** Set on advantage/disadvantage d20 rolls: both faces are in `rolls`, `kept` is used. */
+  roll_mode?: "advantage" | "disadvantage" | null;
+  kept?: number | null;
 }
 
 export interface AdjudicationResult {

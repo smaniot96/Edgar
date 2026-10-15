@@ -1,4 +1,4 @@
-import type { AdjudicationResult } from "../../api/types";
+import type { AdjudicationResult, DiceLogEntry } from "../../api/types";
 
 export interface RollParts {
   check: string;
@@ -11,6 +11,17 @@ export interface RollParts {
   natural: "nat 20" | "nat 1" | null;
   success: boolean;
   damage: number | null;
+  /** Both d20 faces when advantage or disadvantage applied; null for a plain roll. */
+  faces: number[] | null;
+  mode: "advantage" | "disadvantage" | null;
+}
+
+/** The engine's advantage/disadvantage d20 entry for the check, when one was rolled. */
+function modeEntry(adj: AdjudicationResult): DiceLogEntry | null {
+  const entry = (adj.dice_log ?? []).find(
+    (d) => (d.roll_mode === "advantage" || d.roll_mode === "disadvantage") && d.rolls.length === 2,
+  );
+  return entry ?? null;
 }
 
 /** Extract what the roll card shows; null when no dice were rolled this turn. */
@@ -29,12 +40,20 @@ export function rollParts(adj: AdjudicationResult | null | undefined): RollParts
     natural: adj.natural_roll === 20 ? "nat 20" : adj.natural_roll === 1 ? "nat 1" : null,
     success: !!adj.success,
     damage: typeof adj.damage === "number" && adj.damage > 0 ? adj.damage : null,
+    ...rollModeFields(adj),
   };
+}
+
+function rollModeFields(adj: AdjudicationResult): Pick<RollParts, "faces" | "mode"> {
+  const entry = modeEntry(adj);
+  if (!entry || !entry.roll_mode) return { faces: null, mode: null };
+  return { faces: entry.rolls, mode: entry.roll_mode };
 }
 
 /** One-line plain-text version, e.g. "Athletics · 1d20+5 = 17 vs DC 15 → Success · 6 dmg". */
 export function rollSummary(p: RollParts): string {
-  let s = `${p.check} · ${p.expression ? `${p.expression} = ` : ""}${p.total}`;
+  const faces = p.faces ? ` [${p.faces.join(", ")}]` : "";
+  let s = `${p.check} · ${p.expression ? `${p.expression}${faces} = ` : ""}${p.total}`;
   if (p.natural) s += ` (${p.natural})`;
   if (p.dc != null) s += ` vs ${p.against} ${p.dc}`;
   s += ` → ${p.success ? "Success" : "Failure"}`;
