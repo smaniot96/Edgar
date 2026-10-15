@@ -208,12 +208,12 @@ async def test_player_attack_vs_ac_and_no_double_hp_counting(fake_llm_schema, fa
         else:
             assert adj.success is True and goblin["hp_current"] < 9
         assert adj.against == "AC" and adj.dc == 30 and adj.roll_expression == "1d20+5"
-        # Only engine-rolled enemy damage (and Second Wind) touches HP.
+        # Only engine-rolled enemy damage touches HP. No automatic Second Wind at 0 HP; a blow
+        # that reaches 0 is a subdued defeat, which leaves the hero at 1 HP.
         enemy_damage = sum(d["total"] for d in adj.dice_log if d.get("purpose") == "Goblin damage")
-        second_wind = sum(d["total"] for d in adj.dice_log if d.get("purpose") == "second wind")
-        assert adj.character_update.hp_delta <= 0 or second_wind
-        if not second_wind:
-            assert adj.character_update.hp_delta == -min(12, enemy_damage)
+        assert not [d for d in adj.dice_log if d.get("purpose") == "second wind"]
+        expected_hp = max(1 if enemy_damage >= 12 else 0, 12 - enemy_damage)
+        assert adj.character_update.hp_delta == expected_hp - 12
 
 
 @pytest.mark.asyncio

@@ -148,11 +148,22 @@ async def test_reupload_restores_exact_bound_slug_and_preserves_history(
     before = await db_session.scalar(select(func.count(EventLog.id)))
     ingests = []
 
-    def ingest(target, path, *, attempt_id):
-        assert adventures_meta.load_meta(target)["status"] == "processing"
-        assert adventures._PDF_DIR.joinpath(f"{target}.pdf").read_bytes() == b"%PDF supplied source"
+    def ingest(target, path, *, attempt_id, source_filename):
+        pending = adventures_meta.load_meta(target)
+        assert pending["status"] == "processing"
+        candidate = adventures_meta.candidate_pdf_path(target, attempt_id)
+        assert str(candidate) == path
+        assert candidate.read_bytes() == b"%PDF supplied source"
+        assert not adventures._PDF_DIR.joinpath(f"{target}.pdf").exists()
+        assert source_filename == "Original adventure.pdf"
         ingests.append((target, path))
         source(source_corpus, target, ["Restored opening"], expected=1)
+        # This route/history test substitutes indexing, then completes the real source
+        # publication lifecycle. Real extraction/index activation has separate coverage.
+        adventures_meta.save_meta(target, pending)
+        assert adventures_meta.finish_attempt(
+            target, attempt_id, {"status": "ready", "chunks": 1}, success=True
+        )
 
     monkeypatch.setattr(adventures, "_ingest_adventure", ingest)
     uploaded = await api_client.post(
@@ -165,6 +176,8 @@ async def test_reupload_restores_exact_bound_slug_and_preserves_history(
     assert restored["adventure_collections"] == old["adventure_collections"]
     assert restored["source_mode"] == "module" and restored["play_allowed"]
     assert restored["sources"][0]["source_pdf_available"]
+    assert adventures._PDF_DIR.joinpath(f"{slug}.pdf").read_bytes() == b"%PDF supplied source"
+    assert adventures_meta.load_meta(slug)["source_filename"] == "Original adventure.pdf"
     assert await db_session.scalar(select(func.count(EventLog.id))) == before
     assert source_corpus.scroll("unrelated", with_vectors=True)[0] == unrelated
     assert (

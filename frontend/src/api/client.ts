@@ -2,6 +2,7 @@ import type {
   AdventureGenerateRequest,
   AdventureGenerateResponse,
   AdventureRead,
+  AdventureJobRead,
   ExtractionPreview,
   CampaignCharacterRead,
   CampaignRead,
@@ -237,6 +238,10 @@ export async function recoverCampaignSource(id: number, slug: string, file: File
 
 export function retryAdventure(slug: string, reviewed?: { reviewed_source_sha256: string; reviewed_extraction_sha256: string }): Promise<AdventureRead> {
   return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/retry`, reviewed);
+}
+
+export function cancelAdventure(slug: string): Promise<AdventureJobRead> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/cancel`);
 }
 
 export function endCampaign(id: number): Promise<CampaignRead> {
