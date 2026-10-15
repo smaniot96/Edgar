@@ -1,7 +1,5 @@
 """Lost acknowledgments resolve through the original atomic turn receipt."""
 
-import json
-
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -27,11 +25,28 @@ async def test_lost_ack_replay_never_runs_provider_or_repeats_state(
 
     sid = (await api_client.post("/api/seed")).json()["session_id"]
     body = {"message": "I inspect the trail.", "request_id": "stable-action-123"}
+    if first_stream:
+        from apps.api.routers import session as session_router
+
+        original_stream = session_router.stream_session_turn
+
+        async def lose_done(**kwargs):
+            # Consume the real commit, but lose its final acknowledgment in transport.
+            async for frame in original_stream(**kwargs):
+                if frame.startswith("event: done"):
+                    return
+                yield frame
+
+        monkeypatch.setattr(session_router, "stream_session_turn", lose_done)
     suffix = "/stream" if first_stream else ""
     first = await api_client.post(f"/api/sessions/{sid}/turn{suffix}", json=body)
     assert first.status_code == 200, first.text
     if first_stream:
-        done = json.loads(first.text.strip().split("\n\n")[-1].split("data: ", 1)[1])
+        assert "event: token" in first.text
+        assert "event: done" not in first.text
+        saved = await api_client.get(f"/api/sessions/{sid}/turns/{body['request_id']}")
+        assert saved.status_code == 200, saved.text
+        done = saved.json()["result"]
     else:
         done = first.json()
 
