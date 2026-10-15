@@ -424,19 +424,49 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="action_economy",
-        title="Action, bonus action and Dodge in one player turn",
+        title="Action, bonus action, Dodge, Dash and Disengage in one player turn",
         scope=(
             "Each player turn has one action and one bonus action. The engine classifies every "
             "declared action from a fixed table: attack, contested maneuver, item use, a catalog "
-            "action spell and Dodge use the action; Second Wind and Healing Word use the bonus "
-            "action. A second action, or a second bonus action, in the same turn is refused with no "
-            "roll and no round. Dodge gives attacks against the hero disadvantage until the hero's "
-            "next turn begins. The turn's spending is shown in the combat HUD and the narration "
-            "context. Dash, Disengage, Help, reactions, opportunity attacks and movement are not "
-            "modelled."
+            "action spell, Dodge, Dash and Disengage use the action; Second Wind and Healing Word use "
+            "the bonus action. A second action, or a second bonus action, in the same turn is refused "
+            "with no roll and no round. Dodge gives attacks against the hero disadvantage until the "
+            "hero's next turn begins. Dash allows a second move in the turn and Disengage stops the "
+            "opportunity attacks that moves would provoke (see positioning). The turn's spending is "
+            "shown in the combat HUD and the narration context. Help is not modelled."
         ),
         implementation="agent.action_economy:refusal_for",
         test="tests/agent/test_action_economy.py::test_second_action_is_refused_before_any_roll",
+    ),
+    Mechanic(
+        id="positioning",
+        title="Coarse positioning: melee or ranged band, and one move per turn (Dash for two)",
+        scope=(
+            "Each foe stands within 5 feet of the hero (melee) or beyond it (ranged). A foe starts "
+            "at range only when every attack its record lists is ranged; otherwise it starts in melee. "
+            "The hero moves by declaration ('I close in on the archer', 'I back away'), which is free "
+            "and is not an action: one band change per turn at normal speed, and two with the Dash "
+            "action. A ranged-only foe at range stays there; a melee-only foe at range closes in on its "
+            "turn and then attacks. A melee-only attack or grapple cannot reach a foe at range and is "
+            "refused with no roll. A ranged attack made within 5 feet of a foe has disadvantage. The "
+            "bands are shown in the combat HUD and the narration context; rows from before this rule "
+            "carry no band and are not rewritten. Exact distances are not tracked."
+        ),
+        implementation="agent.positioning:plan_moves",
+        test="tests/agent/test_positioning.py::test_hero_moves_one_band_per_turn_and_dash_allows_two",
+    ),
+    Mechanic(
+        id="opportunity_attacks",
+        title="Opportunity attacks (the reaction): leaving a foe's melee reach",
+        scope=(
+            "When the hero moves from a foe's melee band to range without the Disengage action, that "
+            "foe may make one melee attack against the hero with its reaction: the record's first melee "
+            "attack, rolled and damaged by the engine. A creature has one reaction per round, which comes "
+            "back at the start of its own turn. A foe with no melee attack makes none. No other reaction "
+            "is executed."
+        ),
+        implementation="agent.graph_combat:combat_round_node",
+        test="tests/agent/test_positioning.py::test_leaving_melee_provokes_one_opportunity_attack",
     ),
     Mechanic(
         id="captive_lifecycle",
@@ -490,17 +520,20 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="positioning_cover",
-        title="Positioning, cover, high ground and flanking",
-        boundary="No cover, elevation or flanking modifier is applied and no position is tracked.",
+        title="Cover, high ground, flanking, difficult terrain and exact distances",
+        boundary=(
+            "No cover, elevation, flanking or difficult-terrain modifier is applied. Only the melee and "
+            "ranged bands are recorded: no exact distance in feet is tracked and no movement speed is spent."
+        ),
         owner="EDG-044",
     ),
     UnsupportedMechanic(
         id="action_economy_remainder",
-        title="Dash, Disengage, Help, reactions, opportunity attacks and other bonus actions",
+        title="Help, reactions other than opportunity attacks, and other bonus actions",
         boundary=(
             "Each turn allows one action and one bonus action, and only Second Wind and Healing Word "
-            "use the bonus action. Dash, Disengage, Help, reactions, opportunity attacks and any other "
-            "bonus action have no engine effect and no movement is tracked."
+            "use the bonus action. Help, any reaction other than an opportunity attack, and any other "
+            "bonus action have no engine effect."
         ),
         owner="EDG-044",
     ),
@@ -604,12 +637,12 @@ _RULINGS = {
         "roll uses the plain d20 and the sheet modifier."
     ),
     ACTION_ECONOMY: (
-        "Narrative ruling: this action is not modelled. Dash, Disengage, Help, reactions, opportunity "
-        "attacks and other bonus actions have no engine effect."
+        "Narrative ruling: this action is not modelled. Help, reactions other than opportunity attacks "
+        "and other bonus actions have no engine effect."
     ),
     POSITIONING: (
-        "Narrative ruling: positioning is not tracked. Cover, high ground and flanking give no "
-        "modifier and no position is recorded."
+        "Narrative ruling: cover, high ground, flanking and difficult terrain are not modelled. They "
+        "give no modifier, and no position beyond the melee and ranged bands is recorded."
     ),
 }
 
@@ -633,10 +666,17 @@ _OTHER_CONDITION_CLAIMS = (
 )
 _BONUS_ACTION_CLAIM = r"bonus\s+action"
 _DODGE_CLAIM = r"dodg\w*"
-_ACTION_ECONOMY_CLAIM = (
-    r"\b(?:(?:dash|disengage|help)\s+action|" + _BONUS_ACTION_CLAIM + r"|opportunity\s+attacks?|"
-    r"" + _DODGE_CLAIM + r"|disengag\w*)\b"
+# Each economy phrase, keyed by the typed effect the engine records when it executes it. Help has no
+# effect in this engine, so its phrase is always a claim.
+_ECONOMY_PARTS = (
+    ("dodge", _DODGE_CLAIM),
+    ("bonus_action", _BONUS_ACTION_CLAIM),
+    ("dash", r"dash\s+action"),
+    ("disengage", r"disengag\w*"),
+    ("opportunity_attack", r"opportunity\s+attacks?"),
+    ("help", r"help\s+action"),
 )
+_ACTION_ECONOMY_CLAIM = r"\b(?:" + "|".join(p for _, p in _ECONOMY_PARTS) + r")\b"
 _UNSUPPORTED_FEATURE = re.compile(r"\b(?:" + _FEATURE_NAMES + r")\b", re.IGNORECASE)
 _CLAIM_WORDS = {
     SPELL: (
@@ -919,10 +959,10 @@ def _executed_economy_phrase(
 ) -> bool:
     """True when the phrase names an action economy slot the engine executed this turn.
 
-    A Dodge (`dodge` effect) and a bonus action Second Wind or Healing Word (`bonus_action`) are
-    supported, so their wording describes a real effect and is neither declared nor stripped. A
-    declared "bonus action" is that executed one only when the player also names Second Wind or
-    Healing Word; "use my bonus action to hide" stays unsupported beside a Second Wind.
+    A Dodge (`dodge` effect), Dash, Disengage and an opportunity attack are supported, so their
+    wording describes a real effect and is neither declared nor stripped. A declared "bonus action"
+    is that executed one only when the player also names Second Wind or Healing Word; "use my bonus
+    action to hide" stays unsupported beside a Second Wind.
     """
     if kind != ACTION_ECONOMY:
         return False
@@ -931,7 +971,11 @@ def _executed_economy_phrase(
         return True
     if "bonus_action" in applied.effects and word.startswith("bonus"):
         return bool(_EXECUTED_BONUS_SPELL_OR_FEATURE.search(text))
-    return False
+    if "dash" in applied.effects and word.startswith("dash"):
+        return True
+    if "disengage" in applied.effects and word.startswith("disengag"):
+        return True
+    return "opportunity_attack" in applied.effects and word.startswith("opportunity")
 
 
 _EXECUTED_BONUS_SPELL_OR_FEATURE = re.compile(r"second\s+wind|healing\s+word", re.IGNORECASE)
@@ -986,16 +1030,10 @@ def boundary_prompt_block(actions: tuple[UnsupportedAction, ...]) -> str | None:
 def _claim_words(applied: EngineApplied) -> dict[str, str]:
     """The claim vocabulary, minus the action economy phrases the engine executed this turn."""
     words = dict(_CLAIM_WORDS)
-    executed = [
-        claim
-        for effect, claim in (("dodge", _DODGE_CLAIM), ("bonus_action", _BONUS_ACTION_CLAIM))
-        if effect in applied.effects
-    ]
-    if executed:
-        # Only the claims the engine did not execute remain (Dash, Disengage, opportunity attacks).
-        words[ACTION_ECONOMY] = (
-            r"\b(?:(?:dash|disengage|help)\s+action|opportunity\s+attacks?|disengag\w*)\b"
-        )
+    remaining = [claim for effect, claim in _ECONOMY_PARTS if effect not in applied.effects]
+    if len(remaining) < len(_ECONOMY_PARTS):
+        # Only the claims the engine did not execute remain (Help always does).
+        words[ACTION_ECONOMY] = r"\b(?:" + "|".join(remaining) + r")\b"
     return words
 
 

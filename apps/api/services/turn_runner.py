@@ -45,6 +45,7 @@ from agent.nodes.narrator import (
     make_narrator_model,
     narrator_context,
 )
+from agent.positioning import band_of
 from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
@@ -430,6 +431,9 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
                 "alive": c.get("alive", True),
                 "disposition": disposition_of(c),
                 "can_act": can_act(c),
+                # Additive (EDG-044): a foe's distance band and whether its reaction is spent.
+                "band": None if c.get("is_player") else band_of(c),
+                "reaction_used": bool(c.get("reaction_used", False)),
             }
             for c in (combat_state.get("combatants") or [])
         ],

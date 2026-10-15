@@ -4,6 +4,12 @@ import { economyLine, orderCombatants } from "./gameState";
 import { HpBar } from "../ui/HpBar";
 
 /** Plain-language label for a non-standing combatant. `defeated` never claims death or capture. */
+// Distance bands from the hero (EDG-044): within or beyond 5 feet.
+const BAND_LABEL: Record<string, string> = {
+  melee: "in melee",
+  ranged: "at range",
+};
+
 const DISPOSITION_LABEL: Record<string, string> = {
   unconscious: "unconscious",
   captured: "captive",
@@ -56,6 +62,14 @@ export function CombatHud({ combat }: { combat: CombatState }) {
                 {c.isPlayer ? <span className="text-[0.6rem] uppercase text-ember-400/80">you</span> : null}
                 {c.disposition && DISPOSITION_LABEL[c.disposition] ? (
                   <span className="text-[0.6rem] uppercase text-ink-muted">{DISPOSITION_LABEL[c.disposition]}</span>
+                ) : null}
+                {c.band ? (
+                  <span
+                    aria-label={`${c.name} position`}
+                    className="text-[0.6rem] uppercase text-ink-muted"
+                  >
+                    {BAND_LABEL[c.band] ?? c.band}
+                  </span>
                 ) : null}
                 <span className="ml-auto flex shrink-0 gap-1.5 font-mono text-[0.65rem] text-ink-muted">
                   {c.init != null ? <span title="Initiative">⚡{c.init}</span> : null}
