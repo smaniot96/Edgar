@@ -16,6 +16,7 @@ from edgar_core.manifests import require_published, select_scene_context
 from edgar_core.sources import eligible_context, source_citation
 from edgar_core.story import (
     AcceptedStoryEffect,
+    ClockDisclosure,
     StoryEffect,
     StoryFact,
     StoryRef,
@@ -38,9 +39,10 @@ _STATUSES = {
     "encounter": {"encountered"},
     "visit": {"visited"},
     "move": {"visited"},
+    "learn_place": {"known"},
     "relationship": {"friendly", "neutral", "hostile"},
-    "objective": {"active", "completed", "failed"},
-    "milestone": {"completed"},
+    "objective": {"announced", "active", "completed", "failed"},
+    "milestone": {"announced", "active", "completed", "failed"},
     "promise": {"active", "fulfilled", "broken"},
     "clock": {"advanced", "completed"},
 }
@@ -80,7 +82,15 @@ def story_candidates(state: AgentState) -> list[dict]:
             )
 
         for scene in manifest.scenes:
-            if scene.scene_id in selected["allowed_scene_ids"]:
+            known_place_passage_ids = [
+                p.passage_id
+                for p in manifest.passages
+                if p.passage_id in eligible_ids
+                and p.audience == "player"
+                and scene.scene_id in p.known_scene_ids
+            ]
+            can_move = scene.scene_id in selected["allowed_scene_ids"]
+            if can_move or known_place_passage_ids:
                 add(
                     "scene",
                     scene.scene_id,
@@ -89,8 +99,13 @@ def story_candidates(state: AgentState) -> list[dict]:
                         p.passage_id
                         for p in manifest.passages
                         if p.passage_id in eligible_ids
-                        and state.get("current_scene_id") in p.scene_ids
+                        and (
+                            state.get("current_scene_id") in p.scene_ids
+                            or p.passage_id in known_place_passage_ids
+                        )
                     ],
+                    known_place_passage_ids=known_place_passage_ids,
+                    can_move=can_move,
                 )
         for entity in selected["entities"]:
             add(
@@ -105,6 +120,7 @@ def story_candidates(state: AgentState) -> list[dict]:
                 entity_kind=entity["kind"],
                 reveal_on=entity["reveal_on"],
                 discovery_flag=entity.get("discovery_flag"),
+                object_id=entity.get("object_id"),
                 reveal_passage_ids=[
                     p.passage_id
                     for p in manifest.passages
@@ -138,6 +154,10 @@ def story_candidates(state: AgentState) -> list[dict]:
                         consumable=definition.consumable,
                         initial_owner=definition.initial_owner,
                         operations=definition.operations,
+                        announcement_passage_ids=definition.announcement_passage_ids,
+                        clock_reveal=definition.clock_reveal.model_dump()
+                        if definition.clock_reveal
+                        else None,
                     )
     return candidates + _player_promise_candidates(state)
 
@@ -265,7 +285,7 @@ def _kind_matches(effect: StoryEffect, candidate: dict) -> bool:
     target_kind = effect.target.kind
     if effect.kind in _OBJECT_KINDS:
         return target_kind == "object"
-    if effect.kind in {"visit", "move"}:
+    if effect.kind in {"visit", "move", "learn_place"}:
         return target_kind == "scene"
     if effect.kind in {"discover", "encounter", "relationship"}:
         return target_kind == "entity" and (
@@ -340,6 +360,8 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             continue
         if proposal.kind == "move" and any(effect.kind == "move" for effect in accepted):
             continue
+        if proposal.kind == "move" and not candidate.get("can_move"):
+            continue
         if proposal.kind not in _OBJECT_KINDS and proposal.status not in _STATUSES.get(
             proposal.kind, set()
         ):
@@ -371,6 +393,18 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         if any(not _reviewed_chunk(c, state) for c in supporting):
             continue
         public = [c for c in supporting if c.get("audience") == "player"]
+        if proposal.kind == "learn_place":
+            public = [
+                c
+                for c in public
+                if c.get("passage_id") in candidate.get("known_place_passage_ids", [])
+            ]
+        if proposal.status == "announced":
+            public = [
+                c
+                for c in public
+                if c.get("passage_id") in candidate.get("announcement_passage_ids", [])
+            ]
         if proposal.kind == "discover":
             public += [
                 c
@@ -470,6 +504,17 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 )
                 else proposal.target.kind.capitalize()
             ),
+            knowledge_kind="hint"
+            if proposal.kind == "discover" and candidate.get("entity_kind") == "hint"
+            else None,
+            clock_disclosure=_clock_disclosure(candidate, state)
+            if proposal.kind == "clock"
+            else None,
+            related_object=proposal.target.model_copy(
+                update={"kind": "object", "canonical_id": candidate["object_id"]}
+            )
+            if proposal.kind == "discover" and candidate.get("object_id")
+            else None,
         )
         if sealed.effect_id in seen_effects:
             continue
@@ -491,6 +536,25 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     adj.flags_set = [flag for flag in adj.flags_set if flag.key not in discovery_flags]
     adj.flags_cleared = [flag for flag in adj.flags_cleared if flag not in discovery_flags]
     return adj
+
+
+def _clock_disclosure(candidate: dict, state: AgentState) -> ClockDisclosure | None:
+    reveal = candidate.get("clock_reveal")
+    if reveal is None:
+        return None
+    flags = state.get("world_flags") or {}
+
+    def allowed(field: str) -> bool:
+        predicates = reveal.get(field)
+        return predicates is not None and all(
+            flags.get(key) == value for key, value in predicates.items()
+        )
+
+    return ClockDisclosure(
+        current=allowed("current_requires"),
+        maximum=candidate.get("clock_max") if allowed("maximum_requires") else None,
+        completion=allowed("completion_requires"),
+    )
 
 
 def safe_story_summary(adj: AdjudicationResult, engine_summary: str) -> None:

@@ -91,6 +91,9 @@ async def persist_story_effects(
             turn_id=effect.turn_id,
             source_refs=effect.source_refs,
             display_name=effect.display_name,
+            knowledge_kind=effect.knowledge_kind,
+            clock_disclosure=effect.clock_disclosure,
+            related_object=effect.related_object,
         )
         if sealed.effect_id != effect.effect_id:
             raise StoryStateConflict("Story effect content does not match its identity")
