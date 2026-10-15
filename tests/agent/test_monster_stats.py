@@ -519,3 +519,101 @@ async def test_combat_start_declares_unsupported_traits_and_notes_the_unscaled_r
     (wyrm,) = [c for c in out["combat_state"]["combatants"] if not c.get("is_player")]
     assert wyrm["hp_max"] == 30 and stats_of(wyrm) is not None
     assert out["combat_state"]["solo_budget"]["adapted"] is False
+
+
+# --------------------------------------------------------------------------------------------
+# EDG-149: real-layout quirks found by reading the Monster Manual stat blocks. The fixtures below
+# are synthetic: every number and sentence is written for this test, in the layout the rulebook
+# text layer produces ("Melee or Ranged Weapon Attack", "non magical", "(Recharge 5–6)" with an en
+# dash, a spaced minus "(- 1)"). No rulebook text is copied.
+# --------------------------------------------------------------------------------------------
+
+CAPTAIN_TEXT = """Gutter Captain
+Medium humanoid (goblinoid), lawful evil
+Armor Class 16 (scale mail, shield)
+Hit Points 39 (6d8 + 12)
+Speed 30 ft.
+STR DEX CON INT WIS CHA
+14 (+2) 12 (+1) 15 (+2) 9 (- 1) 11 (+0) 13 (+1)
+Saving Throws Dex +3
+Senses darkvision 60 ft., passive Perception 10
+Languages Common, Goblin
+Challenge 2 (450 XP)
+Actions
+Multiattack. The captain makes two attacks with its cudgel. The second attack has disadvantage.
+Cudgel. Melee or Ranged Weapon Attack: +4 to hit, reach 5 ft. or range 20/60 ft., one target. Hit: 6 (1d8 + 2) bludgeoning damage.
+Spit Breath (Recharge 5–6). The captain exhales acid in a 15-foot cone. Each creature in that area must make a DC 12 Dexterity saving throw, taking 10 (3d6) acid damage on a failed save, or half as much damage on a successful one.
+"""  # fmt: skip
+
+SENTINEL_TEXT = """Stone Sentinel
+Large construct, unaligned
+Armor Class 15 (natural armor)
+Hit Points 45 (6d10 + 12)
+Speed 30 ft.
+STR DEX CON INT WIS CHA
+16 (+3) 10 (+0) 14 (+2) 3 (-4) 10 (+0) 1 (-5)
+Damage Resistances bludgeoning, piercing, and slashing from non magical attacks that aren't silvered
+Damage Immunities poison
+Senses darkvision 60 ft., passive Perception 10
+Challenge 3 (700 XP)
+Actions
+Slam. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 8 (1d10 + 3) bludgeoning damage.
+"""  # fmt: skip
+
+
+def test_text_layer_spacing_and_melee_or_ranged_attacks_are_read() -> None:
+    # fixed: "(- 1)" with a space and "Melee or Ranged Weapon Attack" were not read, so the
+    # Wisdom modifier was lost and the attack was declared as a trait.
+    stats = parse_monster_stats(CAPTAIN_TEXT, name="Gutter Captain")
+    assert stats.abilities == {"STR": 2, "DEX": 1, "CON": 2, "INT": -1, "WIS": 0, "CHA": 1}
+    cudgel = stats.attacks[0]
+    assert (cudgel.name, cudgel.bonus, cudgel.damage_dice, cudgel.damage_type) == (
+        "Cudgel",
+        4,
+        "1d8+2",
+        "bludgeoning",
+    )
+    assert not cudgel.ranged  # reach 5 ft. is the melee reading of "Melee or Ranged"
+    assert not any("Cudgel" in d and "not executed" in d for d in stats.declared)
+
+
+def test_multiattack_that_names_one_attack_counts_it_and_declares_the_disadvantage() -> None:
+    # fixed: "makes two attacks with its cudgel" was read as no counts at all.
+    stats = parse_monster_stats(CAPTAIN_TEXT, name="Gutter Captain")
+    assert stats.multiattack == (("Cudgel", 2),)
+    assert [a.name for a in attack_plan(stats)] == ["Cudgel", "Cudgel"]
+    assert "Multiattack: the disadvantage on a later attack is not executed" in stats.declared
+    assert not any("counts could not be read" in d for d in stats.declared)
+
+
+def test_recharge_with_an_en_dash_is_a_named_declared_trait() -> None:
+    # fixed: "Spit Breath (Recharge 5–6)" failed the name pattern and was glued onto the previous
+    # entry, so it was never declared.
+    stats = parse_monster_stats(CAPTAIN_TEXT, name="Gutter Captain")
+    assert "Spit Breath (Recharge 5–6): recharge ability not executed" in stats.declared
+    assert len(stats.attacks) == 1  # the breath is not an attack roll
+
+
+def test_non_magical_split_by_the_text_layer_still_gives_the_resistance() -> None:
+    # fixed: "non magical" (two words) was read as a magic qualifier, so the resistance was dropped.
+    stats = parse_monster_stats(SENTINEL_TEXT, name="Stone Sentinel")
+    assert [(r.damage_type, r.nonmagical_only) for r in stats.resistances] == [
+        ("bludgeoning", True),
+        ("piercing", True),
+        ("slashing", True),
+    ]
+    assert [r.damage_type for r in stats.immunities] == ["poison"]
+    assert stats.abilities["INT"] == -4 and stats.abilities["CHA"] == -5
+
+
+def test_silvered_exception_on_a_nonmagical_resistance_is_declared_not_guessed() -> None:
+    # The hero's weapons are plain, so the resistance applies to them; the silvered exception is
+    # declared rather than silently dropped.
+    stats = parse_monster_stats(SENTINEL_TEXT, name="Stone Sentinel")
+    assert any("silvered or adamantine exception not executed" in d for d in stats.declared)
+    assert adjust_monster_damage(combat_fields_for(stats), 8, "bludgeoning", magical=False)[0] == 4
+
+
+def combat_fields_for(stats) -> dict:
+    """A roster-shaped dict carrying the parsed stats, for the damage-rule helper."""
+    return {"name": stats.name, "monster_stats": stats.to_dict()}

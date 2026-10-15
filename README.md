@@ -89,15 +89,17 @@ simulate (`GET /api/rules/supported-scope`):
   it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
   table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, a bonus action
   that may accompany the turn's action, restored by a short or long rest; no automatic use at 0 HP);
-  Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends one to
-  roll it plus CON (minimum 1 HP, capped at the missing HP) and is refused with none left; a long
-  rest restores HP, spell slots and half the level in spent Hit Dice (minimum one; the 2024
-  campaigns use the same rule); healing potions taken from inventory.
+  Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends one
+  die, rolls it plus CON and regains that total (capped at the missing HP), and is refused with none
+  left; a long rest restores HP, spell slots and up to half the total Hit Dice, rounded down (PHB
+  p.187; the 2024 campaigns use the same rule); healing potions taken from inventory. The AC table
+  follows PHB p.146 (hide armor included), with barbarian and monk Unarmored Defense (PHB pp.49, 79).
 - Action economy in combat: each player turn has one action and one bonus action. Attacks, contested
   maneuvers, item use, catalog action spells, Dodge, Dash and Disengage use the action; Second Wind,
   Healing Word and Rage use the bonus action. A second action or bonus action in the same turn is
   refused with no roll and no round. Dodge gives attacks against the hero disadvantage until the
-  hero's next turn; the HUD and narration show what the turn spent.
+  hero's next turn (the book's visibility condition and Dexterity-save advantage are not applied);
+  the HUD and narration show what the turn spent.
 - Positioning in combat: each foe stands in the melee band (within 5 feet of the hero) or the ranged
   band (beyond it), set from its exact record (a foe whose listed attacks are all ranged starts at
   range). Movement is free and declared in the hero's words ("I close in on the archer", "I back
@@ -127,7 +129,8 @@ simulate (`GET /api/rules/supported-scope`):
   roster and ends with the foe's defeat or the encounter. Concentration is not tracked.
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
-  attacks have disadvantage, attacks against it have advantage) or knocks it prone (its attacks have
+  attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or
+  knocks it prone (its attacks have
   disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
   release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
   are shown in the combat roster and given to the narrator.
@@ -151,8 +154,10 @@ simulate (`GET /api/rules/supported-scope`):
   listed attack. Regeneration heals at the start of the monster's turn, unless the damage types the
   record names have been taken since its last turn. Resistances, immunities and vulnerabilities apply
   to player damage by weapon or spell damage type. Speed and movement, legendary, lair and reaction
-  actions, spellcasting, recharge abilities and unlisted traits are declared in the combat start
-  message and have no effect.
+  actions, spellcasting, recharge abilities, a Multiattack's later-attack disadvantage and unlisted
+  traits are declared in the combat start message and have no effect. Regeneration's 0 HP clause is
+  declared too: an exact creature at 0 HP is defeated at once. Stat blocks were checked against
+  real Monster Manual layouts (see docs/rules-verification-2014.md).
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
   with level. Foes without an exact record are clamped or left out. An exact creature is never

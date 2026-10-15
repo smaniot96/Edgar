@@ -164,7 +164,6 @@ def test_repeated_rests_follow_the_ledger_and_the_long_rest_recovers() -> None:
 @pytest.mark.parametrize(
     ("level", "spent_before", "spent_after"),
     [
-        (1, 1, 0),  # half of 1 is 0; the minimum of one recovers the die
         (3, 3, 2),  # half of 3 is 1
         (4, 4, 2),  # half of 4 is 2
         (4, 1, 0),  # recovery never drops the spent count below zero
@@ -172,17 +171,30 @@ def test_repeated_rests_follow_the_ledger_and_the_long_rest_recovers() -> None:
         (10, 10, 5),  # half of 10 is 5
     ],
 )
-def test_long_rest_recovers_half_the_level_with_a_minimum_of_one(
+def test_long_rest_recovers_up_to_half_the_total_rounded_down(
     level: int, spent_before: int, spent_after: int
 ) -> None:
+    # PHB p.187: "up to a number of dice equal to half of the character's total number of them."
     character = _char(level=level, hp=1, hp_max=60, spent=spent_before)
 
-    assert hit_dice_recovered_by_long_rest(character) == max(1, level // 2)
+    assert hit_dice_recovered_by_long_rest(character) == level // 2
     adj = _rest(character, "I take a long rest")
 
     assert adj.character_update.hit_dice_spent == spent_after
     assert adj.rest_record.hit_dice_recovered == spent_before - spent_after
     assert adj.rest_record.hit_dice_remaining == level - spent_after
+
+
+def test_level_one_long_rest_recovers_no_hit_die() -> None:
+    # PHB p.187: "up to a number of dice equal to half of the character's total number of them".
+    # Half of one die rounds down to zero, so the spent level-1 die stays spent.
+    spent = _char(level=1, hp=1, hp_max=12, spent=1)
+    adj = _rest(spent, "I take a long rest")
+
+    assert hit_dice_recovered_by_long_rest(spent) == 0
+    assert adj.character_update.hit_dice_spent is None  # the ledger is unchanged, nothing written
+    assert adj.rest_record.hit_dice_recovered == 0
+    assert adj.rest_record.hit_dice_remaining == 0
 
 
 def test_long_rest_leaves_untouched_dice_alone() -> None:
@@ -211,7 +223,9 @@ def test_healing_never_exceeds_max_hp_but_still_spends_the_die() -> None:
     assert adj.character_update.hit_dice_spent == 1
 
 
-def test_con_modifier_is_applied_with_a_minimum_of_one_hp() -> None:
+def test_con_modifier_is_applied_with_no_minimum_healing() -> None:
+    # PHB p.187: a short rest regains hit points equal to the roll plus CON. There is no minimum of
+    # one, so a roll that the CON penalty takes below zero regains nothing (the die is still spent).
     wizard = _char("Wizard", level=1, hp=1, hp_max=30, con=6)  # CON 6 is -2
 
     amounts = []
@@ -219,10 +233,10 @@ def test_con_modifier_is_applied_with_a_minimum_of_one_hp() -> None:
         healed = heal_from_rest(wizard, "short", random.Random(seed))
         assert healed is not None and healed.dice is not None
         assert healed.dice.expression == "1d6-2"
-        assert healed.amount >= 1
+        assert healed.amount == max(0, healed.dice.total)
         amounts.append((healed.dice.total, healed.amount))
-    # A d6 rolls 1 or 2 about a third of the time, so the minimum is exercised.
-    assert any(total < 1 and amount == 1 for total, amount in amounts)
+    # A d6 rolls 1 or 2 about a third of the time, so the zero floor is exercised.
+    assert any(total < 1 and amount == 0 for total, amount in amounts)
 
 
 def test_model_cannot_propose_hit_dice_or_rest_evidence() -> None:
