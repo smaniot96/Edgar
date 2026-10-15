@@ -54,6 +54,7 @@ from agent.supported_rules import (
     actions_for_state,
     apply_adjudication_boundary,
     boundary_prompt_block,
+    engine_effects_for_state,
 )
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
@@ -285,7 +286,7 @@ async def adjudicate(
 
     # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
     # Runs before the engine's own roll line is stamped on, so engine dice are never stripped.
-    apply_adjudication_boundary(result, actions)
+    apply_adjudication_boundary(result, actions, engine_effects=engine_effects_for_state(state))
 
     # Authoritative numbers: never trust the model's success/dice.
     result.dice_log = list(extra_log)

@@ -333,6 +333,26 @@ def test_supported_completion_needs_confirmation() -> None:
     assert COMPLETION_FLAG not in {f.key for f in adj.flags_set}
 
 
+@pytest.mark.asyncio
+async def test_supported_contested_maneuver_applies_effect(fake_llm_schema, fake_retrieval) -> None:
+    """A contested grapple the engine wins records a restraint that changes the foe's attacks."""
+    from tests.agent.test_combat import _enemy as foe_fixture, _player as hero_fixture
+    from tests.agent.test_combat_effects import _entries, _find_contest, _foe
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    out = await _find_contest(
+        fake_llm_schema,
+        lambda: [hero_fixture(init=20, ac=99), foe_fixture("Raider", init=5)],
+        "I grapple the raider with my hands",
+        ParsedInput(intent="combat", target="raider"),
+        won=True,
+    )
+    assert _foe(out, "Raider")["effects"] == [
+        {"kind": "restrained", "source": "hands", "applied_round": 1}
+    ]
+    assert _entries(out, "Raider attack")[0]["mode"] == "disadvantage"
+
+
 # --------------------------------------------------------------------------------------------
 # Classification of declared actions
 # --------------------------------------------------------------------------------------------
