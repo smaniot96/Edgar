@@ -35,7 +35,7 @@ once; another playthrough has its own knowledge.
 
 ## Player experience
 
-Upload PDF → private DM preparation → ready to play. The player sees preparation progress,
+Upload PDF or request AI generation → private DM preparation → ready to play. The player sees preparation progress,
 source/setup problems that can be fixed without story spoilers, and the earned opening.
 They never review private branches, endings, ambiguities or suggested content changes.
 The DM owns complete preparation and resolves content gaps privately. The owner reviews
@@ -60,23 +60,71 @@ repair failed preparation. A genuinely unreadable/incompatible source or unsuppo
 required mechanic yields a safe preparation failure and recovery action, without exposing
 private content or asking the player to author/review the adventure.
 
-## AI workflow proposal
+## Current AI implementation, verified 15 October 2026
 
-1. Bind the actual hero/party, selected edition and verified source books (EDG-019).
-2. Draft the private quest/scene/branch structure before expanding chapters. Resolve exact
-   creatures, quantities, encounters, rewards and hazards using supported engine/source records.
-3. Write the retained manuscript from that structure (EDG-012), preserving stable identities
-   and exact clue text. Significant structure changes become explicit proposed amendments.
-4. Check manuscript/structure agreement, source grounding and branch reachability (EDG-020).
-   Unverified mechanics or unresolved critical references prevent verified publication.
-5. The DM runs its internal review and publishes the validated version-bound bundle. Produce
-   a small opening seed from the reviewed player passages; the browser never receives the
-   private plan or a content-review task.
+`apps/api/services/campaign_generator.py` currently makes one structured outline call followed
+by one chapter-writing call per chapter. Sizes have 3/6/12/24 chapters, giving 4/7/13/25
+successful authoring calls for a fresh attempt, before provider retries and embedding.
+At most six chapters run concurrently. Checkpoints retain the outline and completed chapters;
+retry can reuse them. The manuscript is retained and passed through extraction/index checks.
 
-Recommendation: internal draft → validating/repairing → ready states. The player sees
-preparation progress and readiness. A successful generation call alone is insufficient;
-publication requires the recorded validation receipt. No player approval of secret content
-is part of the flow.
+The outline contains premise, setting, hook, faction/NPC strings and short chapter summaries.
+Each chapter writer sees that shared outline, its own summary and the chapter titles; it
+does not see the other completed chapters or a validated set of canonical scene packets.
+The prompt requests rough encounters for a low-level party, rather than verified encounters
+for the actual hero. The generation path does not perform whole-campaign semantic review,
+branch playthrough checks, source-grounded encounter compilation or automatic internal
+manifest review. Existing manifest compile/edit/review/publication primitives are separate.
+Successful manuscript generation/indexing therefore does not establish complete private
+campaign preparation. Full EDG-140 remains Open.
+
+## Proposed AI preparation workflow
+
+Use explicit stages with retained artifacts and readiness checks. Multiple calls are useful
+only when their inputs, outputs and validation responsibilities are clear. Calling the same
+writer repeatedly without checking agreement does not establish campaign coherence.
+
+| Stage | Private DM work and retained output | Required check before continuing |
+| --- | --- | --- |
+| 1. Bind the brief | Record requested tone, scope, edition, allowed books, supported mechanics and actual hero/party profile. | Inputs are available and mutually compatible. If the hero is selected later, keep encounter preparation provisional until adaptation is validated; never claim actual-hero verification early. |
+| 2. Design the backbone | Create stable quests, scenes, prerequisites, significant alternatives, stakes, failure/partial outcomes and compatible endings. | References resolve; critical goals and endings are reachable; conditions cannot require facts that become available only after those conditions. |
+| 3. Establish the shared world | Build a cast/world reference with stable actors, motives, knowledge, objects, locations, chronology, exact clue text and reveal predicates. | One identity per canonical fact; cross-scene clues agree; private truth and player-visible evidence are separate. |
+| 4. Ground mechanics | Resolve monsters, quantities, hazards, rewards and encounters from the selected verified edition/source records and supported engine actions (EDG-019). | All required mechanics have executable supported references; the model cannot replace source statistics. Replan unsupported encounters privately. |
+| 5. Build runnable scene packets | Specify entry conditions, observable material, NPC reactions, alternate approaches, exact discoveries and state changes for every relevant scene. | Essential progress has usable routes; an appropriate failed check yields a consequence or alternative rather than an accidental dead end. Exact clues and cross-scene promises retain their canonical identities. |
+| 6. Write the manuscript | Expand scene packets into retained DM prose and approved opening passages (EDG-012). Pass each writer the necessary canonical records and connection requirements. | Prose agrees with packet facts and introduces no unregistered clue, reward, actor replacement or required mechanic. Parallelize only packets whose inputs are already stable. |
+| 7. Review the complete campaign | Run deterministic structure/source checks plus a separate semantic critic pass over assembled artifacts (EDG-020). Record findings with evidence and affected IDs. | Chronology, motives, clues, branch consequences and endings agree across chapters; every critical finding is resolved. A writer's own success message is insufficient. |
+| 8. Exercise alternate paths and repair | Traverse negotiation, combat, avoidance, failure, partial success and at least one unexpected plausible approach where relevant. Repair the affected plan/packets/prose and rerun dependent checks. | Supported paths reach compatible outcomes; amendments cannot rewrite revealed clues or irreversible facts. Automated fixtures establish consistency, not proof of human enjoyment. |
+| 9. Seal the ready bundle | Freeze the exact manuscript/manifest/source/edition identities, validation report, internal reviewer/policy receipt and small player-safe opening seed. Publish atomically through the existing lifecycle. | All mandatory checks passed on the same artifact versions; readiness never depends solely on embedding success or a model saying it is done. |
+
+This is a dependency workflow, not nine fixed model calls. A long campaign requires many
+scene/act writing and review calls; mechanical reference checks and graph validation should
+be code/tool operations. Scope controls the amount of preparation. Use bounded concurrency,
+per-stage call/token budgets and repair limits. Retain completed artifacts so recovery reruns
+only missing or invalidated work. Budget exhaustion or an unresolved critical finding yields
+an honest non-spoiler preparation failure with a retry/recovery action, never silent readiness.
+
+For example, if the critic finds the ferry keeper knows a clue before learning it, repair
+the affected knowledge/reveal rules and dependent scenes, then revalidate their connections
+and endings. Do not regenerate unrelated chapters or ask the player to approve that secret.
+
+The semantic critic can use the configured runtime model in a separate call with the
+assembled evidence and an explicit review task. Separate review context provides useful
+scrutiny but does not guarantee independence or correctness; deterministic checks, retained
+findings and path fixtures remain mandatory. Actual runtime provider/profile settings and
+costs must be recorded when this pipeline is implemented and evaluated.
+
+Player-facing states should describe only work, for example “Planning your adventure”,
+“Preparing the world”, “Checking consistency”, and “Ready to play”. Do not display the number
+of secret endings, private NPC names, actual branch labels or critique details. No player
+approval of secret content is part of either source flow.
+
+## How PDF preparation joins the same workflow
+
+PDF extraction supplies the source-backed plan and exact quotations in place of inventing
+them from a theme. The DM still performs scene/reference compilation, supported-mechanic
+checks, whole-campaign review, path checks and internal publication. Required additions live
+in a provenance-bearing DM extension layer; they do not rewrite original PDF spans or claim
+to be printed book facts. The player sees the same preparation/readiness flow for both modes.
 
 ## Unexpected player actions
 
