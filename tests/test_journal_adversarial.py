@@ -108,6 +108,33 @@ def test_private_clock_updates_cannot_reorder_visible_entries():
     assert project([initial, note]).model_dump() == project([initial, note, terminal]).model_dump()
 
 
+def test_revealing_current_clock_does_not_reveal_prior_private_update_history():
+    initial = fact("clock", "Water", status="advanced", quantity=1)
+    hidden_update = fact("clock", "Water", event=2, status="advanced", quantity=2)
+    reveal = fact(
+        "clock", "Water", event=3, status="advanced", quantity=3,
+        clock_disclosure=ClockDisclosure(current=True),
+    )
+    # Keep narration chronology identical; only the undisclosed internal ledger differs.
+    events = [EventLog(id=i, session_id=1, event_type="narration",
+                       created_at=datetime(2026, 10, 15, 12, i, tzinfo=UTC),
+                       payload={"turn_id": f"turn-{i}"}) for i in (1, 2, 3)]
+    def read(rows):
+        return project_player_journal(1, {"facts": [f.model_dump() for f in rows]}, events)
+    assert read([initial, reveal]).model_dump() == read([initial, hidden_update, reveal]).model_dump()
+
+
+def test_learning_more_about_an_old_place_does_not_move_current_place_back():
+    hall = fact("visit", "Hall", status="visited")
+    pool = fact("move", "Pool", status="visited", event=2)
+    hall_detail = fact("learn_place", "Hall", status="known", event=3)
+    journal = project([hall, pool, hall_detail])
+    assert journal.current_place.title == "Pool"
+    assert {entry.title: entry.status for entry in journal.entries} == {
+        "Hall": "visited", "Pool": "visited",
+    }
+
+
 def test_known_people_keep_committed_engine_outcomes_from_concurrent_combat_work():
     met = fact("encounter", "Mara Quill", status="encountered")
     for outcome in ("captive", "released", "dead", "defeated"):

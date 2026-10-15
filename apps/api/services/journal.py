@@ -247,30 +247,24 @@ def project_player_journal(
 
         history: list[JournalStatusChange] = []
         if category == "clock":
-            disclosure = getattr(latest_fact, "clock_disclosure", None)
-            if disclosure is not None and disclosure.current:
-                for fact, _, accessible_event_id in records:
-                    status = _safe_status(fact)
-                    if status is None:
-                        continue
-                    item = JournalStatusChange(
-                        status=status,  # type: ignore[arg-type]
-                        turn_number=event_order.get(accessible_event_id) if accessible_event_id is not None else None,
-                        history_event_id=accessible_event_id,
-                    )
-                    if not history or history[-1] != item:
-                        history.append(item)
-            else:
-                # Without a current-value reveal, conceal private update counts and order. A
-                # separately revealed terminal outcome may still show its one committed state.
-                history_status = _safe_status(latest_fact) or "advanced"
-                event_id = records[-1][2] if history_status != "advanced" else origin_event_id
-                turn_number = event_order.get(event_id) if event_id is not None else origin_turn
-                history = [JournalStatusChange(
-                    status=history_status,  # type: ignore[arg-type]
-                    turn_number=turn_number,
-                    history_event_id=event_id,
-                )]
+            # A later current-value reveal does not disclose earlier private update counts.
+            # Keep the original qualitative observation, then only explicitly public updates.
+            history = [JournalStatusChange(
+                status=_safe_status(first_fact) or "advanced",  # type: ignore[arg-type]
+                turn_number=origin_turn,
+                history_event_id=origin_event_id,
+            )]
+            for fact, _, accessible_event_id in records[1:]:
+                disclosure = fact.clock_disclosure
+                if disclosure is None or not (disclosure.current or disclosure.completion):
+                    continue
+                item = JournalStatusChange(
+                    status=_safe_status(fact) or "advanced",  # type: ignore[arg-type]
+                    turn_number=event_order.get(accessible_event_id) if accessible_event_id is not None else None,
+                    history_event_id=accessible_event_id,
+                )
+                if history[-1] != item:
+                    history.append(item)
         else:
             place_visited = False
             for fact, _, accessible_event_id in records:
@@ -335,7 +329,7 @@ def project_player_journal(
     built.sort(key=lambda item: item[0], reverse=True)
     entries = [entry for _, entry in built]
     current_place = next(
-        (entry for _, entry in built if entry.category == "place" and entry.status == "visited"),
+        (entry for _, entry in built if entry.id == latest_place_entry_id),
         None,
     )
     active_goal = next(
