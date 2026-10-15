@@ -272,7 +272,12 @@ async def test_selected_session_people_are_not_crowded_out_by_campaign_notes(
     campaign, sessions, events = await setup(db_session)
     db_session.add_all(
         [
-            NPC(campaign_id=campaign.id, name=f"Manual note {index}", disposition="friendly")
+            NPC(
+                campaign_id=campaign.id,
+                name=f"Manual note {index}",
+                disposition="friendly",
+                stat_block={},
+            )
             for index in range(DEFAULT_PAGE_SIZE)
         ]
     )
