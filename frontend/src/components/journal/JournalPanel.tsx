@@ -42,10 +42,12 @@ function EntryCard({
   selected,
   onSelect,
   onOpenHistory,
+  onSelectRelated,
 }: {
   entry: JournalEntry;
   selected: boolean;
   onSelect: () => void;
+  onSelectRelated: (id: string) => void;
   onOpenHistory?: (historyEventId: number) => void;
 }) {
   return (
@@ -74,7 +76,7 @@ function EntryCard({
           </Button>
         </div>
       </div>
-      {entry.text ? <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink-muted">{entry.text}</p> : null}
+      {entry.text ? <p className="mt-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed text-ink-muted">{entry.text}</p> : null}
       <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-subtle">
         {entry.origin.turn_number !== null ? (
           <div>
@@ -91,7 +93,11 @@ function EntryCard({
         {entry.origin.actor ? (
           <div>
             <dt className="inline">Person: </dt>
-            <dd className="inline">{entry.origin.actor}</dd>
+            <dd className="inline">{entry.related_entry_id ? (
+              <button type="button" className="underline underline-offset-2" onClick={() => onSelectRelated(entry.related_entry_id!)}>
+                {entry.origin.actor}
+              </button>
+            ) : entry.origin.actor}</dd>
           </div>
         ) : null}
         {entry.origin.citation ? (
@@ -255,6 +261,11 @@ export function JournalPanel({
             selected={selectedEntryId === entry.id}
             onSelect={() => onSelectedEntryChange(selectedEntryId === entry.id ? null : entry.id)}
             onOpenHistory={onOpenHistory}
+            onSelectRelated={(id) => {
+              onCategoryChange("all");
+              onQueryChange("");
+              onSelectedEntryChange(id);
+            }}
           />
         ))}
       </div>

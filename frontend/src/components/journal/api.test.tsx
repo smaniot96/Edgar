@@ -81,3 +81,22 @@ it("keeps the last good same-session journal on refresh errors and drops it on s
   expect(container.textContent).not.toContain('"sessionId":1');
   expect(container.textContent).toContain('"stale":false');
 });
+
+it("ignores an older session response even when its JSON resolves after a session switch", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  let resolveOld!: (value: ReturnType<typeof payload>) => void;
+  apiFetchMock
+    .mockResolvedValueOnce({ json: () => new Promise((resolve) => { resolveOld = resolve; }) })
+    .mockResolvedValueOnce({ json: async () => payload(2) });
+  container = document.createElement("div"); document.body.append(container);
+  root = createRoot(container);
+  const updateRefresh = () => {};
+  await act(() => root!.render(<Probe sessionId={1} onRefresh={updateRefresh} />));
+  await flush();
+  await act(() => root!.render(<Probe sessionId={2} onRefresh={updateRefresh} />));
+  await flush();
+  expect(container.textContent).toContain('"sessionId":2');
+  await act(async () => { resolveOld(payload(1)); });
+  expect(container.textContent).toContain('"sessionId":2');
+  expect(container.textContent).not.toContain('"sessionId":1');
+});
