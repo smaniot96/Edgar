@@ -3,6 +3,7 @@ import type {
   CharacterAssignmentHistoryRead,
   CharacterRead,
   CombatState,
+  HitDiceStatus,
   TurnCharacter,
 } from "../../api/types";
 
@@ -22,6 +23,8 @@ export interface SheetCharacter {
   abilities: { key: string; score: number }[];
   conditions: string[];
   inventory: InventoryGroup[];
+  /** Remaining and total Hit Dice (EDG-026); null until the server reports them. */
+  hitDice: HitDiceStatus | null;
 }
 
 const ABILITY_ORDER = ["STR", "DEX", "CON", "INT", "WIS", "CHA"] as const;
@@ -52,6 +55,16 @@ function num(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
   return null;
+}
+
+/** A server Hit Dice view, or null when absent or malformed. */
+export function hitDiceFrom(v: unknown): HitDiceStatus | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const remaining = num(o.remaining);
+  const total = num(o.total);
+  if (remaining == null || total == null || typeof o.die !== "string") return null;
+  return { remaining, total, die: o.die };
 }
 
 function itemLabel(v: unknown): string | null {
@@ -132,6 +145,7 @@ export function sheetFromLibrary(
     abilities: stats.abilities,
     conditions: stats.conditions,
     inventory: parseInventory(assignment?.inventory ?? c.base_inventory),
+    hitDice: hitDiceFrom(assignment?.hit_dice),
   };
 }
 
@@ -163,6 +177,7 @@ export function mergeTurnCharacter(
     abilities: [],
     conditions: [],
     inventory: [],
+    hitDice: null,
   };
   const next: SheetCharacter = { ...base };
   if (typeof c.id === "number") next.id = c.id;
@@ -179,6 +194,8 @@ export function mergeTurnCharacter(
     if (stats.ac != null) next.ac = stats.ac;
   }
   if (c.inventory && typeof c.inventory === "object") next.inventory = parseInventory(c.inventory);
+  const hitDice = hitDiceFrom(c.hit_dice);
+  if (hitDice) next.hitDice = hitDice;
   return next;
 }
 

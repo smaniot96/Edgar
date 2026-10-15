@@ -160,6 +160,32 @@ export interface SessionRead {
 /** Whether a DM line's original roll was stored (EDG-030). Legacy rows are "not_captured". */
 export type RollStatus = "captured" | "no_roll" | "not_captured";
 
+/** Engine evidence of a rest turn (EDG-026). Every number is engine-rolled or engine-derived. */
+export interface RestRecord {
+  kind: "short" | "long";
+  /** A short rest with no Hit Dice left: nothing rolled and nothing healed. */
+  refused: boolean;
+  /** The short-rest roll, e.g. "1d10+2". */
+  expression: string | null;
+  /** The roll total before the cap at maximum HP. */
+  rolled: number | null;
+  /** HP actually regained, capped at the maximum. */
+  healed: number;
+  /** The class Hit Die, e.g. "d10". */
+  die: string;
+  hit_dice_remaining: number;
+  hit_dice_total: number;
+  /** Long rest only: Hit Dice regained. */
+  hit_dice_recovered: number | null;
+}
+
+/** The sheet's Hit Dice (EDG-026): remaining and total dice of the class die. */
+export interface HitDiceStatus {
+  remaining: number;
+  total: number;
+  die: string;
+}
+
 /** The turn's original ruling and dice as stored at commit. Reload shows these; nothing re-rolls. */
 export interface RollRecord {
   turn_id: string | null;
@@ -176,6 +202,8 @@ export interface RollRecord {
   conditions: string[];
   mechanical_summary: string;
   dice_log: DiceLogEntry[];
+  /** Rest evidence for a rest turn (EDG-026); null for other turns. */
+  rest?: RestRecord | null;
 }
 
 export interface ChatMessageRead {
@@ -241,6 +269,8 @@ export interface CharacterAssignmentHistoryRead {
   hp_max: number;
   stats: Record<string, unknown>;
   inventory: Record<string, unknown>;
+  /** Derived Hit Dice view (EDG-026); absent on older servers. */
+  hit_dice?: HitDiceStatus | null;
   assigned_at: string;
   ended_at: string | null;
   status: string;
@@ -295,6 +325,8 @@ export interface AdjudicationResult {
   dice_log?: DiceLogEntry[] | null;
   /** "pending" = the DM thinks the adventure may be over and awaits the player's confirmation. */
   completion_status?: "none" | "pending" | "accepted" | "rejected" | null;
+  /** Rest evidence for a rest turn (EDG-026). */
+  rest_record?: RestRecord | null;
   character_update?: CharacterUpdate | null;
   flags_set?: FlagUpdate[] | null;
   flags_cleared?: string[] | null;
@@ -421,6 +453,8 @@ export interface TurnCharacter {
   inventory?: Record<string, unknown> | null;
   /** Fighter Second Wind resource (additive; present for fighters). */
   second_wind?: { uses_remaining: number; uses_max: number } | null;
+  /** Hit Dice resource (EDG-026; additive, present for every class). */
+  hit_dice?: HitDiceStatus | null;
 }
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */
