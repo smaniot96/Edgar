@@ -272,6 +272,8 @@ const EFFECT_LABELS = new Map<string, string>([
   ["restrained", "Restrained"],
   ["prone", "Prone"],
   ["dodging", "Dodging"],
+  ["paralyzed", "Paralyzed"],
+  ["poisoned", "Poisoned"],
 ]);
 
 /** The hero's last turn in one line (EDG-044), or null when the payload has no record. */
