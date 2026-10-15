@@ -242,8 +242,10 @@ def project_player_journal(
             history=history,
             related_entry_id=related_entry_id,
         )
+        # Undisclosed clock changes must not leak through the journal ordering either.
+        ordered_records = records[:1] if category == "clock" else records
         latest_sequence = max(
-            (fact_order[fact.effect_id] for fact, _, _ in records),
+            (fact_order[fact.effect_id] for fact, _, _ in ordered_records),
             default=0,
         )
         built.append((latest_sequence, entry))

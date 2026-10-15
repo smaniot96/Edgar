@@ -192,6 +192,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
         body: JSON.stringify({ message: input, debug: optsRef.current.debug, request_id: requestId }),
         signal: active.ctrl.signal,
       });
+      if (active.ctrl.signal.aborted) throw new DOMException("Turn aborted", "AbortError");
       kick();
 
       if (!res.ok) {
@@ -221,6 +222,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
         onDebug: (payload) => dispatch({ type: "debug", turnId, payload }),
       });
 
+      if (active.ctrl.signal.aborted) throw new DOMException("Turn aborted", "AbortError");
       if (outcome.kind === "done") {
         dispatch({ type: "done", turnId, result: outcome.result });
         notifyCommitted(outcome.result, requestId, draftRevision);

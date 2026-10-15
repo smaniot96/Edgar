@@ -74,3 +74,10 @@ def test_private_clock_threshold_and_update_count_do_not_change_qualitative_entr
     entry = project([quantified]).entries[0]
     assert entry.text == "The gauge reads 3 marks."
     assert entry.quantity is None
+
+
+def test_private_clock_updates_cannot_reorder_visible_entries():
+    initial = fact("clock", "Rising water", text="Water is rising.", status="advanced", quantity=1)
+    note = fact("discover", "Lens note", event=2)
+    terminal = fact("clock", "Rising water", event=3, text="Water is rising.", status="completed", quantity=9)
+    assert project([initial, note]).model_dump() == project([initial, note, terminal]).model_dump()

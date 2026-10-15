@@ -53,3 +53,22 @@ it("acknowledges an already loaded receipt without replaying its old character s
   expect(onAcknowledged).toHaveBeenCalledWith(3, "saved-7");
   expect(container.querySelectorAll("p")).toHaveLength(2);
 });
+
+it("ignores a completed stream response that arrives after its session unmounts", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  let resolve!: (value: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((done) => { resolve = done; })));
+  const onResult = vi.fn(); const onAcknowledged = vi.fn();
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  function Harness() {
+    const turn = useTurn(1, { debug: false, onResult, onAcknowledged });
+    return <button onClick={() => void turn.send("Wait", 1)}>Send</button>;
+  }
+  await act(() => root.render(<Harness />));
+  await act(async () => { container.querySelector("button")!.click(); });
+  await act(() => root.unmount()); container.remove();
+  await act(async () => { resolve(new Response(`event: done\ndata: {"event_id":1,"narration":"Saved"}\n\n`)); });
+  expect(onResult).not.toHaveBeenCalled();
+  expect(onAcknowledged).not.toHaveBeenCalled();
+});
