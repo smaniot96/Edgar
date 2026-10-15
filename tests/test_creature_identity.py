@@ -386,6 +386,9 @@ def test_manifest_binding_receipt_and_old_digest_compatibility():
     old_body = manifest.model_dump(exclude={"reviewed_sha256", "reviewed_by"})
     for entity in old_body["entities"]:
         entity.pop("stat_reference")
+        entity.pop("reveal_on")
+    for key in ("objects", "objectives", "milestones", "promises", "clocks"):
+        old_body.pop(key)
     old_digest = text_digest(
         json.dumps(old_body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     )

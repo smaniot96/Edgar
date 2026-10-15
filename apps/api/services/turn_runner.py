@@ -184,7 +184,11 @@ async def persist_turn(
             if (
                 campaign.source_mode != result.get("source_mode", "module")
                 or campaign.rules_edition != result.get("rules_edition", "2014")
-                or list(campaign.adventure_collections or [])
+                or (
+                    []
+                    if campaign.source_mode == "homebrew"
+                    else list(campaign.adventure_collections or [])
+                )
                 != result.get("adventure_collections", [])
             ):
                 raise ValueError("Campaign source binding changed during generation")

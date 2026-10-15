@@ -32,8 +32,9 @@ kind/status, earned text, a name only when literally present in earned text, pro
 public source page/hash origins and event provenance. It omits canonical target IDs, gates,
 private metadata and object bookkeeping. Facts lacking valid matching player-audience source
 origins are excluded, including engine-only outcomes without an explicit public source.
-This projection has no unknown/future fact counts or prepared definitions. The retained ledger
-continues to include engine outcomes for canonical planning and irreversible-state checks.
+This projection has no unknown/future fact counts or prepared definitions. Narration uses the same core projection, including source validation and earned names.
+Player-authored promises retain the exact utterance, encountered actor anchor and original
+server turn; evidence_kind distinguishes speech from a source quotation.
 
 Resolved engine combat outcomes use the existing session-owned `CombatState` rows.
 `load_resolved_combat_outcomes(db, session_id)` restores all ended encounters in stable row-ID

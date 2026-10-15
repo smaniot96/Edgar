@@ -49,21 +49,6 @@ def committed_facts(state: AgentState) -> list:
     return StoryState.model_validate(state.get("story_state") or {}).facts
 
 
-def player_story_facts(state: AgentState) -> list[dict]:
-    """Explicit player allowlist: never serialize prepared definitions or private citations."""
-    return [
-        {
-            "kind": fact.kind,
-            "status": fact.status,
-            "name": fact.display_name,
-            "text": fact.player_text,
-            "quantity": fact.quantity,
-        }
-        for fact in committed_facts(state)[-40:]
-        if fact.player_text and any(ref.get("audience") == "player" for ref in fact.source_refs)
-    ]
-
-
 def story_candidates(state: AgentState) -> list[dict]:
     """Canonical identities in the active scene, respecting persisted prerequisites."""
     candidates = []

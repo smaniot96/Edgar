@@ -7,9 +7,6 @@ serialization occurs here. Rows are immutable; the full effect sequence survives
 
 from __future__ import annotations
 
-import copy
-import re
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +17,8 @@ from edgar_core.story import (
     StoryFact,
     StoryState,
     accept_story_effect,
+    known_story_name,
+    player_known_story as player_known_story,
     story_target_id,
 )
 
@@ -120,11 +119,14 @@ def _validate_progression(effect: AcceptedStoryEffect, prior: list[StoryFact]) -
         f.player_text != effect.player_text or f.source_refs != effect.source_refs for f in prior
     ):
         raise StoryStateConflict("A discovered quotation and its origin are immutable")
-    terminal = {"completed", "failed", "fulfilled", "broken"}
-    if (
-        effect.kind in {"objective", "milestone", "promise", "outcome"}
-        and latest.status in terminal
+    if effect.kind == "promise" and any(
+        (f.player_text, f.promise_actor, f.evidence_kind, f.origin_turn_id)
+        != (effect.player_text, effect.promise_actor, effect.evidence_kind, effect.origin_turn_id)
+        for f in prior
     ):
+        raise StoryStateConflict("A promise quotation and its origin are immutable")
+    terminal = {"completed", "failed", "fulfilled", "broken"}
+    if effect.kind in {"objective", "milestone", "promise"} and latest.status in terminal:
         if effect.status != latest.status:
             raise StoryStateConflict("A recorded terminal story outcome cannot regress")
     if effect.kind == "clock" and latest.quantity is not None:
@@ -143,7 +145,7 @@ async def _sync_npc(db: AsyncSession, game_session: SessionModel, fact: StoryFac
             campaign_id=game_session.campaign_id,
             session_id=game_session.id,
             story_identity=fact.fact_id,
-            name=_known_name(fact) or "Encountered person",
+            name=known_story_name(fact) or "Encountered person",
             disposition="neutral",
             stat_block={},
         )
@@ -178,81 +180,3 @@ def session_story_flags(
             if entity["entity_id"] == fact.target.canonical_id and entity.get("discovery_flag"):
                 flags[entity["discovery_flag"]] = "discovered"
     return flags
-
-
-def _known_name(fact: StoryFact) -> str:
-    """A prepared identity is not a learned name until it occurs in earned public text."""
-    return (
-        fact.display_name
-        if fact.display_name and fact.display_name.casefold() in (fact.player_text or "").casefold()
-        else ""
-    )
-
-
-def player_known_story(state: dict) -> dict:
-    """EDG-041 contract: earned facts only, with a fixed public field allowlist.
-
-    This deliberately accepts no manifests. It cannot reveal undiscovered names, counts,
-    gates, private source payloads or future branches. The planner and journal consume the
-    same committed facts. Engine-only object bookkeeping is omitted from the journal.
-    """
-    parsed = StoryState.model_validate(state)
-    public_kinds = {
-        "discover",
-        "encounter",
-        "visit",
-        "move",
-        "objective",
-        "milestone",
-        "promise",
-        "clock",
-        "relationship",
-        "outcome",
-    }
-    facts = []
-    for fact in parsed.facts:
-        if fact.kind not in public_kinds:
-            continue
-        origins = [
-            {
-                key: copy.deepcopy(ref[key])
-                for key in (
-                    "reference_id",
-                    "collection",
-                    "source_sha256",
-                    "extraction_sha256",
-                    "manifest_sha256",
-                    "page",
-                    "page_end",
-                    "source_pages",
-                )
-                if key in ref
-            }
-            for ref in fact.source_refs
-            if ref.get("audience") == "player"
-            and all(
-                isinstance(ref.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", ref[key])
-                for key in ("reference_id", "source_sha256", "extraction_sha256")
-            )
-            and ref.get("collection") == fact.target.collection
-            and ref.get("source_sha256") == fact.target.source_sha256
-            and ref.get("manifest_sha256") == fact.target.manifest_sha256
-            and type(ref.get("page")) is int
-            and ref["page"] > 0
-        ]
-        if not origins:
-            continue
-        facts.append(
-            {
-                "fact_id": fact.fact_id,
-                "effect_id": fact.effect_id,
-                "kind": fact.kind,
-                "status": fact.status,
-                "name": _known_name(fact),
-                "text": fact.player_text,
-                "quantity": fact.quantity,
-                "origins": origins,
-                "event_id": fact.event_id,
-            }
-        )
-    return {"facts": facts}

@@ -334,7 +334,7 @@ async def session_turn(
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
 
-        result = await run_turn(initial_state)
+        result = {**initial_state, **await run_turn(initial_state)}
         done = await persist_turn(session_id, body.message, result)
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 

@@ -18,11 +18,11 @@ by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI rende
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
-from agent.nodes.story_effects import player_story_facts
 from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import cited_excerpt, eligible_context
+from edgar_core.story import StoryState, player_story_effect
 
 _NARRATOR_TEMPERATURE = 0.7
 _HISTORY_TAIL = 4
@@ -101,21 +101,18 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
         )
     if world_flags and state.get("manifest_status") != "reviewed":
         context_parts.append(f"World flags (persisted state): {world_flags}")
-    earned = player_story_facts(state)
+    earned = [
+        public
+        for fact in StoryState.model_validate(state.get("story_state") or {}).facts[-40:]
+        if (public := player_story_effect(fact)) is not None
+    ]
     if earned:
         context_parts.append(f"Committed player-known story facts: {earned}")
     if adjudication:
         accepted = [
-            {
-                "kind": effect.kind,
-                "status": effect.status,
-                "name": effect.display_name,
-                "text": effect.player_text,
-                "quantity": effect.quantity,
-            }
+            public
             for effect in adjudication.accepted_story_effects
-            if effect.player_text
-            and any(ref.get("audience") == "player" for ref in effect.source_refs)
+            if (public := player_story_effect(effect)) is not None
         ]
         context_parts.append(
             f"Validated story consequences this turn (describe only these as new discoveries or accomplishments): {accepted}"

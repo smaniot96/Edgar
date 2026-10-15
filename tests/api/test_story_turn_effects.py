@@ -430,3 +430,66 @@ async def test_stream_cancellation_before_done_does_not_save(
             )
             == 0
         )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_spoken_promise_survives_turn_persistence_and_reload(
+    story_source, fake_llm_schema, api_client, stream
+):
+    import db.postgres.session as sm
+    from apps.api.services.story_state import load_story_state, player_known_story
+    from edgar_core.story import StoryFact, player_promise_ref
+
+    sid = (await api_client.post("/api/seed")).json()["session_id"]
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="social")
+    suffix = "/stream" if stream else ""
+
+    async def turn(proposal, message):
+        fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(
+            success=True, story_effects=[proposal]
+        )
+        response = await api_client.post(
+            f"/api/sessions/{sid}/turn{suffix}", json={"message": message}
+        )
+        assert response.status_code == 200, response.text
+        if stream:
+            assert events(response.text)[-1][0] == "done", response.text
+        async with sm.async_session_factory() as db:
+            return await load_story_state(db, sid)
+
+    state = await turn(
+        story_source("encounter", "mara", target_kind="entity", status="encountered"),
+        "I greet Mara.",
+    )
+    actor = StoryFact.model_validate(state["facts"][0])
+    quotation = "Mara, I promise to bring the note tomorrow."
+    proposal = StoryEffect(
+        kind="promise",
+        target=player_promise_ref(actor.target, quotation),
+        status="active",
+        promise_actor=actor.target,
+        knowledge_fact_ids=[actor.fact_id],
+        source_reference_ids=actor.source_reference_ids,
+        player_text="MODEL REPLACEMENT",
+    )
+    state = await turn(proposal, quotation)
+    promise = StoryFact.model_validate(state["facts"][-1])
+    assert promise.player_text == quotation
+    assert promise.evidence_kind == "player_utterance"
+    assert promise.origin_turn_id == promise.turn_id
+    assert promise.event_id != actor.event_id
+    state = await turn(
+        proposal.model_copy(
+            update={"status": "fulfilled", "knowledge_fact_ids": [promise.fact_id]}
+        ),
+        "I bring Mara the note as promised.",
+    )
+    fulfilled = StoryFact.model_validate(state["facts"][-1])
+    assert fulfilled.status == "fulfilled"
+    assert fulfilled.player_text == quotation
+    assert fulfilled.origin_turn_id == promise.origin_turn_id
+    assert fulfilled.event_id != promise.event_id
+    public = player_known_story(state)["facts"][-1]
+    assert public["evidence_kind"] == "player_utterance"
+    assert public["text"] == quotation
+    assert "MODEL REPLACEMENT" not in str(state)

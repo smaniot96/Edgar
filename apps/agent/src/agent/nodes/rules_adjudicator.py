@@ -133,7 +133,7 @@ def build_adjudicator_prompt(
             content = str(getattr(message, "content", ""))[:2000]
             parts.append(f"{role}: {wrap_player_action(content)}")
     if state.get("manifest_status") == "reviewed":
-        facts = [fact.model_dump() for fact in committed_facts(state)[-40:]]
+        facts = [fact.model_dump() for fact in committed_facts(state)]
         parts.append(
             "Committed session story facts (only these are already earned): " + json.dumps(facts)
         )

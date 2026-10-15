@@ -121,7 +121,6 @@ async def test_immutable_clue_and_terminal_progress_and_clock(db_session):
     for kind, terminal in [
         ("objective", "completed"),
         ("promise", "fulfilled"),
-        ("outcome", "completed"),
     ]:
         await persist_story_effects(
             db_session, sessions[0], [effect(kind, kind, terminal)], event_id=events[0].id

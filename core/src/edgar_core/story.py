@@ -6,8 +6,10 @@ immutable source identity; neither display names nor model prose establishes kno
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,7 +26,6 @@ StoryKind = Literal[
     "promise",
     "clock",
     "relationship",
-    "outcome",
     "acquire",
     "consume",
     "transfer",
@@ -152,3 +153,68 @@ def player_promise_ref(actor: StoryRef, quotation: str) -> StoryRef:
     """An event-authored promise identity, rooted in an already encountered actor."""
     identity = hashlib.sha256((actor.model_dump_json() + "\n" + quotation).encode()).hexdigest()
     return actor.model_copy(update={"kind": "promise", "canonical_id": "promise_" + identity[:48]})
+
+
+def known_story_name(fact: AcceptedStoryEffect) -> str:
+    """A prepared identity is not a learned name until it occurs in earned public text."""
+    return (
+        fact.display_name
+        if fact.display_name and fact.display_name.casefold() in (fact.player_text or "").casefold()
+        else ""
+    )
+
+
+def player_story_effect(effect: AcceptedStoryEffect) -> dict | None:
+    """Shared player allowlist for an accepted consequence or committed fact."""
+    origins = [
+        {
+            key: copy.deepcopy(ref[key])
+            for key in (
+                "reference_id",
+                "collection",
+                "source_sha256",
+                "extraction_sha256",
+                "manifest_sha256",
+                "page",
+                "page_end",
+                "source_pages",
+            )
+            if key in ref
+        }
+        for ref in effect.source_refs
+        if ref.get("audience") == "player"
+        and all(
+            isinstance(ref.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", ref[key])
+            for key in ("reference_id", "source_sha256", "extraction_sha256")
+        )
+        and ref.get("collection") == effect.target.collection
+        and ref.get("source_sha256") == effect.target.source_sha256
+        and ref.get("manifest_sha256") == effect.target.manifest_sha256
+        and type(ref.get("page")) is int
+        and ref["page"] > 0
+    ]
+    if not origins:
+        return None
+    return {
+        "effect_id": effect.effect_id,
+        "kind": effect.kind,
+        "status": effect.status,
+        "name": known_story_name(effect),
+        "text": effect.player_text,
+        "quantity": effect.quantity,
+        "origins": origins,
+        "evidence_kind": effect.evidence_kind,
+        "origin_turn_id": effect.origin_turn_id,
+    }
+
+
+def player_known_story(state: dict) -> dict:
+    """EDG-041 contract: committed earned facts, without prepared definitions or object bookkeeping."""
+    facts = []
+    for fact in StoryState.model_validate(state).facts:
+        if fact.kind in {"acquire", "consume", "transfer", "use", "environment"}:
+            continue
+        public = player_story_effect(fact)
+        if public is not None:
+            facts.append({**public, "fact_id": fact.fact_id, "event_id": fact.event_id})
+    return {"facts": facts}
