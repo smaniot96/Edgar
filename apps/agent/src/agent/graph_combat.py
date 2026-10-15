@@ -16,6 +16,10 @@ Design (solo-playable, finishable, engine-decided):
     player's Athletics is contested by the foe's Dexterity; a won contest records a typed effect in
     `combatants[].effects`, which sets advantage/disadvantage on attacks (`attack_roll_mode`) until a
     declared release, the foe's defeat or the end of the encounter.
+  * Action economy (EDG-044): one action and one bonus action per player turn, classified by
+    `agent.action_economy` from a code-owned table. A second action or bonus action in the same
+    turn is refused before any roll, and the round does not advance. Dodge (an action) gives the
+    hero `dodging` until its next turn starts; Second Wind and Healing Word are bonus actions.
   * HP only changes through engine rolls: enemy attacks, Second Wind (fighter; one use, restored
     by a short or long rest, persisted on the character sheet), or a healing consumable that is
     actually in inventory (and is then removed).
@@ -52,6 +56,17 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from agent.action_economy import (
+    ACTION,
+    BONUS_ACTION,
+    DODGE,
+    SECOND_WIND,
+    Declared,
+    dodge_declared,
+    economy_record,
+    has_attack_words,
+    refusal_for,
+)
 from agent.captives import CaptiveTurn, captive_turn, is_attack_text
 from agent.combatants import (
     INERT_NPC_DISPOSITIONS,
@@ -111,8 +126,9 @@ log = logging.getLogger(__name__)
 # Hard cap so a runaway encounter cannot loop forever; reaching it ends combat as a stalemate.
 MAX_COMBAT_ROUNDS = 12
 
-# Second Wind is used by the player's action only. The rules have no automatic rally at 0 HP, so
-# this code-owned switch stays False; enabling it requires a documented game mode (EDG-025).
+# Second Wind is a bonus action (2014 PHB) that the player may use in the same turn as an action
+# (EDG-044). The rules have no automatic rally at 0 HP, so this code-owned switch stays False;
+# enabling it requires a documented game mode (EDG-025).
 SECOND_WIND_AUTO_AT_ZERO_HP = False
 
 # Defaults used when the encounter builder LLM call is unavailable or returns nothing usable.
@@ -753,8 +769,18 @@ async def combat_round_node(state: AgentState) -> dict:
         if refusal:
             # Refused cast: no roll, no round, no state change (a transparent engine refusal).
             return _ask_player(state, refusal, combat_state=combat_state)
-    if spell_declared or spell_plan is not None:
+    # EDG-044: a bonus-action spell (Healing Word) is not an action, so it leaves the attack alone.
+    bonus_spell = spell_plan if spell_plan is not None and spell_plan.spell.action == BONUS_ACTION else None
+    if spell_declared or (spell_plan is not None and bonus_spell is None):
         is_attack, is_spell = False, False
+    dodge = not fled and dodge_declared(player_input)
+    # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
+    wants_second_wind = (
+        not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
+    )
+    if dodge or wants_second_wind or bonus_spell is not None:
+        # A bonus action or Dodge sits beside an attack only when the player's own words name one.
+        is_attack = is_attack and has_attack_words(player_input)
     heal_item = None
     missing_item = False
     if not fled and spell_plan is None:
@@ -763,19 +789,31 @@ async def combat_round_node(state: AgentState) -> dict:
             # Using an item is the action; if it isn't carried, the action simply fails.
             missing_item = heal_item is None
             is_attack = False
-    wants_second_wind = (
-        not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
-    )
-    if wants_second_wind and not heal_item and not missing_item:
-        is_attack = False
-    else:
-        wants_second_wind = False
     # A supported contested maneuver (EDG-021) or a declared release replaces the attack this turn.
     combat_action = None
-    if not (fled or spell_declared or heal_item or missing_item or wants_second_wind):
+    if not (fled or spell_declared or heal_item or missing_item or dodge):
         combat_action = classify_combat_maneuver(player_input)
     if combat_action is not None:
         is_attack, is_spell = False, False
+    # EDG-044: the slots this turn declares. Two of one slot are refused with no roll and no round.
+    declared: list[Declared] = []
+    if dodge:
+        declared.append(DODGE)
+    if is_attack:
+        declared.append(Declared("attack", ACTION, "attack"))
+    if combat_action is not None and combat_action.kind != "release":
+        declared.append(Declared("maneuver", ACTION, f"{combat_action.kind} maneuver"))
+    if heal_item or missing_item:
+        declared.append(Declared("item", ACTION, "item use"))
+    if spell_plan is not None:
+        declared.append(Declared("spell", spell_plan.spell.action, spell_plan.spell.name))
+    elif spell_declared:
+        declared.append(Declared("spell", ACTION, "spell"))
+    if wants_second_wind:
+        declared.append(SECOND_WIND)
+    refusal = refusal_for(declared, hero)
+    if refusal:
+        return _ask_player(state, refusal, combat_state=combat_state)
     target: dict | None = None
     release_target: dict | None = None
     if combat_action is not None and combat_action.kind == "release":
@@ -853,6 +891,32 @@ async def combat_round_node(state: AgentState) -> dict:
     player_acted = hp > 0
     extra_outcome = ""
     spell_expended: dict[str, int] | None = None
+    # EDG-044: a Dodge lasts until the hero's next turn starts, which is here (after the foes that
+    # act ahead of the hero in initiative). A Dodge declared this turn applies to the foes after.
+    release_effect(player, "dodging")
+    # Bonus action first (Second Wind, Healing Word): it sits beside the turn's action, not in place of it.
+    bonus_text = ""
+    if player_acted and wants_second_wind:
+        sw = spend_second_wind(character, remaining=sw_left)
+        if sw is None:
+            # Refused without a roll: no uses left until a short or long rest. No bonus action is spent.
+            bonus_text = SECOND_WIND_REFUSAL.format(hero=hero)
+            declared = [d for d in declared if d is not SECOND_WIND]
+        else:
+            dice_log.append(sw.dice.to_log("second wind"))
+            hp = min(player_hp_max, hp + sw.amount)
+            sw_left -= 1
+            bonus_text = f"{hero} uses Second Wind and regains {sw.amount} HP."
+            round_effects.append("bonus_action")
+        log_lines.append(bonus_text)
+    if player_acted and bonus_spell is not None:
+        heal_result = resolve_spell(character, bonus_spell)
+        dice_log += heal_result.dice_log
+        spell_expended = heal_result.expended
+        hp = min(player_hp_max, hp + heal_result.healing)
+        bonus_text = narrate(heal_result, hero=hero, target=None)
+        round_effects.append("bonus_action")
+        log_lines.append(bonus_text)
     if not player_acted:
         log_lines.append(f"{hero} is down before they can act.")
     elif fled:
@@ -870,18 +934,12 @@ async def combat_round_node(state: AgentState) -> dict:
             inventory_used.append(heal_item)
             extra_outcome = f"{hero} uses {heal_item} and regains {heal.amount} HP."
             log_lines.append(extra_outcome)
-    elif wants_second_wind:
-        sw = spend_second_wind(character, remaining=sw_left)
-        if sw is None:
-            # Refused without a roll: no uses left until a short or long rest.
-            extra_outcome = SECOND_WIND_REFUSAL.format(hero=hero)
-        else:
-            dice_log.append(sw.dice.to_log("second wind"))
-            hp = min(player_hp_max, hp + sw.amount)
-            sw_left -= 1
-            extra_outcome = f"{hero} uses Second Wind and regains {sw.amount} HP."
+    elif dodge:
+        add_effect(player, "dodging", source="dodge", round_applied=int(combat_state.get("round", 1) or 1))
+        round_effects.append("dodge")
+        extra_outcome = f"{hero} takes the Dodge action: attacks against {hero} have disadvantage until {hero}'s next turn."
         log_lines.append(extra_outcome)
-    elif spell_plan is not None:
+    elif spell_plan is not None and spell_plan.spell.action == ACTION:
         # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
         # chosen foe the same way a weapon hit does.
         save_bonus = int(spell_target.get("initiative_bonus", 0) or 0) if spell_target else 0
@@ -975,6 +1033,9 @@ async def combat_round_node(state: AgentState) -> dict:
             extra_outcome = f"{hero} misses {target['name']}."
         mode_text = "" if mode == "normal" else f" (at {mode})"
         log_lines.append(f"{check_result.describe()}{mode_text}. {extra_outcome}")
+    elif wants_second_wind or bonus_spell is not None:
+        # Only a bonus action was declared and is already resolved above; the action stays free.
+        pass
     else:
         check_result, extra = resolve_from_parsed(character, parsed, player_input=player_input)
         dice_log += extra
@@ -982,6 +1043,7 @@ async def combat_round_node(state: AgentState) -> dict:
             log_lines.append(check_result.describe() + ".")
 
     # --- Adjudicator: describes consequences of the known outcome (flags/scene/items) ---
+    extra_outcome = " ".join(part for part in (bonus_text, extra_outcome) if part)
     if player_acted and not fled:
         adj = await adjudicate(
             {**state, "engine_effects": tuple(round_effects)},
@@ -1034,6 +1096,9 @@ async def combat_round_node(state: AgentState) -> dict:
         # Typed effects end with the encounter (EDG-021): nothing carries into a later fight.
         clear_effects(combatants)
 
+    # EDG-044: what this turn spent, kept on the player row (persisted with the combatants).
+    spent = declared if player_acted and not fled else []
+    player["action_economy"] = economy_record(round_num, spent, dodging=has_effect(player, "dodging"))
     view = initiative_view(combatants)
     player_view_index = next((i for i, c in enumerate(view) if c["is_player"]), 0)
     combat_state.update(
@@ -1041,6 +1106,7 @@ async def combat_round_node(state: AgentState) -> dict:
             "combatants": combatants,
             "initiative_order": [c["name"] for c in combatants],
             "initiative": view,
+            "economy": player["action_economy"],
             "round": round_num if ended else round_num + 1,
             "ended": ended,
             "outcome": outcome,

@@ -84,8 +84,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "lower (disadvantage); both faces are logged. Advantage with disadvantage cancels to "
             "a normal roll. A mode comes only from engine state: an attack against an unconscious target has "
             "advantage, and the restrained or prone effects of a supported combat maneuver set "
-            "advantage or disadvantage on attacks (see contested_maneuvers). A player's or the model's claim of "
-            "advantage is never a source and is not applied."
+            "advantage or disadvantage on attacks (see contested_maneuvers), and a hero who takes the "
+            "Dodge action gives foes disadvantage on attacks until the hero's next turn (see "
+            "action_economy). A player's or the model's claim of advantage is never a source and is not "
+            "applied."
         ),
         implementation="agent.resolution:resolve_check",
         test="tests/agent/test_supported_rules.py::test_supported_advantage_and_disadvantage",
@@ -153,7 +155,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "rolls 1d10 plus fighter level and caps the result at max HP. A request with no use left "
             "is refused without a roll. Uses are stored on the character sheet, so they carry over "
             "between encounters, and a short or long rest restores the use. There is no automatic "
-            "use at 0 HP. Any action economy (bonus action) is not tracked. 2024 campaigns follow "
+            "use at 0 HP. It is a bonus action: the hero may use it in the same turn as an action, "
+            "such as an attack, and not twice in one turn (see action_economy). 2024 campaigns follow "
             "this same single-use rule; the 2024 class table (more uses at higher levels) is not "
             "implemented."
         ),
@@ -184,14 +187,16 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="supported_spells",
-        title="Catalog spells: Fire Bolt, Magic Missile, Sacred Flame and Cure Wounds",
+        title="Catalog spells: Fire Bolt, Magic Missile, Sacred Flame, Cure Wounds and Healing Word",
         scope=(
             "Only these declared spells resolve. Fire Bolt is a spell attack (1d10 fire, two dice "
             "at 5th level and up, more at 11th and 17th; a critical doubles the dice). Magic Missile "
             "is three automatic-hit darts of 1d4+1 force, one more dart per slot above 1st. Sacred "
             "Flame is a DEX save by the target against the caster's spell save DC, with 1d8 radiant "
             "damage on a failure only. Cure Wounds restores 1d8 plus the spellcasting modifier to the "
-            "caster, one die more per slot above 1st; it cannot target anyone else. Cantrips cost no "
+            "caster, one die more per slot above 1st; it cannot target anyone else. Healing Word is a "
+            "bonus action: 1d4 plus the spellcasting modifier to the caster, one die more per slot above "
+            "1st, and the same turn may also attack. Cantrips cost no "
             "slot. A leveled spell spends the named slot or the lowest one available; slot totals "
             "follow class and level for the full and half casters, and a long rest restores them. "
             "Concentration and advantage are not tracked. Other spells get a narrative ruling."
@@ -259,6 +264,22 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         test="tests/agent/test_supported_rules.py::test_supported_contested_maneuver_applies_effect",
     ),
     Mechanic(
+        id="action_economy",
+        title="Action, bonus action and Dodge in one player turn",
+        scope=(
+            "Each player turn has one action and one bonus action. The engine classifies every "
+            "declared action from a fixed table: attack, contested maneuver, item use, a catalog "
+            "action spell and Dodge use the action; Second Wind and Healing Word use the bonus "
+            "action. A second action, or a second bonus action, in the same turn is refused with no "
+            "roll and no round. Dodge gives attacks against the hero disadvantage until the hero's "
+            "next turn begins. The turn's spending is shown in the combat HUD and the narration "
+            "context. Dash, Disengage, Help, reactions, opportunity attacks and movement are not "
+            "modelled."
+        ),
+        implementation="agent.action_economy:refusal_for",
+        test="tests/agent/test_action_economy.py::test_second_action_is_refused_before_any_roll",
+    ),
+    Mechanic(
         id="captive_lifecycle",
         title="Captives after a fight: release, declared kill, or a ruling",
         scope=(
@@ -312,9 +333,13 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         owner="EDG-044",
     ),
     UnsupportedMechanic(
-        id="action_economy",
-        title="Bonus actions, reactions, Dodge, Dash, Disengage, Help and opportunity attacks",
-        boundary="Each round allows one action; these named actions have no engine effect.",
+        id="action_economy_remainder",
+        title="Dash, Disengage, Help, reactions, opportunity attacks and other bonus actions",
+        boundary=(
+            "Each turn allows one action and one bonus action, and only Second Wind and Healing Word "
+            "use the bonus action. Dash, Disengage, Help, reactions, opportunity attacks and any other "
+            "bonus action have no engine effect and no movement is tracked."
+        ),
         owner="EDG-044",
     ),
     UnsupportedMechanic(
@@ -382,7 +407,7 @@ _KIND_MECHANIC = {
     MANEUVER: "unsupported_maneuvers",
     CONDITION: "condition_effects",
     ADVANTAGE: "advantage_disadvantage",
-    ACTION_ECONOMY: "action_economy",
+    ACTION_ECONOMY: "action_economy_remainder",
     POSITIONING: "positioning_cover",
 }
 
@@ -409,8 +434,8 @@ _RULINGS = {
         "roll uses the plain d20 and the sheet modifier."
     ),
     ACTION_ECONOMY: (
-        "Narrative ruling: action economy is not tracked. Bonus actions, reactions, Dodge, Dash, "
-        "Disengage, Help and opportunity attacks have no engine effect."
+        "Narrative ruling: this action is not modelled. Dash, Disengage, Help, reactions, opportunity "
+        "attacks and other bonus actions have no engine effect."
     ),
     POSITIONING: (
         "Narrative ruling: positioning is not tracked. Cover, high ground and flanking give no "
@@ -429,6 +454,12 @@ _FEATURE_NAMES = (
     "bardic inspiration|channel divinity|wild shape|sorcery points?|ki points?|flurry of blows|"
     "stunning strike|superiority dice|martial arts"
 )
+_BONUS_ACTION_CLAIM = r"bonus\s+action"
+_DODGE_CLAIM = r"dodg\w*"
+_ACTION_ECONOMY_CLAIM = (
+    r"\b(?:(?:dash|disengage|help)\s+action|" + _BONUS_ACTION_CLAIM + r"|opportunity\s+attacks?|"
+    r"" + _DODGE_CLAIM + r"|disengag\w*)\b"
+)
 _CLAIM_WORDS = {
     SPELL: (
         r"\b\d+d\d+\b|\bspell\s+slots?\b|\bslots?\b|\bconcentrat\w*|\b(?:"
@@ -446,10 +477,7 @@ _CLAIM_WORDS = {
         r"incapacitated)\b"
     ),
     ADVANTAGE: r"\b(?:advantage|disadvantage|with an edge)\b",
-    ACTION_ECONOMY: (
-        r"\b(?:(?:dodge|dash|disengage|help)\s+action|bonus\s+action|opportunity\s+attacks?|"
-        r"dodg\w*|disengag\w*)\b"
-    ),
+    ACTION_ECONOMY: _ACTION_ECONOMY_CLAIM,
     POSITIONING: r"\b(?:in\s+cover|take\s+cover|behind\s+cover|high\s+ground|flank\w*)\b",
 }
 
@@ -512,7 +540,8 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         ACTION_ECONOMY,
         re.compile(
-            r"\b(?:(?:dodge|dash|disengage|help)\s+action|bonus\s+action|opportunity\s+attacks?|"
+            # Dodge is a supported action (action_economy), so its phrase is not listed here.
+            r"\b(?:(?:dash|disengage|help)\s+action|bonus\s+action|opportunity\s+attacks?|"
             r"ready\s+an?\s+action|extra\s+attack|second\s+attack|off-hand\s+attack|"
             r"as\s+a\s+reaction|my\s+reaction)\b",
             re.IGNORECASE,
@@ -626,13 +655,45 @@ def classify_unsupported_actions(
             continue  # the executed catalog spell; its casting words are not a declared spell
         if kind == ADVANTAGE and engine_roll_mode != "normal":
             continue
-        match = pattern.search(text)
-        if not match or kind in found:
+        if kind in found:
+            continue
+        match = next(
+            (
+                m
+                for m in pattern.finditer(text)
+                if not _executed_economy_phrase(kind, m.group(0), engine_effects, text)
+            ),
+            None,
+        )
+        if not match:
             continue
         if kind == MANEUVER and _engine_applied_maneuver(text, engine_effects):
             continue
         found[kind] = UnsupportedAction(kind, match.group(0).lower()[:60])
     return tuple(found[kind] for kind in _KIND_ORDER if kind in found)
+
+
+def _executed_economy_phrase(
+    kind: str, phrase: str, engine_effects: tuple[str, ...], text: str = ""
+) -> bool:
+    """True when the phrase names an action economy slot the engine executed this turn.
+
+    A Dodge (`dodge` effect) and a bonus action Second Wind or Healing Word (`bonus_action`) are
+    supported, so their wording describes a real effect and is neither declared nor stripped. A
+    declared "bonus action" is that executed one only when the player also names Second Wind or
+    Healing Word; "use my bonus action to hide" stays unsupported beside a Second Wind.
+    """
+    if kind != ACTION_ECONOMY:
+        return False
+    word = phrase.lower()
+    if "dodge" in engine_effects and word.startswith("dodg"):
+        return True
+    if "bonus_action" in engine_effects and word.startswith("bonus"):
+        return bool(_EXECUTED_BONUS_SPELL_OR_FEATURE.search(text))
+    return False
+
+
+_EXECUTED_BONUS_SPELL_OR_FEATURE = re.compile(r"second\s+wind|healing\s+word", re.IGNORECASE)
 
 
 def engine_effects_for_state(state: dict[str, Any]) -> tuple[str, ...]:
@@ -695,6 +756,22 @@ def boundary_prompt_block(actions: tuple[UnsupportedAction, ...]) -> str | None:
 # --------------------------------------------------------------------------------------------
 
 
+def _claim_words(engine_effects: tuple[str, ...]) -> dict[str, str]:
+    """The claim vocabulary, minus the action economy phrases the engine executed this turn."""
+    words = dict(_CLAIM_WORDS)
+    executed = [
+        claim
+        for effect, claim in (("dodge", _DODGE_CLAIM), ("bonus_action", _BONUS_ACTION_CLAIM))
+        if effect in engine_effects
+    ]
+    if executed:
+        # Only the claims the engine did not execute remain (Dash, Disengage, opportunity attacks).
+        words[ACTION_ECONOMY] = (
+            r"\b(?:(?:dash|disengage|help)\s+action|opportunity\s+attacks?|disengag\w*)\b"
+        )
+    return words
+
+
 def _claim_pattern(
     actions: tuple[UnsupportedAction, ...],
     *,
@@ -715,7 +792,7 @@ def _claim_pattern(
         return None
     patterns = [
         p
-        for kind, p in _CLAIM_WORDS.items()
+        for kind, p in _claim_words(engine_effects).items()
         if not (executed_spell and kind == SPELL)
         and not (kind == ADVANTAGE and engine_roll_mode != "normal")
         and not (kind == MANEUVER and engine_effects)
