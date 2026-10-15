@@ -1,0 +1,130 @@
+"""Stable reviewed object availability uses ledger identity, never display-name inference."""
+
+from copy import deepcopy
+
+import pytest
+
+from agent.object_effects import object_state, validate_object_effect
+from edgar_core.artifacts import text_digest
+from edgar_core.manifests import AdventureManifest, manifest_digest
+from edgar_core.story import StoryEffect, StoryRef, accept_story_effect, story_target_id
+
+
+@pytest.fixture
+def object_state_fixture():
+    text = "The note says “The lens tracks reflections, not the sky.”"
+    manifest = AdventureManifest(
+        source="fixture",
+        source_sha256="a" * 64,
+        extraction_sha256="b" * 64,
+        opening_scene_id="room",
+        scenes=[{"scene_id": "room", "title": "Room"}],
+        passages=[
+            {
+                "passage_id": "note_text",
+                "page": 1,
+                "start": 0,
+                "end": len(text),
+                "text_sha256": text_digest(text),
+                "scene_ids": ["room"],
+                "audience": "player",
+            }
+        ],
+        objects=[
+            {
+                "canonical_id": "note",
+                "title": "Lens note",
+                "scene_ids": ["room"],
+                "passage_ids": ["note_text"],
+            },
+            {
+                "canonical_id": "cord",
+                "title": "Spare cord",
+                "scene_ids": ["room"],
+                "passage_ids": ["note_text"],
+                "initial_owner": "character",
+                "consumable": True,
+                "operations": ["tether"],
+            },
+            {
+                "canonical_id": "brace",
+                "title": "Brace",
+                "scene_ids": ["room"],
+                "passage_ids": ["note_text"],
+                "portable": False,
+                "operations": ["secure"],
+            },
+        ],
+        reviewed_by="synthetic fixture",
+    )
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    state = {
+        "adventure_manifests": {"fixture": manifest.model_dump()},
+        "current_scene_id": "room",
+        "character": {"id": 7, "inventory": {"items": ["Spare cord"]}},
+        "story_state": {"facts": []},
+    }
+
+    def effect(kind, obj="note", **kw):
+        return StoryEffect(
+            kind=kind,
+            target=StoryRef(
+                collection="fixture",
+                source_sha256=manifest.source_sha256,
+                manifest_sha256=manifest.reviewed_sha256,
+                kind="object",
+                canonical_id=obj,
+            ),
+            **kw,
+        )
+
+    return state, effect
+
+
+def seal(effect):
+    return accept_story_effect(effect, turn_id="test-turn", source_refs=[], display_name="Fixture")
+
+
+def test_pickup_once_transfer_reacquire_and_consumed_identity(object_state_fixture):
+    state, effect = object_state_fixture
+    acquired = validate_object_effect(effect("acquire"), state)
+    assert acquired.destination == "character:7"
+    assert acquired.quantity == 1
+    assert validate_object_effect(effect("acquire"), state, [seal(acquired)]) is None
+    moved = validate_object_effect(effect("transfer", destination="room"), state, [seal(acquired)])
+    assert moved.status == "moved"
+    assert validate_object_effect(effect("acquire"), state, [seal(acquired), seal(moved)])
+    consumed = validate_object_effect(effect("consume", "cord"), state)
+    state["story_state"]["facts"] = [seal(consumed).model_dump()]
+    assert object_state(consumed.target, state)["consumed"] is True
+    assert validate_object_effect(effect("acquire", "cord"), state) is None
+
+
+def test_gear_environment_operations_require_owned_supported_objects(object_state_fixture):
+    state, effect = object_state_fixture
+    use = validate_object_effect(
+        effect("use", "cord", operation="tether", destination="brace"), state
+    )
+    assert use.status == "used"
+    assert validate_object_effect(effect("use", "cord", operation="gain_bonus"), state) is None
+    assert validate_object_effect(effect("acquire", "brace"), state) is None
+    assert validate_object_effect(effect("consume", "note"), state) is None
+    assert validate_object_effect(effect("acquire", quantity=100), state) is None
+    earned = seal(use)
+    change = effect(
+        "environment", "brace", operation="secure", knowledge_fact_ids=[earned.effect_id]
+    )
+    assert validate_object_effect(change, state) is None
+    assert validate_object_effect(change, state, [earned]).status == "changed"
+    other = deepcopy(state)
+    other["character"]["inventory"] = {}
+    assert validate_object_effect(effect("use", "cord", operation="tether"), other) is None
+
+
+def test_shared_assignment_stable_identity_blocks_second_session_pickup(object_state_fixture):
+    state, effect = object_state_fixture
+    target = effect("acquire").target
+    state["character"]["inventory"]["items"].append(
+        {"name": "Renamed", "story_object_id": story_target_id(target)}
+    )
+    assert validate_object_effect(effect("acquire"), state) is None

@@ -22,6 +22,7 @@ from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
 from db.vector.retrieval import rule_policy
 from edgar_core.sources import cited_excerpt, eligible_context
+from edgar_core.story import StoryState, player_story_effect
 
 _NARRATOR_TEMPERATURE = 0.7
 _HISTORY_TAIL = 4
@@ -100,7 +101,22 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
         )
     if world_flags and state.get("manifest_status") != "reviewed":
         context_parts.append(f"World flags (persisted state): {world_flags}")
+    earned = [
+        public
+        for fact in StoryState.model_validate(state.get("story_state") or {}).facts[-40:]
+        if (public := player_story_effect(fact)) is not None
+    ]
+    if earned:
+        context_parts.append(f"Committed player-known story facts: {earned}")
     if adjudication:
+        accepted = [
+            public
+            for effect in adjudication.accepted_story_effects
+            if (public := player_story_effect(effect)) is not None
+        ]
+        context_parts.append(
+            f"Validated story consequences this turn (describe only these as new discoveries or accomplishments): {accepted}"
+        )
         context_parts.append(f"Engine outcome (final): {adjudication.mechanical_summary}")
         if adjudication.check and adjudication.dc is not None:
             verdict = "success" if adjudication.success else "failure"
@@ -111,6 +127,14 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
             )
         elif adjudication.dice_result is not None:
             context_parts.append(f"Dice: {adjudication.dice_result}")
+    resolved = [
+        {"id": outcome.get("id"), "outcome": outcome.get("outcome"), "round": outcome.get("round")}
+        for outcome in state.get("resolved_combat_outcomes", [])
+    ]
+    if resolved:
+        context_parts.append(
+            f"Recorded outcomes of combats already fought (never reopen or contradict): {resolved}"
+        )
     combat = state.get("combat_state") or {}
     if combat.get("initiative"):
         order = ", ".join(

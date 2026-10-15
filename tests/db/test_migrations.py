@@ -291,3 +291,108 @@ async def test_source_mode_migration_preserves_bindings_and_requires_explicit_ch
                 )
             )
         await engine.dispose()
+
+
+async def test_session_story_ledger_migration_round_trip_preserves_legacy_rows(postgres_env):
+    """Only additive schema on upgrade; existing NPC/history/inventory rows survive."""
+    engine = create_async_engine(
+        URL.create(
+            "postgresql+asyncpg",
+            username=postgres_env["POSTGRES_USER"],
+            password=postgres_env["POSTGRES_PASSWORD"],
+            host=postgres_env["DB_HOST"],
+            port=int(postgres_env["DB_PORT"]),
+            database=postgres_env["POSTGRES_DB"],
+        ),
+        poolclass=NullPool,
+    )
+    try:
+        _alembic(postgres_env, "downgrade", "13_campaign_rules_edition")
+        async with engine.begin() as connection:
+            uid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO users(email) VALUES ('ledger-migration@example.test') RETURNING id"
+                    )
+                )
+            ).scalar_one()
+            cid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO campaigns(created_by,title,system) VALUES (:uid,'Keep','5e') RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            sid = (
+                await connection.execute(
+                    text("INSERT INTO sessions(campaign_id) VALUES (:cid) RETURNING id"),
+                    {"cid": cid},
+                )
+            ).scalar_one()
+            await connection.execute(
+                text(
+                    "INSERT INTO npcs(campaign_id,name,disposition,stat_block) VALUES (:cid,'Legacy','friendly','{\"original\": true}')"
+                ),
+                {"cid": cid},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO world_flags(campaign_id,key,value) VALUES (:cid,'legacy','kept')"
+                ),
+                {"cid": cid},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO event_log(session_id,event_type,payload) VALUES (:sid,'narration','{\"text\":\"Keep\"}')"
+                ),
+                {"sid": sid},
+            )
+        for _ in range(2):
+            _alembic(postgres_env, "upgrade", "head")
+            assert "No new upgrade operations detected" in _alembic(postgres_env, "check").stdout
+            async with engine.connect() as connection:
+                npc = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT name,disposition,stat_block,session_id,story_identity FROM npcs WHERE campaign_id=:cid"
+                            ),
+                            {"cid": cid},
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                assert dict(npc) == {
+                    "name": "Legacy",
+                    "disposition": "friendly",
+                    "stat_block": {"original": True},
+                    "session_id": None,
+                    "story_identity": None,
+                }
+                assert (
+                    await connection.execute(
+                        text("SELECT value FROM world_flags WHERE campaign_id=:cid"), {"cid": cid}
+                    )
+                ).scalar_one() == "kept"
+                assert (
+                    await connection.execute(
+                        text("SELECT payload FROM event_log WHERE session_id=:sid"), {"sid": sid}
+                    )
+                ).scalar_one() == {"text": "Keep"}
+                unique = await connection.run_sync(
+                    lambda conn: inspect(conn).get_unique_constraints("story_facts")
+                )
+                assert any(c["column_names"] == ["session_id", "effect_id"] for c in unique)
+            _alembic(postgres_env, "downgrade", "13_campaign_rules_edition")
+        _alembic(postgres_env, "upgrade", "head")
+    finally:
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "TRUNCATE event_log, combat_state, sessions, character_assignments, characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                )
+            )
+        await engine.dispose()

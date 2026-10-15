@@ -8,6 +8,7 @@ The rolling memory summary is updated as a background task after the response.
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -26,7 +27,7 @@ from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, Sessi
 from ..schemas.turn import TurnRequest, TurnResponse
 from ..services.campaign_sources import require_campaign_sources
 from ..services.character_assignments import character_play_state, load_active_assignment
-from ..services.combat import load_active_combat
+from ..services.combat import load_active_combat, load_resolved_combat_outcomes
 from ..services.npcs import load_npcs
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
@@ -34,6 +35,7 @@ from ..services.session_messages import (
     load_session_messages,
     maybe_update_memory_summary,
 )
+from ..services.story_state import load_story_state, session_story_flags
 from ..services.turn_runner import (
     TurnError,
     combat_state_public,
@@ -93,17 +95,28 @@ async def _load_turn_initial_state(
             status_code=409,
             detail={"code": "adventure_manifest_review_required", "message": str(exc)},
         ) from exc
-    world_flags = await load_world_flags(db, session.campaign_id)
+    story_state = await load_story_state(db, session_id, session.campaign_id)
+    world_flags = session_story_flags(
+        story_state, manifests, await load_world_flags(db, session.campaign_id)
+    )
 
     prior_messages = await load_session_messages(db, session_id)
     character = None
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
-    npcs = await load_npcs(db, session.campaign_id)
+    npcs = await load_npcs(db, session.campaign_id, session_id)
     npc_summaries = [{"name": n.name, "disposition": n.disposition} for n in npcs]
 
     initial_state: dict[str, Any] = {
         "player_input": message,
+        "turn_id": uuid4().hex,
+        "story_state": story_state,
+        "resolved_combat_outcomes": await load_resolved_combat_outcomes(db, session_id),
+        "turn_snapshot": {
+            "current_scene_id": session.current_scene_id,
+            "active_character_id": session.active_character_id,
+            "character": character,
+        },
         "session_id": session_id,
         "campaign_id": session.campaign_id,
         "messages": prior_messages,
@@ -321,7 +334,7 @@ async def session_turn(
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
 
-        result = await run_turn(initial_state)
+        result = {**initial_state, **await run_turn(initial_state)}
         done = await persist_turn(session_id, body.message, result)
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 

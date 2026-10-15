@@ -38,14 +38,18 @@ import db.postgres.session as db_session_module
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
 from agent.nodes.narrator import build_narrator_prompt, make_narrator_model, narrator_context
-from db.postgres.models import EventLog, Session as SessionModel
+from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.config import LLM_MODEL
 from edgar_core.sources import citations_for, public_citations
 
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_combat
-from .world_writes import MissingCharacterAssignmentError, apply_adjudication
+from .world_writes import (
+    MissingCharacterAssignmentError,
+    apply_adjudication,
+    apply_story_inventory,
+)
 
 log = structlog.get_logger()
 
@@ -103,7 +107,8 @@ def sse_event(event: str, data: Any) -> str:
 def public_adjudication(adjudication) -> dict | None:
     if adjudication is None:
         return None
-    value = adjudication.model_dump()
+    # Proposals and canonical/private evidence are engine inputs, never client DTOs.
+    value = adjudication.model_dump(exclude={"story_effects", "accepted_story_effects"})
     value["citations"] = public_citations(value.get("citations", []))
     value["citation_ids"] = [r["reference_id"] for r in value["citations"]]
     return value
@@ -134,14 +139,153 @@ async def persist_turn(
     async with db_session_module.async_session_factory() as db:
         try:
             game_session = (
-                await db.execute(select(SessionModel).where(SessionModel.id == session_id))
+                await db.execute(
+                    select(SessionModel).where(SessionModel.id == session_id).with_for_update()
+                )
             ).scalar_one()
+
+            # A retry of the same server turn must not repeat legacy HP, inventory, combat,
+            # or completion writes. The receipt and narration commit in this same transaction.
+            turn_id = result.get("turn_id")
+            if turn_id:
+                receipt = (
+                    await db.execute(
+                        select(EventLog).where(
+                            EventLog.session_id == session_id,
+                            EventLog.event_type == "narration",
+                            EventLog.payload["turn_id"].astext == turn_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if receipt is not None:
+                    if (receipt.payload or {}).get("player_input") != body_message:
+                        raise ValueError("Turn identity was reused for a different action")
+                    saved = (receipt.payload or {}).get("done")
+                    if saved is None:
+                        raise RuntimeError("Incomplete turn receipt")
+                    return saved
+
+            from starlette.concurrency import run_in_threadpool
+
+            from .adventure_manifests import campaign_manifests
+            from .campaign_sources import require_campaign_sources
+            from .story_state import session_story_flags
+            from .world_flags import load_world_flags
+
+            campaign = (
+                await db.execute(
+                    select(Campaign)
+                    .where(Campaign.id == game_session.campaign_id)
+                    .with_for_update()
+                )
+            ).scalar_one()
+            if campaign.status == "ended":
+                raise ValueError("Campaign ended during generation")
+            if (
+                campaign.source_mode != result.get("source_mode", "module")
+                or campaign.rules_edition != result.get("rules_edition", "2014")
+                or (
+                    []
+                    if campaign.source_mode == "homebrew"
+                    else list(campaign.adventure_collections or [])
+                )
+                != result.get("adventure_collections", [])
+            ):
+                raise ValueError("Campaign source binding changed during generation")
+            await require_campaign_sources(campaign)
+            current_manifests = (
+                {}
+                if campaign.source_mode == "homebrew"
+                else await run_in_threadpool(
+                    campaign_manifests, list(campaign.adventure_collections or [])
+                )
+            )
+            if current_manifests != (result.get("adventure_manifests") or {}):
+                raise ValueError("Reviewed adventure changed during generation")
+
+            # Other sessions may share an assignment. Serialize its inventory projection too.
+            if game_session.active_character_id:
+                await db.execute(
+                    select(CharacterAssignment)
+                    .where(
+                        CharacterAssignment.character_id == game_session.active_character_id,
+                        CharacterAssignment.campaign_id == game_session.campaign_id,
+                        CharacterAssignment.ended_at.is_(None),
+                    )
+                    .with_for_update()
+                )
+            snapshot = result.get("turn_snapshot")
+            current_character = await character_play_state(
+                db, game_session.active_character_id, game_session.campaign_id
+            )
+            if snapshot and (
+                snapshot.get("current_scene_id") != game_session.current_scene_id
+                or snapshot.get("active_character_id") != game_session.active_character_id
+                or snapshot.get("character") != current_character
+            ):
+                raise ValueError("Turn state changed during generation")
+
+            from .story_state import load_story_state, persist_story_effects
+
+            expected_story = result.get("story_state") or {"facts": []}
+            current_story = await load_story_state(db, session_id, game_session.campaign_id)
+            if current_story != expected_story:
+                raise ValueError("Story state changed during generation")
+            current_flags = session_story_flags(
+                current_story,
+                current_manifests,
+                await load_world_flags(db, game_session.campaign_id),
+            )
+            if current_flags != (result.get("world_flags") or {}):
+                raise ValueError("World state changed during generation")
+            effects = adjudication.accepted_story_effects if adjudication else []
+            if effects:
+                from agent.models.adjudication import AdjudicationResult
+                from agent.nodes.story_effects import validate_story_effects
+                from edgar_core.story import StoryEffect
+
+                checked = validate_story_effects(
+                    AdjudicationResult(
+                        success=adjudication.success,
+                        story_effects=[
+                            StoryEffect.model_validate(
+                                effect.model_dump(include=set(StoryEffect.model_fields))
+                            )
+                            for effect in effects
+                        ],
+                    ),
+                    {**result, "character": current_character, "story_state": current_story},
+                )
+                if checked.accepted_story_effects != effects:
+                    raise ValueError("Story consequences no longer validate")
+                # Validate against current committed ownership before any legacy writes.
+                await apply_story_inventory(
+                    db,
+                    game_session,
+                    effects,
+                    initial_state={
+                        **result,
+                        "character": current_character,
+                        "story_state": current_story,
+                    },
+                )
 
             if new_combat:
                 await persist_combat(db, session_id, new_combat)
 
             if adjudication:
-                await apply_adjudication(db, game_session, adjudication)
+                discovery_keys = {
+                    entity["discovery_flag"]
+                    for manifest in (result.get("adventure_manifests") or {}).values()
+                    for entity in manifest.get("entities", [])
+                    if entity.get("discovery_flag")
+                }
+                if discovery_keys:
+                    await apply_adjudication(
+                        db, game_session, adjudication, session_discovery_keys=discovery_keys
+                    )
+                else:
+                    await apply_adjudication(db, game_session, adjudication)
 
             for event in result.get("telemetry_events") or []:
                 db.add(
@@ -151,19 +295,28 @@ async def persist_turn(
                         payload=event["payload"],
                     )
                 )
-            db.add(
-                EventLog(
-                    session_id=session_id,
-                    event_type="narration",
-                    payload={
-                        "player_input": body_message,
-                        "narration": narration,
-                        "citations": citations,
-                        "ruling_citation_ids": ruling_citation_ids,
-                        "rules_edition": edition,
-                    },
-                )
+            narration_event = EventLog(
+                session_id=session_id,
+                event_type="narration",
+                payload={
+                    "player_input": body_message,
+                    "narration": narration,
+                    "citations": citations,
+                    "ruling_citation_ids": ruling_citation_ids,
+                    "rules_edition": edition,
+                    "turn_id": turn_id,
+                },
             )
+            db.add(narration_event)
+            await db.flush()
+            if effects:
+                await persist_story_effects(
+                    db,
+                    game_session,
+                    effects,
+                    event_id=narration_event.id,
+                    expected_state=expected_story,
+                )
 
             character_out = await character_play_state(
                 db, game_session.active_character_id, game_session.campaign_id
@@ -172,6 +325,20 @@ async def persist_turn(
                 db, game_session.campaign_id, adjudication
             )
             current_scene_id = game_session.current_scene_id
+            done = {
+                "narration": narration,
+                "citations": citations,
+                "ruling_citation_ids": ruling_citation_ids,
+                "rules_edition": edition,
+                "character": character_out,
+                "current_scene_id": current_scene_id,
+                "combat_state": combat_state_public(new_combat),
+                "campaign_complete": campaign_complete,
+                "retrieval_degraded": bool(result.get("retrieval_degraded")),
+                "source_status": result.get("source_status", []),
+                "source_mode": result.get("source_mode", "module"),
+            }
+            narration_event.payload = {**narration_event.payload, "done": done}
             await db.commit()
         except MissingCharacterAssignmentError as e:
             await db.rollback()
@@ -182,19 +349,7 @@ async def persist_turn(
             log.exception("turn_persist_failed", session_id=session_id)
             raise TurnError("turn_save_failed") from e
 
-    return {
-        "narration": narration,
-        "citations": citations,
-        "ruling_citation_ids": ruling_citation_ids,
-        "rules_edition": edition,
-        "character": character_out,
-        "current_scene_id": current_scene_id,
-        "combat_state": combat_state_public(new_combat),
-        "campaign_complete": campaign_complete,
-        "retrieval_degraded": bool(result.get("retrieval_degraded")),
-        "source_status": result.get("source_status", []),
-        "source_mode": result.get("source_mode", "module"),
-    }
+    return done
 
 
 async def run_turn(initial_state: dict[str, Any]) -> dict[str, Any]:

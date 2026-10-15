@@ -14,6 +14,10 @@ from agent.models.parsed_input import ParsedInput
 
 class AgentState(TypedDict, total=False):
     # Inputs from the API
+    story_reveal_context: list  # Exact reviewed self-gated player spans; validator-only
+    story_state: dict  # Serialized edgar_core.story.StoryState; committed session facts only
+    turn_id: str  # Server-generated per-turn provenance identity
+    turn_snapshot: dict  # Initial position/active character used for atomic stale-state checks
     player_input: str
     session_id: int
     campaign_id: int
@@ -25,6 +29,7 @@ class AgentState(TypedDict, total=False):
     rules_edition: str
     adventure_manifests: dict[str, dict]  # validated manifests from existing adventure metadata
     npcs: list  # [{name, disposition}] loaded from DB; used to keep allies out of enemy rosters
+    resolved_combat_outcomes: list[dict]  # Session-owned authoritative ended combat rows
     combat_state: dict  # loaded from DB if an encounter is in progress
     memory_summary: str | None  # rolling "story so far" for turns older than `messages`
 

@@ -53,6 +53,8 @@ async def apply_adjudication(
     db: AsyncSession,
     game_session: SessionModel,
     adj: AdjudicationResult,
+    *,
+    session_discovery_keys: set[str] | None = None,
 ) -> None:
     if adj.scene_id:
         known = {game_session.current_scene_id} if game_session.current_scene_id else set()
@@ -63,22 +65,46 @@ async def apply_adjudication(
             game_session.current_scene_id = scene_id
 
     if adj.character_update is not None and game_session.active_character_id:
+        cu = adj.character_update.model_copy(deep=True)
+        # The typed object projection already applies these exact costs/acquisitions once.
+        # Retain engine HP/resources while preventing a legacy name removal from consuming
+        # another same-name item after the stable object has been removed.
+        acquired_names = {
+            effect.display_name.casefold()
+            for effect in adj.accepted_story_effects
+            if effect.kind == "acquire" and effect.display_name
+        }
+        removed_names = {
+            effect.display_name.casefold()
+            for effect in adj.accepted_story_effects
+            if effect.kind in {"consume", "transfer"} and effect.display_name
+        }
+        cu.inventory_add = [
+            name for name in cu.inventory_add if name.casefold() not in acquired_names
+        ]
+        cu.inventory_remove = [
+            name for name in cu.inventory_remove if name.casefold() not in removed_names
+        ]
         await _apply_character_update(
             db,
             game_session.active_character_id,
             game_session.campaign_id,
-            adj.character_update,
+            cu,
         )
 
     completion_ok = adj.completion_status in (None, "accepted")
     for fu in sanitize_flags(adj.flags_set, allow_reserved=True):
+        if fu.key in (session_discovery_keys or set()):
+            continue
         if fu.key == COMPLETION_FLAG and not completion_ok:
             log.warning("completion_flag_rejected", status=adj.completion_status)
             continue
         await upsert_world_flag(db, game_session.campaign_id, fu.key, fu.value)
 
     if adj.flags_cleared:
-        wanted = [str(k) for k in adj.flags_cleared]
+        wanted = [
+            str(k) for k in adj.flags_cleared if str(k) not in (session_discovery_keys or set())
+        ]
         rows = await db.execute(
             select(WorldFlag.key).where(
                 WorldFlag.campaign_id == game_session.campaign_id,
@@ -144,3 +170,57 @@ def _remove_item(inv: dict, name: str) -> bool:
             return True
     log.info("inventory_remove_missing_item", item=str(name)[:80])
     return False
+
+
+async def apply_story_inventory(db, game_session, effects, *, initial_state: dict) -> None:
+    """Project accepted object ownership into the existing assignment inside the turn tx.
+
+    Stable identity stays in the ledger after movement/consumption. Names are display text;
+    removal uses the canonical identity, with reviewed exact-name binding for legacy gear.
+    """
+    from agent.object_effects import OBJECT_KINDS, object_definition, validate_object_effect
+    from edgar_core.story import StoryEffect, story_target_id
+
+    objects = [effect for effect in effects if effect.kind in OBJECT_KINDS]
+    if not objects:
+        return
+    ass = await load_active_assignment(
+        db, game_session.active_character_id, game_session.campaign_id
+    )
+    if ass is None:
+        raise MissingCharacterAssignmentError("No active character assignment for object effects")
+    import copy
+
+    inv = copy.deepcopy(ass.inventory or {})
+    validated = []
+    for accepted in objects:
+        effect = StoryEffect.model_validate(
+            accepted.model_dump(include=set(StoryEffect.model_fields))
+        )
+        normalized = validate_object_effect(effect, initial_state, validated)
+        if normalized is None or normalized != effect:
+            raise ValueError("Story object availability changed before commit")
+        validated.append(accepted)
+        identity = story_target_id(effect.target)
+        definition = object_definition(effect, initial_state)
+        if effect.kind == "acquire":
+            items = list(inv.get("items") or [])
+            items.append(
+                {"name": accepted.display_name or "Recovered item", "story_object_id": identity}
+            )
+            inv["items"] = items
+        elif effect.kind in {"consume", "transfer"}:
+            found = False
+            for entries in inv.values():
+                if not isinstance(entries, list):
+                    continue
+                for index, entry in enumerate(entries):
+                    if isinstance(entry, dict) and entry.get("story_object_id") == identity:
+                        entries.pop(index)
+                        found = True
+                        break
+                if found:
+                    break
+            if not found and definition.initial_owner == "character":
+                _remove_item(inv, definition.title)
+    ass.inventory = inv
