@@ -34,3 +34,13 @@ private metadata and object bookkeeping. Facts lacking valid matching player-aud
 origins are excluded, including engine-only outcomes without an explicit public source.
 This projection has no unknown/future fact counts or prepared definitions. The retained ledger
 continues to include engine outcomes for canonical planning and irreversible-state checks.
+
+Resolved engine combat outcomes use the existing session-owned `CombatState` rows.
+`load_resolved_combat_outcomes(db, session_id)` restores all ended encounters in stable row-ID
+order with their outcome, round and actual persisted roster identities. Initial agent state
+loads these as `resolved_combat_outcomes`, independently of the current active encounter.
+The planner treats these records as authoritative prior results. `resolved_combat_outcomes_public`
+projects the same records to known results/encountered roster names without private creature
+source bindings. The journal should join this projection with `player_known_story` using the
+existing combat row ID as identity; it must not fabricate StoryRefs or duplicate combat
+outcomes as new ledger rows. Outcomes are irreversible engine state, not model proposals.

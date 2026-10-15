@@ -256,3 +256,70 @@ def test_session_discovery_unlocks_only_its_reviewed_passage():
     unrelated = session_story_flags({"facts": []}, manifests, {"note_found": "discovered"})
     assert "earned" in select_scene_context(manifest, "room", earned)["player_passage_ids"]
     assert "earned" not in select_scene_context(manifest, "room", unrelated)["player_passage_ids"]
+
+
+async def test_resolved_engine_victory_survives_reload_without_session_leak(db_session):
+    from apps.api.services.combat import (
+        load_active_combat,
+        load_resolved_combat_outcomes,
+        resolved_combat_outcomes_public,
+    )
+    from db.postgres.models import CombatState
+
+    campaign, sessions, _ = await setup(db_session)
+    campaign.source_mode = "homebrew"
+    victory = CombatState(
+        session_id=sessions[0].id,
+        initiative_order=["Hero", "Guard"],
+        round=4,
+        current_turn_index=0,
+        ended=True,
+        outcome="victory",
+        combatants=[
+            {"name": "Hero", "is_player": True, "alive": True},
+            {
+                "name": "Guard",
+                "creature_id": "actual-creature-id",
+                "is_player": False,
+                "alive": False,
+                "hp_current": 0,
+                "source_reference": {
+                    "actor_id": "guard_eli",
+                    "actor_manifest_sha256": "a" * 64,
+                    "private_extension": "Hidden motive",
+                },
+            },
+        ],
+    )
+    active = CombatState(
+        session_id=sessions[0].id,
+        initiative_order=["Hero"],
+        round=1,
+        current_turn_index=0,
+        ended=False,
+        combatants=[],
+    )
+    db_session.add_all([victory, active])
+    await db_session.commit()
+    sid, other_sid, victory_id = sessions[0].id, sessions[1].id, victory.id
+    db_session.expunge_all()
+    outcomes = await load_resolved_combat_outcomes(db_session, sid)
+    assert len(outcomes) == 1
+    assert outcomes[0]["id"] == victory_id and outcomes[0]["outcome"] == "victory"
+    assert outcomes[0]["round"] == 4
+    assert outcomes[0]["combatants"][1]["source_reference"]["actor_id"] == "guard_eli"
+    assert "hp_current" not in outcomes[0]["combatants"][1]
+    assert await load_resolved_combat_outcomes(db_session, other_sid) == []
+    assert (await load_active_combat(db_session, sid))["ended"] is False
+    public = resolved_combat_outcomes_public(outcomes)
+    assert public[0]["combatants"][1]["name"] == "Guard"
+    assert "source_reference" not in str(public) and "guard_eli" not in str(public)
+    assert "Hidden motive" not in str(public)
+    assert await db_session.scalar(select(func.count()).select_from(StoryFactRow)) == 0
+
+    from apps.api.routers.session import _load_turn_initial_state
+
+    initial = await _load_turn_initial_state(sid, "Remember the victory", db_session)
+    assert initial["resolved_combat_outcomes"] == outcomes
+    other_initial = await _load_turn_initial_state(other_sid, "Begin", db_session)
+    assert other_initial["resolved_combat_outcomes"] == []

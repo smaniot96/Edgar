@@ -27,7 +27,7 @@ from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, Sessi
 from ..schemas.turn import TurnRequest, TurnResponse
 from ..services.campaign_sources import require_campaign_sources
 from ..services.character_assignments import character_play_state, load_active_assignment
-from ..services.combat import load_active_combat
+from ..services.combat import load_active_combat, load_resolved_combat_outcomes
 from ..services.npcs import load_npcs
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
@@ -111,6 +111,7 @@ async def _load_turn_initial_state(
         "player_input": message,
         "turn_id": uuid4().hex,
         "story_state": story_state,
+        "resolved_combat_outcomes": await load_resolved_combat_outcomes(db, session_id),
         "turn_snapshot": {
             "current_scene_id": session.current_scene_id,
             "active_character_id": session.active_character_id,
