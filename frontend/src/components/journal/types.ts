@@ -11,6 +11,8 @@ export type JournalCategory =
 
 export type JournalStatus =
   | "discovered"
+  | "known"
+  | "announced"
   | "encountered"
   | "visited"
   | "active"
@@ -27,6 +29,8 @@ export type JournalStatus =
   | "released"
   | "dead"
   | "defeated";
+
+export type JournalOwnership = "carried" | "left_behind" | "with_another_character" | "consumed" | "untracked";
 
 export interface JournalStatusChange {
   status: JournalStatus;
@@ -49,9 +53,12 @@ export interface JournalEntry {
   text: string | null;
   status: JournalStatus;
   quantity: number | null;
+  clock_maximum?: number | null;
+  ownership?: JournalOwnership | null;
   origin: JournalOrigin;
   history: JournalStatusChange[];
   related_entry_id: string | null;
+  related_entry_ids?: string[];
 }
 
 export interface JournalRead {

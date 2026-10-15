@@ -91,6 +91,9 @@ async def persist_story_effects(
             turn_id=effect.turn_id,
             source_refs=effect.source_refs,
             display_name=effect.display_name,
+            knowledge_kind=effect.knowledge_kind,
+            clock_disclosure=effect.clock_disclosure,
+            related_object=effect.related_object,
         )
         if sealed.effect_id != effect.effect_id:
             raise StoryStateConflict("Story effect content does not match its identity")
@@ -160,6 +163,11 @@ async def _sync_npc(db: AsyncSession, game_session: SessionModel, fact: StoryFac
             stat_block={},
         )
         db.add(npc)
+    earned_name = known_story_name(fact)
+    if earned_name:
+        # A stable person may first be encountered unnamed and be named in a later
+        # accepted reveal. Keep the display projection synchronized with earned knowledge.
+        npc.name = earned_name[:255]
     if fact.kind == "relationship":
         npc.disposition = fact.status
     await db.flush()

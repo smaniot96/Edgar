@@ -112,6 +112,42 @@ def test_projection_is_session_scoped_and_exposes_only_allowlisted_origins() -> 
         assert private_value not in serialized
 
 
+def test_private_only_facts_do_not_make_tracking_look_available() -> None:
+    now = datetime.now(UTC)
+    private = _fact(
+        kind="discover",
+        canonical_id="hidden",
+        event_id=31,
+        turn_id="turn-1",
+        audience="planner",
+        text="A hidden fact that the player has not earned.",
+    )
+    events = [_event(31, 4, "turn-1", now)]
+
+    private_only = project_player_journal(4, {"facts": [private.model_dump()]}, events)
+    mixed = project_player_journal(
+        4,
+        {
+            "facts": [
+                private.model_dump(),
+                _fact(
+                    kind="discover",
+                    canonical_id="known",
+                    event_id=32,
+                    turn_id="turn-2",
+                    text="A known clue.",
+                ).model_dump(),
+            ]
+        },
+        events + [_event(32, 4, "turn-2", now + timedelta(minutes=1))],
+    )
+
+    assert private_only.entries == []
+    assert private_only.tracking == "legacy_untracked"
+    assert [entry.text for entry in mixed.entries] == ["A known clue."]
+    assert mixed.tracking == "available"
+
+
 def test_private_clock_completion_never_reveals_progress_or_terminal_state() -> None:
     now = datetime.now(UTC)
     clock = _fact(

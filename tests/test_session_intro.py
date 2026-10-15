@@ -319,6 +319,30 @@ async def test_known_source_edition_conflict_requires_review_instead_of_generic_
     assert session.current_scene_id is None
 
 
+async def test_review_replaced_during_generation_writes_no_opening_or_seed(
+    reviewed_sources, monkeypatch
+):
+    db, session, model = _intro(monkeypatch)
+
+    async def replace_review(_messages):
+        meta = adventures_meta.load_meta(PRIMARY)
+        manifest = AdventureManifest.model_validate(meta["manifest"])
+        manifest.scenes[0].title = "A revised private definition"
+        manifest.reviewed_sha256 = manifest_digest(manifest)
+        meta["manifest"] = manifest.model_dump()
+        adventures_meta.save_meta(PRIMARY, meta)
+        return AIMessage(content="An opening based on the previous review.")
+
+    model.ainvoke.side_effect = replace_review
+    with pytest.raises(HTTPException) as exc:
+        await session_intro.generate_session_intro(db, session)
+    assert exc.value.status_code == 409
+    assert "changed while opening" in exc.value.detail
+    assert session.current_scene_id is None
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
 async def test_endpoint_persists_reviewed_scene_with_narration_and_keeps_saved_intro(
     api_client, reviewed_sources, db_session, monkeypatch
 ):

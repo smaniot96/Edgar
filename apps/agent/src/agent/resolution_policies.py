@@ -14,7 +14,7 @@ from edgar_core.manifests import (
     select_scene_context,
 )
 from edgar_core.sources import source_citation
-from edgar_core.story import StoryEffect, StoryRef, StoryState
+from edgar_core.story import StoryEffect, StoryRef, StoryState, player_story_effect
 
 
 def policy_effect_key(effect: StoryEffect) -> str:
@@ -32,6 +32,7 @@ def describe_policy_result(success: bool, effects: list, existing: list) -> str:
         "encounter": "You meet",
         "relationship": "Your relationship changes with",
         "move": "You reach",
+        "learn_place": "You learn about",
         "objective": "Objective",
         "milestone": "Milestone",
         "acquire": "You acquire",
@@ -45,7 +46,19 @@ def describe_policy_result(success: bool, effects: list, existing: list) -> str:
         if effect.kind == "discover":
             lines.append(f"You learn:\n{effect.player_text}")
         elif effect.kind == "clock":
-            lines.append(f"{name}: {effect.quantity} intervals recorded ({effect.status}).")
+            public = player_story_effect(effect)
+            if public is None:
+                continue
+            details = []
+            if public["quantity"] is not None:
+                details.append(f"{public['quantity']} intervals recorded")
+            if public["clock_maximum"] is not None:
+                details.append(f"maximum {public['clock_maximum']}")
+            if effect.clock_disclosure and effect.clock_disclosure.completion:
+                details.append(public["status"])
+            lines.append(
+                f"{name}: " + (", ".join(details) if details else "the known urgency changes.")
+            )
         else:
             lines.append(f"{verbs.get(effect.kind, 'Result')}: {name} ({effect.status}).")
     for effect in existing:
@@ -257,7 +270,7 @@ def _effect_target_kind(kind: str) -> str:
         return "entity"
     if kind in {"acquire", "consume", "transfer", "use", "environment"}:
         return "object"
-    if kind == "move":
+    if kind in {"move", "learn_place"}:
         return "scene"
     if kind in {"objective", "milestone", "clock"}:
         return kind

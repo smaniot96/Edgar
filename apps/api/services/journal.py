@@ -7,8 +7,6 @@ origin. Every response field is then constructed from a fixed allowlist.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
@@ -17,6 +15,7 @@ from db.postgres.models import EventLog
 from edgar_core.story import StoryFact, player_story_effect, story_target_id
 
 from ..schemas.journal import JournalEntry, JournalOrigin, JournalRead, JournalStatusChange
+from .journal_identity import journal_entry_id
 
 _CATEGORY = {
     "discover": "clue",
@@ -24,6 +23,7 @@ _CATEGORY = {
     "relationship": "person",
     "visit": "place",
     "move": "place",
+    "learn_place": "place",
     "objective": "goal",
     "milestone": "milestone",
     "promise": "promise",
@@ -43,6 +43,8 @@ _TITLE = {
 }
 _ALLOWED_STATUS = {
     "discovered",
+    "known",
+    "announced",
     "encountered",
     "visited",
     "active",
@@ -60,13 +62,6 @@ _ALLOWED_STATUS = {
     "dead",
     "defeated",
 }
-
-
-def _entry_id(session_id: int, category: str, stable_fact_id: str) -> str:
-    """Return a stable, session-scoped link handle without exposing a canonical identity."""
-    raw = f"edgar-journal-v1:{session_id}:{category}:{stable_fact_id}".encode()
-    digest = base64.urlsafe_b64encode(hashlib.blake2s(raw, digest_size=16).digest())
-    return "entry_" + digest.decode("ascii").rstrip("=")
 
 
 def _fact_event(fact: StoryFact, event_ids: set[int]) -> int | None:
@@ -89,11 +84,10 @@ def _citation(public_fact: dict[str, Any]) -> str | None:
 
 
 def _safe_status(fact: StoryFact) -> str | None:
-    # Clock completion is currently inferred from its private clock_max by the validator.
-    # Until the ledger records an explicit player-reveal marker, only qualitative urgency is
-    # safe to expose; terminal status and count of updates can reveal a hidden threshold.
     if fact.kind == "clock":
-        return "advanced"
+        disclosure = getattr(fact, "clock_disclosure", None)
+        if disclosure is None or not disclosure.completion:
+            return "advanced"
     return fact.status if fact.status in _ALLOWED_STATUS else None
 
 
@@ -108,6 +102,8 @@ def project_player_journal(
     session_id: int,
     state: dict[str, Any],
     narration_events: Iterable[EventLog],
+    *,
+    active_character_id: int | None = None,
 ) -> JournalRead:
     """Build the complete safe projection for one selected session.
 
@@ -133,11 +129,33 @@ def project_player_journal(
     facts = [StoryFact.model_validate(raw) for raw in state.get("facts", [])]
     facts.sort(key=lambda fact: (event_order.get(fact.event_id, 0), fact.event_id or 0))
     safe_records: list[tuple[StoryFact, dict[str, Any], str, int | None]] = []
+    object_ownership: dict[str, str] = {}
     for fact in facts:
+        public_fact = player_story_effect(fact)
+        if public_fact is None:
+            continue
+        if fact.kind in {"acquire", "consume", "transfer"} and fact.target.kind == "object":
+            identity = story_target_id(fact.target)
+            if fact.kind == "acquire":
+                destination = fact.destination or ""
+                if active_character_id is None:
+                    object_ownership[identity] = "untracked"
+                elif destination == f"character:{active_character_id}":
+                    object_ownership[identity] = "carried"
+                elif destination.startswith("character:"):
+                    object_ownership[identity] = "with_another_character"
+                else:
+                    object_ownership[identity] = "untracked"
+            elif fact.kind == "transfer":
+                object_ownership[identity] = "left_behind"
+            else:
+                object_ownership[identity] = "consumed"
+            continue
         category = _CATEGORY.get(fact.kind)
+        if fact.kind == "discover" and getattr(fact, "knowledge_kind", None) == "hint":
+            category = "hint"
         if category is None:
             continue
-        public_fact = player_story_effect(fact)
         status = _safe_status(fact)
         if public_fact is None or status is None:
             continue
@@ -145,7 +163,12 @@ def project_player_journal(
         safe_records.append(
             (
                 fact,
-                {"name": public_fact["name"], "text": public_fact["text"], "origins": public_fact["origins"]},
+                {
+                    "name": public_fact["name"],
+                    "text": public_fact["text"],
+                    "origins": public_fact["origins"],
+                    "quantity": public_fact.get("quantity"),
+                },
                 category,
                 _fact_event(fact, set(event_order)),
             )
@@ -153,15 +176,17 @@ def project_player_journal(
 
     # The latest committed, player-named location is the only location we can call current.
     # Its exact text remains attached as an entry and is never reconstructed from prose.
-    place_at_event: dict[int, str | None] = {}
+    place_at_event: dict[int, tuple[str | None, str | None]] = {}
     latest_place: str | None = None
-    for _, public_fact, category, event_id in safe_records:
-        if category == "place":
+    latest_place_entry_id: str | None = None
+    for fact, public_fact, category, event_id in safe_records:
+        if category == "place" and fact.kind in {"visit", "move"}:
             latest_place = public_fact["name"] or None
+            latest_place_entry_id = journal_entry_id(session_id, "place", fact.fact_id)
         if event_id is not None:
             # If one narration commits more than one location-related fact, origins from
             # that turn resolve to the location after all of its committed facts.
-            place_at_event[event_id] = latest_place
+            place_at_event[event_id] = (latest_place, latest_place_entry_id)
 
     grouped: dict[tuple[str, str], list[tuple[StoryFact, dict[str, Any], int | None]]] = defaultdict(list)
     # The immutable ledger order also resolves multiple consequences in one narration.
@@ -172,12 +197,20 @@ def project_player_journal(
 
     # Resolve promise actors only to a person already present in this same earned projection.
     known_people: dict[str, tuple[str, str]] = {}
+    known_object_clues: dict[str, str] = {}
     for (category, stable_id), records in grouped.items():
+        first_fact = records[0][0]
+        if category in {"clue", "hint"}:
+            related_object = getattr(first_fact, "related_object", None)
+            if related_object is not None:
+                known_object_clues[story_target_id(related_object)] = journal_entry_id(
+                    session_id, category, stable_id
+                )
         if category != "person":
             continue
         names = [record[1]["name"] for record in records if record[1]["name"]]
         if names:
-            known_people[stable_id] = (_entry_id(session_id, category, stable_id), names[0])
+            known_people[stable_id] = (journal_entry_id(session_id, category, stable_id), names[-1])
 
     built: list[tuple[int, JournalEntry]] = []
     for (category, stable_id), records in grouped.items():
@@ -185,12 +218,14 @@ def project_player_journal(
         first_fact, first_public, first_event_id = records[0]
         latest_fact, _, _ = records[-1]
         safe_names = [record[1]["name"] for record in records if record[1]["name"]]
-        title = safe_names[0] if safe_names else _TITLE[category]
+        title = safe_names[-1] if safe_names else _TITLE[category]
         origin_event_id = first_event_id
         if first_fact.origin_turn_id:
             origin_event_id = turn_events.get(first_fact.origin_turn_id, origin_event_id)
         origin_turn = event_order.get(origin_event_id) if origin_event_id is not None else None
-        origin_place = place_at_event.get(origin_event_id) if origin_event_id is not None else None
+        origin_context = place_at_event.get(origin_event_id) if origin_event_id is not None else None
+        origin_place = origin_context[0] if origin_context else None
+        origin_place_entry_id = origin_context[1] if origin_context else None
         actor: str | None = None
         related_entry_id: str | None = None
         if category == "promise" and first_fact.promise_actor is not None:
@@ -198,19 +233,45 @@ def project_player_journal(
             if actor_record is not None:
                 related_entry_id, actor = actor_record
 
+        related_entry_ids: list[str] = []
+        if category == "consequence" and first_fact.target.kind == "object":
+            object_clue_id = known_object_clues.get(story_target_id(first_fact.target))
+            if object_clue_id:
+                related_entry_ids.append(object_clue_id)
+            if origin_place_entry_id:
+                related_entry_ids.append(origin_place_entry_id)
+        ownership: str | None = None
+        related_object = getattr(first_fact, "related_object", None)
+        if category in {"clue", "hint"} and related_object is not None:
+            ownership = object_ownership.get(story_target_id(related_object), "untracked")
+
         history: list[JournalStatusChange] = []
         if category == "clock":
-            # The old ledger has no explicit reveal bit, and validator-generated `completed`
-            # may encode a private maximum. Keep one qualitative state with no progress count.
-            history = [
-                JournalStatusChange(
-                    status="advanced",
-                    turn_number=origin_turn,
-                    history_event_id=origin_event_id,
+            # A later current-value reveal does not disclose earlier private update counts.
+            # Keep the original qualitative observation, then only explicitly public updates.
+            history = [JournalStatusChange(
+                status=_safe_status(first_fact) or "advanced",  # type: ignore[arg-type]
+                turn_number=origin_turn,
+                history_event_id=origin_event_id,
+            )]
+            for fact, _, accessible_event_id in records[1:]:
+                disclosure = fact.clock_disclosure
+                if disclosure is None or not (disclosure.current or disclosure.completion):
+                    continue
+                item = JournalStatusChange(
+                    status=_safe_status(fact) or "advanced",  # type: ignore[arg-type]
+                    turn_number=event_order.get(accessible_event_id) if accessible_event_id is not None else None,
+                    history_event_id=accessible_event_id,
                 )
-            ]
+                if history[-1] != item:
+                    history.append(item)
         else:
+            place_visited = False
             for fact, _, accessible_event_id in records:
+                # Learning the name of a place after visiting it cannot turn an explored
+                # location back into an unvisited location.
+                if category == "place" and fact.kind == "learn_place" and place_visited:
+                    continue
                 status = _safe_status(fact)
                 if status is None:
                     continue
@@ -222,12 +283,20 @@ def project_player_journal(
                 )
                 if not history or history[-1] != item:
                     history.append(item)
+                if category == "place" and fact.kind in {"visit", "move"} and status == "visited":
+                    place_visited = True
         current_status = _safe_status(latest_fact)
+        if category == "place" and any(fact.kind in {"visit", "move"} for fact, _, _ in records):
+            current_status = "visited"
         if current_status is None:
             continue
+        clock_disclosure = getattr(latest_fact, "clock_disclosure", None)
+        clock_is_current = category == "clock" and clock_disclosure is not None and clock_disclosure.current
+        clock_maximum = clock_disclosure.maximum if category == "clock" and clock_disclosure else None
+        quantity = latest_fact.quantity if clock_is_current else None
         citation = _citation(first_public)
         entry = JournalEntry(
-            id=_entry_id(session_id, category, stable_id),
+            id=journal_entry_id(session_id, category, stable_id),
             category=category,  # type: ignore[arg-type]
             title=title,
             # Preserve the first exact earned text as the immutable original. Status changes
@@ -235,7 +304,9 @@ def project_player_journal(
             text=first_public["text"],
             status=current_status,  # type: ignore[arg-type]
             # Candidate counts are withheld until the ledger gets an explicit player reveal.
-            quantity=None,
+            quantity=quantity,
+            clock_maximum=clock_maximum,
+            ownership=ownership,  # type: ignore[arg-type]
             origin=JournalOrigin(
                 turn_number=origin_turn,
                 history_event_id=origin_event_id,
@@ -245,9 +316,10 @@ def project_player_journal(
             ),
             history=history,
             related_entry_id=related_entry_id,
+            related_entry_ids=related_entry_ids,
         )
         # Undisclosed clock changes must not leak through the journal ordering either.
-        ordered_records = records[:1] if category == "clock" else records
+        ordered_records = records if category != "clock" or clock_is_current else records[:1]
         latest_sequence = max(
             (fact_order[fact.effect_id] for fact, _, _ in ordered_records),
             default=0,
@@ -256,7 +328,10 @@ def project_player_journal(
 
     built.sort(key=lambda item: item[0], reverse=True)
     entries = [entry for _, entry in built]
-    current_place = next((entry for _, entry in built if entry.category == "place"), None)
+    current_place = next(
+        (entry for _, entry in built if entry.id == latest_place_entry_id),
+        None,
+    )
     active_goal = next(
         (entry for _, entry in built if entry.category == "goal" and entry.status == "active"),
         None,

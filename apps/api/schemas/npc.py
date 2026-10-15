@@ -14,9 +14,13 @@ class NPCRead(BaseModel):
 
     id: int
     campaign_id: int
+    session_id: int | None = None
     name: str
     disposition: str
     stat_block: dict
+    # Opaque link to this earned person in the selected session's player journal.
+    # Manual campaign notes and non-person combat records have no journal person link.
+    journal_entry_id: str | None = None
 
 
 class NPCUpdate(BaseModel):

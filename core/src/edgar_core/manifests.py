@@ -68,11 +68,12 @@ class StatReference(Record):
 
 class Entity(Record):
     entity_id: Identifier
-    kind: Literal["actor", "clue", "hazard", "ending"]
+    kind: Literal["actor", "clue", "hint", "hazard", "ending"]
     title: str = Field(min_length=1, max_length=200)
     discovery_flag: Identifier | None = None
     reveal_on: Literal["success", "always"] = "success"
     stat_reference: StatReference | None = None
+    object_id: Identifier | None = None
 
 
 class Passage(Record):
@@ -85,6 +86,20 @@ class Passage(Record):
     entity_ids: list[Identifier] = Field(default_factory=list)
     audience: Literal["unreviewed", "player", "planner", "excluded"] = "unreviewed"
     requires: dict[Identifier, str] = Field(default_factory=dict)
+    # Explicit mentioned-place identities. Learning these does not visit or move there.
+    known_scene_ids: list[Identifier] = Field(default_factory=list)
+
+
+class ClockReveal(Record):
+    """None withholds a field; {} allows it once the clock fact is earned.
+
+    Nonempty predicates are evaluated against committed session flags, never model prose.
+    Each disclosure is independent: knowing a current value need not reveal its maximum.
+    """
+
+    current_requires: dict[Identifier, str] | None = None
+    maximum_requires: dict[Identifier, str] | None = None
+    completion_requires: dict[Identifier, str] | None = None
 
 
 class StoryDefinition(Record):
@@ -102,6 +117,26 @@ class StoryDefinition(Record):
     consumable: bool = False
     portable: bool = True
     initial_owner: str | None = Field(default=None, max_length=200)
+    announcement_passage_ids: list[Identifier] = Field(default_factory=list)
+    clock_reveal: ClockReveal | None = None
+
+
+class OpeningJournalSeed(Record):
+    """Explicit reviewed facts earned with the first opening, not the private plan."""
+
+    kind: Literal["discover", "encounter", "visit", "learn_place", "objective", "milestone"]
+    target_id: Identifier
+    status: Literal[
+        "discovered",
+        "encountered",
+        "visited",
+        "known",
+        "announced",
+        "active",
+        "completed",
+        "failed",
+    ]
+    passage_ids: list[Identifier] = Field(min_length=1, max_length=12)
 
 
 _POLICY_CATEGORIES = {
@@ -112,6 +147,7 @@ _POLICY_CATEGORIES = {
 }
 _POLICY_TARGET_KIND = {
     "move": "scene",
+    "learn_place": "scene",
     "discover": "entity",
     "encounter": "entity",
     "relationship": "entity",
@@ -175,12 +211,15 @@ class PolicyEffect(Record):
         "use",
         "environment",
         "move",
+        "learn_place",
     ]
     target_id: Identifier
     status: Literal[
         "discovered",
         "encountered",
         "visited",
+        "known",
+        "announced",
         "active",
         "completed",
         "failed",
@@ -269,8 +308,9 @@ class ResolutionPolicy(Record):
                 "encounter": {"encountered"},
                 "relationship": {"friendly", "neutral", "hostile"},
                 "move": {"visited"},
-                "objective": {"active", "completed", "failed"},
-                "milestone": {"completed"},
+                "learn_place": {"known"},
+                "objective": {"announced", "active", "completed", "failed"},
+                "milestone": {"announced", "active", "completed", "failed"},
                 "clock": {"advanced", "completed"},
                 "acquire": {"acquired"},
                 "consume": {"consumed"},
@@ -306,6 +346,7 @@ class AdventureManifest(Record):
     milestones: list[StoryDefinition] = Field(default_factory=list)
     promises: list[StoryDefinition] = Field(default_factory=list)
     clocks: list[StoryDefinition] = Field(default_factory=list)
+    opening_journal: list[OpeningJournalSeed] = Field(default_factory=list, max_length=20)
     resolution_policies: list[ResolutionPolicy] = Field(default_factory=list)
     reviewed_sha256: Digest | None = None
     reviewed_by: str | None = Field(default=None, min_length=1, max_length=200)
@@ -336,6 +377,8 @@ class AdventureManifest(Record):
                 raise ValueError("Passage span is empty or reversed.")
             if not set(passage.scene_ids) <= scenes or not set(passage.entity_ids) <= entities:
                 raise ValueError("Passage names an unknown scene or entity.")
+            if not set(passage.known_scene_ids) <= scenes:
+                raise ValueError("Known place names an unknown scene.")
             if passage.audience not in ("excluded", "unreviewed") and not passage.scene_ids:
                 raise ValueError("Playable passages need an explicit scene scope.")
         for category in (
@@ -353,6 +396,16 @@ class AdventureManifest(Record):
                     or not set(definition.passage_ids) <= passages
                 ):
                     raise ValueError("Story definition names an unknown scene or passage.")
+                if not set(definition.announcement_passage_ids) <= set(definition.passage_ids):
+                    raise ValueError("Announcement evidence must belong to its definition.")
+                if (
+                    definition.announcement_passage_ids
+                    and category is not self.objectives
+                    and category is not self.milestones
+                ):
+                    raise ValueError("Only goals and milestones can be announced.")
+                if definition.clock_reveal is not None and category is not self.clocks:
+                    raise ValueError("Only clocks can declare clock disclosure.")
                 if not definition.statuses or any(
                     status
                     not in {
@@ -360,6 +413,7 @@ class AdventureManifest(Record):
                         "encountered",
                         "visited",
                         "active",
+                        "announced",
                         "completed",
                         "failed",
                         "fulfilled",
@@ -412,6 +466,12 @@ class AdventureManifest(Record):
                         raise ValueError("Resolution effect evidence must support its definition.")
                     if effect.status not in definition.statuses:
                         raise ValueError("Resolution effect has an unsupported definition status.")
+                    if effect.status == "announced" and not set(effect.passage_ids) <= set(
+                        definition.announcement_passage_ids
+                    ):
+                        raise ValueError(
+                            "Announcement effects need explicit reviewed announcement evidence."
+                        )
                     if effect.kind == "clock" and effect.quantity_delta is not None:
                         if effect.status not in {"advanced", "completed"}:
                             raise ValueError("Clock effects must advance or complete a clock.")
@@ -421,6 +481,7 @@ class AdventureManifest(Record):
                         raise ValueError("Resolution effect names an unknown entity.")
                     if effect.kind == "discover" and entity.kind not in {
                         "clue",
+                        "hint",
                         "hazard",
                         "ending",
                     }:
@@ -436,7 +497,16 @@ class AdventureManifest(Record):
                     }:
                         raise ValueError("Resolution effect evidence must identify its entity.")
                 elif target_kind == "scene":
-                    if effect.target_id not in scenes or effect.status != "visited":
+                    if effect.kind == "learn_place":
+                        if effect.target_id not in scenes or not all(
+                            effect.target_id in p.known_scene_ids
+                            for p in self.passages
+                            if p.passage_id in effect.passage_ids
+                        ):
+                            raise ValueError(
+                                "Known-place effects need explicit mentioned-place evidence."
+                            )
+                    elif effect.target_id not in scenes or effect.status != "visited":
                         raise ValueError("Move effects need a known scene with visited status.")
                 else:
                     raise ValueError("Resolution effect kind has no reviewed definition category.")
@@ -463,7 +533,7 @@ class AdventureManifest(Record):
                             )
                 if effect.kind == "discover":
                     entity = entities_by_id[effect.target_id]
-                    if entity.kind not in {"clue", "hazard", "ending"}:
+                    if entity.kind not in {"clue", "hint", "hazard", "ending"}:
                         raise ValueError(
                             "Only clues, hazards or endings can be policy discoveries."
                         )
@@ -492,7 +562,13 @@ class AdventureManifest(Record):
         for clock in self.clocks:
             if clock.clock_max is None:
                 raise ValueError("Reviewed clocks need an explicit maximum.")
+        self._validate_opening_journal()
         for entity in self.entities:
+            if entity.object_id is not None and (
+                entity.kind not in {"clue", "hint"}
+                or entity.object_id not in {d.canonical_id for d in self.objects}
+            ):
+                raise ValueError("Clue object binding needs a reviewed object in this manifest.")
             reference = entity.stat_reference
             if reference is None:
                 continue
@@ -514,6 +590,66 @@ class AdventureManifest(Record):
                     )
         return self
 
+    def _validate_opening_journal(self) -> None:
+        passages = {p.passage_id: p for p in self.passages}
+        seen = set()
+        for seed in self.opening_journal:
+            key = (seed.kind, seed.target_id)
+            if key in seen:
+                raise ValueError("Opening journal cannot repeat a fact.")
+            seen.add(key)
+            if any(pid not in passages for pid in seed.passage_ids):
+                raise ValueError("Opening seed names an unknown passage.")
+            evidence = [passages[pid] for pid in seed.passage_ids]
+            if any(
+                p.audience != "player" or p.requires or self.opening_scene_id not in p.scene_ids
+                for p in evidence
+            ):
+                raise ValueError(
+                    "Opening seeds require unconditional player passages in the opening."
+                )
+            if seed.kind in {"discover", "encounter"}:
+                entity = next((e for e in self.entities if e.entity_id == seed.target_id), None)
+                if entity is None or not all(seed.target_id in p.entity_ids for p in evidence):
+                    raise ValueError("Opening entity seed needs its own exact entity evidence.")
+                if seed.kind == "encounter":
+                    valid = entity.kind == "actor" and seed.status == "encountered"
+                else:
+                    valid = (
+                        entity.kind in {"clue", "hint", "hazard", "ending"}
+                        and seed.status == "discovered"
+                    )
+            elif seed.kind in {"visit", "learn_place"}:
+                valid = (
+                    seed.kind == "visit"
+                    and seed.target_id == self.opening_scene_id
+                    and seed.status == "visited"
+                ) or (
+                    seed.kind == "learn_place"
+                    and seed.status == "known"
+                    and all(seed.target_id in p.known_scene_ids for p in evidence)
+                )
+            else:
+                definitions = self.objectives if seed.kind == "objective" else self.milestones
+                definition = next(
+                    (d for d in definitions if d.canonical_id == seed.target_id), None
+                )
+                valid = bool(
+                    definition
+                    and not definition.requires
+                    and self.opening_scene_id in definition.scene_ids
+                    and set(seed.passage_ids) <= set(definition.passage_ids)
+                    and seed.status in definition.statuses
+                )
+                if seed.status == "announced":
+                    valid = valid and set(seed.passage_ids) <= set(
+                        definition.announcement_passage_ids if definition else []
+                    )
+            if not valid:
+                raise ValueError(
+                    "Opening journal seed has an unsupported target, state or evidence."
+                )
+
 
 def manifest_digest(manifest: AdventureManifest) -> str:
     """Receipt covers all structure/classification; editing a published draft revokes it."""
@@ -525,6 +661,19 @@ def manifest_digest(manifest: AdventureManifest) -> str:
             entity.pop("reveal_on")
         if entity["stat_reference"] is None:
             entity.pop("stat_reference")
+        if entity["object_id"] is None:
+            entity.pop("object_id")
+    for passage in body["passages"]:
+        if not passage["known_scene_ids"]:
+            passage.pop("known_scene_ids")
+    for category in ("objects", "objectives", "milestones", "promises", "clocks"):
+        for definition in body[category]:
+            if not definition["announcement_passage_ids"]:
+                definition.pop("announcement_passage_ids")
+            if definition["clock_reveal"] is None:
+                definition.pop("clock_reveal")
+    if not body["opening_journal"]:
+        body.pop("opening_journal")
     for key in ("objects", "objectives", "milestones", "promises", "clocks"):
         if not body[key]:
             body.pop(key)

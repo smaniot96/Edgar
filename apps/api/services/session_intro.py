@@ -32,7 +32,9 @@ from edgar_core.sources import (
 from . import adventure_manifests
 from .campaign_sources import require_campaign_sources, source_error
 from .character_assignments import character_play_state
+from .opening_journal import opening_journal_effects
 from .roll_record import ROLL_NO_ROLL
+from .story_state import persist_story_effects
 
 _INTRO_TEMPERATURE = 0.7
 
@@ -48,7 +50,7 @@ INTRO_SYSTEM = (
 )
 
 
-def _reviewed_opening(primary: str, edition: str) -> tuple[str, list[dict]]:
+def _reviewed_opening(primary: str, edition: str) -> tuple[str, list[dict], list]:
     """The first binding owns the opening; secondary modules cannot replace its selection."""
     manifests = adventure_manifests.campaign_manifests([primary])
     scene_id = manifests[primary]["opening_scene_id"]
@@ -58,7 +60,8 @@ def _reviewed_opening(primary: str, edition: str) -> tuple[str, list[dict]]:
         raise ManifestError(
             "Choose an opening scene with reviewed player text compatible with the campaign edition."
         )
-    return scene_id, passages
+    seeds = opening_journal_effects(primary, manifests[primary], passages, edition)
+    return scene_id, passages, seeds
 
 
 async def _has_narration(db: AsyncSession, session_id: int) -> bool:
@@ -93,9 +96,10 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     edition = getattr(campaign, "rules_edition", None) or DEFAULT_RULES_EDITION
     opening_scene_id = None
     passages: list[dict] = []
+    seeds = []
     if not homebrew:
         try:
-            opening_scene_id, passages = await asyncio.to_thread(
+            opening_scene_id, passages, seeds = await asyncio.to_thread(
                 _reviewed_opening, adventure_collections[0], edition
             )
         except ManifestError as exc:
@@ -128,7 +132,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     if opening_text:
         context_parts.append(
             "Open the story at the reviewed opening scene. "
-            "Use only these complete player-approved passages; citation labels identify their "
+            "Use only these complete reviewed player-visible passages; citation labels identify their "
             "sources and must not be narrated. Do not skip ahead to later scenes:\n" + opening_text
         )
     else:
@@ -151,26 +155,48 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     if not narration.strip():
         return None
 
+    if not homebrew:
+        # Preparation may have been replaced while the provider was running. Never attach
+        # an old seed to a newly reviewed source or mix their opening evidence.
+        try:
+            current_opening = await asyncio.to_thread(
+                _reviewed_opening, adventure_collections[0], edition
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="The prepared adventure changed while opening. Retry to use the current version.",
+            ) from exc
+        if current_opening != (opening_scene_id, passages, seeds):
+            raise HTTPException(
+                status_code=409,
+                detail="The prepared adventure changed while opening. Retry to use the current version.",
+            )
+
     if opening_scene_id is not None:
         session.current_scene_id = opening_scene_id
 
     # Persist as the first narration event (empty player_input => renders as a DM-only message).
-    db.add(
-        EventLog(
-            session_id=session.id,
-            event_type="narration",
-            payload={
-                "player_input": "",
-                "narration": narration,
-                "current_scene_id": session.current_scene_id,
-                "citations": citations,
-                "rules_edition": edition,
-                # An opening scene rolls no dice; say so rather than leaving it unrecorded.
-                "roll_status": ROLL_NO_ROLL,
-                "roll": None,
-            },
-        )
+    event = EventLog(
+        session_id=session.id,
+        event_type="narration",
+        payload={
+            "player_input": "",
+            "narration": narration,
+            "current_scene_id": session.current_scene_id,
+            "citations": citations,
+            "rules_edition": edition,
+            # An opening scene rolls no dice; say so rather than leaving it unrecorded.
+            "roll_status": ROLL_NO_ROLL,
+            "roll": None,
+        },
     )
+    db.add(event)
+    if seeds:
+        await db.flush()
+        await persist_story_effects(
+            db, session, seeds, event_id=event.id, expected_state={"facts": []}
+        )
 
     return {
         "narration": narration,

@@ -20,6 +20,7 @@ StoryKind = Literal[
     "discover",
     "encounter",
     "visit",
+    "learn_place",
     "move",
     "objective",
     "milestone",
@@ -36,6 +37,8 @@ StoryStatus = Literal[
     "discovered",
     "encountered",
     "visited",
+    "known",
+    "announced",
     "active",
     "completed",
     "failed",
@@ -84,6 +87,12 @@ class StoryEffect(StoryRecord):
     promise_actor: StoryRef | None = None
 
 
+class ClockDisclosure(StoryRecord):
+    current: bool = False
+    maximum: int | None = Field(default=None, ge=1, le=1000)
+    completion: bool = False
+
+
 class AcceptedStoryEffect(StoryEffect):
     effect_id: Digest
     turn_id: str = Field(min_length=1, max_length=100)
@@ -92,6 +101,10 @@ class AcceptedStoryEffect(StoryEffect):
     source_refs: list[dict] = Field(default_factory=list)
     evidence_kind: Literal["source", "player_utterance"] = "source"
     origin_turn_id: str | None = None
+    # Validator-owned metadata, never accepted from a model's StoryEffect proposal.
+    knowledge_kind: Literal["hint"] | None = None
+    clock_disclosure: ClockDisclosure | None = None
+    related_object: StoryRef | None = None
 
 
 class StoryFact(AcceptedStoryEffect):
@@ -118,12 +131,22 @@ def accept_story_effect(
     display_name: str = "",
     evidence_kind: Literal["source", "player_utterance"] = "source",
     origin_turn_id: str | None = None,
+    knowledge_kind: Literal["hint"] | None = None,
+    clock_disclosure: ClockDisclosure | None = None,
+    related_object: StoryRef | None = None,
 ) -> AcceptedStoryEffect:
     """Seal a previously validated effect; identity deduplicates static facts and per-turn mutable operations."""
     body = effect.model_dump()
     body["source_reference_ids"] = sorted(set(body["source_reference_ids"]))
     body["knowledge_fact_ids"] = sorted(set(body["knowledge_fact_ids"]))
     identity = dict(body)
+    for name, value in (
+        ("knowledge_kind", knowledge_kind),
+        ("clock_disclosure", clock_disclosure),
+        ("related_object", related_object),
+    ):
+        if value is not None:
+            identity[name] = value.model_dump() if isinstance(value, BaseModel) else value
     if identity["promise_actor"] is None:
         identity.pop("promise_actor")
     if effect.kind in {
@@ -151,6 +174,9 @@ def accept_story_effect(
         display_name=display_name,
         evidence_kind=evidence_kind,
         origin_turn_id=origin_turn_id,
+        knowledge_kind=knowledge_kind,
+        clock_disclosure=clock_disclosure,
+        related_object=related_object,
     )
 
 
@@ -203,10 +229,21 @@ def player_story_effect(effect: AcceptedStoryEffect) -> dict | None:
     return {
         "effect_id": effect.effect_id,
         "kind": effect.kind,
-        "status": effect.status,
+        "status": (
+            "advanced"
+            if effect.kind == "clock"
+            and not (effect.clock_disclosure and effect.clock_disclosure.completion)
+            else effect.status
+        ),
         "name": known_story_name(effect),
         "text": effect.player_text,
-        "quantity": effect.quantity,
+        "quantity": (
+            effect.quantity
+            if effect.kind != "clock"
+            or (effect.clock_disclosure and effect.clock_disclosure.current)
+            else None
+        ),
+        "clock_maximum": effect.clock_disclosure.maximum if effect.clock_disclosure else None,
         "origins": origins,
         "evidence_kind": effect.evidence_kind,
         "origin_turn_id": effect.origin_turn_id,

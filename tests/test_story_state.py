@@ -15,6 +15,12 @@ from db.postgres.models import NPC, Campaign, EventLog, Session, StoryFact as St
 from edgar_core.story import StoryEffect, StoryRef, accept_story_effect
 
 
+def test_journal_person_link_format_stays_stable():
+    from apps.api.services.journal_identity import journal_entry_id
+
+    assert journal_entry_id(42, "person", "a" * 64) == "entry_myHG5XICxbfVX_iqRPRzHA"
+
+
 async def setup(db):
     user = User(email="story@example.test")
     db.add(user)
@@ -165,22 +171,41 @@ async def test_provenance_staleness_identity_and_atomic_rollback(db_session):
 
 
 async def test_legacy_npc_rows_stay_campaign_wide_and_new_rows_are_scoped(api_client, db_session):
+    from apps.api.services.journal_identity import journal_entry_id
+
     campaign, sessions, events = await setup(db_session)
     legacy = NPC(
         campaign_id=campaign.id, name="Manual", disposition="friendly", stat_block={"old": True}
     )
     db_session.add(legacy)
-    await persist_story_effects(
-        db_session, sessions[0], [effect("encounter", "odo", "encountered")], event_id=events[0].id
+    encounter = effect(
+        "encounter",
+        "odo",
+        "encountered",
+        player_text="Private source prose that must never appear in the people list.",
     )
+    await persist_story_effects(db_session, sessions[0], [encounter], event_id=events[0].id)
     await db_session.commit()
     response = await api_client.get(f"/api/campaigns/{campaign.id}/npcs")
     assert [n["name"] for n in response.json()] == ["Manual"]
+    assert response.json()[0]["session_id"] is None
+    assert response.json()[0]["journal_entry_id"] is None
     response = await api_client.get(
         f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}"
     )
     assert len(response.json()) == 2
+    assert response.headers["x-npc-tracking"] == "available"
     npc_id = next(n["id"] for n in response.json() if n["name"] != "Manual")
+    learned = next(n for n in response.json() if n["name"] != "Manual")
+    assert learned["session_id"] == sessions[0].id
+    assert learned["stat_block"] == {}
+    assert "Private source prose" not in response.text
+    assert "never public" not in response.text
+    from edgar_core.story import story_target_id
+
+    assert learned["journal_entry_id"] == journal_entry_id(
+        sessions[0].id, "person", story_target_id(encounter.target)
+    )
     assert (await api_client.get(f"/api/npcs/{npc_id}")).status_code == 404
     assert (
         await api_client.get(f"/api/npcs/{npc_id}?session_id={sessions[0].id}")
@@ -188,6 +213,86 @@ async def test_legacy_npc_rows_stay_campaign_wide_and_new_rows_are_scoped(api_cl
     assert (
         await api_client.get(f"/api/npcs/{npc_id}?session_id={sessions[1].id}")
     ).status_code == 404
+    other = Campaign(title="Other campaign", system="5e", created_by=campaign.created_by)
+    db_session.add(other)
+    await db_session.commit()
+    assert (
+        await api_client.get(f"/api/campaigns/{other.id}/npcs?session_id={sessions[0].id}")
+    ).status_code == 404
+
+
+async def test_legacy_session_tracking_state_and_earned_name_refresh(api_client, db_session):
+    campaign, sessions, events = await setup(db_session)
+    legacy = await api_client.get(f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}")
+    assert legacy.headers["x-npc-tracking"] == "legacy_untracked"
+
+    private = effect("discover", "secret", "discovered", player_text="A private ending.")
+    private = accept_story_effect(
+        StoryEffect.model_validate(private.model_dump(include=set(StoryEffect.model_fields))),
+        turn_id="turn-one",
+        display_name="secret ending",
+        source_refs=[{**private.source_refs[0], "audience": "planner"}],
+    )
+    await persist_story_effects(db_session, sessions[0], [private], event_id=events[0].id)
+    await db_session.commit()
+    still_legacy = await api_client.get(
+        f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}"
+    )
+    assert still_legacy.headers["x-npc-tracking"] == "legacy_untracked"
+
+    unnamed = effect(
+        "encounter",
+        "odo",
+        "encountered",
+        player_text="A hooded stranger greets you.",
+    )
+    await persist_story_effects(db_session, sessions[0], [unnamed], event_id=events[0].id)
+    await db_session.commit()
+    assert (
+        await api_client.get(f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}")
+    ).json()[0]["name"] == "Encountered person"
+
+    named = effect(
+        "encounter", "odo", "encountered", player_text="Known person greets you by name."
+    )
+    await persist_story_effects(db_session, sessions[0], [named], event_id=events[0].id)
+    await db_session.commit()
+    refreshed = await api_client.get(
+        f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}"
+    )
+    assert refreshed.headers["x-npc-tracking"] == "available"
+    assert [npc["name"] for npc in refreshed.json()] == ["Known person"]
+
+
+async def test_selected_session_people_are_not_crowded_out_by_campaign_notes(
+    api_client, db_session
+):
+    from apps.api.routers._common import DEFAULT_PAGE_SIZE
+
+    campaign, sessions, events = await setup(db_session)
+    db_session.add_all(
+        [
+            NPC(
+                campaign_id=campaign.id,
+                name=f"Manual note {index}",
+                disposition="friendly",
+                stat_block={},
+            )
+            for index in range(DEFAULT_PAGE_SIZE)
+        ]
+    )
+    encounter = effect("encounter", "odo", "encountered", player_text="Known person is here.")
+    await persist_story_effects(db_session, sessions[0], [encounter], event_id=events[0].id)
+    await db_session.commit()
+
+    response = await api_client.get(
+        f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}"
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == DEFAULT_PAGE_SIZE
+    assert any(npc["session_id"] == sessions[0].id for npc in response.json())
+    assert response.json()[0]["session_id"] == sessions[0].id
 
 
 def test_projection_hides_unearned_name_ids_and_private_metadata():

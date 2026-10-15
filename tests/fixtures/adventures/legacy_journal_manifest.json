@@ -1,0 +1,40 @@
+{
+  "manifest_version": 1,
+  "source": "legacy.pdf",
+  "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "extraction_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "rules_edition": "2014",
+  "opening_scene_id": "hall",
+  "scenes": [
+    {
+      "scene_id": "hall",
+      "title": "Hall",
+      "links": [],
+      "references": []
+    }
+  ],
+  "entities": [],
+  "passages": [
+    {
+      "passage_id": "opening",
+      "page": 1,
+      "start": 0,
+      "end": 4,
+      "text_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "scene_ids": [
+        "hall"
+      ],
+      "entity_ids": [],
+      "audience": "player",
+      "requires": {}
+    }
+  ],
+  "objects": [],
+  "objectives": [],
+  "milestones": [],
+  "promises": [],
+  "clocks": [],
+  "resolution_policies": [],
+  "reviewed_sha256": "58438804363438afe3883c59dc7928061bbf99e8a3eaafcfd5d916f324217368",
+  "reviewed_by": "legacy reviewer"
+}
