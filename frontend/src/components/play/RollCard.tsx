@@ -22,7 +22,13 @@ export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }
       <span className="font-semibold text-ink">{p.check}</span>
       <span aria-hidden className="text-ink-subtle">·</span>
       <span className="font-mono tabular-nums">
-        {p.expression ? <span className="text-ink-muted">{p.expression} = </span> : null}
+        {p.expression ? (
+          <span className="text-ink-muted">
+            {p.expression}
+            {p.faces ? <span title={`${p.mode}: both d20 faces rolled`}> [{p.faces.join(", ")}]</span> : null}
+            {" = "}
+          </span>
+        ) : null}
         <span className="font-semibold text-ink">{p.total}</span>
         {p.dc != null ? (
           <span className="text-ink-muted">

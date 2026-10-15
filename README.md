@@ -85,14 +85,22 @@ The engine simulates a deliberately simplified subset of 5e, and declares what i
 simulate (`GET /api/rules/supported-scope`):
 
 - Executed by the engine: d20 ability, skill, save and tool checks against DCs of 10/15/20/25;
-  weapon attacks with natural 1 and 20 handling; AC from the armor table; initiative; combat rounds
-  in initiative order; Fighter Second Wind (one use, spent by the player's action in or out of
-  combat and restored by a short or long rest; no automatic use at 0 HP); short and long rest
-  healing; healing potions taken from inventory.
-- Not supported: advantage and disadvantage, grapple/shove/pin/restraint, declared spell effects,
-  spell slots and concentration, condition effects, cover and positioning, bonus actions and
-  reactions, the Hit Dice ledger, and class features beyond Second Wind. A declared action of this
-  kind gets a narrative ruling and no mechanical effect.
+  weapon attacks with natural 1 and 20 handling and proficiency only where the class or sheet grants
+  it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
+  table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, spent by the
+  player's action in or out of combat and restored by a short or long rest; no automatic use at 0
+  HP); short and long rest healing; healing potions taken from inventory.
+- Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
+  are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
+  attacks have disadvantage, attacks against it have advantage) or knocks it prone (its attacks have
+  disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
+  release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
+  are shown in the combat roster and given to the narrator.
+- Not supported: advantage claimed by the player or model without an engine source, shove away and
+  other maneuvers, escape contests, declared spell effects, spell slots and concentration, other
+  condition effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and
+  class features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
+  mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   scaled down for a single level-1 hero.
 
