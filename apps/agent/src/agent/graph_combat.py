@@ -61,9 +61,13 @@ from pydantic import BaseModel, Field
 from agent.action_economy import (
     ACTION,
     BONUS_ACTION,
+    DASH,
+    DISENGAGE,
     DODGE,
     SECOND_WIND,
     Declared,
+    dash_declared,
+    disengage_declared,
     dodge_declared,
     economy_record,
     has_attack_words,
@@ -124,6 +128,19 @@ from agent.monster_stats import (
 )
 from agent.nodes import narrator_node, world_retriever_node
 from agent.nodes.rules_adjudicator import adjudicate
+from agent.positioning import (
+    MELEE,
+    RANGED,
+    attacks_from_band,
+    band_of,
+    initial_band,
+    move_refusal,
+    movement_steps,
+    plan_moves,
+    primary_melee_attack,
+    reach_refusal,
+    start_turn,
+)
 from agent.prompts import UNTRUSTED_INPUT_NOTICE, wrap_player_action
 from agent.resolution import (
     SECOND_WIND_REFUSAL,
@@ -181,8 +198,10 @@ _FLEE_NEGATION = re.compile(
 )
 _FLEE_PATTERNS = (
     re.compile(
+        # Disengage (EDG-044) and a retreat to range or away are moves, not leaving the fight.
         r"\b(?:i|we)\s+(?:try\s+to\s+|attempt\s+to\s+|decide\s+to\s+)?"
-        r"(?:flee|retreat|disengage|surrender|give\s+up|yield)\b",
+        r"(?:flee|surrender|give\s+up|yield|retreat(?!\s+(?:to\s+range|from|away|out\s+of\s+reach))"
+        r")\b",
         re.IGNORECASE,
     ),
     re.compile(
@@ -737,6 +756,8 @@ async def combat_round_node(state: AgentState) -> dict:
             return {**retr, "error": str(exc), "error_code": "creature_identity_unresolved"}
         if not enemies:
             return _ask_player(state, "Who are you fighting? Name the foe you attack.")
+        for e in enemies:  # EDG-044: where each foe starts (its record decides; see agent.positioning)
+            e["band"] = initial_band(stats_of(e))
         player_ac = _player_ac(character)
         player_combatant = {
             "name": "player",
@@ -818,6 +839,9 @@ async def combat_round_node(state: AgentState) -> dict:
     if spell_declared or (spell_plan is not None and bonus_spell is None):
         is_attack, is_spell = False, False
     dodge = not fled and dodge_declared(player_input)
+    dash = not fled and dash_declared(player_input)
+    disengage = not fled and disengage_declared(player_input)
+    moving = not fled and bool(movement_steps(player_input))
     # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
     wants_second_wind = (
         not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
@@ -828,8 +852,17 @@ async def combat_round_node(state: AgentState) -> dict:
         and not player.get("raging")
         and cf_left.get(RAGE, 0) > 0
     )
-    if dodge or wants_second_wind or bonus_spell is not None or rage_declared:
-        # A bonus action or Dodge sits beside an attack only when the player's own words name one.
+    if (
+        dodge
+        or dash
+        or disengage
+        or moving
+        or wants_second_wind
+        or bonus_spell is not None
+        or rage_declared
+    ):
+        # A bonus action, Dodge, Dash, Disengage or a move sits beside an attack only when the player's
+        # own words name one.
         is_attack = is_attack and has_attack_words(player_input)
     heal_item = None
     missing_item = False
@@ -849,6 +882,10 @@ async def combat_round_node(state: AgentState) -> dict:
     declared: list[Declared] = []
     if dodge:
         declared.append(DODGE)
+    if dash:
+        declared.append(DASH)
+    if disengage:
+        declared.append(DISENGAGE)
     if is_attack:
         declared.append(Declared("attack", ACTION, "attack"))
     if combat_action is not None and combat_action.kind != "release":
@@ -883,6 +920,31 @@ async def combat_round_node(state: AgentState) -> dict:
             return _ask_player(
                 state, f"Who do you cast {spell_plan.spell.name} at?", combat_state=combat_state
             )
+    # EDG-044: declared moves are free but change band at most once (twice with Dash). Planned on
+    # copies only: a refused turn changes no foe and rolls no die.
+    moves = plan_moves(
+        None if fled else player_input,
+        named,
+        [e for e in enemies if can_act(e)],
+        pick=lambda n: next(
+            (e for e in enemies if can_act(e) and _name_matches(n, e["name"])), None
+        ),
+    )
+    if moves.question:
+        return _ask_player(state, moves.question, combat_state=combat_state)
+    refused_move = move_refusal(hero, len(moves.steps), dash=dash)
+    if refused_move:
+        return _ask_player(state, refused_move, combat_state=combat_state)
+    # A melee attack or grapple cannot reach a foe beyond 5 feet; a ranged weapon or spell can.
+    attack_weapon = choose_weapon(
+        character, player_input, prefer_ranged=bool(_RANGED_HINT.search(player_input))
+    )
+    attack_ranged = bool(_RANGED_HINT.search(player_input)) or attack_weapon.ranged
+    if target is not None and not is_spell and not attack_ranged:
+        if moves.bands.get(id(target), band_of(target)) == RANGED and (
+            is_attack or combat_action is not None
+        ):
+            return _ask_player(state, reach_refusal(hero, target["name"]), combat_state=combat_state)
     # Typed effects this round's engine applied; the boundary and narrator read them.
     round_effects: list[str] = []
     round_modes: list[str] = []  # d20 mode of every attack rolled this round
@@ -914,19 +976,30 @@ async def combat_round_node(state: AgentState) -> dict:
         expr: str,
         damage_type: str | None = None,
         exact: bool = False,
+        ranged: bool = False,
+        within_five_feet: bool = False,
+        reaction: bool = False,
     ) -> None:
-        """One engine-rolled attack by an enemy. `exact` attacks keep their record's dice."""
+        """One engine-rolled attack by an enemy. `exact` attacks keep their record's dice.
+
+        `ranged` and `within_five_feet` (EDG-044) give the attack its reach disadvantage; `reaction`
+        marks an opportunity attack, which spends the foe's reaction (see `opportunity_attack`).
+        """
         round_actors.append(_display(e))
         if not any(a["id"] == stable_id(e) for a in actors):  # one entry per foe (multiattack)
             actors.append({"id": stable_id(e), "name": _display(e)})
-        mode = attack_roll_mode(e, player)
+        mode = attack_roll_mode(e, player, ranged=ranged, within_five_feet=within_five_feet)
         round_modes.append(mode)
         atk, draws = _roll_with_mode(f"1d20{bonus:+d}", mode)
-        dice_log.append(
-            _mode_log(atk, f"{e['name']} {label} attack" if label else f"{e['name']} attack", mode, draws)
-        )
+        if reaction:
+            purpose = f"{e['name']} opportunity attack"
+        else:
+            purpose = f"{e['name']} {label} attack" if label else f"{e['name']} attack"
+        dice_log.append(_mode_log(atk, purpose, mode, draws))
         mode_text = "" if mode == "normal" else f" at {mode}"
         subject = f"{e['name']}'s {label}" if label else e["name"]
+        if reaction:
+            subject = f"{subject} (opportunity attack)"
         natural = atk.rolls[0]
         if natural == 20 or (natural != 1 and atk.total >= player_ac):
             if natural == 20:
@@ -955,6 +1028,7 @@ async def combat_round_node(state: AgentState) -> dict:
                     "critical": natural == 20,
                     "damage": dmg,
                     "damage_type": damage_type,
+                    **({"reaction": "opportunity_attack"} if reaction else {}),
                 }
             )
             damage_player(dmg)
@@ -972,6 +1046,7 @@ async def combat_round_node(state: AgentState) -> dict:
                     "critical": False,
                     "damage": 0,
                     "damage_type": damage_type,
+                    **({"reaction": "opportunity_attack"} if reaction else {}),
                 }
             )
 
@@ -979,6 +1054,10 @@ async def combat_round_node(state: AgentState) -> dict:
         stats = stats_of(e)
         if stats is None:
             # Legacy or generic combatant: its stored numbers, one attack (EDG-148 clamps apply).
+            # Its one attack is a melee attack, so at range it closes in first (EDG-044).
+            if band_of(e) == RANGED:
+                e["band"] = MELEE
+                log_lines.append(f"{e['name']} closes to melee range.")
             enemy_attack(
                 e,
                 label=None,
@@ -991,6 +1070,12 @@ async def combat_round_node(state: AgentState) -> dict:
         if regen_note:
             log_lines.append(regen_note)
         plan = attack_plan(stats)
+        band = band_of(e)
+        if band == RANGED and not any(a.ranged for a in plan):
+            # A melee-only foe at range spends its movement to close in, then attacks (EDG-044).
+            e["band"] = band = MELEE
+            log_lines.append(f"{e['name']} closes to melee range.")
+        plan = attacks_from_band(plan, band)
         if not plan:
             log_lines.append(f"{e['name']} has no supported attack and takes no action.")
         for attack in plan:
@@ -1003,9 +1088,45 @@ async def combat_round_node(state: AgentState) -> dict:
                 expr=attack.damage_dice,
                 damage_type=attack.damage_type,
                 exact=True,
+                ranged=attack.ranged,
+                within_five_feet=band == MELEE and attack.ranged,
             )
 
+    def opportunity_attack(e: dict) -> bool:
+        """The foe's reaction: one melee attack against the hero as it leaves reach (PHB p.195).
+
+        Uses the record's first melee attack, or the stored numbers of a legacy foe. Returns False
+        when the foe has no melee attack to make.
+        """
+        stats = stats_of(e)
+        if stats is None:
+            enemy_attack(
+                e,
+                label=None,
+                bonus=int(e.get("attack_bonus", 3)),
+                expr=_enemy_damage_expr(e.get("damage_dice", "1d6+1")),
+                reaction=True,
+            )
+        else:
+            attack = primary_melee_attack(stats)
+            if attack is None:
+                return False
+            enemy_attack(
+                e,
+                label=attack.name,
+                bonus=attack.bonus,
+                expr=attack.damage_dice,
+                damage_type=attack.damage_type,
+                exact=True,
+                reaction=True,
+            )
+        e["reaction_used"] = True
+        if "opportunity_attack" not in round_effects:
+            round_effects.append("opportunity_attack")
+        return True
+
     def enemy_turn(e: dict) -> None:
+        start_turn(e)  # its reaction comes back at the start of its turn (PHB p.190)
         if not can_act(e) or hp <= 0 or fled:
             return
         foe_attacks(e)
@@ -1085,6 +1206,26 @@ async def combat_round_node(state: AgentState) -> dict:
         cf_left[ACTION_SURGE] = spend_use(character, ACTION_SURGE, cf_left[ACTION_SURGE])
         round_effects.append(ACTION_SURGE)
         log_lines.append(f"{hero} uses Action Surge and gets one more attack.")
+    # EDG-044: declared moves happen before the action. Leaving a foe's melee band provokes one
+    # opportunity attack from it, unless the hero took Disengage this turn (PHB p.192, p.195).
+    if player_acted and not fled:
+        for band, foes in moves.steps:
+            for foe in foes:
+                provoked = (
+                    band == RANGED
+                    and band_of(foe) == MELEE
+                    and not disengage
+                    and hp > 0
+                    and can_act(foe)
+                    and not foe.get("reaction_used")
+                )
+                if provoked:
+                    opportunity_attack(foe)
+                foe["band"] = band
+        if dash:
+            round_effects.append("dash")
+        if disengage:
+            round_effects.append("disengage")
     if not player_acted:
         log_lines.append(f"{hero} is down before they can act.")
     elif fled:
@@ -1125,7 +1266,12 @@ async def combat_round_node(state: AgentState) -> dict:
             save_bonus = 0
         # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
         spell_mode = (
-            attack_roll_mode(player, spell_target, ranged=True)
+            attack_roll_mode(
+                player,
+                spell_target,
+                ranged=True,
+                within_five_feet=band_of(spell_target) == MELEE,
+            )
             if spell_target is not None and spell_plan.spell.kind == "attack"
             else "normal"
         )
@@ -1247,7 +1393,7 @@ async def combat_round_node(state: AgentState) -> dict:
         }
         log_lines.append(f"{contest_line}. {extra_outcome}")
     elif is_attack and target is not None:
-        ranged = bool(_RANGED_HINT.search(player_input))
+        ranged = attack_ranged
         # One swing, or two with Action Surge (EDG-145). Each swing rolls its own engine d20.
         any_hit = False
         for swing in range(2 if surge_swing else 1):
@@ -1255,7 +1401,12 @@ async def combat_round_node(state: AgentState) -> dict:
                 # The first swing finished the foe; the surged swing has nothing to hit.
                 log_lines.append(f"{hero}'s extra attack finds no foe left standing.")
                 break
-            mode = attack_roll_mode(player, target, ranged=ranged)
+            mode = attack_roll_mode(
+                player,
+                target,
+                ranged=ranged,
+                within_five_feet=ranged and band_of(target) == MELEE,
+            )
             attack = resolve_attack(
                 character,
                 int(target.get("ac", 12)),
@@ -1311,9 +1462,20 @@ async def combat_round_node(state: AgentState) -> dict:
             "damage": dealt,
             "target_disposition": disposition_of(target),
         }
-    elif wants_second_wind or bonus_spell is not None or rage_declared:
-        # Only a bonus action was declared and is already resolved above; the action stays free.
-        pass
+    elif (
+        dash
+        or disengage
+        or moving
+        or wants_second_wind
+        or bonus_spell is not None
+        or rage_declared
+    ):
+        # A bonus action, a move, Dash or Disengage was declared and is resolved above (or costs no
+        # roll): the action is that, not a parsed check.
+        if dash or disengage:
+            player_action = {"action": "dash" if dash else "disengage", "result": "taken"}
+        elif moving:
+            player_action = {"action": "move", "result": "moved" if moves.steps else "already_there"}
     else:
         check_result, extra = resolve_from_parsed(character, parsed, player_input=player_input)
         dice_log += extra

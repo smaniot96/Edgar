@@ -161,7 +161,8 @@ def test_action_economy_moves_from_unsupported_to_supported() -> None:
     assert "action_economy" not in unsupported
     remainder = unsupported["action_economy_remainder"]
     assert remainder.owner == "EDG-044"
-    assert "Dash" in remainder.boundary and "Second Wind" in remainder.boundary
+    assert "Help" in remainder.boundary and "Second Wind" in remainder.boundary
+    assert "Dash" not in remainder.boundary and "Disengage" not in remainder.boundary
     payload = contract_payload()
     assert "Dodge" in repr(payload["engine_executed"])
     assert "action_economy" not in {m["id"] for m in payload["not_supported"]}
