@@ -160,6 +160,9 @@ def project_player_journal(
             place_at_event[event_id] = latest_place
 
     grouped: dict[tuple[str, str], list[tuple[StoryFact, dict[str, Any], int | None]]] = defaultdict(list)
+    # The immutable ledger order also resolves multiple consequences in one narration.
+    # For example, an initial visit followed by a move must orient to the destination.
+    fact_order = {fact.effect_id: index for index, (fact, _, _, _) in enumerate(safe_records)}
     for fact, public_fact, category, event_id in safe_records:
         grouped[_group_key(fact, category)].append((fact, public_fact, event_id))
 
@@ -240,7 +243,7 @@ def project_player_journal(
             related_entry_id=related_entry_id,
         )
         latest_sequence = max(
-            (event_order.get(event_id, 0) for _, _, event_id in records),
+            (fact_order[fact.effect_id] for fact, _, _ in records),
             default=0,
         )
         built.append((latest_sequence, entry))
