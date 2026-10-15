@@ -115,7 +115,7 @@ async def test_generation_finishing_late_cannot_replace_newer_manuscript_or_meta
     store.save_meta("authored", {"status": "processing", "rules_edition": "2014"})
     started, release = asyncio.Event(), asyncio.Event()
 
-    async def author(title, *_):
+    async def author(title, *_, **_kwargs):
         if title == "obsolete":
             started.set()
             await release.wait()

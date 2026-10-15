@@ -346,9 +346,12 @@ def _ingest_adventure(
         meta = load_adventure_metadata(slug)
         from ..services.campaign_sources import inspect_ingestion_source
 
-        coverage = inspect_ingestion_source(
-            slug, {**meta, "chunks": n, "ingestion": report_summary(report)}
-        )
+        coverage_meta = {**meta, "chunks": n, "ingestion": report_summary(report)}
+        if store.candidate_pdf_path(slug, token).is_file():
+            # Validate the activated candidate against its immutable PDF. The canonical
+            # PDF still belongs to the previous source until successful finalization.
+            coverage_meta["source_pdf_attempt_id"] = token
+        coverage = inspect_ingestion_source(slug, coverage_meta)
         ready = n > 0 and report.get("quality_passed") and coverage["status"] == "ready"
         store.finish_attempt(
             slug,
