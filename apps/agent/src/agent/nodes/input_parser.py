@@ -54,7 +54,10 @@ def _parser_context(state: AgentState) -> str:
     facts = public_earned_facts(state)
     if facts:
         parts.append(f"Committed player-known story facts and exact source quotations: {json.dumps(facts)}")
-    outcomes = state.get("resolved_combat_outcomes") or []
+    outcomes = [
+        {"id": outcome.get("id"), "outcome": outcome.get("outcome"), "round": outcome.get("round")}
+        for outcome in state.get("resolved_combat_outcomes") or []
+    ]
     if outcomes:
         parts.append(
             "Authoritative resolved combat outcomes (never reopen or contradict): "

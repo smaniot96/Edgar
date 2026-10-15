@@ -95,6 +95,9 @@ def test_parser_planner_and_narrator_get_all_uncovered_messages_and_durable_fact
     from agent.nodes.input_parser import input_parser_node
 
     state = _state()
+    state["resolved_combat_outcomes"][0]["combatants"] = [
+        {"source_reference": {"private_identity": "PRIVATE-COMBAT-SOURCE-BINDING"}}
+    ]
     fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="rp")
 
     import asyncio
@@ -104,6 +107,8 @@ def test_parser_planner_and_narrator_get_all_uncovered_messages_and_durable_fact
     planner_text = build_adjudicator_prompt(state, None)[1]["content"]
     narrator_prompt = build_narrator_prompt(state)
     narrator_text = narrator_prompt[-1].content
+    assert "PRIVATE-COMBAT-SOURCE-BINDING" not in parser_text
+    assert "PRIVATE-COMBAT-SOURCE-BINDING" not in narrator_text
 
     for prompt_text in (parser_text, planner_text, narrator_text):
         assert "player action 1" in prompt_text
