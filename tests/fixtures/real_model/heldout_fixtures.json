@@ -1,0 +1,1111 @@
+{
+  "model": "gpt-6-luna",
+  "date": "2026-10-15",
+  "calls_heldout_total": 42,
+  "labelling_rule": "Held-out set written and labelled before any model call (EDG-147). Same rules as the in-sample set (see parse_fixtures.json labelling_rule).",
+  "items": [
+    {
+      "id": "H01",
+      "lang": "en",
+      "mode": "explore",
+      "text": "I climb onto the roof to look for the thief.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": "athletics",
+        "difficulty": "medium",
+        "target": "roof",
+        "retrieval_query": "Climbing Athletics",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H02",
+      "lang": "en",
+      "mode": "explore",
+      "text": "I bargain with the merchant for a lower price.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "rp",
+        "entities": {},
+        "check": "persuasion",
+        "difficulty": "medium",
+        "target": "merchant",
+        "retrieval_query": "Persuasion bargaining for a lower price",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H03",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I thrust my spear at the goblin captain.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "spear"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": "Spear melee weapon attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H04",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I cast Shocking Grasp on the goblin.",
+      "expected": {
+        "kinds": [
+          "spell"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "spell": "Shocking Grasp"
+        },
+        "check": "spell_attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Shocking Grasp spell attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H05",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I cast Chromatic Orb at the goblin.",
+      "expected": {
+        "kinds": [
+          "spell"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "spell": "Chromatic Orb"
+        },
+        "check": "spell_attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Chromatic Orb spell attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H06",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I cast Sacred Flame at the goblin.",
+      "expected": {
+        "kinds": [
+          "spell"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "spell": "Sacred Flame"
+        },
+        "check": "dex_save",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Sacred Flame spell saving throw",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H07",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I use Sneak Attack on the goblin.",
+      "expected": {
+        "kinds": [
+          "feature"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "feature": "Sneak Attack"
+        },
+        "check": null,
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Rogue Sneak Attack feature",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H08",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I hide behind the pillar to take cover.",
+      "expected": {
+        "kinds": [
+          "positioning"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": "stealth",
+        "difficulty": "medium",
+        "target": null,
+        "retrieval_query": "Hiding and gaining cover rules",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H09",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I jump on the goblin and bite it.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "attack": "bite"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Unarmed strikes bite attack improvised natural weapon",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H10",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I keep the goblin pinned with my boot.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": "athletics",
+        "difficulty": "medium",
+        "target": "goblin",
+        "retrieval_query": "Grappling and maintaining a grapple",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H11",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I knock the goblin captain down with my shield.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "shield"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": "Shield weapon attack and shove combat rules",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "nonlethal",
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H12",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I make the goblin frightened with my roar.",
+      "expected": {
+        "kinds": [
+          "condition"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": "intimidation",
+        "difficulty": "medium",
+        "target": "goblin",
+        "retrieval_query": "Frightened condition and Intimidation",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H13",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I attack the goblin and the goblin is poisoned by my dagger.",
+      "expected": {
+        "kinds": [
+          "condition"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "dagger"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Dagger weapon attack and poison effects",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H14",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I use the Disengage action to retreat.",
+      "expected": {
+        "kinds": [
+          "action_economy"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": null,
+        "difficulty": null,
+        "target": null,
+        "retrieval_query": "Disengage action movement opportunity attacks",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H15",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I bonus-action to drink my potion.",
+      "expected": {
+        "kinds": [
+          "action_economy"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": null,
+        "difficulty": null,
+        "target": null,
+        "retrieval_query": "Drinking a potion as a bonus action",
+        "uses_item": "potion",
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H16",
+      "lang": "it",
+      "mode": "combat",
+      "text": "Mi metto al riparo dietro la colonna.",
+      "expected": {
+        "kinds": [
+          "positioning"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {
+          "action": "take cover"
+        },
+        "check": "athletics",
+        "difficulty": "medium",
+        "target": "column",
+        "retrieval_query": "Taking cover behind an object during combat",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H17",
+      "lang": "it",
+      "mode": "combat",
+      "text": "Lancio Ragnatela sul goblin.",
+      "expected": {
+        "kinds": [
+          "spell"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "spell": "Web"
+        },
+        "check": "dex_save",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Web spell effects and Dexterity saving throw",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H18",
+      "lang": "it",
+      "mode": "explore",
+      "text": "Uso la mia abilità di Furtività per passare inosservato.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": "stealth",
+        "difficulty": "medium",
+        "target": null,
+        "retrieval_query": "Stealth checks",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H19",
+      "lang": "es",
+      "mode": "combat",
+      "text": "Ataco al goblin con la mejor ventaja que tengo.",
+      "expected": {
+        "kinds": [
+          "advantage"
+        ],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "requested_advantage": true
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Weapon attack advantage rules",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H20",
+      "lang": "es",
+      "mode": "explore",
+      "text": "Tomo ventaja de la oscuridad para escabullirme.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": "stealth",
+        "difficulty": "medium",
+        "target": null,
+        "retrieval_query": "Stealth checks while hiding in darkness",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H21",
+      "lang": "es",
+      "mode": "combat",
+      "text": "Quiero matar al goblin con mi hacha.",
+      "expected": {
+        "kinds": [],
+        "lethality": "lethal"
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "axe"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Greataxe melee weapon attack",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "lethal",
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H22",
+      "lang": "es",
+      "mode": "combat",
+      "text": "Quiero dejar inconsciente al goblin.",
+      "expected": {
+        "kinds": [],
+        "lethality": "nonlethal"
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": "attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Nonlethal melee attacks knockout",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "nonlethal",
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H23",
+      "lang": "it",
+      "mode": "combat",
+      "text": "Non voglio uccidere il goblin, solo fermarlo.",
+      "expected": {
+        "kinds": [],
+        "lethality": "nonlethal"
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": null,
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": null,
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "nonlethal",
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H24",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I attack the goblin and hope to kill it quickly.",
+      "expected": {
+        "kinds": [],
+        "lethality": "lethal"
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": "attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Weapon attack and lethal damage",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "lethal",
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H25",
+      "lang": "en",
+      "mode": "explore",
+      "text": "I kill the candle and hide.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": "stealth",
+        "difficulty": "medium",
+        "target": null,
+        "retrieval_query": "Hiding and extinguishing a light source",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H26",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I dodge the goblin's next attack by taking the Dodge action.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "action": "Dodge"
+        },
+        "check": null,
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Dodge action combat",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H27",
+      "lang": "en",
+      "mode": "explore",
+      "text": "I cast an eye over the shelves.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": "perception",
+        "difficulty": "medium",
+        "target": "shelves",
+        "retrieval_query": "Perception checks for noticing details",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H28",
+      "lang": "en",
+      "mode": "explore",
+      "text": "The guard will take advantage of the storm, so we move now.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "exploration",
+        "entities": {
+          "companions": [
+            "Bram"
+          ],
+          "approach": "move during the storm"
+        },
+        "check": null,
+        "difficulty": null,
+        "target": null,
+        "retrieval_query": null,
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H29",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I strike the goblin captain with my fist, hoping to stun it.",
+      "expected": {
+        "kinds": [
+          "condition"
+        ],
+        "lethality": "nonlethal"
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "weapon": "fist"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "Goblin Captain",
+        "retrieval_query": "Unarmed strike and Stunning Strike",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": "nonlethal",
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    },
+    {
+      "id": "H30",
+      "lang": "en",
+      "mode": "combat",
+      "text": "I aim for the goblin's knee and wound it.",
+      "expected": {
+        "kinds": [],
+        "lethality": null
+      },
+      "flag": "",
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "aimed_location": "knee"
+        },
+        "check": "attack",
+        "difficulty": null,
+        "target": "goblin",
+        "retrieval_query": "Weapon attack called shots targeting limbs",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "parser_fallback": false
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "H_N11_hold_person_paralysis",
+      "label": "player says the captain is paralysed by an unsupported spell",
+      "player_input": "I cast Hold Person on the goblin captain and it is paralyzed.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "check": null,
+        "mechanical_summary": "Hold Person is declared but has no engine effect. Goblin Captain attacks Lyra: 1d20+4 = 12 vs AC 15, miss."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {
+          "spell": "Hold Person"
+        },
+        "check": "spell_attack",
+        "difficulty": null,
+        "target": "goblin captain",
+        "retrieval_query": "Hold Person spell",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "Lyra’s attempt to bind the goblin captain in place produces no apparent effect. The captain lunges at you, but its strike misses, scraping harmlessly past.\n\nThe cellar falls quiet for a beat as the captain squares up again. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You thrust out a hand and speak the binding words, but the goblin captain shows no sign of being caught by your spell. It snarls and lunges, its weapon cutting through empty air as you evade the blow in the close confines of the cellar.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You thrust out your hand and speak the words of *Hold Person*, but the magic finds no purchase on the Goblin Captain. He lunges in response, his weapon sweeping past you without landing.\n\nThe cellar’s close air hangs heavy as the captain squares up for another move. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "H_N12_tackle_stunned",
+      "label": "player says the foe is stunned and on the floor after an unsupported tackle",
+      "player_input": "I tackle the goblin captain and it is stunned on the floor.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "check": null,
+        "mechanical_summary": "The tackle has no engine effect this turn. Goblin Captain attacks Lyra: 1d20+4 = 17 vs AC 15, hit, 6 damage."
+      },
+      "parsed": {
+        "intent": "combat",
+        "entities": {},
+        "check": "athletics",
+        "difficulty": "medium",
+        "target": "goblin captain",
+        "retrieval_query": "Grappling Athletics",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "You lunge at the Goblin Captain, trying to bring it down, but it keeps its footing and the struggle gains no ground. It snaps back with a quick strike that catches you, leaving a sharp ache in its wake.\n\nThe Goblin Captain still faces you in the cellar. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "Your tackle fails to change the fight’s course. The Goblin Captain meets your rush with a sharp counterblow, and pain flares as the strike catches you in the cellar.\n\nThe captain remains poised to fight. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "You lunge for the Goblin Captain, but the tackle fails to change the struggle. The captain answers with a sharp blow, and pain flares through you as you stagger back.\n\nThe captain remains poised to press the attack. What do you do?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "H_N13_cover_advantage",
+      "label": "player declares cover and advantage, neither of which the engine tracks",
+      "player_input": "I take cover behind the pillar and the goblin captain loses sight of me, so I get advantage.",
+      "mode": "combat",
+      "combat_state": {
+        "combatants": [
+          {
+            "name": "Lyra",
+            "is_player": true,
+            "hp_current": 22,
+            "hp_max": 22,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          },
+          {
+            "name": "Goblin Captain",
+            "is_player": false,
+            "hp_current": 12,
+            "hp_max": 12,
+            "alive": true,
+            "disposition": "active",
+            "effects": []
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Lyra",
+            "disposition": "active"
+          },
+          {
+            "name": "Goblin Captain",
+            "disposition": "active"
+          }
+        ],
+        "ended": false,
+        "round": 1,
+        "round_actors": [
+          "Goblin Captain"
+        ]
+      },
+      "adjudication": {
+        "success": false,
+        "check": null,
+        "mechanical_summary": "Goblin Captain attacks Lyra: 1d20+4 = 6 vs AC 15, miss. No cover or advantage is tracked."
+      },
+      "parsed": {
+        "intent": "exploration",
+        "entities": {},
+        "check": "stealth",
+        "difficulty": "medium",
+        "target": "goblin captain",
+        "retrieval_query": "Taking cover and hiding Stealth advantage",
+        "uses_item": null,
+        "confirms_ending": false,
+        "resolution_policy_id": null,
+        "recall_fact_id": null,
+        "lethality": null,
+        "dice_expression": null
+      },
+      "samples": [
+        {
+          "text": "You duck behind the cellar pillar as the Goblin Captain snaps a shot toward where you stood. The attack misses, striking stone instead, and the captain remains alert in the gloom. What do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        },
+        {
+          "text": "The goblin captain lunges at you, but the attack glances wide, leaving you room to slip behind the pillar. The cellar’s shadows swallow the captain’s view of you for a moment, though the pillar offers no mechanical advantage.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": [
+              "The cellar’s shadows swallow the captain’s view of you for a moment, though the pillar offers no mechanical advantage."
+            ]
+          }
+        },
+        {
+          "text": "You make a quick move toward the pillar as the Goblin Captain lunges. Its strike cuts through empty air, missing you by a wide margin.\n\nWhat do you do next?",
+          "labels": {
+            "revives_or_invents_attacker": false,
+            "claim_sentences": []
+          }
+        }
+      ]
+    }
+  ],
+  "labelling_note": "Narration labels written by reading each sample after the run (same rule as narration_fixtures.json)."
+}

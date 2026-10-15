@@ -202,6 +202,11 @@ def test_rage_damage_bonus_by_level_and_attack_type() -> None:
     assert rage_damage_bonus(rapier_sheet, _hit(rapier_sheet), raging=True) == 0
 
 
+def test_rage_as_an_idiom_is_not_a_declaration() -> None:
+    assert requested_features("I rage against the machine") == ()
+    assert requested_features("I rage and swing the greataxe") == ("rage",)
+
+
 def test_requested_features_are_declared_words_not_prose() -> None:
     assert requested_features("I use Action Surge and attack") == (ACTION_SURGE,)
     assert requested_features("I sneak attack the guard") == (SNEAK_ATTACK,)

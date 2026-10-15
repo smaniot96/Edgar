@@ -167,6 +167,14 @@ simulate (`GET /api/rules/supported-scope`):
   points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's damage
   resistance). A declared action of this kind gets a narrative ruling and no
   mechanical effect.
+- Declared-action reading (EDG-147, measured against real model outputs; see
+  `tests/fixtures/real_model/README.md`): Declared actions are read in English. Italian and Spanish are read only for a few casting, advantage, cover, lethality and action words. A catalog spell resolves only when its English name is in the declaration; a spell the parser names from another language is ruled as not resolved. Other languages are not classified by these words and rely on the parser's own entities. The unsupported-action
+  classifier, the lethality reading and the narration checks were re-measured on 120 labelled
+  player inputs (used for tuning) and on 30 held-out inputs. The held-out set was labelled before
+  its model run, but two of its misses were then fixed, so it is no longer a clean test. Remaining
+  limits: a parser-declared nonlethal with no word cue ("tackle the goblin to the ground") is read
+  as a nonlethal intent; a parser-named catalog spell with no English name is ruled as not resolved;
+  the narrator revived no dead or unconscious foe in 39 real samples, including when asked to.
 - Exact monster records (EDG-004): a creature identified by its verified record uses that record's
   armor class, hit points, DEX initiative bonus, saving-throw bonuses (for a spell's save), attacks
   and traits. Each listed attack is rolled by the engine; a stated Multiattack makes one roll per
