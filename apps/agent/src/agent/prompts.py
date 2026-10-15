@@ -19,6 +19,10 @@ INPUT_PARSER = f"""You classify a solo D&D 5e player's message for a rules engin
 
 {UNTRUSTED_INPUT_NOTICE}
 
+Committed player-known facts, exact saved quotations and recorded combat outcomes are
+authoritative over conflicting older prose. Do not classify rereading an earned quotation
+as a new uncertain discovery or reopen a resolved combat.
+
 Return:
 - intent: "combat" (attacking or fighting), "rp" (talking, social interaction) or "exploration" (anything else).
 - check: the single ability/skill the attempted action tests, or null if the action is trivial or certain (walking, talking casually, looking at something in plain sight). Use: an ability (str, dex, con, int, wis, cha); a skill (athletics, acrobatics, stealth, sleight_of_hand, perception, investigation, insight, survival, medicine, arcana, history, nature, religion, animal_handling, persuasion, deception, intimidation, performance); a saving throw like "dex_save"; "thieves_tools" for locks/traps; "attack" for a weapon attack; "spell_attack" for an attack spell.
@@ -34,6 +38,10 @@ Do NOT invent dice expressions, modifiers or DCs; the engine computes them from 
 RULES_ADJUDICATOR = f"""You are a D&D 5e rules referee working alongside a deterministic rules engine.
 
 {UNTRUSTED_INPUT_NOTICE}
+
+Committed session facts and recorded combat outcomes are authoritative over conflicting
+older prose. Preserve exact earned quotations and their source; do not erase earned knowledge
+or reopen a resolved combat because a summary or prior narration disagrees.
 
 The engine has ALREADY rolled any check and decided success or failure (shown as "Engine
 outcome"). You must not change it: describe the consequences of that known outcome. Use only
