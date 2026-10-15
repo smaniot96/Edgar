@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { CharacterAssignmentHistoryRead, CharacterRead } from "../../api/types";
-import { mergeTurnCharacter, orderCombatants, parseInventory, sheetForCampaign, sheetFromLibrary } from "./gameState";
+import {
+  economyLine,
+  mechanicalEffects,
+  mergeTurnCharacter,
+  orderCombatants,
+  parseInventory,
+  sheetForCampaign,
+  sheetFromLibrary,
+} from "./gameState";
 import { rollParts, rollSummary } from "./rollText";
 
 const eda: CharacterRead = {
@@ -192,5 +200,24 @@ describe("roll card text", () => {
 
   it("is hidden (null) when no dice were rolled", () => {
     expect(rollParts({ success: false, damage: null, mechanical_summary: "", dice_result: null })).toBeNull();
+  });
+});
+
+describe("combat economy (EDG-044)", () => {
+  it("reads the hero's last turn and stays silent for legacy payloads", () => {
+    expect(economyLine({ round: 2, action: "attack", bonus_action: "Second Wind", dodging: false })).toBe(
+      "Last turn: action attack · bonus action Second Wind",
+    );
+    expect(economyLine({ round: 1, action: "Dodge", bonus_action: null, dodging: true })).toBe(
+      "Last turn: action Dodge · bonus action unused",
+    );
+    expect(economyLine(null)).toBeNull();
+    expect(economyLine(undefined)).toBeNull();
+  });
+
+  it("labels Dodging as a mechanical effect and drops unknown kinds", () => {
+    expect(mechanicalEffects([{ kind: "dodging" }, { kind: "stunned" }])).toEqual([
+      { kind: "dodging", label: "Dodging" },
+    ]);
   });
 });

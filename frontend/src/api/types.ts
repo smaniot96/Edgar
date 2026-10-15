@@ -331,11 +331,23 @@ export interface InitiativeEntry {
   effects?: CombatEffect[] | null;
 }
 
+/** What the hero's last turn spent, as the engine recorded it (EDG-044, additive). */
+export interface CombatEconomy {
+  round?: number | null;
+  /** Label of the action the turn spent (e.g. "attack", "Dodge"), or null when none. */
+  action?: string | null;
+  /** Label of the bonus action the turn spent (e.g. "Second Wind"), or null when none. */
+  bonus_action?: string | null;
+  dodging?: boolean | null;
+}
+
 export interface CombatState {
   round: number;
   ended: boolean;
   outcome: CombatOutcome;
   second_wind_used?: boolean;
+  /** The hero's last turn (additive); absent or null for legacy payloads. */
+  economy?: CombatEconomy | null;
   /** Fighter Second Wind uses left on the sheet (additive). */
   second_wind_uses_remaining?: number | null;
   initiative_order?: string[];
