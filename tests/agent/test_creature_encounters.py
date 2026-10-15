@@ -60,7 +60,9 @@ async def test_builder_receives_full_exact_record_and_persists_compact_provenanc
         messages for schema, messages in fake_llm_schema.calls if schema is EncounterSetup
     )
     assert "FINAL ACTION" in prompt[1].content
-    assert roster[0]["stat_adaptation"] == "legacy_solo_encounter"
+    # The record's own numbers apply; the builder's are not used (EDG-004).
+    assert roster[0]["stat_adaptation"] == "exact_record"
+    assert roster[0]["hp_max"] == 7 and roster[0]["ac"] == 15
 
 
 @pytest.mark.parametrize("names", [["Hobgoblin"], ["Goblin", "Captain Vellum"]])
