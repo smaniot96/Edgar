@@ -3,7 +3,6 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from agent.resolution import hit_dice_status
 from db.postgres.models import Campaign, Character, CharacterAssignment
 
 from ..dependencies import current_user_id, get_session
@@ -185,10 +184,6 @@ async def list_character_assignments(
                 hp_max=a.hp_max,
                 stats=a.stats,
                 inventory=a.inventory,
-                # Derived Hit Dice view (EDG-026) so the sheet survives reload without a turn.
-                hit_dice=hit_dice_status(
-                    {"class": character.character_class, "level": character.level, "stats": a.stats}
-                ),
                 assigned_at=a.assigned_at,
                 ended_at=a.ended_at,
                 status="ended" if ended else "active",
