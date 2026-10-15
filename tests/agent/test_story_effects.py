@@ -339,3 +339,31 @@ def test_allowed_transition_requires_canonical_justified_move():
     )
     assert validated.scene_id == "vault"
     assert validated.accepted_story_effects[0].display_name == "Scene"
+
+
+def test_visit_is_current_only_and_a_turn_accepts_one_move():
+    state, _, _ = fixture_state()
+    data = state["adventure_manifests"]["module"]
+    data["scenes"].append({"scene_id": "garden", "title": "Garden", "links": [], "references": []})
+    data["scenes"][0]["links"].append({"scene_id": "garden", "requires": {}})
+    manifest = AdventureManifest.model_validate(data)
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    state["adventure_manifests"]["module"] = manifest.model_dump()
+    for chunk in state["adventure_context"] + state["planner_context"]:
+        chunk["manifest_sha256"] = manifest.reviewed_sha256
+    state["world_flags"]["key_found"] = "discovered"
+    future_visit = proposal(
+        state, kind="visit", target_kind="scene", identity="vault", status="visited"
+    )
+    first_move = proposal(
+        state, kind="move", target_kind="scene", identity="vault", status="visited"
+    )
+    second_move = proposal(
+        state, kind="move", target_kind="scene", identity="garden", status="visited"
+    )
+    adj = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[future_visit, first_move, second_move]),
+        state,
+    )
+    assert [effect.target.canonical_id for effect in adj.accepted_story_effects] == ["vault"]
+    assert adj.scene_id == "vault"

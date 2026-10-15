@@ -209,6 +209,12 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         candidate = candidates.get(proposal.target.model_dump_json())
         if candidate is None or not _kind_matches(proposal, candidate):
             continue
+        if proposal.kind == "visit" and proposal.target.canonical_id != state.get(
+            "current_scene_id"
+        ):
+            continue
+        if proposal.kind == "move" and any(effect.kind == "move" for effect in accepted):
+            continue
         if proposal.kind not in _OBJECT_KINDS and proposal.status not in _STATUSES.get(
             proposal.kind, set()
         ):
