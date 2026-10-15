@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { cn } from "../../lib/cn";
 import { abilityModifier, formatModifier, type SheetCharacter } from "./gameState";
 import { HpBar } from "../ui/HpBar";
+import { ResourceCounters } from "./ResourceCounters";
 
 function SectionTitle({ children }: { children: string }) {
   return (
@@ -112,6 +113,13 @@ export function CharacterSheet({
                   </div>
                 ))}
               </dl>
+            </section>
+          ) : null}
+
+          {c.secondWind || c.spellSlots?.length ? (
+            <section aria-label="Resources">
+              <SectionTitle>Resources</SectionTitle>
+              <ResourceCounters secondWind={c.secondWind} spellSlots={c.spellSlots} />
             </section>
           ) : null}
 

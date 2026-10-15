@@ -57,6 +57,18 @@ export function CombatHud({ combat }: { combat: CombatState }) {
                 </span>
               </div>
               <HpBar current={c.hp} max={c.hpMax} compact label={`${c.name} HP`} />
+              {c.effects.length ? (
+                <ul aria-label={`${c.name} active effects`} className="flex flex-wrap gap-1">
+                  {c.effects.map((e) => (
+                    <li
+                      key={e.kind}
+                      className="rounded border border-danger/50 bg-danger-soft/40 px-1.5 py-px text-[0.6rem] font-semibold uppercase tracking-wide text-danger"
+                    >
+                      {e.label}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </li>
           ))}
         </ol>

@@ -14,6 +14,7 @@ from ..schemas.character import (
     CharacterUpdate,
     CurrentAssignmentSummary,
 )
+from ..services.character_assignments import resource_view
 from ._common import Page
 
 router = APIRouter(tags=["characters"])
@@ -191,6 +192,9 @@ async def list_character_assignments(
                 assigned_at=a.assigned_at,
                 ended_at=a.ended_at,
                 status="ended" if ended else "active",
+                **resource_view(
+                    {"class": character.character_class, "level": character.level, "stats": a.stats}
+                ),
             )
         )
     return out

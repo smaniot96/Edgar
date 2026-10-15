@@ -2,14 +2,22 @@
 import type {
   CharacterAssignmentHistoryRead,
   CharacterRead,
+  CombatEffect,
   CombatState,
   HitDiceStatus,
+  SecondWindState,
+  SpellSlotState,
   TurnCharacter,
 } from "../../api/types";
 
 export interface InventoryGroup {
   label: string;
   items: string[];
+}
+
+/** One spell level's slots, derived by the engine; `level` is 1..9. */
+export interface SpellSlotRow extends SpellSlotState {
+  level: number;
 }
 
 export interface SheetCharacter {
@@ -25,6 +33,10 @@ export interface SheetCharacter {
   inventory: InventoryGroup[];
   /** Remaining and total Hit Dice (EDG-026); null until the server reports them. */
   hitDice: HitDiceStatus | null;
+  /** Engine Second Wind counter; null for non-fighters and legacy payloads. */
+  secondWind: SecondWindState | null;
+  /** Engine spell slots by level; null for non-casters and legacy payloads. */
+  spellSlots: SpellSlotRow[] | null;
 }
 
 const ABILITY_ORDER = ["STR", "DEX", "CON", "INT", "WIS", "CHA"] as const;
@@ -118,6 +130,33 @@ export function parseStats(stats: Record<string, unknown> | null | undefined): {
   };
 }
 
+/** Second Wind counter from a payload; null when absent or malformed (nothing is invented). */
+export function parseSecondWind(v: unknown): SecondWindState | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const max = num(o.uses_max);
+  const left = num(o.uses_remaining);
+  if (max == null || left == null || max < 1) return null;
+  return { uses_remaining: Math.max(0, Math.min(max, left)), uses_max: max };
+}
+
+/** Spell slot rows sorted by level; null when absent, empty or malformed. */
+export function parseSpellSlots(v: unknown): SpellSlotRow[] | null {
+  if (!v || typeof v !== "object") return null;
+  const rows: SpellSlotRow[] = [];
+  for (const [key, raw] of Object.entries(v as Record<string, unknown>)) {
+    const level = num(key);
+    if (level == null || level < 1 || level > 9 || !raw || typeof raw !== "object") continue;
+    const slot = raw as Record<string, unknown>;
+    const total = num(slot.total);
+    const remaining = num(slot.remaining);
+    if (total == null || remaining == null || total < 0) continue;
+    rows.push({ level, total, remaining: Math.max(0, Math.min(total, remaining)) });
+  }
+  if (!rows.length) return null;
+  return rows.sort((a, b) => a.level - b.level);
+}
+
 export function parseInventory(inv: Record<string, unknown> | null | undefined): InventoryGroup[] {
   const groups: InventoryGroup[] = [];
   for (const [k, v] of Object.entries(inv ?? {})) {
@@ -146,6 +185,8 @@ export function sheetFromLibrary(
     conditions: stats.conditions,
     inventory: parseInventory(assignment?.inventory ?? c.base_inventory),
     hitDice: hitDiceFrom(assignment?.hit_dice),
+    secondWind: parseSecondWind(assignment?.second_wind),
+    spellSlots: parseSpellSlots(assignment?.spell_slots),
   };
 }
 
@@ -178,6 +219,8 @@ export function mergeTurnCharacter(
     conditions: [],
     inventory: [],
     hitDice: null,
+    secondWind: null,
+    spellSlots: null,
   };
   const next: SheetCharacter = { ...base };
   if (typeof c.id === "number") next.id = c.id;
@@ -196,6 +239,9 @@ export function mergeTurnCharacter(
   if (c.inventory && typeof c.inventory === "object") next.inventory = parseInventory(c.inventory);
   const hitDice = hitDiceFrom(c.hit_dice);
   if (hitDice) next.hitDice = hitDice;
+  // Resources are replaced by every payload that carries them (a spend or recharge shows at once).
+  if ("second_wind" in c) next.secondWind = parseSecondWind(c.second_wind);
+  if ("spell_slots" in c) next.spellSlots = parseSpellSlots(c.spell_slots);
   return next;
 }
 
@@ -211,7 +257,33 @@ export interface HudCombatant {
   /** Engine disposition (`active`, `unconscious`, `captured`, `dead`, `defeated`) when known. */
   disposition: string | null;
   canAct: boolean | null;
+  /** Supported engine effects only (restrained, prone), in engine order. */
+  effects: CombatEffectView[];
   isCurrent: boolean;
+}
+
+export interface CombatEffectView {
+  kind: string;
+  label: string;
+}
+
+/** Plain-language labels for the supported combat effects; any other kind is not shown as active. */
+const EFFECT_LABELS = new Map<string, string>([
+  ["restrained", "Restrained"],
+  ["prone", "Prone"],
+]);
+
+/** Engine `effects` mapped to display labels; unknown or narrative kinds are dropped. */
+export function mechanicalEffects(effects: CombatEffect[] | null | undefined): CombatEffectView[] {
+  const out: CombatEffectView[] = [];
+  const seen = new Set<string>();
+  for (const e of effects ?? []) {
+    const label = typeof e?.kind === "string" ? EFFECT_LABELS.get(e.kind) : undefined;
+    if (!label || seen.has(e.kind)) continue;
+    seen.add(e.kind);
+    out.push({ kind: e.kind, label });
+  }
+  return out;
 }
 
 /**
@@ -248,6 +320,7 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
       alive: c.alive !== false && (num(c.hp_current) ?? 1) > 0,
       disposition: c.disposition ?? null,
       canAct: typeof c.can_act === "boolean" ? c.can_act : null,
+      effects: mechanicalEffects(c.effects),
       isCurrent: false,
     };
   };
@@ -266,6 +339,7 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
           alive: typeof e.alive === "boolean" ? e.alive : base.alive && (hp == null || hp > 0),
           disposition: e.disposition ?? base.disposition,
           canAct: typeof e.can_act === "boolean" ? e.can_act : base.canAct,
+          effects: e.effects ? mechanicalEffects(e.effects) : base.effects,
         });
       } else {
         const hp = num(e.hp);
@@ -280,6 +354,7 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
           alive: typeof e.alive === "boolean" ? e.alive : hp == null || hp > 0,
           disposition: e.disposition ?? null,
           canAct: typeof e.can_act === "boolean" ? e.can_act : null,
+          effects: mechanicalEffects(e.effects),
           isCurrent: false,
         });
       }

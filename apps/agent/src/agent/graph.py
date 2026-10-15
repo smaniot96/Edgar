@@ -22,7 +22,7 @@ from collections.abc import Callable
 
 from langgraph.graph import END, START, StateGraph
 
-from agent.graph_combat import build_combat_subgraph
+from agent.graph_combat import build_combat_subgraph, captive_turn_for_state
 from agent.nodes import (
     input_parser_node,
     narrator_node,
@@ -44,6 +44,10 @@ def route_after_input_parser(state: AgentState) -> str:
         return "combat"
     parsed = state.get("parsed_input")
     if parsed and parsed.intent == "combat":
+        return "combat"
+    # A captive named outside a fight is answered by the engine (release, kill or ruling), so
+    # the turn goes through the combat node rather than narration alone (EDG-146).
+    if captive_turn_for_state(state) is not None:
         return "combat"
     return "normal"
 

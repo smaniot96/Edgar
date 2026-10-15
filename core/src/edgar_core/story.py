@@ -50,6 +50,11 @@ StoryStatus = Literal[
     "moved",
     "used",
     "changed",
+    # Engine-owned combat outcomes of kind `encounter` (EDG-146). Never model-proposed.
+    "captive",
+    "released",
+    "dead",
+    "defeated",
 ]
 
 

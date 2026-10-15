@@ -35,6 +35,8 @@ const sheet: SheetCharacter = {
   abilities: [],
   conditions: [],
   inventory: [],
+  secondWind: null,
+  spellSlots: null,
   hitDice: { remaining: 0, total: 1, die: "d10" },
 };
 

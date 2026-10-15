@@ -37,6 +37,8 @@ class AgentState(TypedDict, total=False):
     npcs: list  # [{name, disposition}] loaded from DB; used to keep allies out of enemy rosters
     resolved_combat_outcomes: list[dict]  # Session-owned authoritative ended combat rows
     combat_state: dict  # loaded from DB if an encounter is in progress
+    combat_captives: list[dict]  # Combat-owned captive/released/dead NPC rows (EDG-146)
+    captive_outcome: dict  # Engine-decided release/kill of a captive, persisted with the turn
     memory_summary: str | None  # rolling story summary immediately before `messages`
 
     # Produced by nodes

@@ -50,6 +50,34 @@ function rollModeFields(adj: AdjudicationResult): Pick<RollParts, "faces" | "mod
   return { faces: entry.rolls, mode: entry.roll_mode };
 }
 
+/** A healing dice roll from the engine's dice log (Second Wind, spell healing, item or rest healing). */
+export interface HealingRoll {
+  /** Dice-log purpose, capitalised for display, e.g. "Second Wind" or "Cure Wounds healing". */
+  label: string;
+  expression: string;
+  rolls: number[];
+  total: number;
+}
+
+/** Dice-log purposes that are healing rolls: Second Wind, "<spell> healing", "healing (<item>)", hit dice. */
+const HEALING_PURPOSE = /second wind|healing|hit die/i;
+
+/** Healing dice the engine rolled this turn, in log order. Only logged dice are shown. */
+export function healingRolls(adj: AdjudicationResult | null | undefined): HealingRoll[] {
+  const out: HealingRoll[] = [];
+  for (const d of adj?.dice_log ?? []) {
+    const purpose = typeof d.purpose === "string" ? d.purpose.trim() : "";
+    if (!purpose || !HEALING_PURPOSE.test(purpose) || typeof d.total !== "number") continue;
+    out.push({
+      label: /^second wind$/i.test(purpose) ? "Second Wind" : purpose.charAt(0).toUpperCase() + purpose.slice(1),
+      expression: d.expression,
+      rolls: Array.isArray(d.rolls) ? d.rolls : [],
+      total: d.total,
+    });
+  }
+  return out;
+}
+
 /** One-line plain-text version, e.g. "Athletics · 1d20+5 = 17 vs DC 15 → Success · 6 dmg". */
 export function rollSummary(p: RollParts): string {
   const faces = p.faces ? ` [${p.faces.join(", ")}]` : "";

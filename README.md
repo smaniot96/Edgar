@@ -103,13 +103,20 @@ simulate (`GET /api/rules/supported-scope`):
   disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
   release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
   are shown in the combat roster and given to the narrator.
+- Captives: a foe knocked out in a nonlethal victory stays alive as a captive. The player can release
+  it (it is no longer a captive and is never an enemy again) or kill it, but only with an explicit
+  lethal declaration in their own words; no dice are rolled. An attack on a captive without that
+  declaration starts no combat and receives a ruling asking whether to release, question or kill.
+  Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, concentration, other condition
   effects, cover and positioning, bonus actions and reactions, declared counts of Hit Dice, and class
   features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
   mechanical effect.
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
-  scaled down for a single level-1 hero.
+  fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
+  with level. Over-budget foes are clamped or left out, exact creature identities are kept, and the
+  combat start notes any adaptation.
 
 ## Repo layout
 

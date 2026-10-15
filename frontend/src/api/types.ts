@@ -274,6 +274,10 @@ export interface CharacterAssignmentHistoryRead {
   assigned_at: string;
   ended_at: string | null;
   status: string;
+  /** Derived Second Wind resource (EDG-034); absent for non-fighters and legacy payloads. */
+  second_wind?: SecondWindState | null;
+  /** Derived spell slots per level, keyed by level as a string (casters only). */
+  spell_slots?: Record<string, SpellSlotState> | null;
 }
 
 /** Per-turn adjudication frame from the SSE/turn contract. */
@@ -333,6 +337,25 @@ export interface AdjudicationResult {
   scene_id?: string | null;
 }
 
+/** Engine-owned Second Wind counter (read-only view of the sheet resource). */
+export interface SecondWindState {
+  uses_remaining: number;
+  uses_max: number;
+}
+
+/** Engine-owned spell slot counter for one spell level. */
+export interface SpellSlotState {
+  total: number;
+  remaining: number;
+}
+
+/** Supported combat effect on a combatant (EDG-021). Only the engine list is mechanical. */
+export interface CombatEffect {
+  kind: string;
+  source?: string | null;
+  applied_round?: number | null;
+}
+
 export interface Combatant {
   name: string;
   display_name?: string | null;
@@ -346,6 +369,7 @@ export interface Combatant {
   /** Combat disposition from the engine: active, unconscious, captured, dead or defeated. */
   disposition?: string | null;
   can_act?: boolean | null;
+  effects?: CombatEffect[] | null;
 }
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | null;
@@ -361,6 +385,7 @@ export interface InitiativeEntry {
   alive?: boolean;
   disposition?: string | null;
   can_act?: boolean | null;
+  effects?: CombatEffect[] | null;
 }
 
 export interface CombatState {
@@ -452,7 +477,9 @@ export interface TurnCharacter {
   stats?: Record<string, unknown> | null;
   inventory?: Record<string, unknown> | null;
   /** Fighter Second Wind resource (additive; present for fighters). */
-  second_wind?: { uses_remaining: number; uses_max: number } | null;
+  second_wind?: SecondWindState | null;
+  /** Derived spell slots per level (casters only; additive). */
+  spell_slots?: Record<string, SpellSlotState> | null;
   /** Hit Dice resource (EDG-026; additive, present for every class). */
   hit_dice?: HitDiceStatus | null;
 }

@@ -273,6 +273,24 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         implementation="agent.combatants:add_effect",
         test="tests/agent/test_supported_rules.py::test_supported_contested_maneuver_applies_effect",
     ),
+    Mechanic(
+        id="captive_lifecycle",
+        title="Captives after a fight: release, declared kill, or a ruling",
+        scope=(
+            "A living captive won by a nonlethal victory can be released by the player's declared "
+            "release: it becomes released, is neutral and is never an enemy again. It can be killed "
+            "only by an explicit lethal declaration in the player's own words; the captive then "
+            "becomes dead. Attacking a captive without a declared kill starts no combat and makes no "
+            "roll: the engine asks whether the player releases, questions or kills them. Questioning "
+            "a captive is narrated as before. Each outcome is recorded in the session story ledger "
+            "with its combat identity. No dice are rolled for these actions."
+        ),
+        implementation="agent.captives:captive_turn",
+        test=(
+            "tests/agent/test_captive_lifecycle.py::"
+            "test_release_turn_returns_engine_outcome_without_dice_or_combat"
+        ),
+    ),
 )
 
 UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
@@ -343,9 +361,12 @@ SOLO_ADAPTATIONS: tuple[str, ...] = (
         "HP to 1 and the story continues, often with the hero captured or at the enemy's mercy."
     ),
     (
-        "Encounters are scaled down for a solo level-1 hero. The encounter builder is prompted "
-        "for a lone boss of about 18-30 HP and mooks of about 5-11 HP, within validated ranges "
-        "(enemy HP 1-120). The budget is prompt guidance, not an engine-enforced limit."
+        "Encounters are fitted to a solo hero by an engine-enforced budget (agent.encounter_budget) "
+        "derived from hero level, applied when a new roster is built. At level 1 it allows at most "
+        "2 foes, a boss of 18-30 HP, other foes of 5-11 HP, and a total enemy HP of 41. Higher "
+        "levels scale those numbers up and allow more foes. Over-budget foes are clamped into range "
+        "or left out, never renamed. Exact creature identities and source records are kept. The "
+        "combat start notes any adaptation, and the combat state records it."
     ),
 )
 
