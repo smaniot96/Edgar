@@ -380,7 +380,8 @@ async def session_turn(
             citations=done["citations"],
             rules_edition=done["rules_edition"],
             ruling_citation_ids=done["ruling_citation_ids"],
-            combat_state=result.get("combat_state"),
+            # The public roster shape only: raw combatants carry planner-only creature provenance.
+            combat_state=done["combat_state"],
             current_scene_id=done["current_scene_id"],
             character=done["character"],
             campaign_complete=done["campaign_complete"],
