@@ -201,25 +201,40 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="long_rest",
-        title="Long rest healing",
+        title="Long rest healing and Hit Dice recovery",
         scope=(
             "A long rest (sleep or camp-for-the-night wording) restores HP to the maximum, every "
-            "expended spell slot and a fighter's Second Wind use. No other long-rest resource is "
-            "reset by the engine."
+            "expended spell slot and a fighter's Second Wind use. It also regains half the "
+            "character's level in spent Hit Dice, minimum one. 2024 campaigns follow the same "
+            "Hit Dice rule in this engine. No other long-rest resource is reset by the engine."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_long_rest_restores_hp",
     ),
     Mechanic(
         id="short_rest",
-        title="Short rest healing (no Hit Dice ledger)",
+        title="Short rest healing spends one Hit Die",
         scope=(
-            "A short rest (rest-for-an-hour wording) rolls one hit die of the class plus the CON "
-            "modifier, minimum 1 HP. Dice are not counted down, so short rests are not limited by "
-            "Hit Dice. A short rest also restores a fighter's Second Wind use."
+            "A short rest (rest-for-an-hour wording) spends one Hit Die of the class and rolls it "
+            "plus the CON modifier, minimum 1 HP, healing no more than the missing HP. With no Hit "
+            "Dice left it is refused: nothing is rolled and nothing is healed until a long rest. A "
+            "declared count of Hit Dice is not parsed, so one die is spent. A short rest also "
+            "restores a fighter's Second Wind use."
         ),
         implementation="agent.resolution:heal_from_rest",
-        test="tests/agent/test_supported_rules.py::test_supported_short_rest_has_no_ledger",
+        test="tests/agent/test_supported_rules.py::test_supported_short_rest_spends_one_hit_die",
+    ),
+    Mechanic(
+        id="hit_dice",
+        title="Hit Dice ledger on the character sheet",
+        scope=(
+            "Each character has Hit Dice equal to its level, of the class die (d6 sorcerer or "
+            "wizard, d8 bard, cleric, druid, monk, rogue, warlock or artificer, d10 fighter, "
+            "paladin or ranger, d12 barbarian). The spent count is an engine-owned sheet resource, "
+            "shown with the remaining count after each rest. A manual sheet edit cannot change it."
+        ),
+        implementation="agent.resolution:hit_dice_status",
+        test="tests/test_hit_dice_persistence.py::test_supported_hit_dice_ledger_persists_and_is_protected",
     ),
     Mechanic(
         id="official_conditions",
@@ -304,12 +319,6 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         title="Class features other than Second Wind",
         boundary="Action Surge, Sneak Attack, Rage, Divine Smite and similar features have no engine effect.",
         owner="unassigned",
-    ),
-    UnsupportedMechanic(
-        id="hit_dice_ledger",
-        title="Expended Hit Dice ledger",
-        boundary="Short rests do not reduce a remaining Hit Dice count.",
-        owner="EDG-026",
     ),
     UnsupportedMechanic(
         id="monster_traits",

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from agent.resolution import second_wind_status
+from agent.resolution import hit_dice_status, second_wind_status
 from db.postgres.models import Character, CharacterAssignment
 
 
@@ -71,4 +71,6 @@ async def character_play_state(
     second_wind = second_wind_status(out)
     if second_wind is not None:
         out["second_wind"] = second_wind
+    # Additive, derived view of the Hit Dice ledger (EDG-026): every class has Hit Dice.
+    out["hit_dice"] = hit_dice_status(out)
     return out

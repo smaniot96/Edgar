@@ -96,6 +96,8 @@ class CharacterAssignmentHistoryRead(BaseModel):
     hp_max: int
     stats: dict
     inventory: dict
+    # Derived Hit Dice view (EDG-026): remaining, total and die type; None for legacy rows.
+    hit_dice: dict | None = None
     assigned_at: datetime
     ended_at: datetime | None
     status: Literal["active", "ended"]

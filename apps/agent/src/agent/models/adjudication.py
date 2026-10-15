@@ -40,6 +40,9 @@ class CharacterUpdate(BaseModel):
     # Engine-owned spell slot ledger (EDG-027): the expended count per spell level, written when
     # set (an empty map clears it, e.g. after a long rest). Hidden from the model's schema.
     spell_slots_expended: SkipJsonSchema[dict[str, int] | None] = None
+    # Engine-owned Hit Dice spent (EDG-026): written after a short rest spends a die or a long
+    # rest recovers some. A model-proposed value is cleared in enforce_side_effects.
+    hit_dice_spent: SkipJsonSchema[int | None] = None
 
     @field_validator(
         "add_conditions", "remove_conditions", "inventory_add", "inventory_remove", mode="before"
@@ -47,6 +50,20 @@ class CharacterUpdate(BaseModel):
     @classmethod
     def _null_lists_to_empty(cls, value: object) -> list:
         return value if value is not None else []
+
+
+class RestRecord(BaseModel):
+    """Engine evidence for a rest turn (EDG-026). Every number is engine-rolled or engine-derived."""
+
+    kind: str  # "short" | "long"
+    refused: bool = False  # a short rest with no Hit Dice left: nothing rolled, nothing healed
+    expression: str | None = None  # the short-rest roll, e.g. "1d10+2"
+    rolled: int | None = None  # total of that roll, before the cap at maximum HP
+    healed: int = 0  # HP actually regained, capped at the maximum
+    die: str  # the class Hit Die, e.g. "d10", shown even when refused
+    hit_dice_remaining: int
+    hit_dice_total: int
+    hit_dice_recovered: int | None = None  # long rest only: Hit Dice regained
 
 
 class FlagUpdate(BaseModel):
@@ -86,6 +103,8 @@ class AdjudicationResult(BaseModel):
     dice_log: SkipJsonSchema[list[dict]] = Field(default_factory=list)  # every engine roll
     # None (not evaluated) | "none" | "pending" | "accepted" | "rejected"
     completion_status: SkipJsonSchema[str | None] = None
+    # Engine evidence of a rest turn (EDG-026); never a model proposal.
+    rest_record: SkipJsonSchema[RestRecord | None] = None
 
     @field_validator(
         "story_effects",
