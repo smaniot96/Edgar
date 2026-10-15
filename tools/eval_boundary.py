@@ -72,8 +72,8 @@ def load(name: str = "in_sample") -> tuple[dict, dict]:
 def _engine_effects(text: str, mode: str, parsed: ParsedInput | None, character: dict) -> tuple:
     """Approximation of the typed effects the engine applies this turn (no engine run here).
 
-    A supported restraint or prone maneuver is applied in combat; an executed Blindness cast is
-    assumed to have blinded the foe (its save is not in the fixture).
+    A supported restraint or prone maneuver is applied in combat; an executed condition spell (Blindness, Hold Person, Guiding Bolt) is assumed to have taken
+    hold (its save is not in the fixture).
     """
     effects: list[str] = []
     if mode == "combat":
@@ -81,8 +81,8 @@ def _engine_effects(text: str, mode: str, parsed: ParsedInput | None, character:
         if maneuver is not None and maneuver.kind in ("restrained", "prone"):
             effects.append(maneuver.kind)
     request = cast_request(text, parsed, character)
-    if request is not None and request[2] is None and request[0].condition == "blinded":
-        effects.append("blinded")
+    if request is not None and request[2] is None and request[0].condition:
+        effects.append(request[0].condition)  # a cast condition spell is assumed to have taken hold
     return tuple(effects)
 
 

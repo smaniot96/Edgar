@@ -530,12 +530,10 @@
       "mode": "combat",
       "text": "I cast Hold Person on the goblin captain.",
       "expected": {
-        "kinds": [
-          "spell"
-        ],
+        "kinds": [],
         "lethality": null
       },
-      "flag": "",
+      "flag": "Hold Person joined the supported catalog in EDG-043 slice 2: the cast is executed, no ruling.",
       "parsed": {
         "intent": "combat",
         "entities": {

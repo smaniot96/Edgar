@@ -243,10 +243,10 @@ def test_synthetic_non_english_words_are_read_and_english_names_are_required() -
 
 def test_synthetic_negated_spell_ruling_is_kept_and_a_claim_is_removed() -> None:
     actions = classify_unsupported_actions(
-        "I cast Hold Person on the goblin captain.", None, CHARACTER
+        "I cast Eldritch Blast at the goblin captain.", None, CHARACTER
     )
     narration = (
-        "You speak the words of *Hold Person*, but the magic finds no purchase. "
+        "You speak the words of *Eldritch Blast*, but the magic finds no purchase. "
         "The captain's blow lands, and the captain is paralyzed in place."
     )
     cleaned = apply_narration_boundary(narration, actions)

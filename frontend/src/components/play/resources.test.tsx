@@ -111,7 +111,7 @@ describe("supported effects and disposition", () => {
         { kind: "restrained", source: "a net", applied_round: 1 },
         { kind: "restrained", source: "a net", applied_round: 2 },
         { kind: "prone", source: "a shove", applied_round: 1 },
-        { kind: "poisoned", source: "narration", applied_round: 1 },
+        { kind: "frightened", source: "narration", applied_round: 1 },
         { kind: "constructor", source: "x", applied_round: 1 },
       ]),
     ).toEqual([

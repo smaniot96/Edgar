@@ -266,7 +266,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="supported_spells",
         title=(
             "Catalog spells: Fire Bolt, Magic Missile, Sacred Flame, Cure Wounds, Healing Word, "
-            "Guiding Bolt and Blindness/Deafness"
+            "Guiding Bolt, Blindness/Deafness and Hold Person"
         ),
         scope=(
             "Only these declared spells resolve, and only when the declaration names the spell in English. "
@@ -281,10 +281,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "die more per slot above 1st, and a hit marks the foe (see condition_effects). "
             "Blindness/Deafness is a Constitution save against the spell save DC, with no damage; it "
             "casts blindness only, at one foe (a declaration naming deafness is refused), and does not "
+            "scale to extra targets. Hold Person is a Wisdom save against the spell save DC that paralyzes "
+            "one humanoid foe for up to a minute, is held by concentration (see concentration) and does not "
             "scale to extra targets. Cantrips cost no slot. A leveled spell spends the named slot or the "
             "lowest one available; slot totals follow class and level for the full and half casters, and "
-            "a long rest restores them. Concentration and advantage are not tracked. Other spells get a "
-            "narrative ruling."
+            "a long rest restores them. Other spells get a narrative ruling."
         ),
         implementation="agent.spells:resolve_spell",
         test="tests/agent/test_spells.py::test_catalog_spell_attack_hit_miss_and_crit",
@@ -298,12 +299,58 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "advantage. At the end of each of its turns the foe repeats the Constitution save, and a "
             "success ends the effect. Guiding Bolt marks a foe it hits: the next attack roll against "
             "that foe has advantage, the roll spends the mark, and an unspent mark ends at the end of "
-            "the caster's next turn. The condition is stored on the foe, shown in the combat roster and "
-            "given to the narrator; it ends with the foe's defeat or the encounter. Concentration is not "
-            "tracked. No other condition has an engine effect."
+            "the caster's next turn. Hold Person paralyzes a humanoid foe that fails its Wisdom save: it "
+            "cannot act but stays in the fight, attacks against it have advantage, a melee hit from within "
+            "5 feet is a critical hit (the engine does not track distance for a reach weapon, so none is "
+            "applied for one), and it repeats the save at the end of each of its turns. A foe whose record "
+            "gives no humanoid type is refused before any roll. The condition is stored on the foe, shown in "
+            "the combat roster and given to the narrator; it ends with the foe's defeat or the encounter. "
+            "No other condition has an engine effect on a foe."
         ),
         implementation="agent.conditions:apply_spell_condition",
-        test="tests/agent/test_conditions.py::test_blindness_failed_save_blinds_and_the_repeat_save_ends_it",
+        test="tests/agent/test_concentration.py::test_hold_person_paralyzes_a_humanoid_until_its_repeat_save",
+    ),
+    Mechanic(
+        id="concentration",
+        title="Concentration on one spell, with its damage save",
+        scope=(
+            "The caster holds at most one concentration spell (Hold Person). Casting another such spell "
+            "ends the first, and the first spell's effects on foes end with it. Concentration ends when "
+            "the spell's minute passes, when no foe still carries its effect, and when the caster falls to "
+            "0 HP. Taking damage while concentrating requires a Constitution save, engine-rolled with the "
+            "sheet's save modifier (proficiency included when the sheet lists it): DC 10 or half the damage, "
+            "whichever is higher, rounded down; a failure ends the spell. A spell with no effect on a foe "
+            "does not start concentration."
+        ),
+        implementation="agent.conditions:concentration_save",
+        test="tests/agent/test_concentration.py::test_damage_breaks_concentration_only_when_the_save_fails",
+    ),
+    Mechanic(
+        id="monster_riders",
+        title="Poisoned rider on an exact monster's hit",
+        scope=(
+            "An exact record whose attack reads exactly as 'and the target must succeed on a DC N "
+            "Constitution saving throw or be poisoned for 1 minute, and it can repeat the save at the end "
+            "of each of its turns' is executed on a hit. The hero makes the engine-rolled save with the "
+            "sheet's Constitution modifier; a failure poisons the hero, which gives its own attack rolls "
+            "disadvantage (ability checks are not penalised). The hero repeats the save at the end of its own "
+            "turn, and a success ends the effect. Any other rider clause, such as extra poison damage or "
+            "unconsciousness, stays declared and is not executed."
+        ),
+        implementation="agent.conditions:rider_save",
+        test="tests/agent/test_monster_riders.py::test_poisoned_rider_on_a_hit_saves_and_the_hero_repeats_it",
+    ),
+    Mechanic(
+        id="monster_recharge",
+        title="Recharge X-6 attacks of exact records",
+        scope=(
+            "An exact record's attack named 'Recharge X-6' (or 'Recharge 6') with an exactly readable attack "
+            "text is used once, then waits: at the start of each of the monster's turns it rolls a d6 and "
+            "regains the attack on X or higher. A ready recharge attack is used before the creature's other "
+            "attack. Breath and other area or save-based recharge abilities stay declared."
+        ),
+        implementation="agent.monster_stats:recharge_turn_start",
+        test="tests/agent/test_monster_riders.py::test_recharge_attack_waits_for_its_d6_roll",
     ),
     Mechanic(
         id="long_rest",
@@ -539,10 +586,15 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="other_conditions",
-        title="Mechanical effects of other conditions (poisoned, frightened, paralyzed, stunned and the rest)",
+        title=(
+            "Mechanical effects of other conditions (frightened, stunned, charmed and the rest; poisoned "
+            "and paralyzed beyond the effects named in the supported list)"
+        ),
         boundary=(
-            "Such a condition has no engine effect: it does not penalise rolls, speed, actions or "
-            "senses, and no foe is poisoned, frightened, paralyzed or stunned by the engine."
+            "Such a condition has no engine effect: it does not penalise rolls, speed, actions or senses, "
+            "and no foe is frightened, stunned or charmed by the engine. A poisoned creature's ability "
+            "checks are not penalised, and a frightened creature's movement and line-of-sight limits are "
+            "not tracked."
         ),
         owner="EDG-043",
     ),
@@ -580,12 +632,13 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         id="monster_traits",
         title=(
             "Other monster traits: speed and movement, legendary, lair and reaction actions, "
-            "spellcasting, recharge abilities and unlisted traits"
+            "spellcasting, breath and other save-based recharge abilities, and unlisted traits"
         ),
         boundary=(
             "Each such trait is declared, not executed, in the combat start message. It has no engine "
-            "effect: a monster never moves, casts, recharges or takes a legendary, lair or reaction "
-            "action, and its passive traits are not applied."
+            "effect: a monster never moves, casts, uses a breath or area recharge ability, or takes a "
+            "legendary, lair or reaction action, and its passive traits are not applied. An attack-style "
+            "Recharge attack is executed as stated in the supported list."
         ),
         owner="EDG-043",
     ),
@@ -689,9 +742,44 @@ _FEATURE_NAMES = (
 )
 # Condition claims other than blinded. Blinded is engine-applied from Blindness/Deafness and is
 # exempt only when the engine actually applied it this turn (see `_claim_pattern`).
-_OTHER_CONDITION_CLAIMS = (
-    r"\b(?:stunned|poisoned|paralyzed|petrified|charmed|frightened|deafened|incapacitated)\b"
-)
+# Condition words, by condition. A condition the engine really recorded this turn is exempt from its
+# claim words (see `_condition_claim`), so the narration of a real effect is never stripped.
+_CLAIM_CONDITION_WORDS = {
+    "blinded": "blinded",
+    "stunned": "stunned",
+    "poisoned": "poisoned",
+    "paralyzed": "paralyzed",
+    "petrified": "petrified",
+    "charmed": "charmed",
+    "frightened": "frightened",
+    "deafened": "deafened",
+    "incapacitated": "incapacitated",
+}
+_TEXT_CONDITION_WORDS = {
+    "blinded": "blind|blinds|blinded|blinding",
+    "stunned": "stun|stuns|stunned|stunning",
+    "poisoned": "poison|poisons|poisoned|poisoning",
+    "paralyzed": "paralyze|paralyzes|paralyzed|paralyse|paralysed",
+    "petrified": "petrify|petrifies|petrified",
+    "charmed": "charm|charms|charmed",
+    "frightened": "frighten|frightens|frightened",
+    "deafened": "deafen|deafened",
+    "incapacitated": "incapacitate|incapacitated",
+}
+# Conditions the engine records on a creature this module reads (see `_claim_pattern`).
+_RECORDED_CONDITIONS = frozenset({"blinded", "paralyzed", "poisoned"})
+
+
+def _condition_claim(exclude: frozenset[str] = frozenset()) -> str:
+    words = "|".join(w for k, w in _CLAIM_CONDITION_WORDS.items() if k not in exclude)
+    return rf"\b(?:{words})\b"
+
+
+def _text_condition_pattern(exclude: frozenset[str] = frozenset()) -> re.Pattern[str]:
+    words = "|".join(ws for k, ws in _TEXT_CONDITION_WORDS.items() if k not in exclude)
+    return re.compile(rf"\b(?:{words})\b", re.IGNORECASE)
+
+
 _BONUS_ACTION_CLAIM = r"bonus[\s-]+action"
 _DODGE_CLAIM = r"dodg\w*"
 # Each economy phrase, keyed by the typed effect the engine records when it executes it. Help has no
@@ -754,7 +842,7 @@ _CLAIM_WORDS = {
         + r"|prone|held\s+(?:fast|down|in\s+place|still)|knocked\s+(?:down|prone|over)|"
         r"(?:can|could)(?:n't|\s+not)\s+(?:move|escape|get\s+up|stand))\b"
     ),
-    CONDITION: r"\bblinded\b|" + _OTHER_CONDITION_CLAIMS,
+    CONDITION: _condition_claim(),
     ADVANTAGE: r"\b(?:advantage|disadvantage|with an edge)\b",
     ACTION_ECONOMY: _ACTION_ECONOMY_CLAIM,
     POSITIONING: r"\b(?:in\s+cover|take\s+cover|behind\s+cover|high\s+ground|flank\w*)\b",
@@ -774,12 +862,6 @@ _UNCOVERED_SPELL = re.compile(
 
 # Condition words in declared text. The blind words are read separately so that a blinded condition the
 # engine applied is not stripped, while every other condition word keeps its ruling.
-_TEXT_CONDITION_OTHER = re.compile(
-    r"\b(?:stun|stuns|stunned|stunning|poison|poisons|poisoned|poisoning|paralyze|paralyzes|"
-    r"paralyzed|paralyse|paralysed|petrify|petrifies|petrified|charm|charms|charmed|frighten|"
-    r"frightens|frightened|deafen|deafened|incapacitate|incapacitated)\b",
-    re.IGNORECASE,
-)
 
 _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
@@ -808,13 +890,7 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         CONDITION,
-        re.compile(
-            r"\b(?:stun|stuns|stunned|stunning|blind|blinds|blinded|blinding|poison|poisons|"
-            r"poisoned|poisoning|paralyze|paralyzes|paralyzed|paralyse|paralysed|petrify|"
-            r"petrifies|petrified|charm|charms|charmed|frighten|frightens|frightened|deafen|"
-            r"deafened|incapacitate|incapacitated)\b",
-            re.IGNORECASE,
-        ),
+        _text_condition_pattern(),
     ),
     (
         ADVANTAGE,
@@ -913,7 +989,7 @@ def _engine_applied_maneuver(text: str, applied: EngineApplied) -> bool:
 
 # Spell conditions the executed spell records on a foe; when the engine recorded none, the narrated
 # claim is ruled on (agent.conditions). A marked foe has no claim word in the narration.
-_CONDITION_RECORDED = frozenset({"blinded"})
+_CONDITION_RECORDED = frozenset({"blinded", "paralyzed"})
 
 ENGINE_ROLL_MODE_KEY = "engine_roll_mode"
 
@@ -1014,8 +1090,11 @@ def classify_unsupported_actions(
             continue  # the executed catalog spell; its casting words are not a declared spell
         if kind == ADVANTAGE and applied.roll_mode != "normal":
             continue
-        if kind == CONDITION and "blinded" in effects:
-            pattern = _TEXT_CONDITION_OTHER  # the engine blinded a foe: that word is not a claim
+        recorded = _RECORDED_CONDITIONS & set(effects)
+        if kind == CONDITION and recorded:
+            pattern = _text_condition_pattern(
+                frozenset(recorded)
+            )  # a real effect: its word is not a claim
         if kind in found:
             continue
         match = next(
@@ -1163,8 +1242,9 @@ def _claim_pattern(
             continue
         if kind == MANEUVER and maneuver_applied:
             continue
-        if kind == CONDITION and "blinded" in applied.effects:
-            p = _OTHER_CONDITION_CLAIMS  # the engine's blinded is real; other conditions still ruled
+        recorded = _RECORDED_CONDITIONS & set(applied.effects)
+        if kind == CONDITION and recorded:
+            p = _condition_claim(frozenset(recorded))  # the engine's real condition is not a claim
         patterns.append(p)
     # An implemented class feature is a claim only while the engine has not executed it this turn.
     executed = set(applied.effects) & FEATURE_EFFECTS
