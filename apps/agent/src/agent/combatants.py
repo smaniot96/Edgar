@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent.monster_stats import narrator_note
+from agent.positioning import band_of, band_text
 
 Lethality = Literal["lethal", "nonlethal"]
 
@@ -255,17 +256,25 @@ def clear_effects(combatants: Iterable[dict]) -> None:
 
 
 def attack_roll_mode(
-    attacker: Mapping[str, Any], target: Mapping[str, Any], *, ranged: bool = False
+    attacker: Mapping[str, Any],
+    target: Mapping[str, Any],
+    *,
+    ranged: bool = False,
+    within_five_feet: bool = False,
 ) -> str:
     """The 5e attack-roll mode from combatant effects: "advantage", "disadvantage" or "normal".
 
     A restrained, prone or blinded attacker rolls at disadvantage. A restrained, blinded or marked
     target is attacked with advantage; a prone target with advantage in melee and disadvantage at
-    range; a dodging target with disadvantage. Opposing sources cancel to normal, as the rules do.
-    Pure: it never rolls and never sets a number.
+    range; a dodging target with disadvantage. `within_five_feet` (EDG-044, the melee band) is the
+    typed source of the PHB rule that a ranged attack made within 5 feet of a hostile creature has
+    disadvantage: it applies only to a ranged attack. Opposing sources cancel to normal, as the
+    rules do. Pure: it never rolls and never sets a number.
     """
     advantage = disadvantage = False
     if any(e["kind"] in _OWN_ATTACK_DISADVANTAGE for e in effects_of(attacker)):
+        disadvantage = True
+    if ranged and within_five_feet:
         disadvantage = True
     for e in effects_of(target):
         if e["kind"] in _AGAINST_ADVANTAGE:
@@ -309,7 +318,11 @@ def _public_effect(e: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def view_fields(c: Mapping[str, Any]) -> dict[str, Any]:
-    """Public, shape-stable disposition fields for the roster, HUD and narrator."""
+    """Public, shape-stable disposition fields for the roster, HUD and narrator.
+
+    `band` and `reaction_used` (EDG-044) are additive: the hero has no band, and a foe's band reads
+    as melee when its row predates positioning (see `agent.positioning`).
+    """
     disposition = disposition_of(c)
     return {
         "id": stable_id(c),
@@ -317,6 +330,8 @@ def view_fields(c: Mapping[str, Any]) -> dict[str, Any]:
         "can_act": can_act(c),
         "alive": disposition in LIVING_DISPOSITIONS,
         "effects": [_public_effect(e) for e in effects_of(c)],
+        "band": None if c.get("is_player") else band_of(c),
+        "reaction_used": bool(c.get("reaction_used", False)),
     }
 
 
@@ -327,12 +342,17 @@ def _effects_text(c: Mapping[str, Any]) -> str:
     )
 
 
+def _position_text(c: Mapping[str, Any]) -> str:
+    """A foe's band, stated for rows that carry one (EDG-044); legacy rows keep their text."""
+    return f"; position: {band_text(c)}" if "band" in c else ""
+
+
 def narrator_roster(combatants: Iterable[Mapping[str, Any]], round_actors: Iterable[str]) -> str:
     """Authoritative roster text for the round narration. The engine decides; prose must agree."""
     enemies = [c for c in combatants if not c.get("is_player")]
     lines = [
         f'- id "{stable_id(c)}", name "{display_name(c)}": {_STATUS_TEXT[disposition_of(c)]}'
-        f"{_effects_text(c)}{narrator_note(c)}"
+        f"{_effects_text(c)}{_position_text(c)}{narrator_note(c)}"
         for c in enemies
     ]
     able = [display_name(c) for c in enemies if can_act(c)]
