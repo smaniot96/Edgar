@@ -89,8 +89,10 @@ simulate (`GET /api/rules/supported-scope`):
   it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
   table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, spent by the
   player's action in or out of combat and restored by a short or long rest; no automatic use at 0
-  HP); short and long rest healing (a long rest also restores spell slots); healing potions taken
-  from inventory.
+  HP); Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends
+  one to roll it plus CON (minimum 1 HP, capped at the missing HP) and is refused with none left; a
+  long rest restores HP, spell slots and half the level in spent Hit Dice (minimum one; the 2024
+  campaigns use the same rule); healing potions taken from inventory.
 - Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
   darts, upcast by slot), Sacred Flame (DEX save) and Cure Wounds (self-heal). Their dice are
   rolled by the engine, leveled spells spend a slot tracked per character, and a cast with no slot
@@ -108,7 +110,7 @@ simulate (`GET /api/rules/supported-scope`):
   Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, concentration, other condition
-  effects, cover and positioning, bonus actions and reactions, the Hit Dice ledger, and class
+  effects, cover and positioning, bonus actions and reactions, declared counts of Hit Dice, and class
   features beyond Second Wind. A declared action of this kind gets a narrative ruling and no
   mechanical effect.
 - Exact monster records (EDG-004): a creature identified by its verified record uses that record's

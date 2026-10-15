@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from agent.resolution import second_wind_status
+from agent.resolution import hit_dice_status, second_wind_status
 from agent.spells import expended_slots, slot_totals
 from db.postgres.models import Character, CharacterAssignment
 
@@ -81,6 +81,8 @@ def resource_view(character: dict[str, Any]) -> dict[str, Any]:
     second_wind = second_wind_status(character)
     if second_wind is not None:
         out["second_wind"] = second_wind
+    # Additive, derived view of the Hit Dice ledger (EDG-026): every class has Hit Dice.
+    out["hit_dice"] = hit_dice_status(character)
     spell_slots = spell_slots_status(character)
     if spell_slots is not None:
         out["spell_slots"] = spell_slots
