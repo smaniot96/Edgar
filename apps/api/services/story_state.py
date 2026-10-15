@@ -7,20 +7,30 @@ serialization occurs here. Rows are immutable; the full effect sequence survives
 
 from __future__ import annotations
 
+import hashlib
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.combatants import disposition_of
 from db.postgres.models import NPC, EventLog, Session as SessionModel, StoryFact as StoryFactRow
 from edgar_core.story import (
     AcceptedStoryEffect,
     StoryEffect,
     StoryFact,
+    StoryRef,
     StoryState,
     accept_story_effect,
     known_story_name,
     player_known_story as player_known_story,
     story_target_id,
 )
+
+# EDG-146: engine-owned combat outcomes enter the ledger as `encounter` facts on a combat-owned
+# target. The target has no reviewed manifest, so its digests name the encounter itself.
+COMBAT_OUTCOME_COLLECTION = "combat"
+COMBAT_OUTCOME_STATUS = {"captured": "captive", "dead": "dead", "defeated": "defeated"}
+_CAPTIVE_TERMINAL = frozenset({"dead", "released"})
 
 
 class StoryStateConflict(ValueError):
@@ -180,3 +190,131 @@ def session_story_flags(
             if entity["entity_id"] == fact.target.canonical_id and entity.get("discovery_flag"):
                 flags[entity["discovery_flag"]] = "discovered"
     return flags
+
+
+def combat_outcome_target(combat_id: int, combatant_id: str) -> StoryRef:
+    """Stable identity of one foe in one encounter, independent of its status."""
+    encounter = hashlib.sha256(f"combat-outcome:{combat_id}".encode()).hexdigest()
+    manifest = hashlib.sha256(b"engine:combat-outcome:v1").hexdigest()
+    who = hashlib.sha256(f"{combat_id}\n{combatant_id}".encode()).hexdigest()
+    return StoryRef(
+        collection=COMBAT_OUTCOME_COLLECTION,
+        source_sha256=encounter,
+        manifest_sha256=manifest,
+        kind="entity",
+        canonical_id=f"combatant_{who[:40]}",
+    )
+
+
+def _provenance(combat_id: int, combatant_id: str, action: str, round_: int | None) -> dict:
+    reference = f"{combat_id}\n{combatant_id}\n{action}"
+    return {
+        "reference_id": hashlib.sha256(reference.encode()).hexdigest(),
+        "audience": "engine",
+        "combat_id": combat_id,
+        "combat_round": round_,
+        "combatant_id": combatant_id,
+    }
+
+
+async def persist_combat_outcome_facts(
+    db: AsyncSession,
+    game_session: SessionModel,
+    combat_id: int,
+    combat_state: dict,
+    *,
+    event_id: int,
+    turn_id: str,
+) -> None:
+    """Project captured, dead and defeated foes of an ended encounter (caller commits).
+
+    Only combatants with a stored disposition are recorded. Legacy `alive=false` rows have none,
+    so they stay undecided and no intent is invented for them.
+    """
+    if not combat_state.get("ended"):
+        return
+    for c in combat_state.get("combatants") or []:
+        if c.get("is_player") or "disposition" not in c:
+            continue
+        status = COMBAT_OUTCOME_STATUS.get(disposition_of(c))
+        if status is None:
+            continue
+        combatant_id = str(c.get("name") or "")
+        await _record_encounter_fact(
+            db,
+            game_session,
+            combat_outcome_target(combat_id, combatant_id),
+            status,
+            display_name=str(c.get("display_name") or combatant_id),
+            provenance=_provenance(combat_id, combatant_id, status, combat_state.get("round")),
+            event_id=event_id,
+            turn_id=turn_id,
+        )
+
+
+async def persist_captive_fact(
+    db: AsyncSession,
+    game_session: SessionModel,
+    *,
+    combat_id: int,
+    combatant_id: str,
+    status: str,
+    display_name: str,
+    combat_round: int | None,
+    event_id: int,
+    turn_id: str,
+) -> None:
+    """Record a player's release or kill of a captive; a terminal outcome is never reversed."""
+    if status not in ("released", "dead"):
+        raise StoryStateConflict("Unsupported captive outcome")
+    await _record_encounter_fact(
+        db,
+        game_session,
+        combat_outcome_target(combat_id, combatant_id),
+        status,
+        display_name=display_name,
+        provenance=_provenance(combat_id, combatant_id, status, combat_round),
+        event_id=event_id,
+        turn_id=turn_id,
+    )
+
+
+async def _record_encounter_fact(
+    db: AsyncSession,
+    game_session: SessionModel,
+    target: StoryRef,
+    status: str,
+    *,
+    display_name: str,
+    provenance: dict,
+    event_id: int,
+    turn_id: str,
+) -> None:
+    """Append one immutable engine fact once. Exact replays are no-ops; the session lock serializes."""
+    await db.execute(
+        select(SessionModel.id).where(SessionModel.id == game_session.id).with_for_update()
+    )
+    current = await load_story_state(db, game_session.id, game_session.campaign_id)
+    facts = [StoryFact.model_validate(f) for f in current["facts"]]
+    effect = accept_story_effect(
+        StoryEffect(kind="encounter", target=target, status=status),
+        turn_id=turn_id,
+        source_refs=[provenance],
+        display_name=display_name,
+    )
+    if any(f.effect_id == effect.effect_id for f in facts):
+        return
+    prior = [f for f in facts if f.fact_id == story_target_id(target)]
+    if prior and prior[-1].status in _CAPTIVE_TERMINAL and prior[-1].status != status:
+        raise StoryStateConflict("A recorded captive outcome cannot change")
+    fact = StoryFact(**effect.model_dump(), fact_id=story_target_id(target), event_id=event_id)
+    db.add(
+        StoryFactRow(
+            session_id=game_session.id,
+            effect_id=fact.effect_id,
+            fact_id=fact.fact_id,
+            event_id=event_id,
+            payload=fact.model_dump(),
+        )
+    )
+    await db.flush()
