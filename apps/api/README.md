@@ -30,6 +30,15 @@ The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session
 
 `current_user_id()` looks up the seeded `dm@edgar.local` user; this is the single-user seam for solo play and is replaced by real auth when there is more than one user.
 
+## Supported rules scope
+
+`GET /api/rules/supported-scope` is read-only and static. It returns the code-owned contract
+(`agent.supported_rules`): the mechanics the engine executes, the rules it does not execute, and
+the solo-play adaptations. A declared action that falls in the unsupported list receives a narrative
+ruling. Its narration and adjudication cannot state an engine effect, so spells, maneuvers,
+advantage, positioning and similar claims never change HP, conditions or flags. The scope is also
+summarised in the rules and narrator prompts.
+
 ## Health
 
 `/health` returns 200 without touching the DB (cheap; for compose healthchecks). `/ready` returns 200 only when Postgres, Redis and Qdrant all answer within a short timeout, 503 otherwise (for orchestrators that need a real readiness signal).

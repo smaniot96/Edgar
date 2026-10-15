@@ -3,6 +3,14 @@ import { cn } from "../../lib/cn";
 import { orderCombatants } from "./gameState";
 import { HpBar } from "../ui/HpBar";
 
+/** Plain-language label for a non-standing combatant. `defeated` never claims death or capture. */
+const DISPOSITION_LABEL: Record<string, string> = {
+  unconscious: "unconscious",
+  captured: "captive",
+  dead: "dead",
+  defeated: "defeated",
+};
+
 /** Initiative-ordered combat tracker: every combatant incl. the player, HP, AC, whose turn. */
 export function CombatHud({ combat }: { combat: CombatState }) {
   const rows = orderCombatants(combat);
@@ -31,7 +39,7 @@ export function CombatHud({ combat }: { combat: CombatState }) {
                 "flex w-40 shrink-0 flex-col gap-1 rounded-md border px-2 py-1.5 text-xs",
                 c.isPlayer ? "border-ember-800/70 bg-ember-950/20" : "border-line bg-surface/80",
                 c.isCurrent && "ring-1 ring-ember-400",
-                !c.alive && "opacity-50",
+                (!c.alive || c.canAct === false) && "opacity-50",
               )}
             >
               <div className="flex items-center gap-1.5">
@@ -40,6 +48,9 @@ export function CombatHud({ combat }: { combat: CombatState }) {
                   {c.name}
                 </span>
                 {c.isPlayer ? <span className="text-[0.6rem] uppercase text-ember-400/80">you</span> : null}
+                {c.disposition && DISPOSITION_LABEL[c.disposition] ? (
+                  <span className="text-[0.6rem] uppercase text-ink-muted">{DISPOSITION_LABEL[c.disposition]}</span>
+                ) : null}
                 <span className="ml-auto flex shrink-0 gap-1.5 font-mono text-[0.65rem] text-ink-muted">
                   {c.init != null ? <span title="Initiative">⚡{c.init}</span> : null}
                   {c.ac != null ? <span title="Armor class">AC {c.ac}</span> : null}
