@@ -61,6 +61,9 @@ async def test_lost_ack_replay_never_runs_provider_or_repeats_state(
     assert receipt.status_code == 200, receipt.text
     assert receipt.json()["status"] == "committed"
     assert receipt.json()["result"]["narration"] == done["narration"]
+    assert isinstance(receipt.json()["result"]["event_id"], int)
+    history = (await api_client.get(f"/api/sessions/{sid}/messages")).json()
+    assert history[-1]["event_id"] == receipt.json()["result"]["event_id"]
     for replay_suffix in ("", "/stream"):
         replay = await api_client.post(f"/api/sessions/{sid}/turn{replay_suffix}", json=body)
         assert replay.status_code == 200, replay.text

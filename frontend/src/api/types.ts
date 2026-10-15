@@ -207,6 +207,7 @@ export interface RollRecord {
 }
 
 export interface ChatMessageRead {
+  event_id?: number | null;
   citations?: SourceCitation[];
   ruling_citation_ids?: string[];
   role: "user" | "dm";
@@ -498,6 +499,7 @@ export interface TurnCharacter {
 
 /** Shape of the `done` SSE frame and the sync POST turn response. */
 export interface TurnResult {
+  event_id?: number | null;
   citations?: SourceCitation[];
   ruling_citation_ids?: string[];
   retrieval_degraded?: boolean;

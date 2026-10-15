@@ -33,6 +33,7 @@ class TurnRequest(BaseModel):
 class TurnResponse(BaseModel):
     """Response body for turn endpoint."""
 
+    event_id: int | None = None
     retrieval_degraded: bool = False
     source_status: list[dict] = Field(default_factory=list)
     source_mode: str = "module"

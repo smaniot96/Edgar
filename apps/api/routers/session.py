@@ -200,6 +200,7 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
                 ChatMessageRead(
                     role="user",
                     content=str(p["player_input"]),
+                    event_id=e.id,
                     created_at=e.created_at,
                 )
             )
@@ -210,6 +211,7 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
                 ChatMessageRead(
                     role="dm",
                     content=str(p["narration"]),
+                    event_id=e.id,
                     citations=public_citations(p.get("citations", [])),
                     rules_edition=p.get("rules_edition"),
                     ruling_citation_ids=[
@@ -428,6 +430,7 @@ async def session_turn(
 
         adjudication = result.get("adjudication_result")
         return TurnResponse(
+            event_id=done.get("event_id"),
             narration=done["narration"],
             retrieval_degraded=done["retrieval_degraded"],
             source_status=done["source_status"],
