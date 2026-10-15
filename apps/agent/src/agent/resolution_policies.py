@@ -32,6 +32,7 @@ def describe_policy_result(success: bool, effects: list, existing: list) -> str:
         "encounter": "You meet",
         "relationship": "Your relationship changes with",
         "move": "You reach",
+        "learn_place": "You learn about",
         "objective": "Objective",
         "milestone": "Milestone",
         "acquire": "You acquire",

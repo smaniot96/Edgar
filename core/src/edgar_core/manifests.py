@@ -466,6 +466,12 @@ class AdventureManifest(Record):
                         raise ValueError("Resolution effect evidence must support its definition.")
                     if effect.status not in definition.statuses:
                         raise ValueError("Resolution effect has an unsupported definition status.")
+                    if effect.status == "announced" and not set(effect.passage_ids) <= set(
+                        definition.announcement_passage_ids
+                    ):
+                        raise ValueError(
+                            "Announcement effects need explicit reviewed announcement evidence."
+                        )
                     if effect.kind == "clock" and effect.quantity_delta is not None:
                         if effect.status not in {"advanced", "completed"}:
                             raise ValueError("Clock effects must advance or complete a clock.")
