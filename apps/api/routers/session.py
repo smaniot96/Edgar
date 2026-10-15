@@ -34,6 +34,7 @@ from ..services.combat import (
     load_resolved_combat_outcomes,
 )
 from ..services.npcs import load_npcs
+from ..services.roll_record import stored_roll
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
     load_session_context,
@@ -201,6 +202,8 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
                 )
             )
         if p.get("narration"):
+            # The stored original ruling and dice; reload never re-rolls (EDG-030).
+            roll_status, roll = stored_roll(p)
             out.append(
                 ChatMessageRead(
                     role="dm",
@@ -213,6 +216,9 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
                         if rid
                         in {r["reference_id"] for r in public_citations(p.get("citations", []))}
                     ],
+                    turn_id=p.get("turn_id"),
+                    roll_status=roll_status,
+                    roll=roll,
                     created_at=e.created_at,
                 )
             )
@@ -388,6 +394,8 @@ async def session_turn(
             combat_diagnostics=(
                 combat_round_from_events(result.get("telemetry_events")) if body.debug else None
             ),
+            roll_status=done.get("roll_status"),
+            roll=done.get("roll"),
         )
     except HTTPException:
         raise

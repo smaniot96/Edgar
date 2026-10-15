@@ -1,4 +1,4 @@
-import type { AdjudicationResult, DiceLogEntry } from "../../api/types";
+import type { AdjudicationResult, DiceLogEntry, RollRecord } from "../../api/types";
 
 export interface RollParts {
   check: string;
@@ -87,4 +87,25 @@ export function rollSummary(p: RollParts): string {
   s += ` → ${p.success ? "Success" : "Failure"}`;
   if (p.damage != null) s += ` · ${p.damage} dmg`;
   return s;
+}
+
+/**
+ * The roll card's input for a stored turn (EDG-030): the same numbers the live turn showed.
+ * Only the fields the card and its dev details read are copied.
+ */
+export function adjudicationFromRoll(roll: RollRecord): AdjudicationResult {
+  return {
+    success: roll.success,
+    damage: roll.damage,
+    conditions: roll.conditions,
+    mechanical_summary: roll.mechanical_summary,
+    dice_result: roll.dice_result,
+    check: roll.check,
+    dc: roll.dc,
+    against: roll.against,
+    modifier: roll.modifier,
+    roll_expression: roll.roll_expression,
+    natural_roll: roll.natural_roll,
+    dice_log: roll.dice_log,
+  };
 }
