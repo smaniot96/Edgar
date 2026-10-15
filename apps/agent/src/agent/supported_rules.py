@@ -45,6 +45,16 @@ from agent.spells import CATALOG, cast_request
 CONTRACT_ID = "edgar.supported-5e-subset"
 CONTRACT_VERSION = 1
 
+# EDG-147: the classifier reads declarations in English first. Italian and Spanish words are read for a
+# few casting, advantage, cover, lethality and action terms only; the engine's spell resolution needs the
+# English spell name in the declaration. Other languages rely on the parser's own entities.
+DECLARATION_LANGUAGE = (
+    "Declared actions are read in English. Italian and Spanish are read only for a few casting, "
+    "advantage, cover, lethality and action words. A catalog spell resolves only when its English name "
+    "is in the declaration; a spell the parser names from another language is ruled as not resolved. "
+    "Other languages are not classified by these words and rely on the parser's own entities."
+)
+
 EDITION_BASIS = (
     "Engine numbers follow the 2014 core rules (d20 checks, DC tiers 10/15/20/25, ability "
     "modifiers, proficiency progression, weapon and armor tables). A campaign's rules_edition "
@@ -244,7 +254,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "Guiding Bolt and Blindness/Deafness"
         ),
         scope=(
-            "Only these declared spells resolve. Fire Bolt is a spell attack (1d10 fire, two dice "
+            "Only these declared spells resolve, and only when the declaration names the spell in English. "
+            "Fire Bolt is a spell attack (1d10 fire, two dice "
             "at 5th level and up, more at 11th and 17th; a critical doubles the dice). Magic Missile "
             "is three automatic-hit darts of 1d4+1 force, one more dart per slot above 1st. Sacred "
             "Flame is a DEX save by the target against the caster's spell save DC, with 1d8 radiant "
@@ -624,13 +635,47 @@ _FEATURE_NAMES = (
 _OTHER_CONDITION_CLAIMS = (
     r"\b(?:stunned|poisoned|paralyzed|petrified|charmed|frightened|deafened|incapacitated)\b"
 )
-_BONUS_ACTION_CLAIM = r"bonus\s+action"
+_BONUS_ACTION_CLAIM = r"bonus[\s-]+action"
 _DODGE_CLAIM = r"dodg\w*"
 _ACTION_ECONOMY_CLAIM = (
     r"\b(?:(?:dash|disengage|help)\s+action|" + _BONUS_ACTION_CLAIM + r"|opportunity\s+attacks?|"
     r"" + _DODGE_CLAIM + r"|disengag\w*)\b"
 )
 _UNSUPPORTED_FEATURE = re.compile(r"\b(?:" + _FEATURE_NAMES + r")\b", re.IGNORECASE)
+# A shove or pin aimed at an inanimate object ("shove the table against the door") is not a combat
+# maneuver, so the object is excluded by lookahead.
+_INANIMATE = (
+    r"table|chair|crate|box|barrel|cart|door|desk|bench|stool|wardrobe|cabinet|rock|boulder|stone|"
+    r"bag|bucket|chest|tray|bookcase|shelf|bed|sofa|notice|note|map|poster|sign|letter|paper|card|"
+    r"flyer|badge|cloak|scroll"
+)
+_NOT_OBJECT = (
+    r"(?!\s+(?:the\s+|a\s+|an\s+|his\s+|her\s+|its\s+|their\s+|my\s+|your\s+)?(?:"
+    + _INANIMATE
+    + r")\b)"
+)
+# Idioms that name no mechanic ("take advantage of", "cast my net", "rage against the machine").
+# They are blanked out of the declared text before the word patterns read it. Casting itself is still
+# read from the original text by `cast_request`.
+_IDIOM = re.compile(
+    r"\b(?:take|takes|took|taken|taking|prendo|prendere|prende|aprovecho|aprovechar|sacar|saco|"
+    r"tomar|tomo)\s+(?:la\s+|il\s+|de\s+la\s+|de\s+)?(?:advantage|vantaggio|ventaja)\b"
+    r"(?:\s+(?:of|dal|de)\b)?"
+    r"|\bcast\s+(?:my|your|his|her|their|a)\s+(?:net|line|glance|look|vote|lot)\b"
+    r"|\bcast\s+(?:off|aside|about|around|out)\b"
+    r"|\bcast\s+(?:an?|one|the|my|your|his|her|their)\s+(?:eyes?|look|glance|gaze)\b"
+    r"|\brage\s+against\b"
+    r"|\bfrighten\w*\s+(?:\w+\s+){0,2}into\b"
+    r"|\btrip(?:s|ped|ping)?\s+over\b",
+    re.IGNORECASE,
+)
+# A parser-named action that is a 5e action economy slot the engine does not model (combat only).
+_PARSED_ECONOMY = re.compile(
+    r"dash|disengage|\bhelp\b|ready\s+an?\s+action|reaction|bonus|opportunity|extra attack|"
+    r"second attack|off-hand",
+    re.IGNORECASE,
+)
+
 _CLAIM_WORDS = {
     SPELL: (
         r"\b\d+d\d+\b|\bspell\s+slots?\b|\bslots?\b|\bconcentrat\w*|\b(?:"
@@ -640,7 +685,9 @@ _CLAIM_WORDS = {
     FEATURE: r"\b(?:" + _FEATURE_NAMES + r")\b",
     MANEUVER: (
         r"\b(?:pinned|pins?\s+(?:him|her|it|them|the\s+\w+)|pinning|restrain\w*|grappl\w*|"
-        r"shov\w*|prone|held\s+(?:fast|down|in\s+place|still)|knocked\s+(?:down|prone|over)|"
+        r"shov\w*"
+        + _NOT_OBJECT
+        + r"|prone|held\s+(?:fast|down|in\s+place|still)|knocked\s+(?:down|prone|over)|"
         r"(?:can|could)(?:n't|\s+not)\s+(?:move|escape|get\s+up|stand))\b"
     ),
     CONDITION: r"\bblinded\b|" + _OTHER_CONDITION_CLAIMS,
@@ -675,7 +722,9 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         SPELL,
         re.compile(
             r"\b(?:spell|spells|spellcasting|spellcast|cantrips?|rituals?|incantation|"
-            r"incantesimo|incantesimi|lancio|lanciare|incantato|incantata)\b"
+            r"incantesimo|incantesimi|lancio\s+di\s+(?:un\s+|una\s+)?(?:incantesimo|magia)|"
+            r"lanzo\s+(?:un\s+|una\s+)?(?:hechizo|conjuro)|lanzar\s+(?:un\s+|una\s+)?(?:hechizo|conjuro)|"
+            r"hechizo|conjuro|incantato|incantata)\b"
             r"|\bcast(?:s|ing)?\b(?!\s+(?:off|aside|doubt|suspicion|about|around|out|your|a\s+"
             r"(?:glance|look|light|shadow|net|line|vote|lot)|my\s+(?:eyes|gaze|net|line))\b)"
             r"|\b(?:" + _SPELL_NAMES + r")\b",
@@ -685,7 +734,8 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         MANEUVER,
         re.compile(
-            r"\b(?:pin|pins|pinned|pinning|shove|shoves|shoved|shoving|restrain|restrains|"
+            r"\b(?:(?:pin|pins|pinned|pinning|shove|shoves|shoved|shoving)\b" + _NOT_OBJECT + r"|"
+            r"restrain|restrains|"
             r"restrained|restraining|grapple|grapples|grappled|grappling|tackle|tackles|tackled|"
             r"trip|trips|tripped|tripping|knock(?:s|ed|ing)?\s+(?:\w+\s+)?prone|"
             r"hold\s+(?:him|her|it|them)\s+(?:down|in\s+place|still|fast))\b",
@@ -706,7 +756,7 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ADVANTAGE,
         re.compile(
             r"(?<!take\s)(?<!takes\s)(?<!taking\s)(?<!took\s)(?<!taken\s)"
-            r"\b(?:advantage|disadvantage|with an edge)\b(?!\s+of\b)",
+            r"\b(?:advantage|disadvantage|with an edge|vantaggio|ventaja)\b(?!\s+of\b)",
             re.IGNORECASE,
         ),
     ),
@@ -714,7 +764,7 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ACTION_ECONOMY,
         re.compile(
             # Dodge is a supported action (action_economy), so its phrase is not listed here.
-            r"\b(?:(?:dash|disengage|help)\s+action|bonus\s+action|opportunity\s+attacks?|"
+            r"\b(?:(?:dash|help)\s+action|disengag\w*|bonus[\s-]+action|opportunity\s+attacks?|"
             r"ready\s+an?\s+action|extra\s+attack|second\s+attack|off-hand\s+attack|"
             r"as\s+a\s+reaction|my\s+reaction)\b",
             re.IGNORECASE,
@@ -724,8 +774,7 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         POSITIONING,
         re.compile(
             r"\b(?:flank\w*|take\s+cover|in\s+cover|behind\s+cover|high\s+ground|"
-            r"blocks?\s+the\s+(?:door|doorway|exit|passage|corridor|stairs?|way)|"
-            r"block\s+the\s+(?:door|doorway|exit|passage|corridor|stairs?|way))\b",
+            r"a\s+cubierto|copertura|al\s+riparo)\b",
             re.IGNORECASE,
         ),
     ),
@@ -758,6 +807,19 @@ def _parsed_spell(parsed: Any) -> bool:
         return True
     entities = getattr(parsed, "entities", None)
     return isinstance(entities, dict) and bool(entities.get("spell"))
+
+
+def _unresolved_spell_note(parsed: Any) -> str | None:
+    """The parser named a catalog spell but the words do not: the engine resolves a catalog spell only
+    when its English name is in the declaration, so the spell is not resolved."""
+    entities = getattr(parsed, "entities", None)
+    name = str(entities.get("spell") or "").strip().lower() if isinstance(entities, dict) else ""
+    if name and name in {spell.name.lower() for spell in CATALOG}:
+        return (
+            f"Narrative ruling: {name} is not resolved: the engine resolves a catalog spell only "
+            "when its English name is in the declaration, so no spell effect is applied."
+        )
+    return None
 
 
 def _parsed_feature(parsed: Any) -> str | None:
@@ -818,6 +880,7 @@ def classify_unsupported_actions(
     unsupported, so its narration is not stripped.
     """
     text = str(player_input or "")
+    scan = _IDIOM.sub(" ", text)
     found: dict[str, UnsupportedAction] = {}
     request = cast_request(text, parsed, character)
     if request is not None:
@@ -836,13 +899,13 @@ def classify_unsupported_actions(
                 "succeeded or no foe was in the fight, so none is applied.",
             )
     elif _parsed_spell(parsed):
-        found[SPELL] = UnsupportedAction(SPELL, "spell (parsed)")
+        found[SPELL] = UnsupportedAction(SPELL, "spell (parsed)", _unresolved_spell_note(parsed))
     # Implemented class features (EDG-145) the engine executed this turn are not declared. Any
     # other declared one (refused, or not applied this turn) gets its own ruling.
-    class_features = requested_features(text, parsed_feature_name(parsed))
+    class_features = requested_features(scan, parsed_feature_name(parsed))
     phrases = [f.replace("_", " ") for f in class_features if f not in engine_effects]
     rulings = [feature_ruling(f, character) for f in class_features if f not in engine_effects]
-    unsupported = _UNSUPPORTED_FEATURE.search(text)
+    unsupported = _UNSUPPORTED_FEATURE.search(scan)
     feature = unsupported.group(0) if unsupported else _parsed_feature(parsed)
     if feature:
         phrases.append(feature.lower()[:60])
@@ -868,7 +931,7 @@ def classify_unsupported_actions(
         match = next(
             (
                 m
-                for m in pattern.finditer(text)
+                for m in pattern.finditer(scan)
                 if not _executed_economy_phrase(kind, m.group(0), engine_effects, text)
             ),
             None,
@@ -878,7 +941,29 @@ def classify_unsupported_actions(
         if kind == MANEUVER and _engine_applied_maneuver(text, engine_effects):
             continue
         found[kind] = UnsupportedAction(kind, match.group(0).lower()[:60])
+    economy = _parsed_economy(parsed, text, engine_effects)
+    if ACTION_ECONOMY not in found and economy:
+        found[ACTION_ECONOMY] = UnsupportedAction(ACTION_ECONOMY, economy)
     return tuple(found[kind] for kind in _KIND_ORDER if kind in found)
+
+
+def _parsed_economy(parsed: Any, text: str, engine_effects: tuple[str, ...]) -> str | None:
+    """A combat action the parser named (Dash, Disengage...) that the engine does not model.
+
+    Read only in combat (the economy slots are combat rules), and never for an action the engine
+    executed this turn (Dodge, or a Second Wind / Healing Word bonus action).
+    """
+    if getattr(parsed, "intent", None) != "combat":
+        return None
+    entities = getattr(parsed, "entities", None)
+    action = str(entities.get("action") or "").strip() if isinstance(entities, dict) else ""
+    if not action or re.search(r"dodg", action, re.IGNORECASE):
+        return None
+    if not _PARSED_ECONOMY.search(action) or _executed_economy_phrase(
+        ACTION_ECONOMY, action, engine_effects, text
+    ):
+        return None
+    return action.lower()[:60]
 
 
 def _executed_economy_phrase(
@@ -1059,16 +1144,54 @@ def apply_adjudication_boundary(
             if not claim.search(f"{str(fu.key).replace('_', ' ')} {fu.value}")
         ]
     rulings = " ".join(ruling_lines(actions))
-    summary = _strip_claim_sentences(adj.mechanical_summary, claim)
+    summary = _strip_claim_sentences(adj.mechanical_summary, claim, keep=ENGINE_ROLL_LINE)
     adj.mechanical_summary = f"{summary} {rulings}".strip()
 
 
-def _strip_claim_sentences(text: str, claim: re.Pattern[str] | None) -> str:
-    """Keep line structure; drop each sentence that claims an unsupported effect."""
+# Engine roll lines are engine facts and a summary keeps them whatever they say. They are recognised by
+# the engine's own formats (`resolution.Roll.describe`, the contested-roll line, the attack line), never by
+# dice notation alone: "hits the goblin for 3d4" is model prose and is still a claim.
+ENGINE_ROLL_LINE = re.compile(
+    r"\((?:d20 rolled|advantage:|disadvantage:)|\bcontest:|\bvs\s+(?:AC|DC)\s+\d+"
+    r"|->\s*(?:success|failure|critical hit|automatic miss)"
+    r"|\b\d+d\d+(?:[+-]\d+)?\s*=\s*\d+\s+vs\s+(?:AC|DC)\b",
+    re.IGNORECASE,
+)
+_NEGATION = re.compile(
+    r"\b(?:no|not|nothing|never|without|fails?|failed|doesn't|does\s+not|didn't|did\s+not)\b|n't\b",
+    re.IGNORECASE,
+)
+_NEGATABLE = re.compile(
+    r"(?:"
+    + _SPELL_NAMES
+    + r")|spell\s+(?:hits|strikes|lands|takes\s+hold|binds|damages|heals|restores)",
+    re.IGNORECASE,
+)
+
+
+def _claims_effect(sentence: str, claim: re.Pattern[str] | None) -> bool:
+    """True when the sentence asserts an unsupported effect. A negated spell name or a negated
+    "spell takes hold" ("no spell takes hold") states the ruling, so it is not a claim."""
+    if claim is None:
+        return False
+    hits = [m.group(0) for m in claim.finditer(sentence)]
+    if not hits:
+        return False
+    return not (_NEGATION.search(sentence) and all(_NEGATABLE.fullmatch(h) for h in hits))
+
+
+def _strip_claim_sentences(
+    text: str, claim: re.Pattern[str] | None, keep: re.Pattern[str] | None = None
+) -> str:
+    """Keep line structure; drop each sentence that claims an unsupported effect (`keep` exempts)."""
     kept_lines: list[str] = []
     for line in str(text or "").splitlines():
         sentences = [s for s in _SENTENCE_END.split(line.strip()) if s.strip()]
-        survivors = [s for s in sentences if claim is None or not claim.search(s)]
+        survivors = [
+            s
+            for s in sentences
+            if not _claims_effect(s, claim) or (keep is not None and keep.search(s))
+        ]
         if survivors:
             kept_lines.append(" ".join(survivors))
     return "\n\n".join(kept_lines).strip()
@@ -1123,6 +1246,7 @@ def contract_payload() -> dict[str, Any]:
             {"id": m.id, "title": m.title, "boundary": m.boundary} for m in UNSUPPORTED_MECHANICS
         ],
         "solo_adaptations": list(SOLO_ADAPTATIONS),
+        "declaration_language": DECLARATION_LANGUAGE,
         "runtime_boundary": (
             "A declared action that falls in the not-supported list receives a narrative ruling. "
             "Its narration cannot state an engine effect, and no spell, maneuver, condition or "

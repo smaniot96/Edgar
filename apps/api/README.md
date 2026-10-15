@@ -46,7 +46,7 @@ Action Surge and Rage are persisted per feature in `stats["class_features"]`, an
 only for its encounter (`raging` in the combat state); a combat maneuver the engine actually
 applied (a won grapple, restraint or shove prone) and a spell condition it recorded (a foe blinded by
 Blindness/Deafness, or marked by Guiding Bolt) are recorded in the combatant's `effects` and are not
-stripped from the narration. The scope is also summarised in the rules and narrator prompts.
+stripped from the narration. The scope is also summarised in the rules and narrator prompts. Declared actions are read in English. Italian and Spanish are read only for a few casting, advantage, cover, lethality and action words. A catalog spell resolves only when its English name is in the declaration; a spell the parser names from another language is ruled as not resolved. Other languages are not classified by these words and rely on the parser's own entities. The payload carries this as `declaration_language`.
 
 ## Health
 
