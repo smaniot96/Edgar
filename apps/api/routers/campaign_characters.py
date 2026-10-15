@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from agent.resolution import SECOND_WIND_KEY
+from agent.resolution import ENGINE_STATS_KEYS
 from db.postgres.models import Campaign, Character, CharacterAssignment
 
 from ..dependencies import current_user_id, get_session
@@ -141,9 +141,10 @@ async def patch_campaign_character(
             status_code=422,
             detail=f"hp_current ({new_hp_current}) cannot exceed hp_max ({new_hp_max})",
         )
-    if "stats" in data and isinstance(assignment.stats, dict) and SECOND_WIND_KEY in assignment.stats:
-        # A manual sheet edit must not reset the engine-owned Second Wind uses.
-        data["stats"] = {**data["stats"], SECOND_WIND_KEY: assignment.stats[SECOND_WIND_KEY]}
+    if "stats" in data and isinstance(assignment.stats, dict):
+        # A manual sheet edit must not reset engine-owned resources (Second Wind uses, spell slots).
+        kept = {k: assignment.stats[k] for k in ENGINE_STATS_KEYS if k in assignment.stats}
+        data["stats"] = {**data["stats"], **kept}
     for key, value in data.items():
         setattr(assignment, key, value)
 

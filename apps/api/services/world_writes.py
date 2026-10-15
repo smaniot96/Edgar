@@ -148,6 +148,13 @@ async def _apply_character_update(db, character_id: int, campaign_id: int, cu) -
         if name in conditions:
             conditions.remove(name)
     stats["conditions"] = conditions
+    if cu.spell_slots_expended is not None:
+        # Engine-owned expended slot ledger (agent.spells); totals derive from class and level.
+        stats["spell_slots_expended"] = {
+            str(level): int(count)
+            for level, count in cu.spell_slots_expended.items()
+            if int(count) > 0
+        }
     ass.stats = stats
 
     inv = {k: (list(v) if isinstance(v, list) else v) for k, v in (ass.inventory or {}).items()}
