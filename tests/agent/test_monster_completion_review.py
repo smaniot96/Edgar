@@ -95,14 +95,15 @@ async def test_lair_damage_and_no_consecutive_repetition_survive_round_reload(
 ) -> None:
     from agent import graph_combat
 
-    narrator = graph_combat.narrator_node
+    request = graph_combat.narrator_request
     seen_effects = []
 
-    async def capture_narrator(state):
+    def capture_request(state, profile):
+        # The narrator's own input: the round's engine effects reach the prompt and boundary.
         seen_effects.append(state["engine_effects"])
-        return await narrator(state)
+        return request(state, profile)
 
-    monkeypatch.setattr(graph_combat, "narrator_node", capture_narrator)
+    monkeypatch.setattr(graph_combat, "narrator_request", capture_request)
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     source = (
         "On initiative count 20 (losing initiative ties), the dragon takes a lair action to cause "

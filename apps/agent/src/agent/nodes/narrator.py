@@ -1,7 +1,10 @@
 """Generate the player-facing narration from the adjudicated outcome.
 
-`build_narrator_prompt` is exported separately so the SSE turn runner can stream tokens with
-`llm.astream` while still using the same context-building logic. The narrator gets:
+`build_narrator_prompt` and `narrator_request` are exported separately so the SSE turn runner can
+stream tokens with `llm.astream` while still using the same context-building logic. Combat rounds
+use the same builder with the `play.combat_narrator` profile: the round's mechanics are finalised
+first, then the narrator is called once, either here (sync) or by the streaming runner (EDG-079).
+The narrator gets:
   - the player's literal message
   - the active character's HP/stats so it does not describe a fresh PC as bleeding
   - the authoritative scene id so it does not skip ahead to a different location
@@ -15,6 +18,8 @@
 The player's text is wrapped in <player_action> tags (untrusted input). Output length is bounded
 by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI renders state.
 """
+
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
@@ -37,6 +42,7 @@ from edgar_core.story import player_story_effect
 
 _NARRATOR_TEMPERATURE = 0.7
 _RAG_BLOCK_TOP_K = 5
+NARRATION_FAILED_MESSAGE = "Narration could not be completed."
 
 
 def deterministic_narration(state: AgentState) -> str | None:
@@ -57,6 +63,18 @@ def make_narrator_model(profile: str = "play.narrator"):
         temperature=_NARRATOR_TEMPERATURE,
         max_tokens=NARRATOR_MAX_TOKENS,
     )
+
+
+def narration_profile(state: AgentState) -> str:
+    """The stage profile a narration call uses: combat rounds have their own budget and model."""
+    return "play.combat_narrator" if state.get("combat_state") else "play.narrator"
+
+
+def narrator_request(state: AgentState, profile: str) -> tuple[Any, list[BaseMessage]]:
+    """The chat model and prompt for one narrator call (shared by sync nodes and SSE streams)."""
+    llm = make_narrator_model(profile)
+    prompt = build_narrator_prompt(state, profile)
+    return llm, prompt
 
 
 def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
@@ -193,15 +211,14 @@ async def narrator_node(state: AgentState) -> dict:
 
     narration = deterministic_narration(state)
     if narration is None:
-        profile = "play.combat_narrator" if state.get("combat_state") else "play.narrator"
-        llm = make_narrator_model(profile)
-        prompt = build_narrator_prompt(state, profile)
+        profile = narration_profile(state)
+        llm, prompt = narrator_request(state, profile)
         try:
             response = await llm.ainvoke(prompt)
         except Exception as e:
             return {
                 "narration": "",
-                "error": "Narration could not be completed.",
+                "error": NARRATION_FAILED_MESSAGE,
                 "error_code": provider_error_code(e),
             }
         narration = apply_narration_boundary(

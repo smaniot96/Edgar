@@ -54,7 +54,7 @@ import asyncio
 import logging
 import re
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -140,7 +140,7 @@ from agent.conditions import (
     stun_ends_before_turn,
 )
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
-from agent.llm import make_chat_model
+from agent.llm import make_chat_model, message_text
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.models.parsed_input import ParsedInput
 from agent.monster_stats import (
@@ -162,7 +162,13 @@ from agent.monster_stats import (
     stats_of,
     weapon_damage_type,
 )
-from agent.nodes import narrator_node, world_retriever_node
+from agent.nodes import world_retriever_node
+from agent.nodes.narrator import (
+    NARRATION_FAILED_MESSAGE,
+    deterministic_narration,
+    narration_profile,
+    narrator_request,
+)
 from agent.nodes.rules_adjudicator import adjudicate
 from agent.positioning import (
     MELEE,
@@ -214,6 +220,8 @@ from agent.spells import (
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
+    apply_narration_boundary,
+    engine_applied_for_state,
     has_declared_spell,
     parsed_feature_name,
     ruling_lines,
@@ -221,6 +229,7 @@ from agent.supported_rules import (
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference, reference_matches
 from edgar_core.log_safety import error_summary
+from edgar_core.safe_errors import provider_error_code
 from tools.dice import DiceOutcome, parse_dice, roll
 
 log = logging.getLogger(__name__)
@@ -812,6 +821,79 @@ def _is_attack_action(parsed: Any, named: list[str]) -> tuple[bool, bool]:
 # --------------------------------------------------------------------------------------------
 # Node
 # --------------------------------------------------------------------------------------------
+
+
+PENDING_ROUND_NARRATION_KEY = "pending_round_narration"
+
+
+@dataclass(frozen=True)
+class PendingRoundNarration:
+    """A combat round whose mechanics are final and whose one narrator call has not run (EDG-079).
+
+    Dice, HP, dispositions, the adjudication, completion and the round's telemetry inputs are all
+    decided before this exists. `narr_state` is the exact state the narrator prompt and the
+    boundary are built from, so the streamed call and the sync call see identical input.
+    """
+
+    narr_state: dict[str, Any]
+    combatants: list[dict]
+    adjudication: AdjudicationResult
+    outcome: str | None
+    base_update: dict[str, Any]  # round state to persist, without narration/messages/telemetry
+    round_event: dict[str, Any]  # combat_round_event kwargs, except the stage timings
+    stage_ms: dict[str, int]  # stages measured before narration
+
+    @property
+    def profile(self) -> str:
+        return narration_profile(self.narr_state)
+
+
+def finalize_round_narration(
+    pending: PendingRoundNarration, narration: str, *, bound: bool, narrating_ms: int
+) -> dict[str, Any]:
+    """The one finalisation of a combat round's narration, shared by the sync node and the stream.
+
+    `narration` is the complete narrator text (or the deterministic text when `bound` is False).
+    Streamed tokens are provisional and never reach this function; the text decided here is the
+    authoritative `done.narration`. It applies, in order:
+      1. the narration boundary to model text (the engine owns effects: a claimed effect the
+         engine did not apply is dropped, and the ruling stated),
+      2. the roster check: prose that revives an inactive foe or invents an attacker is replaced
+         by the engine's mechanical summary,
+      3. the victory/defeat/fled suffix,
+      4. the AIMessage history, and
+      5. the round telemetry row, with the measured narrating stage.
+    """
+    text = narration
+    if bound:
+        text = apply_narration_boundary(
+            text,
+            actions_for_state(pending.narr_state),
+            applied=engine_applied_for_state(pending.narr_state),
+        )
+    messages = [*(pending.narr_state.get("messages") or []), AIMessage(content=text)]
+    problems = roster_violations(text, pending.combatants)
+    if problems:
+        # Prose that revives an inactive foe or invents an attacker is replaced by the engine's log.
+        log.warning("narration_roster_violation", extra={"problems": problems[:4]})
+        text = pending.adjudication.mechanical_summary or ""
+        messages = [*messages[:-1], AIMessage(content=text)]
+    if pending.outcome == "victory":
+        text += "\n\n**Victory!** The way forward is clear."
+    elif pending.outcome == "defeat":
+        text += "\n\n**Subdued.** You are overwhelmed and knocked unconscious — your story is not over, but you are at the enemy's mercy."
+    elif pending.outcome == "fled":
+        text += "\n\n*(You have left the fight.)*"
+
+    stage_ms = {**pending.stage_ms, "narrating_ms": int(narrating_ms)}
+    round_event = combat_round_event(**pending.round_event, stage_ms=stage_ms)
+    return {
+        **pending.base_update,
+        "messages": messages,
+        "narration": text,
+        # Written in the turn transaction by persist_turn (EDG-031); never committed here.
+        "telemetry_events": [round_event],
+    }
 
 
 async def combat_round_node(state: AgentState) -> dict:
@@ -2384,7 +2466,9 @@ async def combat_round_node(state: AgentState) -> dict:
         boss_victory=boss_victory,
     )
 
-    # --- Narrate the whole round in one call ---
+    # --- Finalise the mechanics, then narrate the whole round in one call (EDG-079) ---
+    # Everything the narrator is given and everything persisted is decided above. The narrator
+    # text is the only thing left to produce, so it is the only thing that can be deferred.
     combat_state["round_actors"] = round_actors
     narr_state = {
         **state,
@@ -2393,66 +2477,59 @@ async def combat_round_node(state: AgentState) -> dict:
         "engine_effects": engine_effects,
         "engine_roll_mode": round_roll_mode,
     }
-    t_stage = time.monotonic()
-    narr_updates = await narrator_node(narr_state)
-    stage_ms["narrating_ms"] = int((time.monotonic() - t_stage) * 1000)
-    if narr_updates.get("error"):
-        return {
-            **retr,
-            "error": narr_updates["error"],
-            "error_code": narr_updates.get("error_code", "turn_failed"),
-        }
-    narration = narr_updates.get("narration", "")
-    problems = roster_violations(narration, combatants)
-    if problems:
-        # Prose that revives an inactive foe or invents an attacker is replaced by the engine's log.
-        log.warning("narration_roster_violation", extra={"problems": problems[:4]})
-        narration = adj.mechanical_summary or ""
-        messages = narr_updates.get("messages")
-        if messages and isinstance(messages[-1], AIMessage):
-            messages = [*messages[:-1], AIMessage(content=narration)]
-            narr_updates = {**narr_updates, "messages": messages}
-    if outcome == "victory":
-        narration += "\n\n**Victory!** The way forward is clear."
-    elif outcome == "defeat":
-        narration += "\n\n**Subdued.** You are overwhelmed and knocked unconscious — your story is not over, but you are at the enemy's mercy."
-    elif outcome == "fled":
-        narration += "\n\n*(You have left the fight.)*"
-
-    round_event = combat_round_event(
-        turn_id=state.get("turn_id"),
-        round_num=round_num,
-        ended=ended,
+    pending = PendingRoundNarration(
+        narr_state=narr_state,
+        combatants=combatants,
+        adjudication=adj,
         outcome=outcome,
-        actors=actors,
-        player_action={**player_action, **({"bonus_action": bonus_record} if bonus_record else {})},
-        outcomes=outcomes,
-        dispositions=[
-            {
-                "id": stable_id(c),
-                "name": _display(c),
-                "is_player": bool(c.get("is_player")),
-                "disposition": disposition_of(c),
-                "hp_current": c.get("hp_current"),
-            }
-            for c in combatants
-        ],
-        dice_log=adj.dice_log,
-        stage_ms=stage_ms,
+        base_update={
+            **retr,
+            "combat_state": combat_state,
+            "adjudication_result": adj,
+            "engine_roll_mode": round_roll_mode,
+            "rules_context": state.get("rules_context", []),
+            "adventure_context": state.get("adventure_context", []),
+        },
+        round_event={
+            "turn_id": state.get("turn_id"),
+            "round_num": round_num,
+            "ended": ended,
+            "outcome": outcome,
+            "actors": actors,
+            "player_action": {**player_action, **({"bonus_action": bonus_record} if bonus_record else {})},
+            "outcomes": outcomes,
+            "dispositions": [
+                {
+                    "id": stable_id(c),
+                    "name": _display(c),
+                    "is_player": bool(c.get("is_player")),
+                    "disposition": disposition_of(c),
+                    "hp_current": c.get("hp_current"),
+                }
+                for c in combatants
+            ],
+            "dice_log": adj.dice_log,
+        },
+        stage_ms=dict(stage_ms),
     )
-    return {
-        **retr,
-        "combat_state": combat_state,
-        "messages": list(narr_updates.get("messages", state.get("messages", []))),
-        "narration": narration,
-        "adjudication_result": adj,
-        "engine_roll_mode": round_roll_mode,
-        "rules_context": state.get("rules_context", []),
-        "adventure_context": state.get("adventure_context", []),
-        # Written in the turn transaction by persist_turn (EDG-031); never committed here.
-        "telemetry_events": [round_event],
-    }
-
+    text = deterministic_narration(narr_state)
+    if text is None and state.get("defer_narration"):
+        # The SSE runner streams the one narrator call, then calls finalize_round_narration.
+        return {**pending.base_update, PENDING_ROUND_NARRATION_KEY: pending}
+    bound = text is None
+    t_stage = time.monotonic()
+    if text is None:
+        llm, prompt = narrator_request(narr_state, pending.profile)
+        try:
+            text = message_text(await llm.ainvoke(prompt))
+        except Exception as e:
+            return {
+                **retr,
+                "error": NARRATION_FAILED_MESSAGE,
+                "error_code": provider_error_code(e),
+            }
+    narrating_ms = int((time.monotonic() - t_stage) * 1000)
+    return finalize_round_narration(pending, text, bound=bound, narrating_ms=narrating_ms)
 
 def _ask_player(state: AgentState, question: str, *, combat_state: dict | None = None) -> dict:
     """No dice rolled, no round consumed: ask the player to clarify their target."""
