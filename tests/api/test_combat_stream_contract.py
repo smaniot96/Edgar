@@ -197,6 +197,22 @@ async def test_combat_stream_finalises_mechanics_before_one_streamed_narration(n
 
 
 @pytest.mark.asyncio
+async def test_declared_unsupported_mechanic_is_bounded_before_any_token(
+    narrator, committed, monkeypatch
+):
+    """Like the normal path, text for a declared unsupported mechanic is withheld until bounded."""
+    scripted = narrator(ScriptedNarrator(["The goblin ", "lunges ", "at you."]))
+    monkeypatch.setattr(turn_runner, "actions_for_state", lambda _state: ("declared",))
+    with use_rng(random.Random(3)):
+        events = await stream_events(_combat_state())
+
+    assert scripted.calls == ["ainvoke"], "one provider call, not streamed to the player raw"
+    done = done_of(events)
+    assert tokens_of(events) == done["narration"]
+    assert len(committed) == 1
+
+
+@pytest.mark.asyncio
 async def test_sync_and_stream_finalise_the_same_round(narrator, committed):
     text = ["The goblin ", "lunges at you."]
     # A foe that survives the round keeps the scripted text unchanged, so both paths are compared

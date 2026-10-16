@@ -814,10 +814,34 @@ async def _stream_session_turn(
     yield sse_event("status", {"stage": "narrating"})
     narrating_started = time.monotonic()
     pending = state.pop(PENDING_ROUND_NARRATION_KEY, None)
-    if pending is not None:
-        # Combat: the mechanics are final. Stream the one narrator call, then finalise the round
-        # with the same function the sync node uses. Only `done` after the commit is authoritative.
-        # Its narrating and mechanics stages come from the round's own row (adopted at the commit).
+    # Combat with a model narration: the mechanics are final. Stream the one narrator call, then
+    # finalise the round with the same function the sync node uses. Only `done` after the commit
+    # is authoritative. Its narrating and mechanics stages come from the round's own row.
+    if pending is not None and actions_for_state(pending.narr_state):
+        llm, prompt = narrator_request(pending.narr_state, pending.profile)
+        # A declared unsupported mechanic must not reach the player unchecked (as on the
+        # normal path): wait for the complete text, finalise, then stream only the bounded text.
+        try:
+            response = await traced_call(
+                lambda: llm.ainvoke(prompt), kind="narrate", profile=pending.profile
+            )
+        except Exception as e:
+            yield sse_event(
+                "error", error_body(e, event="turn_narrator_failed", session_id=session_id)
+            )
+            return
+        text = message_text(response)
+        narrating_ms = int((time.monotonic() - narrating_started) * 1000)
+        state.update(
+            finalize_round_narration(pending, text, bound=True, narrating_ms=narrating_ms)
+        )
+        for piece in _yield_narration_tokens(state["narration"]):
+            diag.record_first_text()
+            yield sse_event("token", {"text": piece})
+        narration = state["narration"]
+        timings["narrating_ms"] = timings.get("narrating_ms", 0) + narrating_ms
+        lap_start = time.monotonic()
+    elif pending is not None:
         llm, prompt = narrator_request(pending.narr_state, pending.profile)
         run = _NarrationStream()
         async with aclosing(
