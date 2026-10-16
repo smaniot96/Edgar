@@ -24,7 +24,13 @@ from edgar_core.prepared import (
     validate_prepared_amendment,
     validate_prepared_campaign,
 )
-from edgar_core.story import StoryEffect, StoryFact, StoryRef, accept_story_effect
+from edgar_core.story import (
+    StoryEffect,
+    StoryFact,
+    StoryRef,
+    accept_story_effect,
+    story_target_id,
+)
 
 
 def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCampaign]:
@@ -445,6 +451,242 @@ def test_runtime_amendment_rejects_a_reversal_of_a_committed_objective():
         "story_state": {"facts": [fact.model_dump(mode="json")]},
     }
     assert accept_runtime_amendment(_additive_amendment(prepared), state) is None
+
+
+def _actor_bound_amendment_fixture():
+    manifest, prepared = _fixture()
+    body = manifest.model_dump()
+    body["entities"] = [{"entity_id": "guard_eli", "kind": "actor", "title": "Guard Eli"}]
+    body["passages"][0]["entity_ids"] = ["guard_eli"]
+    body["resolution_policies"].append(
+        {
+            "policy_id": "guard_check",
+            "action": "Confront Guard Eli",
+            "scene_ids": ["dock"],
+            "passage_ids": ["source_intro"],
+            "requires": {"gate_open": "yes"},
+            "mode": "check",
+            "check": "athletics",
+            "dc": 12,
+            "failure_mode": "partial",
+            "on_success": [
+                {
+                    "kind": "encounter",
+                    "target_id": "guard_eli",
+                    "status": "encountered",
+                    "passage_ids": ["source_intro"],
+                }
+            ],
+            "on_failure": [
+                {
+                    "kind": "encounter",
+                    "target_id": "guard_eli",
+                    "status": "encountered",
+                    "passage_ids": ["source_intro"],
+                }
+            ],
+        }
+    )
+    reviewed = _approved(AdventureManifest.model_validate(body), prepared)
+    amendment_body = _additive_amendment(prepared).model_dump()
+    amendment_body["branches"][0]["policy_ids"].append("guard_check")
+    amendment_body["outcomes"][0]["policy_selections"].append(
+        {"policy_id": "guard_check", "result": "success"}
+    )
+    amendment_body["outcomes"][1]["policy_selections"].append(
+        {"policy_id": "guard_check", "result": "failure"}
+    )
+    amendment = PreparedAmendment.model_validate(amendment_body)
+    return reviewed, prepared, amendment
+
+
+@pytest.mark.parametrize(
+    ("disposition", "expected_status"),
+    [("dead", "dead"), ("captured", "captive")],
+)
+def test_runtime_amendment_preserves_manifest_bound_combatant_outcomes(
+    disposition, expected_status
+):
+    from agent.prepared_amendments import _committed_facts
+
+    reviewed, prepared, amendment = _actor_bound_amendment_fixture()
+    state = {
+        "world_flags": {"gate_open": "yes"},
+        "story_state": {"facts": []},
+        "resolved_combat_outcomes": [
+            {
+                "id": 73,
+                # Row-level outcome is not a canonical entity fate.
+                "outcome": "victory",
+                "combatants": [
+                    {
+                        "name": "Guard Eli",
+                        "is_player": False,
+                        "disposition": disposition,
+                        "source_reference": {
+                            "actor_id": "guard_eli",
+                            "actor_collection": "sample.pdf",
+                            "actor_manifest_sha256": reviewed.reviewed_sha256,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    facts = _committed_facts(state, "sample.pdf", reviewed)
+    actor_fact = next(row for row in facts if row.target_id == "guard_eli")
+    assert actor_fact.status == expected_status and actor_fact.irreversible
+    checked = validate_prepared_amendment(reviewed, prepared, amendment, facts, [])
+    assert not checked.valid
+    assert "amendment_rewrites_irreversible_fact" in {
+        finding.code for finding in checked.report.findings
+    }
+
+
+def test_combat_fate_requires_the_exact_actor_manifest_binding():
+    from agent.prepared_amendments import _committed_facts
+
+    reviewed, _, _ = _actor_bound_amendment_fixture()
+    state = {
+        "world_flags": {},
+        "story_state": {"facts": []},
+        "resolved_combat_outcomes": [
+            {
+                "id": 73,
+                "outcome": "victory",
+                "combatants": [
+                    {
+                        "name": "Guard Eli",
+                        "is_player": False,
+                        "disposition": "dead",
+                        "source_reference": {
+                            "actor_id": "guard_eli",
+                            "actor_collection": "other.pdf",
+                            "actor_manifest_sha256": reviewed.reviewed_sha256,
+                        },
+                    },
+                    {
+                        "name": "Another guard",
+                        "is_player": False,
+                        "disposition": "dead",
+                        "source_reference": {
+                            "actor_id": "guard_eli",
+                            "actor_collection": "sample.pdf",
+                            "actor_manifest_sha256": "f" * 64,
+                        },
+                    },
+                    {
+                        "name": "Player",
+                        "is_player": True,
+                        "disposition": "dead",
+                        "source_reference": {
+                            "actor_id": "guard_eli",
+                            "actor_collection": "sample.pdf",
+                            "actor_manifest_sha256": reviewed.reviewed_sha256,
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    assert not any(
+        row.kind == "entity" and row.target_id == "guard_eli"
+        for row in _committed_facts(state, "sample.pdf", reviewed)
+    )
+
+
+def test_released_story_fact_advances_the_immutable_combat_capture_snapshot():
+    from agent.prepared_amendments import _committed_facts
+    from apps.api.services.story_state import combat_outcome_target
+
+    reviewed, _, _ = _actor_bound_amendment_fixture()
+    target = combat_outcome_target(73, "Guard Eli")
+    effect = accept_story_effect(
+        StoryEffect(kind="encounter", target=target, status="released"),
+        turn_id="turn-release",
+        source_refs=[
+            {
+                "reference_id": "a" * 64,
+                "audience": "engine",
+                "combat_id": 73,
+                "combatant_id": "Guard Eli",
+            }
+        ],
+    )
+    release = StoryFact(
+        **effect.model_dump(), fact_id=story_target_id(target)
+    ).model_dump()
+    state = {
+        "world_flags": {},
+        "story_state": {"facts": [release]},
+        "resolved_combat_outcomes": [
+            {
+                "id": 73,
+                "outcome": "victory",
+                "combatants": [
+                    {
+                        "name": "Guard Eli",
+                        "is_player": False,
+                        "disposition": "captured",
+                        "source_reference": {
+                            "actor_id": "guard_eli",
+                            "actor_collection": "sample.pdf",
+                            "actor_manifest_sha256": reviewed.reviewed_sha256,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    facts = _committed_facts(state, "sample.pdf", reviewed)
+    actor_fact = next(row for row in facts if row.target_id == "guard_eli")
+    assert actor_fact.status == "released" and actor_fact.irreversible
+
+
+def test_completed_outcomes_ignore_story_facts_from_another_source_version():
+    from agent.prepared_amendments import _completed_outcomes
+
+    manifest, prepared = _fixture()
+    reviewed = _approved(manifest, prepared)
+
+    def objective_fact(collection: str, source_sha256: str, manifest_sha256: str) -> dict:
+        target = StoryRef(
+            collection=collection,
+            source_sha256=source_sha256,
+            manifest_sha256=manifest_sha256,
+            kind="objective",
+            canonical_id="rescue_keeper",
+        )
+        effect = accept_story_effect(
+            StoryEffect(kind="objective", target=target, status="completed"),
+            turn_id=f"turn-{collection}",
+            source_refs=[],
+        )
+        return StoryFact(**effect.model_dump(), fact_id=story_target_id(target)).model_dump()
+
+    foreign_facts = [
+        objective_fact("other.pdf", reviewed.source_sha256, reviewed.reviewed_sha256),
+        objective_fact("sample.pdf", "3" * 64, reviewed.reviewed_sha256),
+        objective_fact("sample.pdf", reviewed.source_sha256, "4" * 64),
+    ]
+    for foreign_fact in foreign_facts:
+        assert _completed_outcomes(
+            prepared, reviewed, "sample.pdf", {"story_state": {"facts": [foreign_fact]}}
+        ) == []
+
+    current_source = {
+        "facts": [
+            objective_fact(
+                "sample.pdf", reviewed.source_sha256, reviewed.reviewed_sha256
+            )
+        ]
+    }
+    completed = _completed_outcomes(
+        prepared, reviewed, "sample.pdf", {"story_state": current_source}
+    )
+    assert {"negotiation_success", "fight_success"} <= set(completed)
 
 
 async def test_session_amendment_event_replay_is_private_and_source_version_bound(db_session):

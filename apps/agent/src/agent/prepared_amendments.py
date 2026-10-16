@@ -38,6 +38,12 @@ _STORY_KIND = {
     "learn_place": "scene",
 }
 _TERMINAL_STATUSES = {"completed", "failed", "fulfilled", "broken", "dead", "released"}
+_COMBAT_DISPOSITION_STATUS = {
+    "captured": "captive",
+    "dead": "dead",
+    "defeated": "defeated",
+}
+_COMBAT_STORY_STATUSES = {"captive", "dead", "defeated", "released"}
 _MAX_CONTEXT_BRANCHES = 12
 _MAX_CONTEXT_OUTCOMES = 24
 
@@ -164,7 +170,9 @@ def prepared_runtime_context(state: AgentState) -> list[dict]:
                 "source_sha256": manifest.source_sha256,
                 "manifest_sha256": manifest.reviewed_sha256,
                 "prepared_sha256": prepared_digest(prepared),
-                "completed_outcome_ids": _completed_outcomes(prepared, manifest, state),
+                "completed_outcome_ids": _completed_outcomes(
+                    prepared, manifest, collection, state
+                ),
                 "branches": [
                     {
                         "branch_id": branch.branch_id,
@@ -186,7 +194,15 @@ def prepared_runtime_context(state: AgentState) -> list[dict]:
     return contexts
 
 
-def _committed_facts(state: AgentState, manifest) -> list[CommittedPreparedFact]:
+def _committed_facts(
+    state: AgentState, collection: str, manifest
+) -> list[CommittedPreparedFact]:
+    """Project only current-version session facts into the amendment validator.
+
+    CombatState is session-owned and stores a roster's private source binding. Its numeric row
+    ID and row-level victory/defeat label are not adventure entity identities. Only a combatant
+    bound to this exact reviewed manifest can contribute an entity fact.
+    """
     facts: list[CommittedPreparedFact] = []
     for key, value in sorted((state.get("world_flags") or {}).items()):
         facts.append(
@@ -197,6 +213,12 @@ def _committed_facts(state: AgentState, manifest) -> list[CommittedPreparedFact]
     passage_by_id = {row.passage_id: row for row in manifest.passages}
     story = StoryState.model_validate(state.get("story_state") or {}).facts
     for item in story:
+        if (
+            item.target.collection != collection
+            or item.target.source_sha256 != manifest.source_sha256
+            or item.target.manifest_sha256 != manifest.reviewed_sha256
+        ):
+            continue
         target_kind = _STORY_KIND.get(item.kind)
         if target_kind:
             passage_ids = sorted(
@@ -204,7 +226,8 @@ def _committed_facts(state: AgentState, manifest) -> list[CommittedPreparedFact]
                     ref["passage_id"]
                     for ref in item.source_refs
                     if isinstance(ref.get("passage_id"), str)
-                    and ref.get("collection") == item.target.collection
+                    and ref.get("collection") == collection
+                    and ref.get("source_sha256") == manifest.source_sha256
                     and ref.get("manifest_sha256") == item.target.manifest_sha256
                 }
             )
@@ -223,7 +246,8 @@ def _committed_facts(state: AgentState, manifest) -> list[CommittedPreparedFact]
             passage_id = ref.get("passage_id")
             if (
                 not isinstance(passage_id, str)
-                or ref.get("collection") != item.target.collection
+                or ref.get("collection") != collection
+                or ref.get("source_sha256") != manifest.source_sha256
                 or ref.get("manifest_sha256") != item.target.manifest_sha256
             ):
                 continue
@@ -238,25 +262,73 @@ def _committed_facts(state: AgentState, manifest) -> list[CommittedPreparedFact]
                         irreversible=True,
                     )
                 )
-    # Preserve encounter resolutions the combat engine has already ended. These facts are
-    # deliberately engine-derived; an adjudication proposal cannot create them.
+    # The combat row remains an immutable snapshot. A session StoryFact can record the later
+    # release or explicit kill of a captive, keyed by its engine-owned combat id and combatant
+    # name. Apply that latest status to the exact actor binding in the persisted roster.
+    story_combat_status: dict[tuple[int, str], str] = {}
+    for item in story:
+        if item.kind != "encounter" or item.target.collection != "combat":
+            continue
+        for ref in item.source_refs:
+            combat_id = ref.get("combat_id")
+            combatant_id = ref.get("combatant_id")
+            if (
+                type(combat_id) is int
+                and isinstance(combatant_id, str)
+                and item.status in _COMBAT_STORY_STATUSES
+            ):
+                story_combat_status[(combat_id, combatant_id)] = item.status
+
+    actors = {
+        entity.entity_id for entity in manifest.entities if entity.kind == "actor"
+    }
+    latest_actor_facts: dict[str, tuple[int, str]] = {}
     for row in state.get("resolved_combat_outcomes") or []:
-        identity = row.get("id") or row.get("combat_id")
-        outcome = row.get("outcome")
-        if isinstance(identity, str) and outcome in _TERMINAL_STATUSES:
-            facts.append(
-                CommittedPreparedFact(
-                    kind="entity", target_id=identity, status=outcome, irreversible=True
-                )
+        combat_id = row.get("id")
+        if type(combat_id) is not int:
+            continue
+        for combatant in row.get("combatants") or []:
+            if combatant.get("is_player"):
+                continue
+            source = combatant.get("source_reference") or {}
+            actor_id = source.get("actor_id")
+            if (
+                not isinstance(actor_id, str)
+                or source.get("actor_collection") != collection
+                or source.get("actor_manifest_sha256") != manifest.reviewed_sha256
+                or actor_id not in actors
+            ):
+                continue
+            status = _COMBAT_DISPOSITION_STATUS.get(combatant.get("disposition"))
+            if status is None:
+                continue
+            combatant_id = combatant.get("name")
+            if isinstance(combatant_id, str):
+                status = story_combat_status.get((combat_id, combatant_id), status)
+            previous = latest_actor_facts.get(actor_id)
+            if previous is None or combat_id >= previous[0]:
+                latest_actor_facts[actor_id] = (combat_id, status)
+    for actor_id, (_, status) in latest_actor_facts.items():
+        facts.append(
+            CommittedPreparedFact(
+                kind="entity", target_id=actor_id, status=status, irreversible=True
             )
+        )
     return facts
 
 
-def _completed_outcomes(prepared: PreparedCampaign, manifest, state: AgentState) -> list[str]:
-    """Derive achieved prepared outcome IDs from existing engine effects and flags."""
-    from edgar_core.story import StoryState
-
+def _completed_outcomes(
+    prepared: PreparedCampaign, manifest, collection: str, state: AgentState
+) -> list[str]:
+    """Derive achieved prepared outcomes only from facts bound to this manifest version."""
     facts = StoryState.model_validate(state.get("story_state") or {}).facts
+    facts = [
+        fact
+        for fact in facts
+        if fact.target.collection == collection
+        and fact.target.source_sha256 == manifest.source_sha256
+        and fact.target.manifest_sha256 == manifest.reviewed_sha256
+    ]
     policies = {row.policy_id: row for row in manifest.resolution_policies}
     done: list[str] = []
     for outcome in prepared.outcomes:
@@ -327,8 +399,8 @@ def accept_runtime_amendment(
             or amendment.branches[0].approach != "unexpected"
         ):
             return None
-        facts = _committed_facts(state, manifest)
-        completed = _completed_outcomes(prepared, manifest, state)
+        facts = _committed_facts(state, collection, manifest)
+        completed = _completed_outcomes(prepared, manifest, collection, state)
         checked = validate_prepared_amendment(manifest, prepared, amendment, facts, completed)
         if not checked.valid or checked.amended is None:
             return None
