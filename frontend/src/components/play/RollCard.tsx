@@ -5,12 +5,16 @@ import { healingRolls, restSummary, rollParts, rollSummary, type HealingRoll } f
 const CONTAINER =
   "inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-strong/80 bg-surface/80 px-2.5 py-1 text-xs text-ink";
 
-/** A healing dice roll: the dice and total only; applied HP is shown by the sheet, not claimed here. */
+/**
+ * A healing dice roll: the dice and total only; applied HP is shown by the sheet, not claimed here.
+ * A total below zero is the roll's arithmetic and heals nothing, so it never reads as negative healing.
+ */
 function HealingPill({ roll }: { roll: HealingRoll }) {
   return (
     <span className="rounded border border-success/40 px-1.5 py-px font-mono text-success">
       {roll.label} · {roll.expression}
-      {roll.rolls.length ? ` [${roll.rolls.join(", ")}]` : ""} = {roll.total} healing
+      {roll.rolls.length ? ` [${roll.rolls.join(", ")}]` : ""} = {roll.total}
+      {roll.total < 0 ? ", heals 0" : " healing"}
     </span>
   );
 }
