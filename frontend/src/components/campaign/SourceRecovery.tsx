@@ -68,7 +68,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
                 {source.status !== "ready" && source.job?.kind !== "generation" ? (
                   <label className="block space-y-1">
                     <span className="block text-ink-muted">Recover with a PDF</span>
-                    <input aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
+                    <input className="min-h-11 max-w-full" aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
                       onChange={(event) => {
                         const file = event.currentTarget.files?.[0];
                         event.currentTarget.value = "";
@@ -143,9 +143,9 @@ export function SourceRecovery({ campaign, onUpdated }: {
           ) : null}
           {["missing", "empty", "partial", "failed"].includes(source.status) && !(source.job?.kind === "generation" && source.job.retryable) ? (
             <div className="flex flex-wrap items-center gap-3">
-              <label className="space-y-1">
+              <label className="min-w-0 max-w-full space-y-1">
                 <span className="block">Re-upload the PDF for {source.title}</span>
-                <input aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
+                <input className="min-h-11 max-w-full" aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
                   onChange={(e) => {
                     const file = e.currentTarget.files?.[0];
                     e.currentTarget.value = "";

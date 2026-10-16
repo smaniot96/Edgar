@@ -42,7 +42,7 @@ export function ComposerBar({
     textarea.style.height = "auto";
     const height = Math.max(minimum, Math.min(textarea.scrollHeight, maximum));
     textarea.style.height = `${height}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maximum ? "auto" : "hidden";
+    textarea.style.overflowY = "auto";
   }, [value]);
   return (
     <footer className="shrink-0 border-t border-line bg-canvas/80 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:px-4">
@@ -58,7 +58,7 @@ export function ComposerBar({
         </label>
         <textarea
           id={id}
-          className="max-h-40 min-h-[44px] flex-1 resize-none overflow-y-hidden rounded-control border border-line-strong bg-surface-sunken px-3 py-2.5 text-[0.95rem] leading-6 text-ink placeholder:text-ink-subtle focus:border-ember-600 focus:outline-none focus:ring-1 focus:ring-ember-500/70 disabled:cursor-not-allowed disabled:opacity-60"
+          className="max-h-[min(10rem,calc(var(--edgar-visible-height,100dvh)*0.25))] min-h-[44px] min-w-0 flex-1 resize-none overflow-y-auto rounded-control border border-line-strong bg-surface-sunken px-3 py-2.5 text-[0.95rem] leading-6 text-ink placeholder:text-ink-subtle focus:border-ember-600 focus:outline-none focus:ring-1 focus:ring-ember-500/70 disabled:cursor-not-allowed disabled:opacity-60"
           ref={textareaRef}
           rows={1}
           value={value}

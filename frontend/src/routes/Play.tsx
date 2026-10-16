@@ -325,6 +325,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           inert={narrow && activeTool !== null}
           aria-hidden={narrow && activeTool !== null ? true : undefined}
         >
+          <div role="region" aria-label="Adventure orientation and tools" className="min-h-0 max-h-[45%] shrink overflow-y-auto overscroll-contain">
           <PlayHeader
             title={game.title}
             campaignId={game.campaignId}
@@ -357,7 +358,6 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             hasDraft={draft.trim().length > 0}
             onAppend={(idea) => editDraft(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${idea}`)}
           />
-          <PlayToolBar activeTool={activeTool} onToggle={toggleTool} />
           {journalFeedback ? (
             <p role="status" className="mx-3 my-2 flex shrink-0 items-center justify-between gap-3 rounded-control bg-success-soft px-3 py-2 text-sm text-success sm:mx-4">
               <span>{journalFeedback}</span>
@@ -365,7 +365,9 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             </p>
           ) : null}
 
-          <div className="flex min-h-0 flex-1">
+          </div>
+          <PlayToolBar activeTool={activeTool} onToggle={toggleTool} />
+          <div className="flex min-h-[min(55%,16rem)] flex-1">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
               {game.combat ? <CombatHud combat={game.combat} /> : null}
 
@@ -399,9 +401,6 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
               )}
 
               <div ref={composerRef} className="shrink-0">
-                {!campaignComplete ? (
-                  <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mb-2 [overflow-wrap:anywhere] sm:mx-4" />
-                ) : null}
                 {campaignComplete ? (
                   <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
                 ) : (

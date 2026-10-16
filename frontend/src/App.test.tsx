@@ -59,3 +59,28 @@ it("falls back to the page region when the new route has no heading", async () =
     await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
   }
 });
+
+it("applies the visible keyboard viewport to the shell and restores the zoom fallback", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0, scale: 1 });
+  Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(() => root.render(<MemoryRouter><App /></MemoryRouter>));
+    const shell = container.firstElementChild as HTMLElement;
+    expect(shell.style.getPropertyValue("--edgar-visible-height")).toBe("844px");
+    await act(() => {
+      viewport.height = 340; viewport.offsetTop = 20;
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    expect(shell.style.getPropertyValue("--edgar-visible-height")).toBe("340px");
+    expect(shell.style.getPropertyValue("--edgar-visible-top")).toBe("20px");
+    await act(() => { viewport.scale = 2; viewport.dispatchEvent(new Event("resize")); });
+    expect(shell.style.getPropertyValue("--edgar-visible-height")).toBe("");
+  } finally {
+    await act(() => root.unmount()); container.remove();
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined });
+    vi.unstubAllGlobals();
+  }
+});

@@ -37,7 +37,7 @@ it("grows for multiline drafts, caps its height and returns to one-line height w
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 120 });
     await act(() => render("A multiline note\nWith another line"));
     expect(textarea.style.height).toBe("120px");
-    expect(textarea.style.overflowY).toBe("hidden");
+    expect(textarea.style.overflowY).toBe("auto");
 
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 300 });
     await act(() => render("A long note\n".repeat(20)));
@@ -47,6 +47,6 @@ it("grows for multiline drafts, caps its height and returns to one-line height w
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 24 });
     await act(() => render(""));
     expect(textarea.style.height).toBe("44px");
-    expect(textarea.style.overflowY).toBe("hidden");
+    expect(textarea.style.overflowY).toBe("auto");
   } finally { await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
 });

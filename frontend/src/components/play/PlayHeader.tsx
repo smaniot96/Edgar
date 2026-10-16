@@ -48,7 +48,7 @@ export function PlayHeader({
             <summary className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-md px-2 text-[0.7rem] font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400 [&::-webkit-details-marker]:hidden">
               Full title
             </summary>
-            <div className="absolute left-0 top-full z-50 mt-1 max-h-[min(35dvh,14rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-line-strong bg-canvas p-3 text-sm text-ink shadow-xl shadow-black/50 whitespace-normal break-words [overflow-wrap:anywhere]">
+            <div className="absolute right-0 top-full z-50 mt-1 max-h-[min(35dvh,14rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-line-strong bg-canvas p-3 text-sm text-ink shadow-xl shadow-black/50 whitespace-normal break-words [overflow-wrap:anywhere]">
               {title}
             </div>
           </details>
