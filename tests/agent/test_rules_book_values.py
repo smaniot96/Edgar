@@ -143,6 +143,16 @@ def test_versatile_weapons_match_the_phb_weapons_table() -> None:
     assert {w.name: w.versatile for w in _WEAPONS if w.versatile} == book
 
 
+def test_light_weapons_match_the_phb_weapons_table() -> None:
+    # PHB Weapons table, PDF p.150: the weapons whose properties list "light". The hand crossbow
+    # is the one ranged weapon among them.
+    book = {
+        "club", "dagger", "handaxe", "light hammer", "sickle", "scimitar", "shortsword",
+        "hand crossbow",
+    }  # fmt: skip
+    assert {w.name for w in _WEAPONS if w.light} == book
+
+
 @pytest.mark.parametrize(
     ("hint", "shield", "dice"),
     [

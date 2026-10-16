@@ -10,8 +10,8 @@ What the turn spent is recorded on the player combatant as `action_economy` and 
 combat state for the public payload. A Dodge is the `dodging` typed effect (agent.combatants).
 
 Not modelled here: Dash, Disengage, Help, reactions, opportunity attacks, movement and
-positioning, and any bonus action other than Second Wind and Healing Word (see the contract in
-`agent.supported_rules`).
+positioning, and any bonus action other than Second Wind, Healing Word, Rage and the off-hand
+attack (see the contract in `agent.supported_rules`).
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ DODGE = Declared("dodge", ACTION, "Dodge")
 DASH = Declared("dash", ACTION, "Dash")
 DISENGAGE = Declared("disengage", ACTION, "Disengage")
 SECOND_WIND = Declared("second_wind", BONUS_ACTION, "Second Wind")
+OFF_HAND_ATTACK = Declared("off_hand_attack", BONUS_ACTION, "off-hand attack")
 
 # A declared Dodge: the player's own clause, "I dodge", "I take the Dodge action", "and dodge".
 # A third-person or narrative use ("the goblin tries to dodge", "I dodge the arrow") is not one.
@@ -66,6 +67,12 @@ _DASH_DECLARED = re.compile(
     re.IGNORECASE,
 )
 _DISENGAGE_DECLARED = re.compile(_ACTION_DECLARED.format(verb=r"disengag(?:e|es|ing)"), re.I)
+# Two-weapon fighting (PHB, PDF p.196) in the player's own words. "On the other hand" is an idiom.
+_OFF_HAND_DECLARED = re.compile(
+    r"\b(?:off[- ]?hand|two[- ]weapon\s+fighting|dual[- ]wield\w*|both\s+(?:weapons|blades)"
+    r"|(?:with|using)\s+(?:my|the)\s+other\s+(?:hand|weapon|blade))\b",
+    re.IGNORECASE,
+)
 _ATTACK_WORDS = re.compile(
     r"\b(?:attack\w*|strik\w*|stab\w*|swing\w*|slash\w*|shoot\w*|lunge\w*|smash\w*|thrust\w*"
     r"|hit\s+(?:the|a|an|him|her|it|them)|cut\s+(?:the|a|an|him|her|it|them))\b",
@@ -85,6 +92,10 @@ def disengage_declared(text: str | None) -> bool:
     return bool(_DISENGAGE_DECLARED.search(str(text or "")))
 
 
+def off_hand_declared(text: str | None) -> bool:
+    return bool(_OFF_HAND_DECLARED.search(str(text or "")))
+
+
 def has_attack_words(text: str | None) -> bool:
     """True when the player's own words name an attack (a dodge's object does not count)."""
     return bool(_ATTACK_WORDS.search(_DODGE_OBJECT.sub(" ", str(text or ""))))
@@ -99,6 +110,21 @@ def refusal_for(declared: Sequence[Declared], hero: str) -> str | None:
                 f"{hero} can take only one {_SLOT_NAMES[slot]} per turn, and this turn declares "
                 f"{' and '.join(labels)}. Choose one: no roll is made and no turn is spent."
             )
+    return None
+
+
+def off_hand_refusal(hero: str, *, attacked: bool, pair: bool) -> str | None:
+    """The engine's refusal of an off-hand attack that lacks its Attack action or its weapon pair."""
+    if not attacked:
+        return (
+            f"{hero} can attack with the off hand only after taking the Attack action with a "
+            "light melee weapon this turn. No roll is made and no turn is spent."
+        )
+    if not pair:
+        return (
+            f"{hero} needs a different light melee weapon in the other hand, with no shield, to "
+            "attack with the off hand. No roll is made and no turn is spent."
+        )
     return None
 
 

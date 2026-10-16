@@ -10,19 +10,13 @@ from edgar_core.model_profiles import (
     ModelProfileError,
     ModelProfileSnapshot,
     effective_profile,
+    is_reasoning_model,
 )
 
 # Upper bound for one narration (~3 short paragraphs). Keeps latency/cost predictable and stops
 # runaway "status block" style output. On reasoning models this cap also covers reasoning tokens,
 # which is why they run at a low `reasoning_effort`.
 NARRATOR_MAX_TOKENS = 600
-
-# Model families that reject a non-default `temperature` and take `reasoning_effort` instead.
-_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
-
-
-def is_reasoning_model(model: str) -> bool:
-    return model.startswith(_REASONING_PREFIXES) and "chat" not in model
 
 
 def chat_model_kwargs(
