@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import inspect
 import re
+import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -29,6 +31,7 @@ from edgar_core.preparation import (
     PreparationTaskStatus,
     ProviderUsage,
     PublicPreparationStatus,
+    SafePreparationFailure,
     StageExecutionResult,
     StagePlan,
     ValidationReceipt,
@@ -40,6 +43,7 @@ from edgar_core.preparation import (
     canonical_sha256,
     safe_public_stage,
 )
+from edgar_core.safe_errors import OutcomeState, classify_failure
 
 from .preparation_store import PreparationStore, StalePreparationRevision
 
@@ -203,6 +207,13 @@ class PreparationSupervisor:
             stage=stage_label,
             retryable=action in ("retry", "restart"),
             action=action,
+            failure=(
+                _safe_preparation_failure(
+                    state.last_safe_error_code, state.last_safe_error_ref, run_id
+                )
+                if state.status in (PreparationJobStatus.BLOCKED, PreparationJobStatus.FAILED)
+                else None
+            ),
         )
 
     async def step(
@@ -310,6 +321,7 @@ class PreparationSupervisor:
                 raise PreparationError("No failed task is retryable; fix the missing stage contract first.")
             payload["status"] = "queued"
             payload["last_safe_error_code"] = None
+            payload["last_safe_error_ref"] = None
 
         return self.store.mutate_run(slug, run_id, update=update)
 
@@ -330,6 +342,7 @@ class PreparationSupervisor:
                     task["status"] = "pending"
             payload["status"] = "preparing"
             payload["last_safe_error_code"] = None
+            payload["last_safe_error_ref"] = None
         return self.store.mutate_run(slug, run_id, update=update)
 
     def invalidate_dependents(
@@ -395,6 +408,7 @@ class PreparationSupervisor:
             payload["current_stage"] = f"P{first_stage:02d}"
             payload["status"] = "queued"
             payload["last_safe_error_code"] = None
+            payload["last_safe_error_ref"] = None
             payload["publication_inventory"] = None
             payload["published_bundle_sha256"] = None
 
@@ -460,6 +474,7 @@ class PreparationSupervisor:
                     payload["stage_statuses"].pop(stage.value, None)
             payload["stage_plans"]["P02"]["tasks"].append(context_task.model_dump(mode="json"))
             payload.update(findings=[], current_stage="P03", status="repairing", last_safe_error_code=None,
+                           last_safe_error_ref=None,
                            publication_inventory=None, published_bundle_sha256=None)
         try:
             return self.store.update_run(slug, run_id, expected_revision=state.revision, update=restart)
@@ -794,6 +809,7 @@ class PreparationSupervisor:
                          reserved_cost_microusd=0, accepted_artifact_ids=[a.artifact_id for a in result.proposed_artifacts],
                          validation_receipt_ids=[r.validator_id + ":" + r.details_sha256 for r in receipts],
                          last_safe_error_code=None, updated_at=now)
+            payload["last_safe_error_ref"] = None
             current_findings = {finding["finding_id"]: finding for finding in payload["findings"]}
             for finding in findings:
                 current_findings[finding.finding_id] = finding.model_dump(mode="json")
@@ -818,7 +834,11 @@ class PreparationSupervisor:
         findings: tuple[PreparationFinding, ...] = (),
     ) -> PreparationRunState:
         now = _iso(_now())
-        retryable = usage is None or usage.failure_code is not None
+        unknown_provider_outcome = task.requires_provider and (
+            usage is None or (usage.provider_called and not usage.usage_known)
+        )
+        retryable = not unknown_provider_outcome and (usage is None or usage.failure_code is not None)
+        error_ref = _new_support_ref()
         def update(payload: dict[str, Any]) -> None:
             saved = payload["tasks"][_task_key(task)]
             _assert_fence(saved, worker_id, fence)
@@ -850,26 +870,31 @@ class PreparationSupervisor:
                          last_safe_error_code=code, updated_at=now)
             payload["status"] = "failed" if saved["status"] == "failed" else "blocked"
             payload["last_safe_error_code"] = code
+            payload["last_safe_error_ref"] = error_ref
         try:
             return self.store.mutate_run(slug, run_id, update=update)
         except PreparationError:
             return self.store.load_run(slug, run_id)
 
     def _block_task(self, slug: str, run_id: str, task: PreparationTask, code: str) -> PreparationRunState:
+        error_ref = _new_support_ref()
         def update(payload: dict[str, Any]) -> None:
             saved = payload["tasks"][_task_key(task)]
             saved.update(status="blocked", last_safe_error_code=code, updated_at=_iso(_now()))
             payload["status"] = "blocked"
             payload["last_safe_error_code"] = code
+            payload["last_safe_error_ref"] = error_ref
         return self.store.mutate_run(slug, run_id, update=update)
 
     def _block_run(self, slug: str, run_id: str, code: str) -> PreparationRunState:
+        error_ref = _new_support_ref()
         def update(payload: dict[str, Any]) -> None:
             if payload["status"] in ("ready", "cancelled"):
                 return
             payload["status"] = "blocked"
             payload["stage_statuses"][payload["current_stage"] or "P01"] = "blocked"
             payload["last_safe_error_code"] = code
+            payload["last_safe_error_ref"] = error_ref
         return self.store.mutate_run(slug, run_id, update=update)
 
     def _finish_stage(
@@ -992,3 +1017,27 @@ def _exception_code(exc: Exception) -> str:
     """Keep a safe class-only failure identifier in the private run record."""
     code = re.sub(r"[^a-z0-9_-]", "_", type(exc).__name__.lower())[:96]
     return code if code and code[0].isalpha() else "task_execution_failed"
+
+
+def _new_support_ref() -> str:
+    return f"err-{secrets.token_hex(8)}"
+
+
+def _safe_preparation_failure(
+    code: str | None, support_ref: str | None, run_id: str
+) -> SafePreparationFailure | None:
+    if not isinstance(code, str):
+        return None
+    if not isinstance(support_ref, str) or not re.fullmatch(r"err-[0-9a-f]{16}", support_ref):
+        # Stable compatibility projection for runs created before references were persisted.
+        support_ref = "err-" + hashlib.sha256(f"{run_id}:{code}".encode()).hexdigest()[:16]
+    failure = classify_failure(code, outcome=OutcomeState.UNKNOWN, support_ref=support_ref)
+    return SafePreparationFailure(
+        code=failure.code,
+        category=failure.category.value,
+        message=failure.message,
+        recovery_action=failure.recovery_action.value,
+        retryable=failure.retryable,
+        support_ref=failure.support_ref,
+        outcome=failure.outcome.value,
+    )

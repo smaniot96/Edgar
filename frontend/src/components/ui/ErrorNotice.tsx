@@ -1,11 +1,10 @@
-import { errorDetails, errorMessage, isOfflineError } from "../../api/client";
-import { useMode } from "../../dev/ModeContext";
+import { safeFailureFromUnknown, type SafeRecoveryAction } from "../../api/turnStream";
 import { cn } from "../../lib/cn";
 import { Button } from "./Button";
 
 /**
- * Player-friendly error line. Raw status/body/request id appear only in Developer mode.
- * Pass `onRetry` to offer a retry button.
+ * Player-friendly error line. It uses fixed copy derived from safe categories; exception,
+ * provider, and validation body text is never rendered, including in Developer mode.
  */
 export function ErrorNotice({
   error,
@@ -16,30 +15,40 @@ export function ErrorNotice({
   onRetry?: () => void;
   className?: string;
 }) {
-  const { isDev } = useMode();
   if (error == null) return null;
-  const details = isDev ? errorDetails(error) : null;
+  const safe = safeFailureFromUnknown(error);
+  const nextStep: Partial<Record<SafeRecoveryAction, string>> = {
+    repair_source: "Open the adventure source and review its recovery options.",
+    review_source: "Review and publish the current adventure material before continuing.",
+    fix_input: "Check the highlighted information and correct it before continuing.",
+    assign_character: "Choose a character assigned to this campaign.",
+    wait: "Wait for the current action to finish, then check its status.",
+    retry: "The server confirms this action was not saved, so you can retry it.",
+    check_existing_result: "Check the saved result before you submit this action again.",
+    configure_provider: "Review the provider configuration or allowance before continuing.",
+    restart_preparation: "Review the preparation setup and start a new preparation.",
+    contact_support: "Share the reference below with support if the problem continues.",
+    read_history: "Your saved campaign history remains available to read.",
+  };
   return (
     <div
       role="alert"
+      aria-atomic="true"
       className={cn(
         "rounded-control border border-danger-strong/60 bg-danger-soft/60 px-3 py-2 text-sm text-danger",
         className,
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p>{errorMessage(error)}</p>
-        {onRetry ? (
+        <p>{safe.message}</p>
+        {onRetry && (safe.retryable || safe.recoveryAction === "check_existing_result") ? (
           <Button variant="secondary" size="sm" onClick={onRetry}>
-            Retry
+            {safe.retryable ? "Retry" : "Check again"}
           </Button>
         ) : null}
       </div>
-      {details ? (
-        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-ink-muted">
-          {details}
-        </pre>
-      ) : null}
+      <p className="mt-1 text-xs text-ink-muted">{nextStep[safe.recoveryAction ?? "contact_support"]}</p>
+      {safe.supportRef ? <p className="mt-1 text-xs text-ink-subtle">Support reference: {safe.supportRef}</p> : null}
     </div>
   );
 }
@@ -54,28 +63,24 @@ export function OfflineState({
   onRetry: () => void;
   title?: string;
 }) {
-  const { isDev } = useMode();
-  const offline = isOfflineError(error);
-  const details = isDev ? errorDetails(error) : null;
+  const safe = safeFailureFromUnknown(error);
+  const offline = safe.category === "interrupted";
   return (
     <div role="alert" className="mx-auto max-w-md rounded-card border border-line bg-surface p-6 text-center">
       <h2 className="font-display text-display-sm text-ink">
         {title ?? (offline ? "Edgar is offline" : "Couldn't load this page")}
       </h2>
-      <p className="mt-2 text-sm text-ink-muted">{errorMessage(error)}</p>
+      <p className="mt-2 text-sm text-ink-muted">{safe.message}</p>
       {offline ? (
         <p className="mt-1 text-xs text-ink-subtle">
           Start the API (for example with <code className="font-mono">make up</code>) and retry.
         </p>
       ) : null}
       <Button className="mt-4" onClick={onRetry}>
-        Retry
+        Check again
       </Button>
-      {details ? (
-        <pre className="mt-4 max-h-40 overflow-auto whitespace-pre-wrap break-words text-left font-mono text-[11px] text-ink-subtle">
-          {details}
-        </pre>
-      ) : null}
+      <p className="mt-2 text-xs text-ink-subtle">Your saved work is still available.</p>
+      {safe.supportRef ? <p className="mt-1 text-xs text-ink-subtle">Support reference: {safe.supportRef}</p> : null}
     </div>
   );
 }

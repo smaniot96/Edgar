@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from edgar_core.preparation import SafePreparationFailure
 from edgar_core.sources import RulesEdition, SourceEdition
 
 from .preparation_setup import PreparationSetup
@@ -36,6 +37,7 @@ class AdventureJobRead(BaseModel):
     action_label: str | None = None
     explanation: str | None = None
     source_version: str | None = None
+    failure: SafePreparationFailure | None = None
 
 
 class AdventureRead(BaseModel):

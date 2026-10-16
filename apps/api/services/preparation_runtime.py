@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import fcntl
+import hashlib
 import json
 import re
 import uuid
@@ -26,6 +27,7 @@ from edgar_core.preparation import (
     PreparationRunBinding,
     PreparationRunState,
     PublicPreparationStatus,
+    SafePreparationFailure,
     canonical_sha256,
     safe_public_stage,
 )
@@ -33,6 +35,7 @@ from edgar_core.preparation import (
 from . import adventures_meta as meta_store
 from .preparation import PreparationError, PreparationSupervisor
 from .preparation_store import PreparationStore, PreparationStoreError, preparation_path
+from .safe_errors import classify_error, new_support_ref, safe_failure_metadata
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -89,6 +92,14 @@ def _preparation_failure_message(code: str | None) -> str:
             else "Preparation needs attention. Retry the saved work or start a new adventure.",
         )
     return "Preparation needs attention. Retry the saved work or start a new adventure."
+
+
+def _setup_failure_code(error: BaseException) -> str:
+    """Project an explicit fixed setup code without classifying exception text."""
+    code = getattr(error, "code", None)
+    if code in {"preparation_profile_invalid", "preparation_source_invalid"}:
+        return code
+    return "preparation_setup_invalid"
 
 
 def make_preparation_supervisor(
@@ -983,24 +994,37 @@ def safe_preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | 
     if not isinstance(run_id, str) or not re.fullmatch(r"prep-[0-9a-f]{32}", run_id):
         return None
     if pair is not None and pair[1] is None:
+        failure = _failure_projection(
+            meta.get("failure_code") or "preparation_setup_invalid",
+            meta.get("support_ref"),
+            run_id,
+        )
         return PublicPreparationStatus(
             run_id=run_id,
             status=PreparationJobStatus.BLOCKED,
             stage="Preparation needs attention",
             retryable=False,
             action="restart",
+            failure=failure,
         )
     try:
         state = PreparationStore().load_run(slug, run_id)
     except (PreparationStoreError, ValueError):
+        failure = _failure_projection(
+            meta.get("failure_code") or "preparation_failed", meta.get("support_ref"), run_id
+        )
         return PublicPreparationStatus(
             run_id=run_id,
             status=PreparationJobStatus.BLOCKED,
             stage="Preparation needs attention",
             retryable=False,
             action="restart",
+            failure=failure,
         )
     if _needs_new_commission(state.last_safe_error_code):
+        failure = _failure_projection(
+            state.last_safe_error_code, state.last_safe_error_ref, run_id
+        )
         return PublicPreparationStatus(
             run_id=run_id,
             status=state.status,
@@ -1011,6 +1035,7 @@ def safe_preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | 
             ),
             retryable=False,
             action="restart",
+            failure=failure,
         )
     if private_preparation_ready(slug, meta):
         return PublicPreparationStatus(
@@ -1033,20 +1058,34 @@ def safe_preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | 
     )
 
 
+def _failure_projection(
+    code: object, support_ref: object, identity: str
+) -> SafePreparationFailure | None:
+    if not isinstance(code, str):
+        return None
+    if not isinstance(support_ref, str) or not re.fullmatch(r"err-[0-9a-f]{16}", support_ref):
+        # Legacy records receive a stable reference without modifying them during a read.
+        support_ref = "err-" + hashlib.sha256(f"{identity}:{code}".encode()).hexdigest()[:16]
+    failure = classify_error(code, support_ref=support_ref)
+    return SafePreparationFailure(
+        code=failure.code,
+        category=failure.category.value,
+        message=failure.message,
+        recovery_action=failure.recovery_action.value,
+        retryable=failure.retryable,
+        support_ref=failure.support_ref,
+        outcome=failure.outcome.value,
+    )
+
+
 def _mark_setup_blocked(slug: str, token: str, code: str) -> None:
     """A missing setup never reaches supervisor planning or a provider adapter."""
 
-    safe_messages = {
-        "preparation_setup_required": "Choose a hero and preparation budget to continue.",
-        "preparation_setup_invalid": "Preparation setup needs correction before it can continue.",
-        "preparation_profile_invalid": "Preparation configuration needs correction before it can continue.",
-        "preparation_source_invalid": "The retained adventure source needs attention before preparation can continue.",
-    }
+    failure = safe_failure_metadata(code, support_ref=new_support_ref())
     with meta_store.attempt_guard(slug, token) as meta:
         meta.update(
             status="failed",
-            failure_code=code,
-            error=safe_messages.get(code, safe_messages["preparation_setup_invalid"]),
+            **failure,
         )
         job = meta.get("job") or {}
         job.update(state="failed", stage="preparation", retryable=False, updated_at=_now())
@@ -1077,14 +1116,17 @@ def _sync_terminal_meta(slug: str, token: str, state: PreparationRunState) -> No
         if meta.get("private_preparation") is not True:
             return
         error_code = state.last_safe_error_code
+        safe_failure = safe_failure_metadata(
+            error_code or "preparation_failed",
+            support_ref=state.last_safe_error_ref or new_support_ref(),
+        )
         supervisor_status = PreparationSupervisor(
             adapters={}, validators={}, store=PreparationStore()
         ).status(slug, state.binding.run_id)
         restart_required = _needs_new_commission(error_code)
         meta.update(
             status="failed",
-            error=_preparation_failure_message(error_code),
-            failure_code=error_code or "preparation_blocked",
+            **safe_failure,
         )
         job = meta.get("job") or {}
         job.update(
@@ -1327,15 +1369,7 @@ async def prepare_adventure(
     except PreparationError:
         raise
     except Exception as exc:
-        code = (
-            "preparation_profile_invalid"
-            if "profile" in str(exc).lower()
-            else (
-                "preparation_source_invalid"
-                if "source" in str(exc).lower()
-                else "preparation_setup_invalid"
-            )
-        )
+        code = _setup_failure_code(exc)
         try:
             token = attempt_token or _job_identity(meta_store.load_meta(slug))[1]
             _mark_setup_blocked(slug, token, code)
