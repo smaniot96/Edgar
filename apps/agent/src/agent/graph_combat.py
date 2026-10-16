@@ -104,20 +104,27 @@ from agent.combatants import (
     disposition_of,
     finish_victory,
     has_effect,
+    impaired_checks,
     is_standing,
     release_effect,
     roster_violations,
+    save_auto_fails,
     save_roll_mode,
     stable_id,
     view_fields,
 )
 from agent.conditions import (
+    afflict,
     apply_spell_condition,
     concentration_save,
     consume_mark,
     drop_concentration,
+    drop_concentration_if_incapacitated,
+    end_fear_of_defeated,
+    end_of_source_turn,
     end_of_turn_saves,
     expire_effects,
+    fear_refusal,
     hero_end_of_turn_saves,
     humanoid_refusal,
     paralyzed_melee_crit,
@@ -132,6 +139,7 @@ from agent.conditions import (
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
+from agent.models.parsed_input import ParsedInput
 from agent.monster_stats import (
     AttackRider,
     AttackSave,
@@ -749,11 +757,13 @@ def _mode_log(outcome: DiceOutcome, purpose: str, mode: str, draws: list[int]) -
     return {**entry, "rolls": list(draws), "kept": outcome.rolls[0], "roll_mode": mode}
 
 
-def _contest(attacker_bonus: int, defender_bonus: int) -> tuple[bool, DiceOutcome, DiceOutcome]:
+def _contest(
+    attacker_bonus: int, defender_bonus: int, *, attacker_mode: str = "normal"
+) -> tuple[bool, DiceOutcome, DiceOutcome, list[int]]:
     """A contested check: the higher total wins, so a tie leaves the attacker without the effect."""
-    mine = roll(f"1d20{attacker_bonus:+d}")
+    mine, draws = _roll_with_mode(f"1d20{attacker_bonus:+d}", attacker_mode)
     theirs = roll(f"1d20{defender_bonus:+d}")
-    return mine.total > theirs.total, mine, theirs
+    return mine.total > theirs.total, mine, theirs, draws
 
 
 def _is_attack_action(parsed: Any, named: list[str]) -> tuple[bool, bool]:
@@ -865,6 +875,11 @@ async def combat_round_node(state: AgentState) -> dict:
     player["hp_max"] = player_hp_max
     player_ac = int(player.get("ac") or combat_state.get("player_ac") or _player_ac(character))
     player["ac"] = player_ac
+    if ended_spell := drop_concentration_if_incapacitated(player, enemies):
+        log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
+    if has_effect(player, "stunned"):
+        # EDG-043: a stunned hero is incapacitated (PHB, PDF p.291): nothing declared is acted on.
+        player_input, parsed, named, fled = "", ParsedInput(), [], False
     # Second Wind uses come from the sheet, never from the encounter: they persist across fights.
     sw_before = second_wind_remaining(character)
     sw_left = sw_before
@@ -1006,7 +1021,9 @@ async def combat_round_node(state: AgentState) -> dict:
     )
     if moves.question:
         return _ask_player(state, moves.question, combat_state=combat_state)
-    refused_move = move_refusal(hero, len(moves.steps), dash=dash)
+    refused_move = move_refusal(hero, len(moves.steps), dash=dash) or fear_refusal(
+        hero, player, moves.steps
+    )
     if refused_move:
         return _ask_player(state, refused_move, combat_state=combat_state)
     # A melee attack or grapple cannot reach a foe beyond 5 feet; a ranged weapon or spell can.
@@ -1144,13 +1161,18 @@ async def combat_round_node(state: AgentState) -> dict:
                     player,
                     rider,
                     character=character,
-                    source=e["name"],
+                    source=_display(e),
+                    source_id=stable_id(e),
                     round_applied=int(combat_state.get("round", 1) or 1),
                 )
                 dice_log.append(rider_roll.outcome.to_log(f"{hero} {rider.ability} save ({rider.kind})"))
                 log_lines.append(rider_save_line(hero, rider_roll, attack=label or e["name"]))
                 if rider_roll.failed:
                     round_effects.append(rider.kind)
+                    if ended_spell := drop_concentration_if_incapacitated(player, enemies):
+                        log_lines.append(
+                            f"{hero}'s concentration on {ended_spell} ends while incapacitated."
+                        )
         else:
             log_lines.append(f"{subject} misses {hero} (rolled {atk.total}{mode_text} vs AC {player_ac}).")
             outcomes.append(
@@ -1172,27 +1194,39 @@ async def combat_round_node(state: AgentState) -> dict:
     def enemy_save_action(e: dict, attack: MonsterAttack, save: AttackSave) -> None:
         """A breath-weapon style action (EDG-043): the hero's engine-rolled save, then the damage.
 
-        A failed save takes the rolled damage; a success takes half of it (rounded down) or none,
-        as the record states. A dodging hero has advantage on a Dexterity save (PHB, PDF p.193).
+        A failed save takes the rolled damage and records the action's condition, if it has one; a
+        success takes half of the damage (rounded down) or none, as the record states. A dodging
+        hero has advantage on a Dexterity save (PHB, PDF p.193); a stunned hero fails a Strength or
+        Dexterity save without a roll (PHB, PDF p.293).
         """
         note_actor(e)
-        mode = save_roll_mode(player, save.ability)
-        bonus = save_modifier(character, save.ability)
-        saving, draws = _roll_with_mode(f"1d20{bonus:+d}" if bonus else "1d20", mode)
-        purpose = f"{hero} {save.ability} save ({attack.name})"
-        dice_log.append(_mode_log(saving, purpose, mode, draws))
-        dmg_roll = roll(attack.damage_dice)
-        dice_log.append(dmg_roll.to_log(f"{e['name']} {attack.name} damage"))
-        saved = saving.total >= save.dc
-        dmg = dmg_roll.total
-        if saved:
-            dmg = dmg // 2 if save.half_on_success else 0
-        mode_text = "" if mode == "normal" else f" at {mode}"
+        if save_auto_fails(player, save.ability):
+            saved, mode, total = False, "normal", None
+            rolled = "automatic failure while stunned"
+        else:
+            mode = save_roll_mode(player, save.ability)
+            bonus = save_modifier(character, save.ability)
+            saving, draws = _roll_with_mode(f"1d20{bonus:+d}" if bonus else "1d20", mode)
+            purpose = f"{hero} {save.ability} save ({attack.name})"
+            dice_log.append(_mode_log(saving, purpose, mode, draws))
+            saved, total = saving.total >= save.dc, saving.total
+            rolled = f"rolled {total}" + ("" if mode == "normal" else f" at {mode}")
+        dmg = 0
+        if attack.damage_dice:
+            dmg_roll = roll(attack.damage_dice)
+            dice_log.append(dmg_roll.to_log(f"{e['name']} {attack.name} damage"))
+            dmg = dmg_roll.total
+            if saved:
+                dmg = dmg // 2 if save.half_on_success else 0
         result = "succeeds on" if saved else "fails"
-        damage = f"takes {dmg} {attack.damage_type} damage" if dmg else "takes no damage"
+        effects = []
+        if attack.damage_dice:
+            effects.append(f"takes {dmg} {attack.damage_type} damage" if dmg else "takes no damage")
+        if save.condition:
+            effects.append(f"is not {save.condition}" if saved else f"is {save.condition}")
         log_lines.append(
             f"{hero} {result} the {save.ability} save against {e['name']}'s {attack.name} "
-            f"(rolled {saving.total}{mode_text} vs DC {save.dc}) and {damage}."
+            f"({rolled} vs DC {save.dc}) and {' and '.join(effects)}."
         )
         outcomes.append(
             {
@@ -1201,14 +1235,30 @@ async def combat_round_node(state: AgentState) -> dict:
                 "attack": attack.name,
                 "ability": save.ability,
                 "dc": save.dc,
-                "roll": saving.total,
+                "roll": total,
                 "roll_mode": mode,
                 "saved": saved,
                 "damage": dmg,
                 "damage_type": attack.damage_type,
+                **({"condition": save.condition} if save.condition and not saved else {}),
             }
         )
+        # Damage can trigger the usual concentration save first; a failed save that stuns the hero
+        # then ends concentration regardless of whether that damage save succeeded.
         damage_player(dmg)
+        if save.condition and not saved and hp > 0:
+            afflict(
+                player,
+                save.condition,
+                source=_display(e),
+                round_applied=int(combat_state.get("round", 1) or 1),
+                ability=save.ability,
+                dc=save.dc,
+                source_id=stable_id(e) if save.condition == "frightened" else None,
+            )
+            round_effects.append(save.condition)
+            if ended_spell := drop_concentration_if_incapacitated(player, enemies):
+                log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
 
     def exact_attack(e: dict, attack: MonsterAttack, band: str) -> None:
         """One attack or save action of an exact record, made from the foe's band."""
@@ -1337,6 +1387,9 @@ async def combat_round_node(state: AgentState) -> dict:
         for save in end_of_turn_saves(e):
             dice_log.append(save.outcome.to_log(f"{save.name} {save.ability} save ({save.kind})"))
             log_lines.append(save_line(save))
+        # EDG-043: a hero condition that lasts until the end of this foe's next turn ends with it.
+        for kind in end_of_source_turn(player, e, int(combat_state.get("round", 1) or 1)):
+            log_lines.append(f"{hero} is no longer {kind}.")
 
     player_index = combatants.index(player)
     before = [c for c in combatants[:player_index] if not c.get("is_player")]
@@ -1351,7 +1404,8 @@ async def combat_round_node(state: AgentState) -> dict:
     check_result: CheckResult | None = None
     dealt = 0
     inventory_used: list[str] = []
-    player_acted = hp > 0
+    # An enemy ahead in initiative may have stunned the hero just now (EDG-043).
+    player_acted = hp > 0 and not has_effect(player, "stunned")
     extra_outcome = ""
     player_action: dict = {"action": "none", "result": "down"}
     spell_expended: dict[str, int] | None = None
@@ -1441,7 +1495,12 @@ async def combat_round_node(state: AgentState) -> dict:
         if disengage:
             round_effects.append("disengage")
     if not player_acted:
-        log_lines.append(f"{hero} is down before they can act.")
+        if hp > 0:
+            player_action = {"action": "none", "result": "stunned"}
+            round_effects.append("stunned")
+            log_lines.append(f"{hero} is stunned and cannot act.")
+        else:
+            log_lines.append(f"{hero} is down before they can act.")
     elif fled:
         player_action = {"action": "flee", "result": "fled"}
         log_lines.append(f"{hero} disengages and flees the fight.")
@@ -1597,13 +1656,20 @@ async def combat_round_node(state: AgentState) -> dict:
         log_lines.append(extra_outcome)
     elif combat_action is not None and target is not None:
         # Contested Athletics against the foe's Dexterity (EDG-021). Engine dice decide it.
-        won, mine, theirs = _contest(
-            check_spec(character, "athletics").modifier, int(target.get("initiative_bonus", 0) or 0)
+        check_mode = "disadvantage" if impaired_checks(player) else "normal"
+        won, mine, theirs, mine_draws = _contest(
+            check_spec(character, "athletics").modifier,
+            int(target.get("initiative_bonus", 0) or 0),
+            attacker_mode=check_mode,
         )
-        dice_log += [mine.to_log("athletics contest"), theirs.to_log(f"{target['name']} contest")]
+        dice_log += [
+            _mode_log(mine, "athletics contest", check_mode, mine_draws),
+            theirs.to_log(f"{target['name']} contest"),
+        ]
         verdict = "success" if won else "failure"
         contest_line = (
-            f"contest: {hero} athletics {mine.expression} = {mine.total} "
+            f"contest: {hero} athletics{f' at {check_mode}' if check_mode != 'normal' else ''} "
+            f"{mine.expression} = {mine.total} "
             f"(d20 rolled {mine.rolls[0]}) vs {target['name']} {theirs.expression} = {theirs.total} "
             f"(d20 rolled {theirs.rolls[0]}) -> {verdict}"
         )
@@ -1727,7 +1793,9 @@ async def combat_round_node(state: AgentState) -> dict:
         elif moving:
             player_action = {"action": "move", "result": "moved" if moves.steps else "already_there"}
     else:
-        check_result, extra = resolve_from_parsed(character, parsed, player_input=player_input)
+        check_result, extra = resolve_from_parsed(
+            character, parsed, player_input=player_input, impaired=impaired_checks(player)
+        )
         dice_log += extra
         player_action = {
             "action": "check",
@@ -1754,6 +1822,11 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # EDG-043: the hero's own turn ends: a rider's condition is repeated with the sheet's save.
     if not fled:
+        if feared := end_fear_of_defeated(player, enemies):
+            log_lines.append(
+                f"{feared} is down; {hero}'s fear no longer imposes its attack, check or movement "
+                "restrictions, but the condition and its repeat save remain."
+            )
         for save in hero_end_of_turn_saves(player, character):
             dice_log.append(save.outcome.to_log(f"{hero} {save.ability} save ({save.kind})"))
             log_lines.append(save_line(save))

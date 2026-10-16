@@ -8,9 +8,9 @@ Stored on every combatant:
   * `alive`: kept for existing readers with the living-vs-not meaning. True only for living
     dispositions (active, unconscious, captured). False for dead and defeated.
 
-Derived, never stored: `can_act` (active, above 0 HP and not paralyzed). Only a combatant that can
-act attacks. `is_standing` is the same without the paralysis: a paralyzed foe is still in the fight
-(it can be targeted, it still has a turn, and the fight is not over while it stands).
+Derived, never stored: `can_act` (active, above 0 HP and neither paralyzed nor stunned). Only a
+combatant that can act attacks. `is_standing` is the same without the paralysis: a paralyzed foe is
+still in the fight (it can be targeted, it still has a turn, and the fight is not over while it stands).
 
 `effects` (EDG-021): a list of typed combat effects, each `{kind, source, applied_round}`. Only
 the kinds in `EFFECT_KINDS` are read. Restraint (`restrained`) and `prone` come from a supported
@@ -22,13 +22,15 @@ Dexterity saves advantage (EDG-043, `save_roll_mode`). It ends when the combatan
 (see `agent.graph_combat`), not at the end of a round.
 
 Spell conditions (EDG-043, see `agent.conditions`) add `blinded`, `marked` and `paralyzed` to the same
-list. Monster riders add `poisoned` to a player. They may also carry `expires_after_round` (the last
-round in force) and `save` (`{ability, dc}`: the combatant repeats that save at the end of each of its
-turns, and the effect ends on success). Rows written without those keys read exactly as before.
+list. Monster riders and save actions add `poisoned`, `frightened` and `stunned` to a player. They
+may also carry `expires_after_round` (the last round in force) and `save` (`{ability, dc}`: the
+combatant repeats that save at the end of each of its turns, and the effect ends on success), or
+`ends_with_turn_of` (the creature at whose next turn's end the effect ends). Rows written without
+those keys read exactly as before.
 A caster's concentration (`concentration` on the player combatant, see `agent.conditions`) is a
-single dict, or absent. Recharge attacks used and not yet recharged are `recharge_spent` names. A
-legendary creature's spent legendary actions are `legendary_spent` (EDG-043): absent reads as none
-spent, so a row written before legendary actions has its full budget.
+single dict, or absent. Recharge attacks used and not yet recharged, and once-per-fight actions used,
+are `recharge_spent` names. A legendary creature's spent legendary actions are `legendary_spent`
+(EDG-043): absent reads as none spent, so a row written before legendary actions has its full budget.
 
 Legacy rows (written before `disposition` existed) carry only `alive`/`hp_current`. They are
 read honestly: `alive` False means "defeated" (cause unknown). It is not treated as proof of
@@ -71,11 +73,17 @@ EFFECT_KINDS: tuple[str, ...] = (
     "marked",
     "paralyzed",
     "poisoned",
+    "frightened",
+    "stunned",
 )
 # Kinds that give the bearer's own attack rolls disadvantage, and kinds that give attacks against
 # the bearer advantage (a prone bearer is the exception: its 5-foot split is in attack_roll_mode).
-_OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded", "poisoned"})
-_AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked", "paralyzed"})
+# A frightened bearer has it while the source of its fear is in sight; the engine counts the source as
+# in sight while it stands (see `agent.conditions.end_fear_of_defeated`).
+_OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded", "poisoned", "frightened"})
+_AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked", "paralyzed", "stunned"})
+# Kinds that give the bearer disadvantage on ability checks (PHB Appendix A, PDF pp.291, 293).
+_CHECK_DISADVANTAGE = frozenset({"frightened", "poisoned"})
 _EFFECT_TEXT = {
     "restrained": (
         "restrained with {source}: its attacks have disadvantage and attacks against it have "
@@ -94,6 +102,14 @@ _EFFECT_TEXT = {
         "from within 5 feet is a critical hit"
     ),
     "poisoned": "poisoned by {source}: its attacks have disadvantage",
+    "frightened": (
+        "frightened of {source}: its attacks and ability checks have disadvantage while {source} "
+        "stands, and it cannot willingly move closer to {source}"
+    ),
+    "stunned": (
+        "stunned by {source}: it cannot act, attacks against it have advantage, and it fails "
+        "Strength and Dexterity saves"
+    ),
     "dodging": (
         "dodging (Dodge action): attacks against it have disadvantage and its Dexterity saves "
         "advantage until its next turn"
@@ -211,7 +227,7 @@ def is_standing(c: Mapping[str, Any]) -> bool:
 
 
 def can_act(c: Mapping[str, Any]) -> bool:
-    return is_standing(c) and not has_effect(c, "paralyzed")
+    return is_standing(c) and not (has_effect(c, "paralyzed") or has_effect(c, "stunned"))
 
 
 def declared_lethality(parsed: Any, player_input: str | None) -> Lethality | None:
@@ -271,6 +287,8 @@ def add_effect(
     round_applied: int,
     expires_after_round: int | None = None,
     save: Mapping[str, Any] | None = None,
+    ends_with_turn_of: str | None = None,
+    source_id: str | None = None,
 ) -> bool:
     """Apply a typed effect. False when the combatant already has that effect (no stacking)."""
     if kind not in EFFECT_KINDS:
@@ -282,6 +300,10 @@ def add_effect(
         entry["expires_after_round"] = int(expires_after_round)
     if save is not None:
         entry["save"] = {"ability": str(save["ability"]), "dc": int(save["dc"])}
+    if ends_with_turn_of is not None:
+        entry["ends_with_turn_of"] = ends_with_turn_of
+    if source_id is not None:
+        entry["source_id"] = source_id
     c["effects"] = [*effects_of(c), entry]
     return True
 
@@ -321,7 +343,11 @@ def attack_roll_mode(
     Pure: it never rolls and never sets a number.
     """
     advantage = disadvantage = False
-    if any(e["kind"] in _OWN_ATTACK_DISADVANTAGE for e in effects_of(attacker)):
+    if any(
+        e["kind"] in _OWN_ATTACK_DISADVANTAGE
+        and not (e["kind"] == "frightened" and e.get("source_defeated"))
+        for e in effects_of(attacker)
+    ):
         disadvantage = True
     if ranged and within_five_feet:
         disadvantage = True
@@ -344,6 +370,24 @@ def save_roll_mode(combatant: Mapping[str, Any], ability: str) -> str:
     """The 5e saving-throw mode from the bearer's effects: a dodging combatant has advantage on its
     Dexterity saves (PHB, PDF p.193, Dodge). Pure: it never rolls."""
     return "advantage" if ability == "DEX" and has_effect(combatant, "dodging") else "normal"
+
+
+def impaired_checks(c: Mapping[str, Any]) -> bool:
+    """True when the combatant's conditions give its ability checks disadvantage: frightened or
+    poisoned (PHB Appendix A). Pure: it never rolls."""
+    return any(
+        e["kind"] in _CHECK_DISADVANTAGE
+        and not (e["kind"] == "frightened" and e.get("source_defeated"))
+        for e in effects_of(c)
+    )
+
+
+def save_auto_fails(combatant: Mapping[str, Any], ability: str) -> bool:
+    """A stunned or paralyzed combatant automatically fails Strength and Dexterity saves (PHB, PDF
+    pp.291, 293)."""
+    return ability in ("STR", "DEX") and (
+        has_effect(combatant, "stunned") or has_effect(combatant, "paralyzed")
+    )
 
 
 def apply_player_disposition(player: dict, *, subdued: bool) -> None:
@@ -391,10 +435,17 @@ def view_fields(c: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _effects_text(c: Mapping[str, Any]) -> str:
-    return "".join(
-        "; " + _EFFECT_TEXT[e["kind"]].format(source=e.get("source") or "hands")
-        for e in effects_of(c)
-    )
+    parts: list[str] = []
+    for effect in effects_of(c):
+        source = effect.get("source") or "hands"
+        if effect["kind"] == "frightened" and effect.get("source_defeated"):
+            parts.append(
+                f"; remains frightened of {source}, but its source is down so attack, check and "
+                "movement restrictions are inactive while its repeat save remains"
+            )
+        else:
+            parts.append("; " + _EFFECT_TEXT[effect["kind"]].format(source=source))
+    return "".join(parts)
 
 
 def concentration_of(c: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -408,6 +459,8 @@ def concentration_of(c: Mapping[str, Any]) -> dict[str, Any] | None:
 def _status(c: Mapping[str, Any]) -> str:
     if disposition_of(c) == "active" and _hp(c) > 0 and has_effect(c, "paralyzed"):
         return "active, cannot act (paralyzed)"
+    if disposition_of(c) == "active" and _hp(c) > 0 and has_effect(c, "stunned"):
+        return "active, incapacitated (stunned)"
     return _STATUS_TEXT[disposition_of(c)]
 def _position_text(c: Mapping[str, Any]) -> str:
     """A foe's band, stated for rows that carry one (EDG-044); legacy rows keep their text."""

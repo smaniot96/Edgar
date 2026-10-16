@@ -156,9 +156,13 @@ simulate (`GET /api/rules/supported-scope`):
 - Monster riders and recharge (EDG-043): an exact record whose attack reads exactly as "and the
   target must succeed on a DC N Constitution saving throw or be poisoned for 1 minute, ... repeat the
   saving throw at the end of each of its turns" poisons the hero on a hit after the engine-rolled
-  save. The hero's attacks then have disadvantage, and it repeats the save at the end of its own turn.
+  save. The hero's attacks and ability checks then have disadvantage, and it repeats the save at the
+  end of its own turn.
   An attack-style "Recharge X-6" attack is used once, then waits for a d6 at the start of the
-  creature's turns. Any other rider wording stays declared.
+  creature's turns. A hit that reads "If the target is a creature, it must succeed on a DC N Wisdom
+  (or Constitution) saving throw or be frightened (or stunned) until the end of the <creature>'s next
+  turn" is saved the same way and lasts until the end of that creature's next turn, with no repeat
+  save. Any other rider wording stays declared.
 - Monster breath weapons (EDG-043): an exact record's action that reads exactly as "exhales ... in a
   N-foot cone (or line). Each creature in that area must make a DC N ... saving throw, taking ... on
   a failed save, or half as much damage on a successful one" (or "must succeed on ... or take ...",
@@ -168,6 +172,19 @@ simulate (`GET /api/rules/supported-scope`):
   success. A ready breath weapon replaces the Multiattack and uses the Recharge X-6 rule above. The
   hero is the only target, so the cone's shape and range are not modelled; other wording stays
   declared.
+- Frightened and stunned hero (EDG-043): an exact record's Frightful Presence (a dragon's "Each
+  creature of the dragon's choice ... must succeed on a DC N Wisdom saving throw or become frightened
+  for 1 minute", with its repeat-save and 24-hour immunity sentences), made first as the Multiattack's
+  opener once per fight (the book's 24-hour immunity is only tracked within that fight); a save action
+  worded "... or take N (dice) <type> damage and be stunned for 1 minute" (the mind flayer's Mind
+  Blast, "magically emits" in a cone); and the rider above leave a hero that fails the engine-rolled
+  save frightened or stunned. A minute is 10 rounds, with the repeat save at the end of each of the
+  hero's turns. A frightened hero has disadvantage on attack rolls, ability checks and Athletics
+  contests while the source stands (line of sight is not modelled) and cannot close in on it. When the
+  source is down, the condition and repeat save persist but those restrictions stop. Stunned
+  incapacitates the hero (its turn passes with no action, move or flight), makes it fail Strength and
+  Dexterity saves without a roll, gives attacks against it advantage, and ends concentration even
+  when a damage concentration save succeeded. Any other wording stays declared.
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or
@@ -182,8 +199,8 @@ simulate (`GET /api/rules/supported-scope`):
   Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, other concentration spells, other
-  conditions (frightened, stunned, charmed and the rest have no engine effect; a poisoned hero's
-  ability checks are not penalised), area effects on more than the hero and save actions whose
+  conditions (charmed, grappled and the rest have no engine effect; frightened and stunned only from
+  the exact wordings above), area effects on more than the hero and save actions whose
   wording is not read exactly, cover, high ground, flanking, difficult terrain and exact distances,
   Help, reactions other than opportunity attacks, other bonus actions, and class features other than
   Second Wind, Action Surge, Sneak Attack and Rage (Divine Smite, Lay on Hands, Bardic Inspiration,

@@ -343,15 +343,19 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="monster_riders",
-        title="Poisoned rider on an exact monster's hit",
+        title="Poisoned, frightened or stunned rider on an exact monster's hit",
         scope=(
             "An exact record whose attack reads exactly as 'and the target must succeed on a DC N "
             "Constitution saving throw or be poisoned for 1 minute, and it can repeat the save at the end "
             "of each of its turns' is executed on a hit. The hero makes the engine-rolled save with the "
             "sheet's Constitution modifier; a failure poisons the hero, which gives its own attack rolls "
-            "disadvantage (ability checks are not penalised). The hero repeats the save at the end of its own "
-            "turn, and a success ends the effect. Any other rider clause, such as extra poison damage or "
-            "unconsciousness, stays declared and is not executed."
+            "and ability checks disadvantage (PHB Appendix A, PDF p.293). The hero repeats the save at the "
+            "end of its own turn, and a success ends the effect. A hit that reads 'If the target is a "
+            "creature, it must succeed on a DC N Wisdom (or Constitution) saving throw or be frightened "
+            "(or stunned) until the end of the <creature>'s next turn' is saved the same way, and a "
+            "failure lasts until the end of that creature's next turn, with no repeat save (see "
+            "monster_conditions for the effects). Any other rider clause, such as extra poison damage "
+            "or unconsciousness, stays declared and is not executed."
         ),
         implementation="agent.conditions:rider_save",
         test="tests/agent/test_monster_riders.py::test_poisoned_rider_on_a_hit_saves_and_the_hero_repeats_it",
@@ -373,11 +377,13 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="monster_save_actions",
         title="Breath-weapon saves of exact records against the hero",
         scope=(
-            "An exact record's action that reads exactly as 'The creature exhales ... in a N-foot cone "
-            "(or line). Each creature in that area must make a DC N <ability> saving throw, taking N "
+            "An exact record's action that reads exactly as 'The creature exhales (or magically emits) ... "
+            "in a N-foot cone (or line). Each creature in that area must make a DC N <ability> saving "
+            "throw, taking N "
             "(dice) <type> damage on a failed save, or half as much damage on a successful one' (or, "
             "worded 'must succeed on a DC N <ability> saving throw or take N (dice) <type> damage', no "
-            "damage on a success) makes no attack roll. The hero rolls an engine d20 plus the sheet's "
+            "damage on a success, with the one clause 'and be stunned for 1 minute' allowed; see "
+            "monster_conditions) makes no attack roll. The hero rolls an engine d20 plus the sheet's "
             "save modifier (the ability modifier, plus proficiency when the sheet or the class lists the "
             "save, PHB, PDF p.46), at advantage on a Dexterity save while dodging (PHB, PDF p.193); the "
             "engine rolls the record's damage dice and the hero takes it on a failure, half of it "
@@ -411,6 +417,30 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "tests/agent/test_monster_legendary.py::"
             "test_at_a_turn_boundary_only_one_costliest_affordable_option_is_used"
         ),
+    ),
+    Mechanic(
+        id="monster_conditions",
+        title="Frightened and stunned hero from exact monster text",
+        scope=(
+            "A save action that reads exactly as a dragon's Frightful Presence ('Each creature of the "
+            "dragon's choice that is within 120 feet of the dragon and aware of it must succeed on a DC "
+            "N Wisdom saving throw or become frightened for 1 minute', with its repeat-save and "
+            "24-hour immunity sentences) or as 'or take N (dice) <type> damage and be stunned for 1 "
+            "minute' (the mind flayer's Mind Blast), or a frightened or stunned rider on a hit (see "
+            "monster_riders), leaves a hero that fails its save in that condition. The minute is 10 "
+            "rounds, and the hero repeats the save at the end of each of its turns, a success ending "
+            "it. A Multiattack that opens with 'can use its Frightful Presence' makes it first, once "
+            "per fight (the book's 24-hour immunity is only tracked within that fight). A frightened "
+            "hero has disadvantage on attack rolls, ability checks and Athletics contests while the "
+            "source stands (line of sight is not modelled); when the source is down, the condition and "
+            "repeat save remain, but those restrictions stop. A move that closes in on the source is refused with no "
+            "roll. A stunned hero is incapacitated: its turn passes with no action, move or flight, it "
+            "fails Strength and Dexterity saves without a roll, and attacks against it have advantage "
+            "(PHB Appendix A, PDF pp.291, 293). Stunned or paralyzed also ends concentration, including "
+            "when a persisted effect is loaded. Any other wording stays declared and is not executed."
+        ),
+        implementation="agent.conditions:afflict",
+        test="tests/agent/test_monster_conditions.py::test_frightful_presence_frightens_the_hero_once_and_it_repeats_the_save",
     ),
     Mechanic(
         id="long_rest",
@@ -461,8 +491,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         title="Official condition names as narrative tags",
         scope=(
             "Only the 15 official condition names are stored; common aliases are normalised. The "
-            "stored name is a narrative tag: it has no engine effect on a player character. The "
-            "engine applies blinded and marked to foes only, from catalog spells (see condition_effects)."
+            "stored name is a narrative tag; only the specific mechanics listed here have engine "
+            "effects on a player character. The "
+            "engine applies blinded, marked and paralyzed to foes from catalog spells (see "
+            "condition_effects), and poisoned, frightened and stunned to the hero from exact monster "
+            "text (see monster_riders and monster_conditions)."
         ),
         implementation="agent.resolution:normalise_conditions",
         test="tests/agent/test_supported_rules.py::test_supported_conditions_are_tags_only",
@@ -671,14 +704,16 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     UnsupportedMechanic(
         id="other_conditions",
         title=(
-            "Mechanical effects of other conditions (frightened, stunned, charmed and the rest; poisoned "
-            "and paralyzed beyond the effects named in the supported list)"
+            "Mechanical effects of other conditions (charmed, grappled, incapacitated and the rest; "
+            "frightened and stunned on a foe; poisoned and paralyzed beyond the effects named in the "
+            "supported list)"
         ),
         boundary=(
             "Such a condition has no engine effect: it does not penalise rolls, speed, actions or senses, "
-            "and no foe is frightened, stunned or charmed by the engine. A poisoned creature's ability "
-            "checks are not penalised, and a frightened creature's movement and line-of-sight limits are "
-            "not tracked."
+            "and no foe is frightened, stunned or charmed by the engine. The hero is frightened or "
+            "stunned only by the exact monster wordings named in monster_conditions. A hero's "
+            "paralysis has no engine effect beyond automatic failure of Strength and Dexterity saves "
+            "and ending concentration; a hero charmed or grappled by a monster has no engine effect."
         ),
         owner="EDG-043",
     ),
@@ -854,7 +889,7 @@ _TEXT_CONDITION_WORDS = {
     "incapacitated": "incapacitate|incapacitated",
 }
 # Conditions the engine records on a creature this module reads (see `_claim_pattern`).
-_RECORDED_CONDITIONS = frozenset({"blinded", "paralyzed", "poisoned"})
+_RECORDED_CONDITIONS = frozenset({"blinded", "frightened", "paralyzed", "poisoned", "stunned"})
 
 
 def _condition_claim(exclude: frozenset[str] = frozenset()) -> str:
