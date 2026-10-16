@@ -9,6 +9,7 @@ import sys
 
 from db.vector import get_embeddings, get_qdrant_client
 from db.vector.versions import active_index_read
+from edgar_core.model_profiles import ModelProfileError, validate_provider_configuration
 
 
 def main() -> None:
@@ -33,6 +34,11 @@ def main() -> None:
         help="Number of sample/search results per collection (default: 3)",
     )
     args = parser.parse_args()
+    if args.search:
+        try:
+            validate_provider_configuration()
+        except ModelProfileError as exc:
+            parser.exit(1, f"Configuration error: {exc}\n")
 
     client = get_qdrant_client()
     collections = client.get_collections().collections

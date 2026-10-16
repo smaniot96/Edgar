@@ -15,6 +15,7 @@ from db.postgres.models import (
     User,
     WorldFlag,
 )
+from tests.agent.test_combat import play_defeat, play_flee, play_round_limit, play_victory
 
 
 @pytest.mark.asyncio
@@ -238,6 +239,36 @@ async def test_resolved_combat_outcome_cannot_regress(db_session):
     with pytest.raises(ValueError, match="resolved combat"):
         await persist_combat(db_session, sess.id, {**unchanged, "ended": False, "outcome": None})
     assert resolved.ended is True and resolved.outcome == "victory"
+
+
+@pytest.mark.parametrize("play", [play_victory, play_defeat, play_flee, play_round_limit])
+@pytest.mark.asyncio
+async def test_engine_round_survives_persist_and_reload(
+    db_session, fake_llm_schema, fake_retrieval, play
+) -> None:
+    """EDG-127: each turn's round is written and read back as the engine resolved it."""
+    from apps.api.services.combat import (
+        load_active_combat,
+        load_resolved_combat_outcomes,
+        persist_combat,
+    )
+    from apps.api.services.turn_runner import combat_state_public
+
+    _, _, sess = await _setup(db_session)
+    sid = sess.id
+    combat_id = None
+    for out in await play(fake_llm_schema):
+        combat_id = await persist_combat(db_session, sid, {**out["combat_state"], "id": combat_id})
+        await db_session.commit()
+        db_session.expunge_all()
+        resolved = out["telemetry_events"][0]["payload"]["round"]
+        shown = combat_state_public(out["combat_state"])["round"]
+        if out["combat_state"]["ended"]:
+            (row,) = await load_resolved_combat_outcomes(db_session, sid)
+            assert row["id"] == combat_id and row["round"] == shown == resolved
+        else:
+            loaded = await load_active_combat(db_session, sid)
+            assert loaded["id"] == combat_id and loaded["round"] == shown
 
 
 @pytest.mark.asyncio

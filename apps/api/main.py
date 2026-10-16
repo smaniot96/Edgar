@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from edgar_core.config import API_TITLE, API_VERSION
+from edgar_core.model_profiles import validate_provider_configuration
 
 from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
 from .routers._common import HTTPErrorWithContext
@@ -40,6 +41,8 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    # Fail before any background work when local provider settings are unusable.
+    log.info("provider_configuration_validated", **validate_provider_configuration())
     # Background ingest/generation tasks die with the process; flag the ones a previous run
     # left in "processing" as failed so the UI can offer a retry instead of spinning forever.
     from .services.adventures_meta import fail_stale_processing
