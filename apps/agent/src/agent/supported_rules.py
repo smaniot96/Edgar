@@ -384,6 +384,28 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         test="tests/agent/test_monster_save_actions.py::test_a_failed_save_takes_the_full_damage_then_the_breath_waits",
     ),
     Mechanic(
+        id="monster_legendary_actions",
+        title="Legendary actions of exact records, spent after the hero's turn",
+        scope=(
+            "An exact record that states 'can take N legendary actions' spends them at the end of the "
+            "hero's turn (MM, PDF p.12): one option at a time, each the most expensive option the budget "
+            "left can pay for (ties in the record's order), while the foe can make it from its band, can "
+            "act and the hero stands. The spent actions are saved on the foe and regained at the start "
+            "of its own turn; a row without them has its full budget. Two shapes are executed: an option "
+            "that only names one of the creature's own plain attacks ('makes a tail attack'), rolled as "
+            "that attack, and the dragon Wing Attack (Costs 2 Actions), a Dexterity save for bludgeoning "
+            "damage and none on a success, made from the melee band (its 10 or 15 foot radius is not "
+            "modelled). The Wing Attack's prone effect and its flight are not executed. Every other "
+            "option (Detect, spells, movement, a condition, an attack named with 'or') stays declared, "
+            "never guessed. Legendary actions are not spent after another foe's turn."
+        ),
+        implementation="agent.monster_stats:legendary_plan",
+        test=(
+            "tests/agent/test_monster_legendary.py::"
+            "test_after_the_hero_the_costliest_affordable_options_are_used_in_order"
+        ),
+    ),
+    Mechanic(
         id="long_rest",
         title="Long rest healing and Hit Dice recovery",
         scope=(
@@ -686,14 +708,17 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     UnsupportedMechanic(
         id="monster_traits",
         title=(
-            "Other monster traits: speed and movement, legendary, lair and reaction actions, "
-            "spellcasting, save actions and recharge abilities not read exactly, and unlisted traits"
+            "Other monster traits: speed and movement, lair and reaction actions, legendary options not "
+            "read exactly, spellcasting, save actions and recharge abilities not read exactly, and "
+            "unlisted traits"
         ),
         boundary=(
             "Each such trait is declared, not executed, in the combat start message. It has no engine "
             "effect: a monster never moves, casts, uses a save action it cannot read exactly, or takes a "
-            "legendary, lair or reaction action, and its passive traits are not applied. An attack-style "
-            "Recharge attack and a breath weapon are executed as stated in the supported list."
+            "lair action (no encounter or scene data states that it is in its lair), a reaction action or a "
+            "legendary option that is not read exactly, and its passive traits are not applied. An "
+            "attack-style Recharge attack, a breath weapon and the legendary options of the supported "
+            "list are executed as stated there."
         ),
         owner="EDG-043",
     ),
