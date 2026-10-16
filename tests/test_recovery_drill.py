@@ -389,6 +389,7 @@ async def test_coordinated_bundle_restores_campaign_history_manuscript_vectors_a
                         assert ready.status_code == 200
                         assert ready.json()["checks"] == {
                             "postgres": "ok",
+                            "schema": "ok",
                             "redis": "ok",
                             "qdrant": "ok",
                         }
