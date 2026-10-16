@@ -108,6 +108,14 @@ def _unique_slug(desired: str, taken: set[str]) -> str:
 
 def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     meta = load_adventure_metadata(slug)
+    from ..services.cover_images import normalize_cover_image
+
+    try:
+        cover_image = normalize_cover_image(meta.get("cover_image"))
+    except ValueError:
+        # Old metadata may predate the local-path contract. An invalid optional cover should
+        # degrade to the card's normal fallback instead of breaking the adventure listing.
+        cover_image = None
     from ..services.campaign_sources import source_read
 
     source = source_read(slug)
@@ -119,7 +127,7 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
         rules_edition=meta.get("rules_edition", "unspecified"),
         description=meta.get("description"),
         level_range=meta.get("level_range"),
-        cover_image=meta.get("cover_image"),
+        cover_image=cover_image,
         status=status,
         usable_chunks=source.usable_chunks,
         source_pdf_available=source.source_pdf_available,
