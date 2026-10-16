@@ -114,7 +114,7 @@ export function PlayToolPanel({
           {activeTool === "journal" ? (
             <>
               <Button
-                className="hidden lg:inline-flex"
+                className="max-lg:hidden"
                 variant="secondary"
                 size="sm"
                 aria-expanded={expandedJournal}

@@ -113,7 +113,7 @@ const DmRow = memo(function DmRow({
               <button
                 key={entry.actor_id ?? entry.id}
                 type="button"
-                className="min-h-11 rounded-control border border-line bg-surface px-3 py-1 text-left font-medium text-ember-700 underline decoration-ember-400 underline-offset-2 hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+                className="min-h-11 rounded-control border border-line bg-surface px-3 py-1 text-left font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
                 aria-label={`Open journal entry for NPC ${entry.title}`}
                 onClick={() => onOpenActorEntry?.(entry.id)}
               >

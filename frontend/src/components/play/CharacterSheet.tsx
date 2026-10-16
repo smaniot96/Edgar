@@ -159,7 +159,8 @@ export function CharacterSheet({
                           {readableItems?.get(it) && onReadItem ? (
                             <button
                               type="button"
-                              className="shrink-0 text-xs font-medium text-ember-700 underline decoration-ember-400 underline-offset-2 hover:text-ember-900"
+                              aria-label={`Read ${it}`}
+                              className="shrink-0 text-xs font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
                               onClick={() => onReadItem(readableItems.get(it)!)}
                             >
                               Read

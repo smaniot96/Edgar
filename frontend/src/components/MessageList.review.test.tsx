@@ -59,3 +59,36 @@ it("leaves the persisted reading anchor untouched until boot history is seeded",
     await act(() => root.unmount()); container.remove(); sessionStorage.removeItem(key); vi.unstubAllGlobals();
   }
 });
+
+it("keeps the log silent while narration streams and alerts once for a failed turn", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  const pending = { turnId: "t1", requestId: "r1", input: "look", stage: "narrating", text: "The door creaks", adjudication: null, debug: null };
+  try {
+    await act(() => root.render(
+      <MessageList
+        messages={[{ id: "h0", role: "dm", content: "Old saved narration." }]}
+        pending={pending}
+      />,
+    ));
+    const log = container.querySelector('[role="log"]')!;
+    expect(log.getAttribute("aria-live")).toBe("off");
+    expect(log.textContent).toContain("The door creaks");
+    expect(container.querySelectorAll("[aria-live]:not([aria-live='off']), [role='status'], [role='alert']")).toHaveLength(0);
+
+    await act(() => root.render(
+      <MessageList
+        messages={[
+          { id: "h0", role: "dm", content: "Old saved narration." },
+          { id: "t1:error", role: "error", content: "Connection lost" },
+        ]}
+        pending={null}
+      />,
+    ));
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection lost");
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});

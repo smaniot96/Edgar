@@ -22,6 +22,11 @@ const CATEGORIES: { value: JournalCategory | "all"; label: string }[] = [
 
 const PAGE_SIZE = 24;
 
+/** Keyboard users follow a jump or a revealed batch instead of staying on a control that moved or vanished. */
+function focusEntry(id: string) {
+  requestAnimationFrame(() => document.getElementById(`journal-entry-${id}`)?.focus({ preventScroll: true }));
+}
+
 export interface JournalPanelProps {
   data: JournalRead | null;
   loading: boolean;
@@ -77,7 +82,8 @@ function EntryCard({
     <article
       id={id}
       aria-current={selected ? "true" : undefined}
-      className={`rounded-control border bg-surface p-3 ${selected ? "border-ember-500 ring-1 ring-ember-500/40" : "border-line"}`}
+      tabIndex={-1}
+      className={`rounded-control border bg-surface p-3 outline-none focus-visible:ring-2 focus-visible:ring-ember-400 ${selected ? "border-ember-500 ring-1 ring-ember-500/40" : "border-line"}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
@@ -94,6 +100,7 @@ function EntryCard({
             variant="secondary"
             size="sm"
             aria-pressed={selected}
+            aria-label={`${selected ? "Selected" : "Select"} ${entry.title}`}
             onClick={onSelect}
           >
             {selected ? "Selected" : "Select"}
@@ -157,7 +164,7 @@ function EntryCard({
         <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-subtle">
           <span className="font-medium">Related:</span>
           {relatedEntries.map((related) => (
-            <button key={related.id} type="button" className="text-ember-700 underline decoration-ember-400 underline-offset-2" onClick={() => onSelectRelated(related.id)}>
+            <button key={related.id} type="button" className="text-ember-300 underline decoration-ember-400 underline-offset-2" onClick={() => onSelectRelated(related.id)}>
               {related.category === "place" ? "Place: " : related.category === "clue" ? "Clue: " : "Entry: "}{related.title}
             </button>
           ))}
@@ -178,7 +185,8 @@ function EntryCard({
                 {change.history_event_id !== null && onOpenHistory ? (
                   <button
                     type="button"
-                    className="font-medium text-ember-700 underline decoration-ember-400 underline-offset-2 hover:text-ember-900"
+                    aria-label={`View narration: ${entry.title}, ${statusLabel(change.status)}`}
+                    className="font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
                     onClick={() => onOpenHistory(change.history_event_id!)}
                   >
                     View narration
@@ -266,7 +274,7 @@ export function JournalPanel({
         </div>
         {data ? (
           <a
-            className="text-sm font-medium text-ember-700 underline decoration-ember-400 underline-offset-2 hover:text-ember-900"
+            className="text-sm font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
             href={exportHref}
             download
           >
@@ -343,6 +351,7 @@ export function JournalPanel({
               onCategoryChange("all");
               onQueryChange("");
               onSelectedEntryChange(id);
+              focusEntry(id);
             }}
           />
         ))}
@@ -351,10 +360,13 @@ export function JournalPanel({
         <Button
           className="w-full"
           variant="secondary"
-          onClick={() => setPageState((current) => ({
-            key: filterKey,
-            count: Math.min((current.key === filterKey ? current.count : PAGE_SIZE) + PAGE_SIZE, entries.length),
-          }))}
+          onClick={() => {
+            setPageState((current) => ({
+              key: filterKey,
+              count: Math.min((current.key === filterKey ? current.count : PAGE_SIZE) + PAGE_SIZE, entries.length),
+            }));
+            focusEntry(entries[visibleCount].id);
+          }}
         >
           Show more entries
         </Button>
