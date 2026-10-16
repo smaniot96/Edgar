@@ -463,11 +463,13 @@ def _eval_rulings(corpus: dict[str, Any]) -> dict[str, Any]:
     )
 
     dragon = parse_monster_stats(passages["mm-adult-red-dragon"]["text"], name="Adult Red Dragon")
+    # The compact source excerpt lacks the exact breath lead-in required by the parser.
+    # Full correctly worded breath actions are supported and tested by EDG-043.
     dragon_boundary = [value for value in dragon.declared if "Fire Breath" in value]
     dragon_ok = dragon.ac == 19 and dragon.hp_max == 256 and bool(dragon_boundary)
     results.append(
         {
-            "id": "adult-dragon-explicit-engine-boundary",
+            "id": "adult-dragon-incomplete-action-stays-declared",
             "passed": dragon_ok,
             "applied": {"ac": dragon.ac, "hp": dragon.hp_max, "declared": dragon_boundary},
         }

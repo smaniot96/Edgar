@@ -2,8 +2,8 @@
 
 `uv run --locked python tools/eval_fidelity.py --compact` completed with `all_passed: true`.
 The baseline is pinned to corpus SHA-256
-`43cac6d1b48371780a595cd021d3f38f3429d1c1a197d66e0968c1a208efe478` and production prompt-source
-SHA-256 `b8c7e7081e59da8a88ae7a995bc1f3eb4de90c64e4cf9d5a72b49dbae2704cb8`.
+`d1f0d687c4e7df3530fd5f2b3cb9b6a398e691683e891d90e7c49945d23a2ab3` and production prompt-source
+SHA-256 `e9de592383d3fc3c44728dccc3fee066bbc48c179733d0b4ab600dd46ce84ac8`.
 
 | Measure | Result |
 | --- | ---: |
@@ -21,7 +21,7 @@ retrieval used the production exact-heading lexical fallback because embeddings 
 
 The six ruling cases applied Second Wind (seed 11: 13 healing on `1d10+5`), Magic Missile (three
 darts, 15 force damage), Goblin AC/HP and scimitar stats, Troll AC/HP/Regeneration and bite-claw-claw
-multiattack, the Adult Red Dragon's AC/HP plus the current explicit Fire Breath boundary, and a check
+multiattack, the Adult Red Dragon's AC/HP plus conservative declaration of its shortened Fire Breath excerpt, and a check
 using the source's DC 13 (seed 11: total 15, success). These call deterministic engine functions,
 without LLM adjudication or narration.
 
@@ -51,3 +51,11 @@ measure query interpretation, semantic retrieval and prompt-conditioned rulings.
 
 The focused pytest run emitted seven PyMuPDF binding deprecation warnings and one local-Qdrant
 warning that payload indexes are unavailable in local mode. All assertions passed.
+
+## Integration review — 16 October 2026
+
+Re-ran on main `2bbe5df` plus the reviewed EDG-125/054/062 integration. The prompt hash was
+refreshed after reviewing the merged retrieved-excerpt trust-boundary and tag-neutralisation
+changes; no prompt was invoked. The Dragon excerpt remains unchanged source text. Its abbreviated
+breath wording does not match the exact parser, so it stays declared. This does not imply that
+full correctly worded breath actions are unsupported; their execution is covered by EDG-043.

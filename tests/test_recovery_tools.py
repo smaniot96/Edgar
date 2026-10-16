@@ -138,3 +138,32 @@ def test_source_extraction_refuses_parent_traversal(tmp_path):
     with pytest.raises(ValueError, match="unsafe path"):
         recovery._extract_sources(archive_path, destination)
     assert not (tmp_path / "outside.txt").exists()
+
+
+@pytest.mark.parametrize("directory", ["secrets", "credentials", ".env.local", "private.key"])
+def test_secret_directories_exclude_innocently_named_descendants(tmp_path, directory):
+    # A secret-named host ancestor must not exclude the entire application tree.
+    data = tmp_path / "secret-host-project" / "data"
+    sources = data / "adventures" / "village"
+    hidden = sources / directory / "nested"
+    hidden.mkdir(parents=True)
+    (hidden / "ordinary.txt").write_text("synthetic sensitive payload", encoding="utf-8")
+    (sources / "story.md").write_text("retained story", encoding="utf-8")
+    archive_path = tmp_path / "sources.tar.gz"
+    counts = recovery._write_source_archive(data, archive_path)
+    assert counts["adventures"] == 1
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = archive.getnames()
+    assert "adventures/village/story.md" in names
+    assert not any(directory in name for name in names)
+
+    # Verification/restore must reject externally supplied archives with the same path.
+    with tarfile.open(archive_path, "w:gz") as archive:
+        member = tarfile.TarInfo(f"adventures/village/{directory}/nested/ordinary.txt")
+        member.size = 7
+        archive.addfile(member, io.BytesIO(b"blocked"))
+    destination = tmp_path / "restored"
+    destination.mkdir()
+    with pytest.raises(ValueError, match="unsafe path"):
+        recovery._extract_sources(archive_path, destination)
+    assert not list(destination.iterdir())

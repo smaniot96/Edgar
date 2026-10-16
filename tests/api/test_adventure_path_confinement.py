@@ -43,7 +43,8 @@ def test_traversal_cannot_read_write_or_lock_outside_metadata_root(data_dirs):
     assert not adventures_dir.exists()
 
 
-def test_metadata_source_and_attempt_symlinks_cannot_escape(data_dirs, monkeypatch):
+@pytest.mark.asyncio
+async def test_metadata_source_and_attempt_symlinks_cannot_escape(data_dirs, monkeypatch):
     adventures_dir, pdf_dir, root = data_dirs
     adventures_dir.mkdir(parents=True)
     pdf_dir.mkdir(parents=True)
@@ -57,7 +58,7 @@ def test_metadata_source_and_attempt_symlinks_cannot_escape(data_dirs, monkeypat
 
     monkeypatch.setattr(adventures, "_all_collection_names", lambda: [])
     with pytest.raises(ValueError, match="symlink"):
-        adventures.get_adventure("linked")
+        await adventures.get_adventure("linked")
     with pytest.raises(ValueError, match="symlink"):
         adventures.update_adventure("linked", AdventureUpdate(title="changed"))
     with pytest.raises(ValueError, match="symlink"):
@@ -95,7 +96,8 @@ def test_generated_and_legacy_slug_forms_remain_valid(data_dirs):
         assert store.candidate_pdf_path(slug, "c" * 32).is_relative_to(adventures_dir.resolve())
 
 
-def test_metadata_fallback_handlers_reject_traversal_before_filesystem_access(
+@pytest.mark.asyncio
+async def test_metadata_fallback_handlers_reject_traversal_before_filesystem_access(
     data_dirs, monkeypatch
 ):
     _, _, root = data_dirs
@@ -105,7 +107,7 @@ def test_metadata_fallback_handlers_reject_traversal_before_filesystem_access(
     monkeypatch.setattr(adventures, "_all_collection_names", lambda: [])
 
     with pytest.raises(HTTPException) as get_error:
-        adventures.get_adventure("../../outside")
+        await adventures.get_adventure("../../outside")
     assert get_error.value.status_code == 422
 
     with pytest.raises(HTTPException) as patch_error:

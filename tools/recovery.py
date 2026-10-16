@@ -104,13 +104,15 @@ def _validate_qdrant_url(qdrant_url: str, *, require_loopback: bool) -> None:
 
 
 def _is_secret_path(path: Path) -> bool:
-    name = path.name.lower()
-    return (
+    # Callers supply archive-relative paths so unrelated host directories do not
+    # suppress legitimate files. A secret directory excludes its entire subtree.
+    return any(
         name in SECRET_NAMES
         or name.startswith(".env.")
         or name.endswith(tuple(SECRET_SUFFIXES))
         or "credential" in name
         or "secret" in name
+        for name in (part.lower() for part in path.parts)
     )
 
 
@@ -130,7 +132,7 @@ def _write_source_archive(source_data: Path, target: Path) -> dict[str, int]:
             for path in sorted(candidate.rglob("*")):
                 if path.is_symlink():
                     raise ValueError("Source tree contains a symlink; review it before backup.")
-                if _is_secret_path(path):
+                if _is_secret_path(path.relative_to(root)):
                     continue
                 if path.is_file():
                     archive.add(path, arcname=path.relative_to(root).as_posix(), recursive=False)
