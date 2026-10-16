@@ -102,7 +102,9 @@ _register(
 _register(
     FailureSpec(ErrorCategory.BUSY, "busy", "This action is still being processed. Check its status before trying again.", 409, RecoveryAction.WAIT),
     "session_busy", "turn_busy", "request_busy", "lock_conflict", "preparation_busy",
-    "preparation_in_progress",
+)
+_register(
+    FailureSpec(ErrorCategory.BUSY, "preparation_in_progress", "Preparation is still running. Check back when it finishes.", 409, RecoveryAction.WAIT),
 )
 _register(
     FailureSpec(ErrorCategory.PROVIDER_UNAVAILABLE, "provider_unavailable", "The Dungeon Master service could not complete this request.", 503, RecoveryAction.CHECK_EXISTING_RESULT, True),

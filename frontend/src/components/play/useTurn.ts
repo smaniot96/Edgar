@@ -96,7 +96,8 @@ function describeTurnFailure(error: TurnError): string {
                     : error.recoveryAction === "contact_support" ? " Share the reference with support if the problem continues."
                       : " Check the saved result before trying again.";
   const reference = error.supportRef ? ` Reference: ${error.supportRef}.` : "";
-  return `${error.message}${next}${reference}`;
+  const guidance = error.message.includes(next.trim()) ? "" : next;
+  return `${error.message}${guidance}${reference}`;
 }
 
 function receiptUrl(sessionId: number, requestId: string): string {

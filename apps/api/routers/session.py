@@ -399,6 +399,8 @@ def _turn_error_response(err: TurnError) -> JSONResponse:
 
 
 def _turn_http_error_response(exc: HTTPException) -> JSONResponse:
+    from ..services.safe_errors import http_failure_payload
+
     detail = exc.detail if isinstance(exc.detail, dict) else {}
     code = detail.get("code")
     if exc.detail == _BUSY_DETAIL:
@@ -408,7 +410,7 @@ def _turn_http_error_response(exc: HTTPException) -> JSONResponse:
     failure = classify_http_failure(exc.status_code, code=code, outcome="not_committed")
     if failure.category == "busy":
         failure = classify_http_failure(exc.status_code, code=code, outcome="unknown")
-    return JSONResponse(status_code=failure.status_code, content=failure.to_payload())
+    return JSONResponse(status_code=exc.status_code, content=http_failure_payload(failure))
 
 
 async def _replayed_turn(
