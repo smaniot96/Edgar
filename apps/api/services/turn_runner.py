@@ -46,10 +46,20 @@ from agent.nodes.narrator import (
     narrator_context,
 )
 from agent.positioning import band_of
+from agent.provider_trace import traced_call, traced_stream
 from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
     engine_applied_for_state,
+)
+from agent.turn_diagnostics import (
+    TURN_DIAGNOSTICS_EVENT,
+    TurnDiagnostics,
+    bind_collector,
+    bound_steps,
+    finalize_turn_diagnostics,
+    new_turn_diagnostics,
+    turn_diagnostics_public,
 )
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.model_profiles import (
@@ -449,15 +459,26 @@ async def persist_turn(
     return done
 
 
-async def run_turn(initial_state: dict[str, Any]) -> dict[str, Any]:
-    """Run the full graph, retaining provider attribution only from recognized failures."""
-    with model_profile_snapshot():
+async def run_turn(
+    initial_state: dict[str, Any], *, diagnostics: TurnDiagnostics | None = None
+) -> dict[str, Any]:
+    """Run the full graph, retaining provider attribution only from recognized failures.
+
+    The turn's `turn_diagnostics` row is appended to `telemetry_events` here, so `persist_turn`
+    writes it in the same transaction as the turn (EDG-053).
+    """
+    diag = diagnostics or new_turn_diagnostics(
+        turn_id=initial_state.get("turn_id"), delivery="sync"
+    )
+    with model_profile_snapshot(), bind_collector(diag):
         result = await app.ainvoke(dict(initial_state))
-        if result.get("error"):
-            failure = TurnError(result.get("error_code"), outcome="not_committed")
-            log_failure("turn_agent_error", failure.failure)
-            raise failure
-        return result
+    if result.get("error"):
+        failure = TurnError(result.get("error_code"), outcome="not_committed")
+        log_failure("turn_agent_error", failure.failure)
+        raise failure
+    events = list(result.get("telemetry_events") or [])
+    events.append(finalize_turn_diagnostics(diag, events))
+    return {**result, "telemetry_events": events}
 
 
 def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -544,6 +565,14 @@ def combat_round_from_events(events: list[dict] | None) -> dict[str, Any] | None
     return None
 
 
+def turn_diagnostics_from_events(events: list[dict] | None) -> dict[str, Any] | None:
+    """The developer view of this turn's measured latency, usage and cost row (EDG-053)."""
+    for event in events or []:
+        if event.get("event_type") == TURN_DIAGNOSTICS_EVENT:
+            return turn_diagnostics_public(event.get("payload"))
+    return None
+
+
 def _debug_combat_state(combat_state: dict | None) -> dict | None:
     """Expose observed combat diagnostics without unpublished source or capability data.
 
@@ -577,6 +606,7 @@ def _debug_payload(
     combat_state: dict | None,
     timings: dict[str, int],
     combat_diagnostics: dict | None = None,
+    turn_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Everything a developer needs to confirm a turn ran correctly: intent classification,
     the RAG chunks actually retrieved (the silently-dead-RAG class of bug), full combat
@@ -596,6 +626,8 @@ def _debug_payload(
         "timings_ms": timings,
         # Combat turns only: the round's actors, original dice and outcomes (EDG-031).
         "combat_diagnostics": combat_diagnostics,
+        # This turn's measured latency, usage and cost (EDG-053). Null fields are unmeasured.
+        "turn_diagnostics": turn_diagnostics,
         "model": effective_profile("play.narrator").model,
         "model_profiles": profile_diagnostics(current_model_profiles()),
     }
@@ -625,6 +657,7 @@ async def stream_session_turn(
     body_message: str,
     initial_state: dict[str, Any],
     debug: bool = False,
+    diagnostics: TurnDiagnostics | None = None,
 ) -> AsyncIterator[str]:
     """Stream a turn under one immutable settings snapshot, including the narrator tail."""
     with model_profile_snapshot():
@@ -633,6 +666,7 @@ async def stream_session_turn(
             body_message=body_message,
             initial_state=initial_state,
             debug=debug,
+            diagnostics=diagnostics,
         ):
             yield frame
 
@@ -643,10 +677,14 @@ async def _stream_session_turn(
     body_message: str,
     initial_state: dict[str, Any],
     debug: bool = False,
+    diagnostics: TurnDiagnostics | None = None,
 ) -> AsyncIterator[str]:
     t0 = time.monotonic()
     lap_start = t0
     timings: dict[str, int] = {}
+    diag = diagnostics or new_turn_diagnostics(
+        turn_id=initial_state.get("turn_id"), delivery="stream"
+    )
 
     def lap(bucket: str) -> None:
         """Charge the time since the previous lap to `bucket` (real wall-clock stage timings)."""
@@ -661,8 +699,8 @@ async def _stream_session_turn(
     state: dict[str, Any] = dict(initial_state)
     is_combat = False
     try:
-        async for mode, chunk in prepare_app.astream(
-            dict(initial_state), stream_mode=["updates", "values"]
+        async for mode, chunk in bound_steps(
+            prepare_app.astream(dict(initial_state), stream_mode=["updates", "values"]), diag
         ):
             if mode == "values":
                 state = dict(chunk)
@@ -674,6 +712,7 @@ async def _stream_session_turn(
                 if node == "input_parser":
                     route = route_after_input_parser({**state, **(update or {})})
                     is_combat = route == "combat"
+                    diag.set_path("combat" if is_combat else "normal")
                     yield sse_event("status", {"stage": "retrieving"})
                     if is_combat:
                         yield sse_event("status", {"stage": "adjudicating"})
@@ -695,13 +734,16 @@ async def _stream_session_turn(
         yield sse_event("adjudication", public_adjudication(adjudication))
 
     yield sse_event("status", {"stage": "narrating"})
+    narrating_started = time.monotonic()
     if is_combat:
         # The combat subgraph already narrated the round; pseudo-stream it word by word.
         narration = state.get("narration") or ""
         for piece in _yield_narration_tokens(narration):
+            diag.record_first_text()
             yield sse_event("token", {"text": piece})
     elif (narration := deterministic_narration(state)) is not None:
         for piece in _yield_narration_tokens(narration):
+            diag.record_first_text()
             yield sse_event("token", {"text": piece})
     elif actions := actions_for_state(state):
         # A declared unsupported mechanic must not reach the player unchecked: wait for the
@@ -709,7 +751,9 @@ async def _stream_session_turn(
         prompt = build_narrator_prompt(state)
         llm = make_narrator_model()
         try:
-            response = await llm.ainvoke(prompt)
+            response = await traced_call(
+                lambda: llm.ainvoke(prompt), kind="narrate", profile="play.narrator"
+            )
         except Exception as e:
             yield sse_event(
                 "error", error_body(e, event="turn_narrator_failed", session_id=session_id)
@@ -719,6 +763,7 @@ async def _stream_session_turn(
             message_text(response), actions, applied=engine_applied_for_state(state)
         )
         for piece in _yield_narration_tokens(narration):
+            diag.record_first_text()
             yield sse_event("token", {"text": piece})
         lap("narrating_ms")
     else:
@@ -726,11 +771,14 @@ async def _stream_session_turn(
         llm = make_narrator_model()
         narration_parts: list[str] = []
         try:
-            async for chunk in llm.astream(prompt):
+            async for chunk in traced_stream(
+                llm.astream(prompt), kind="narrate", profile="play.narrator", collector=diag
+            ):
                 tok = message_text(chunk)
                 if not tok:
                     continue
                 narration_parts.append(tok)
+                diag.record_first_text()
                 yield sse_event("token", {"text": tok})
         except Exception as e:
             yield sse_event(
@@ -739,9 +787,15 @@ async def _stream_session_turn(
             return
         narration = "".join(narration_parts)
         lap("narrating_ms")
+    if not is_combat:
+        # Combat narration is measured by the round itself (adopted into the turn row below).
+        diag.record_stage_ms("narrating_ms", int((time.monotonic() - narrating_started) * 1000))
     state["narration"] = narration
 
     yield sse_event("status", {"stage": "saving"})
+    # Built before the commit so the row rides the same transaction. Its total ends just before it.
+    telemetry = list(state.get("telemetry_events") or [])
+    state["telemetry_events"] = [*telemetry, finalize_turn_diagnostics(diag, telemetry)]
     try:
         done_payload = await persist_turn(session_id, body_message, state)
     except TurnError as e:
@@ -780,6 +834,7 @@ async def _stream_session_turn(
                     "total_ms": int((time.monotonic() - t0) * 1000),
                 },
                 combat_diagnostics=combat_diagnostics,
+                turn_diagnostics=turn_diagnostics_from_events(state.get("telemetry_events")),
             ),
         )
     yield sse_event("done", done_payload)

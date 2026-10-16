@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import uuid
 
 import structlog
@@ -93,13 +94,17 @@ class TurnLock:
         self.renew_interval = renew_interval
         self.max_hold = max_hold
         self._renew_task: asyncio.Task | None = None
+        # Wall time of the last acquire attempt (EDG-053). Diagnostics only; never a lock input.
+        self.acquire_ms: int | None = None
 
     def _ttl_ms(self) -> int:
         return max(1, int(self.ttl * 1000))
 
     async def acquire(self) -> bool:
         """SET key token NX PX ttl. On success, start the background renewal task."""
+        started = time.monotonic()
         acquired = await self.redis.set(self.key, self.token, nx=True, px=self._ttl_ms())
+        self.acquire_ms = int((time.monotonic() - started) * 1000)
         if acquired:
             self._renew_task = asyncio.create_task(self._renew_loop())
         return bool(acquired)
