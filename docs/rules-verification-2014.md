@@ -173,19 +173,65 @@ check in `db/vector` rejects such mixes, and the parser declares what it cannot 
 | One action and one bonus action per turn | `action_economy.refusal_for` | PHB "Bonus Actions", PDF p.190 | MATCH | |
 | Advantage and disadvantage cancel | `resolution.combine_roll_modes` | PHB PDF p.174 | MATCH | |
 
-## 6. Encounter budget (`apps/agent/src/agent/encounter_budget.py`)
+## 6. Encounter budget (`apps/agent/src/agent/encounter_budget.py`, `dmg_thresholds.py`)
 
-NOT-IN-BOOKS. The DMG and PHB do not define a solo budget. Report only, nothing changed:
+NOT-IN-BOOKS as a rule: the DMG does not define a solo budget. The budget is an engine ceiling, and its
+numbers are checked against the 2014 DMG tables (EDG-153). Each table below was read from the local,
+read-only book; the rulebooks are not copied into the repo.
 
-- The DMG XP thresholds (DMG PDF p.82) for one level-1 hero are 25 / 50 / 75 / 100 (easy to deadly).
-- The level-1 budget allows a lone boss of up to 30 HP, +5 to hit and 5 average damage per hit. The
-  MM's Goblin Boss is CR 1, 200 XP (PDF p.167), twice the level-1 deadly threshold, so the level-1
-  cap can produce a deadly solo fight.
-- At level 20 the budget allows four foes, each up to about 173 HP (boss) or 63 HP (others), up to 29
-  average damage and +9 to hit. The DMG deadly threshold for one level-20 hero is 12,700 XP (PDF p.82).
-  Several creatures of that strength are far above it, so the cap is permissive at the top too.
-- Conclusion: the budget is hand-set and not tied to XP. It is sane as a ceiling for a single hero
-  only at mid levels. Retuning it is a design decision, not a book fact, so it is left unchanged.
+Verified tables (`apps/agent/src/agent/dmg_thresholds.py`):
+
+- XP Thresholds by Character Level, levels 1-20, Easy/Medium/Hard/Deadly: DMG PDF p.82 (level 1 is
+  25/50/75/100; level 20 is 2,800/5,700/8,500/12,700).
+- Encounter multipliers: DMG PDF p.82 (1 monster x1, 2 x1.5, 3-6 x2, 7-10 x2.5, 11-14 x3, 15+ x4).
+- Party of fewer than three: DMG PDF p.83, "Party Size", moves the multiplier one step up (1.5 for a
+  lone monster, 5 for fifteen or more). For one hero the engine uses 1.5, 2, 2.5, 3, 4, 5.
+- Difficulty: DMG PDF p.82, step 5. The closest threshold lower than the adjusted XP sets the tier, so an
+  adjusted XP equal to a threshold stays in the tier below. "Deadly" means strictly above 100 at level 1.
+- Experience Points by Challenge Rating: DMG PDF p.275 (CR 1 = 200 XP; CR 0 uses the engine's 10).
+- Monster Statistics by Challenge Rating (HP, damage per round, attack bonus): DMG PDF p.274. Step 4
+  averages the defensive and offensive CR, with one step of shift per two points of attack-bonus
+  difference. Armor Class is not budgeted and is not used.
+- Goblin Boss is CR 1, 200 XP: Monster Manual PDF p.167 (the index lists p.166).
+
+Justification of the generic-foe budget. The worst generic roster is one boss at its HP ceiling plus the
+other foes at theirs, all at the attack and damage ceilings. Its adjusted XP for one hero is checked
+against that level's deadly threshold (`tests/agent/test_dmg_thresholds.py` recomputes it for all 20
+levels). The DMG's CR table gives, for the ceilings chosen, these implied ratings:
+
+| Level | Foes | Boss HP | Other HP | Attack max | Damage max | Worst adjusted XP | Deadly |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 2 | 18-30 | 5-11 | +4 | 3 | 100 | 100 |
+| 2 | 2 | 23-38 | 6-14 | +4 | 5 | 200 | 200 |
+| 3 | 2 | 27-45 | 8-17 | +4 | 8 | 300 | 400 |
+| 4 | 2 | 32-53 | 9-19 | +4 | 8 | 300 | 500 |
+| 5 | 3 | 36-60 | 10-22 | +6 | 8 | 1,000 | 1,100 |
+| 9 | 4 | 54-90 | 15-33 | +6 | 8 | 1,875 | 2,400 |
+| 10 | 4 | 59-98 | 16-36 | +6 | 14 | 2,625 | 2,800 |
+| 15 | 4 | 81-135 | 23-50 | +8 | 14 | 6,125 | 6,400 |
+| 19 | 4 | 99-165 | 28-61 | +8 | 20 | 9,125 | 10,900 |
+| 20 | 4 | 104-173 | 29-63 | +9 | 29 | 12,500 | 12,700 |
+
+The full 1-20 table is in `encounter_budget._LIMITS`. Attack and damage are non-decreasing across levels.
+Level 1 keeps the prompt's HP bands and two-foe count, and lowers the attack from +5 to +4 and the damage
+from 5 to 3. A foe with 11 HP, +5 and 5 damage implies CR 1/4 (50 XP), and two of them are 100 XP at x2,
+so the old cap reached 200 against a deadly threshold of 100. The old hand-set budget was above the deadly threshold at most levels
+below 20, which is why it changed.
+
+Exact creatures (EDG-004) are never rescaled. An exact foe is classified by its printed XP (`challenge_xp`
+from its record). The kept roster is then checked once for one hero:
+
+- At or below the deadly threshold: informational only, as before.
+- Above the deadly threshold, below twice it: `above_deadly` warning.
+- Twice the deadly threshold or more: `far_above_deadly` warning.
+
+A warning names the exact foes, their CR and XP, the adjusted XP and the threshold. It never refuses the
+fight and never changes a creature. An exact foe with no readable XP makes the check unknown, with no
+warning.
+
+Known gap, reported to the root (not in this change): `edgar_core.grounding.encounter_multiplier` gives x4
+for 15+ monsters with a party of fewer than three, where DMG p.83 gives x5. The xfail in
+`tests/agent/test_dmg_thresholds.py` records it.
 
 ## Unverifiable locally (2024 and other editions)
 
