@@ -172,6 +172,7 @@ class PathExplorationReport(CoherenceRecord):
 
     @property
     def exhaustive(self) -> bool:
+        """Whether every authored outcome has a reachable or unreachable classification."""
         return not self.exhausted and not self.unverified_outcome_ids
 
 
@@ -253,7 +254,15 @@ class RepairEnvelope(CoherenceRecord):
 
 
 DEFAULT_PATH_BUDGET = PathBudget()
-PathState = tuple[str, tuple[tuple[str, str], ...], tuple[str, ...]]
+PathState = tuple[
+    str,
+    tuple[tuple[str, str], ...],
+    tuple[str, ...],
+    tuple[tuple[str, str], ...],
+    tuple[str, ...],
+    tuple[tuple[str, str, str, tuple[str, ...]], ...],
+    bool,
+]
 PathTrace = tuple[PathState, tuple[str, ...], tuple[str, ...], tuple[str, ...], int]
 
 
@@ -394,7 +403,11 @@ def _review_subjects(
             raise ValueError(f"P09 must propose exactly one final {kind} artifact.")
         selected.append(matches[0])
     manifest_artifact, prepared_artifact, manuscript_artifact = selected
-    inventory = _unique_artifacts((*dependencies, *selected))
+    reports = {"deterministic_review_report", "semantic_critic_report"}
+    additional_subjects = tuple(
+        artifact for artifact in proposed_artifacts if artifact.artifact_kind not in reports
+    )
+    inventory = _unique_artifacts((*dependencies, *additional_subjects))
     return manifest_artifact, prepared_artifact, manuscript_artifact, inventory
 
 
@@ -707,6 +720,8 @@ def _inventory_names(snapshot: Mapping[str, Any]) -> set[str]:
                     names.add(child)
                 else:
                     names.update(collect(child, in_inventory=in_inventory))
+        elif in_inventory and isinstance(value, str):
+            names.add(value)
         return names
 
     return {name.casefold().strip() for name in collect(snapshot) if name.strip()}
@@ -749,13 +764,13 @@ def explore_prepared_paths(
     initial_world_flags: Mapping[str, str] | None = None,
     budget: PathBudget = DEFAULT_PATH_BUDGET,
 ) -> PathExplorationReport:
-    """Explore finite authored branch/outcome choices using runtime route and policy rules.
+    """Find a witness for each authored outcome under runtime route and policy rules.
 
     Movement uses ``select_scene_context`` (the same reviewed WorldFlag gate consumed by
     runtime). Policy predicates and inventory prerequisites are checked before an outcome;
     discovery outcomes set only the canonical session discovery flag, and move outcomes can
-    move only into the runtime's currently allowed scene set. This explores authored
-    alternatives, not arbitrary natural-language actions.
+    move only into the runtime's currently allowed scene set. Once every authored outcome has
+    a witness, the search stops without enumerating every combination of those alternatives.
     """
 
     manifest = _manifest(manifest_artifact)
@@ -788,6 +803,110 @@ def explore_prepared_paths(
     for branch in prepared.branches:
         branches_by_scene.setdefault(branch.scene_id, []).append(branch)
     inventory = _inventory_names(binding.hero_party_snapshot)
+    object_by_id = {row.canonical_id: row for row in manifest.objects}
+    scene_links = {
+        scene.scene_id: {link.scene_id for link in scene.links} for scene in manifest.scenes
+    }
+    reachable_cache: dict[str, set[str]] = {}
+
+    def reachable_scenes(scene_id: str) -> set[str]:
+        if scene_id not in reachable_cache:
+            reachable = {scene_id}
+            pending = [scene_id]
+            while pending:
+                current = pending.pop()
+                for destination in scene_links.get(current, set()) - reachable:
+                    reachable.add(destination)
+                    pending.append(destination)
+            reachable_cache[scene_id] = reachable
+        return reachable_cache[scene_id]
+
+    def normalize_state(state: PathState) -> PathState:
+        (
+            scene_id,
+            flag_items,
+            inventory_items,
+            object_location_items,
+            resolved_quest_items,
+            durable_fact_items,
+            terminal,
+        ) = state
+        future_scene_ids = reachable_scenes(scene_id)
+        future_policies = [
+            policy
+            for policy in manifest.resolution_policies
+            if future_scene_ids.intersection(policy.scene_ids)
+        ]
+        future_branches = [
+            branch for branch in prepared.branches if branch.scene_id in future_scene_ids
+        ]
+        future_quest_ids = {branch.quest_id for branch in future_branches}
+        future_branch_ids = {branch.branch_id for branch in future_branches}
+        future_fact_targets = {
+            (effect.kind, effect.target_id)
+            for policy in future_policies
+            for result in ("automatic", "success", "failure")
+            for effect in _policy_effects(policy, result)
+            if effect.kind in {"objective", "milestone", "relationship", "encounter"}
+        }
+        future_object_ids = {
+            effect.target_id
+            for policy in future_policies
+            for result in ("automatic", "success", "failure")
+            for effect in _policy_effects(policy, result)
+            if effect.kind in {"acquire", "consume", "transfer", "use"}
+        }
+        relevant_flags = {
+            key
+            for candidate_scene in manifest.scenes
+            if candidate_scene.scene_id in future_scene_ids
+            for link in candidate_scene.links
+            for key in link.requires
+        }
+        relevant_flags.update(key for policy in future_policies for key in policy.requires)
+        relevant_flags.update(
+            key
+            for quest in prepared.quests
+            if quest.quest_id in future_quest_ids
+            for key in quest.prerequisites
+        )
+        relevant_flags.update(key for branch in future_branches for key in branch.requires)
+        relevant_flags.update(
+            key
+            for outcome in prepared.outcomes
+            if outcome.branch_id in future_branch_ids
+            for key in outcome.requires
+        )
+        relevant_items = {
+            item.casefold().strip() for policy in future_policies for item in policy.requires_items
+        }
+        relevant_items.update(
+            object_by_id[object_id].title.casefold().strip()
+            for object_id in future_object_ids
+            if object_id in object_by_id
+        )
+        return (
+            scene_id,
+            tuple((key, value) for key, value in flag_items if key in relevant_flags),
+            tuple(item for item in inventory_items if item in relevant_items),
+            tuple(
+                (object_id, location)
+                for object_id, location in object_location_items
+                if object_id in future_object_ids
+            ),
+            tuple(quest_id for quest_id in resolved_quest_items if quest_id in future_quest_ids),
+            tuple(fact for fact in durable_fact_items if (fact[0], fact[1]) in future_fact_targets),
+            terminal,
+        )
+
+    # The party snapshot is the authoritative source for initially carried items. Object
+    # definitions supply location and consumption rules for later authored effects.
+    object_locations: dict[str, str] = {}
+    for object_id, definition in object_by_id.items():
+        if _has_required_item(inventory, definition.title):
+            object_locations[object_id] = "party"
+        elif definition.initial_owner:
+            object_locations[object_id] = definition.initial_owner
     flags = dict(initial_world_flags or {})
     if any(
         not isinstance(key, str) or not key or not isinstance(value, str)
@@ -795,38 +914,69 @@ def explore_prepared_paths(
     ):
         raise ValueError("Initial path flags must map nonempty WorldFlag IDs to string values.")
     # Include the opening's unconditional canonical state only; do not infer authored future facts.
-    start: PathState = (
-        manifest.opening_scene_id,
-        tuple(sorted(flags.items())),
-        tuple(sorted(inventory)),
+    start: PathState = normalize_state(
+        (
+            manifest.opening_scene_id,
+            tuple(sorted(flags.items())),
+            tuple(sorted(inventory)),
+            tuple(sorted(object_locations.items())),
+            (),
+            (),
+            False,
+        )
     )
     queue: deque[PathTrace] = deque([(start, (), (), (manifest.opening_scene_id,), 0)])
     queued = {start}
-    visited: set[tuple[str, tuple[tuple[str, str], ...], tuple[str, ...]]] = set()
+    visited: set[PathState] = set()
     reached_outcomes: set[str] = set()
+    expected = set(outcomes)
     examples: list[PathExample] = []
     exhausted = False
-    while queue:
+    while queue and reached_outcomes != expected:
         state, path_branches, path_outcomes, path_scenes, depth = queue.popleft()
         if state in visited:
             continue
         if len(visited) >= budget.max_states:
             exhausted = True
             break
-        scene_id, flag_items, inventory_items = state
+        (
+            scene_id,
+            flag_items,
+            inventory_items,
+            object_location_items,
+            resolved_quest_items,
+            durable_fact_items,
+            terminal,
+        ) = state
         visited.add(state)
         current_flags = dict(flag_items)
         current_inventory = set(inventory_items)
+        current_object_locations = dict(object_location_items)
+        resolved_quests = set(resolved_quest_items)
+        durable_facts = set(durable_fact_items)
         try:
             scene = select_scene_context(manifest, scene_id, current_flags)
         except Exception:
+            continue
+
+        if terminal:
             continue
 
         # Scene navigation is constrained by the exact links and conditions used in play.
         for next_scene in sorted(set(scene.get("allowed_scene_ids", ()))):
             if next_scene == scene_id:
                 continue
-            next_state = (next_scene, flag_items, inventory_items)
+            next_state: PathState = normalize_state(
+                (
+                    next_scene,
+                    flag_items,
+                    inventory_items,
+                    object_location_items,
+                    resolved_quest_items,
+                    durable_fact_items,
+                    terminal,
+                )
+            )
             if depth >= budget.max_depth:
                 if next_state not in visited and next_state not in queued:
                     exhausted = True
@@ -845,7 +995,7 @@ def explore_prepared_paths(
 
         for branch in branches_by_scene.get(scene_id, ()):
             quest = quests.get(branch.quest_id)
-            if quest is None:
+            if quest is None or quest.quest_id in resolved_quests:
                 continue
             if not _matches_predicates(
                 current_flags, quest.prerequisites
@@ -888,37 +1038,86 @@ def explore_prepared_paths(
                     continue
                 next_flags = dict(current_flags)
                 next_inventory = set(current_inventory)
+                next_object_locations = dict(current_object_locations)
+                next_durable_facts = set(durable_facts)
                 next_scene = scene_id
+                next_terminal = False
                 move_allowed = set(scene.get("allowed_scene_ids", ()))
                 for policy, result in selected:
                     for effect in _policy_effects(policy, result):
+                        definition = object_by_id.get(effect.target_id)
+                        if effect.kind in {"acquire", "consume", "transfer", "use"}:
+                            if definition is None:
+                                unavailable = True
+                                break
+                            owner = next_object_locations.get(
+                                effect.target_id, definition.initial_owner or ""
+                            )
+                            if effect.kind == "acquire":
+                                if (
+                                    not definition.portable
+                                    or owner in {"party", "consumed"}
+                                    or (owner and owner != scene_id)
+                                ):
+                                    unavailable = True
+                                    break
+                                next_object_locations[effect.target_id] = "party"
+                                next_inventory.add(definition.title.casefold().strip())
+                            elif effect.kind == "consume":
+                                if owner != "party" or not definition.consumable:
+                                    unavailable = True
+                                    break
+                                next_object_locations[effect.target_id] = "consumed"
+                                next_inventory.discard(definition.title.casefold().strip())
+                            elif effect.kind == "transfer":
+                                if (
+                                    owner != "party"
+                                    or not definition.portable
+                                    or effect.destination != scene_id
+                                ):
+                                    unavailable = True
+                                    break
+                                next_object_locations[effect.target_id] = effect.destination
+                                next_inventory.discard(definition.title.casefold().strip())
+                            elif owner != "party":
+                                unavailable = True
+                                break
+                        if effect.kind in {"objective", "milestone", "relationship", "encounter"}:
+                            for prior_kind, prior_target, prior_status, _ in durable_facts:
+                                conflicts = {
+                                    frozenset({"completed", "failed"}),
+                                    frozenset({"friendly", "hostile"}),
+                                }
+                                if (
+                                    effect.kind == prior_kind
+                                    and effect.target_id == prior_target
+                                    and effect.status != prior_status
+                                    and frozenset({effect.status, prior_status}) in conflicts
+                                ):
+                                    unavailable = True
+                                    break
+                            if unavailable:
+                                break
+                            next_durable_facts.add(
+                                (
+                                    effect.kind,
+                                    effect.target_id,
+                                    effect.status,
+                                    tuple(effect.passage_ids),
+                                )
+                            )
                         if effect.kind == "discover":
                             entity = entities.get(effect.target_id)
                             if entity and entity.discovery_flag:
                                 next_flags[entity.discovery_flag] = "discovered"
+                            if entity and entity.kind == "ending":
+                                next_terminal = True
                         elif effect.kind == "move":
                             if effect.target_id in move_allowed:
                                 next_scene = effect.target_id
                             else:
                                 unavailable = True
                                 break
-                        elif effect.kind in {"acquire", "consume", "transfer", "use"}:
-                            definition = next(
-                                (
-                                    row
-                                    for row in manifest.objects
-                                    if row.canonical_id == effect.target_id
-                                ),
-                                None,
-                            )
-                            if definition:
-                                label = definition.title.casefold().strip()
-                                if effect.kind == "acquire":
-                                    next_inventory.add(label)
-                                elif (
-                                    effect.kind in {"consume", "transfer"} or definition.consumable
-                                ):
-                                    next_inventory.discard(label)
                     if unavailable:
                         break
                 if unavailable:
@@ -926,10 +1125,16 @@ def explore_prepared_paths(
                 reached_outcomes.add(outcome.outcome_id)
                 new_branches = path_branches + (branch.branch_id,)
                 new_outcomes = path_outcomes + (outcome.outcome_id,)
-                next_state = (
-                    next_scene,
-                    tuple(sorted(next_flags.items())),
-                    tuple(sorted(next_inventory)),
+                next_state = normalize_state(
+                    (
+                        next_scene,
+                        tuple(sorted(next_flags.items())),
+                        tuple(sorted(next_inventory)),
+                        tuple(sorted(next_object_locations.items())),
+                        tuple(sorted(resolved_quests | {branch.quest_id})),
+                        tuple(sorted(next_durable_facts)),
+                        next_terminal or bool(outcome.ending_entity_ids),
+                    )
                 )
                 next_scenes = (
                     path_scenes if path_scenes[-1] == next_scene else path_scenes + (next_scene,)
@@ -950,7 +1155,6 @@ def explore_prepared_paths(
                         queue.append(
                             (next_state, new_branches, new_outcomes, next_scenes, depth + 1)
                         )
-    expected = {outcome.outcome_id for outcome in prepared.outcomes}
     unverified = expected - reached_outcomes if exhausted else set()
     unreachable = expected - reached_outcomes if not exhausted else set()
     # The report carries exact source artifacts, not claims about arbitrary player prompts.
