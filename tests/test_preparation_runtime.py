@@ -34,6 +34,7 @@ def test_missing_setup_has_safe_restart_projection(private_meta_dir):
             "private_preparation": True,
             "failure_code": "preparation_setup_required",
             "error": "private request details",
+            "support_ref": "err-0123456789abcdef",
             "job": {"job_id": "a" * 32, "kind": "generation", "state": "failed"},
         },
     )
@@ -45,7 +46,29 @@ def test_missing_setup_has_safe_restart_projection(private_meta_dir):
     assert projected.status == PreparationJobStatus.BLOCKED
     assert projected.stage == "Preparation needs attention"
     assert projected.action == "restart"
+    assert projected.failure is not None
+    assert projected.failure.support_ref == "err-0123456789abcdef"
     assert "private request details" not in projected.model_dump_json()
+
+    source = campaign_sources.source_read("private")
+    assert source.status == "failed"
+    assert source.failure_code == projected.failure.code
+    assert source.job is not None and source.job.failure is not None
+    assert source.job.failure.support_ref == projected.failure.support_ref
+    assert "private request details" not in source.model_dump_json()
+
+
+def test_setup_failure_projection_uses_only_explicit_fixed_codes():
+    private_source_detail = RuntimeError("source.pdf includes private story content")
+    private_profile_detail = RuntimeError("invalid profile at /private/config.toml")
+    explicit_profile = RuntimeError("opaque failure")
+    explicit_profile.code = "preparation_profile_invalid"
+
+    assert runtime._setup_failure_code(private_source_detail) == "turn_failed"
+    assert runtime._setup_failure_code(private_profile_detail) == "turn_failed"
+    assert runtime._setup_failure_code(TypeError("private source payload")) == "turn_failed"
+    assert runtime._setup_failure_code(ValueError("invalid setup")) == "preparation_setup_invalid"
+    assert runtime._setup_failure_code(explicit_profile) == "preparation_profile_invalid"
 
 
 def test_private_source_read_hides_every_unready_artifact(private_meta_dir, monkeypatch):

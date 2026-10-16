@@ -211,6 +211,49 @@ def test_long_pdf_compile_edit_publish_and_active_state_retrieval(source_bundle,
     assert chunk["entity_ids"] == ["old_guardian", "hidden_map", "sleeping_trap"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault", ["none", "missing_manifest", "missing_extraction", "unknown_edition"]
+)
+async def test_standalone_library_readiness_requires_current_reviewed_source(source_bundle, fault):
+    from apps.api.routers.adventures import _with_readiness
+    from apps.api.schemas.adventure import AdventureRead
+    from apps.api.services import adventures_meta as store
+
+    _, extraction, draft = source_bundle
+    metadata = store.load_meta("branching")
+    if fault != "missing_manifest":
+        metadata["manifest"] = approve(extraction, edited_manifest(extraction, draft)).model_dump()
+    store.save_meta("branching", metadata)
+    if fault == "missing_extraction":
+        (store.ADVENTURES_DIR / "branching" / "branching.extraction.json").unlink()
+    before = {
+        str(path): path.read_bytes() for path in store.ADVENTURES_DIR.rglob("*") if path.is_file()
+    }
+    result = await _with_readiness(
+        AdventureRead(
+            slug="branching",
+            title="Fixture",
+            status="ready",
+            usable_chunks=100,
+            rules_edition="unspecified" if fault == "unknown_edition" else "2014",
+        )
+    )
+    assert result.readiness is not None
+    assert result.readiness.play_allowed is (fault == "none")
+    assert result.readiness.state == (
+        "ready"
+        if fault == "none"
+        else "rules_edition_mismatch"
+        if fault == "unknown_edition"
+        else "adventure_review_needed"
+    )
+    assert "PRIVATE" not in result.model_dump_json()
+    assert before == {
+        str(path): path.read_bytes() for path in store.ADVENTURES_DIR.rglob("*") if path.is_file()
+    }
+
+
 @pytest.mark.parametrize(
     "fault", ["overlap", "gap", "unknown_link", "duplicate_id", "unreviewed", "missing_opening"]
 )
@@ -240,6 +283,7 @@ def test_stale_receipts_source_versions_and_inspected_drafts_rejected(source_bun
         review_manifest(
             extraction, edited, reviewed_digest=manifest_digest(draft), reviewer="Reader"
         )
+
     published = approve(extraction, edited)
     changed = published.model_dump()
     changed["passages"][0]["audience"] = "planner"
@@ -260,6 +304,35 @@ def test_stale_receipts_source_versions_and_inspected_drafts_rejected(source_bun
             reviewed_extraction=pdf.parent.parent
             / "adventures/branching/branching.extraction.json",
         )
+
+
+def test_campaign_manifests_rechecks_the_retained_canonical_extraction(source_bundle):
+    from apps.api.services import adventure_manifests, adventures_meta
+
+    pdf, extraction, draft = source_bundle
+    reviewed = approve(extraction, edited_manifest(extraction, draft))
+    metadata = adventures_meta.load_meta("branching")
+    metadata["manifest"] = reviewed.model_dump()
+    adventures_meta.save_meta("branching", metadata)
+
+    assert (
+        adventure_manifests.campaign_manifests(["branching"])["branching"]["reviewed_sha256"]
+        == reviewed.reviewed_sha256
+    )
+
+    extraction_report = adventures_meta.ADVENTURES_DIR / "branching" / "branching.extraction.json"
+    original = extraction_report.read_bytes()
+    report = json.loads(original)
+    report["pages"][0]["text"] += " changed after review"
+    extraction_report.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ManifestError, match="retained adventure extraction"):
+        adventure_manifests.campaign_manifests(["branching"])
+
+    extraction_report.write_bytes(original)
+    with pdf.open("ab") as changed:
+        changed.write(b"changed source bytes")
+    with pytest.raises(ManifestError, match="retained adventure extraction"):
+        adventure_manifests.campaign_manifests(["branching"])
 
 
 def test_missing_indexed_passage_and_ambiguous_binding_fail_closed(source_bundle, isolated_index):
@@ -502,8 +575,14 @@ def test_exact_generated_original_and_structured_references_survive_reviewed_rei
     monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
     monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
     pages = [
-        (1, "# The Quiet Keep\n\nThe guide waits beside the well. A silver key opens the gate beyond the old stone bridge and quiet village."),
-        (2, "## Peaceful ending\n\nThe guardian accepts the key and everyone returns home safely. The village celebrates its newfound peace beside the ancient well."),
+        (
+            1,
+            "# The Quiet Keep\n\nThe guide waits beside the well. A silver key opens the gate beyond the old stone bridge and quiet village.",
+        ),
+        (
+            2,
+            "## Peaceful ending\n\nThe guardian accepts the key and everyone returns home safely. The village celebrates its newfound peace beside the ancient well.",
+        ),
     ]
     original = "\n\n".join(text for _, text in pages).encode()
     store.save_meta("authored", {"status": "failed", "rules_edition": "2014"})

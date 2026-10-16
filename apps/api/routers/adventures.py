@@ -48,6 +48,12 @@ from ..services.adventures_meta import (
     reserve_meta,
     save_meta as _save_adventure_metadata,
 )
+from ..services.safe_errors import (
+    classify_error,
+    classify_http_failure,
+    log_failure,
+    safe_failure_metadata,
+)
 
 log = structlog.get_logger()
 router = APIRouter(tags=["adventures"])
@@ -67,7 +73,8 @@ def _all_collection_names() -> list[str]:
     try:
         return [c.name for c in client.get_collections().collections]
     except Exception as exc:
-        log.error("qdrant_unavailable", error=str(exc))
+        failure = classify_error(exc)
+        log_failure("qdrant_unavailable", failure)
         raise HTTPException(
             status_code=503,
             detail="Vector store unavailable; cannot list adventures.",
@@ -109,7 +116,7 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
         retrieval_degraded=status != "ready",
         chunks=meta.get("chunks"),
         source_filename=meta.get("source_filename"),
-        error=source.message or meta.get("error"),
+        error=source.message,
         created_at=meta.get("created_at"),
         failure_code=source.failure_code,
         extraction_preview_available=source.extraction_preview_available,
@@ -130,8 +137,7 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     )
 
 
-@router.get("/adventures", response_model=list[AdventureRead])
-def list_adventures():
+def _list_adventures():
     """All adventure modules: embedded collections plus any still-processing/failed uploads."""
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
@@ -146,13 +152,42 @@ def list_adventures():
     return out
 
 
-@router.get("/adventures/{slug}", response_model=AdventureRead)
-def get_adventure(slug: str):
+def _get_adventure(slug: str):
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
     if slug not in collection_slugs and not _metadata_path(slug).is_file():
         raise HTTPException(status_code=404, detail="Adventure not found")
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
+
+
+async def _with_readiness(adventure: AdventureRead) -> AdventureRead:
+    """Use actual play gates for modules before a campaign has been created."""
+    from db.postgres.models import Campaign
+
+    from ..services.campaign_readiness import evaluate_play_readiness
+
+    prospective = Campaign(
+        id=0,
+        status="active",
+        source_mode="module",
+        adventure_collections=[adventure.slug],
+        rules_edition=adventure.rules_edition,
+    )
+    adventure.readiness = await evaluate_play_readiness(
+        None, prospective, observed_sources=[adventure]
+    )
+    return adventure
+
+
+@router.get("/adventures", response_model=list[AdventureRead])
+async def list_adventures():
+    adventures = await run_in_threadpool(_list_adventures)
+    return [await _with_readiness(adventure) for adventure in adventures]
+
+
+@router.get("/adventures/{slug}", response_model=AdventureRead)
+async def get_adventure(slug: str):
+    return await _with_readiness(await run_in_threadpool(_get_adventure, slug))
 
 
 def _extraction_path(slug: str, name: str, *, candidate_attempt_id: str | None = None) -> Path:
@@ -394,28 +429,27 @@ def _ingest_adventure(
     except SupersededIngestion:
         log.info("adventure_ingest_superseded", slug=slug)
     except IngestionRejected as exc:
+        failure = classify_error(exc.code)
         store.finish_attempt(
             slug,
             token,
             {
                 "status": "failed",
                 "chunks": 0,
-                "failure_code": exc.code,
-                "error": str(exc),
+                **safe_failure_metadata(exc.code, support_ref=failure.support_ref),
                 "ingestion": report_summary(exc.report),
             },
         )
-        log.warning("adventure_quality_rejected", slug=slug, code=exc.code)
+        log_failure("adventure_quality_rejected", failure, level="warning")
     except Exception as exc:
-        log.exception("adventure_ingest_failed", slug=slug)
-        # Raw exception text can carry internals; the full trace is in the logs.
+        failure = classify_error(exc)
+        log_failure("adventure_ingest_failed", failure)
         store.finish_attempt(
             slug,
             token,
             {
                 "status": "failed",
-                "failure_code": "ingestion_error",
-                "error": f"Ingestion failed ({type(exc).__name__}); see server logs.",
+                **safe_failure_metadata(exc, support_ref=failure.support_ref),
             },
         )
     finally:
@@ -842,7 +876,8 @@ def cancel_adventure(slug: str):
             else:
                 request_job_cancel(slug)
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            failure = classify_http_failure(409, code="preparation_busy")
+            raise HTTPException(status_code=409, detail=failure.to_payload()) from exc
     return safe_job_read(load_adventure_metadata(slug), slug)
 
 
@@ -893,7 +928,8 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
         try:
             client.delete_collection(slug)
         except UnexpectedResponse as exc:
-            log.error("adventure_delete_qdrant_failed", slug=slug, error=str(exc))
+            failure = classify_error(exc)
+            log_failure("adventure_delete_qdrant_failed", failure)
             raise HTTPException(
                 status_code=502, detail="Vector store error while deleting the adventure."
             ) from exc

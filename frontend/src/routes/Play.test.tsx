@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { CampaignRead } from "../api/types";
+import type { CampaignRead, ReadinessRead } from "../api/types";
 import type { JournalRead } from "../components/journal/types";
 import Play from "./Play";
 const harness = vi.hoisted(() => ({
@@ -13,7 +13,7 @@ const harness = vi.hoisted(() => ({
   historyReady: true,
   announcement: "",
   recover: vi.fn(),
-  turnOptions: null as null | { onResult?: (result: unknown) => void; onAcknowledged?: (revision: number, requestId: string) => void },
+  turnOptions: null as null | { onResult?: (result: unknown) => void; onAcknowledged?: (revision: number, requestId: string) => void; onReadinessRejected?: () => void },
   journal: { data: null as unknown, loading: false, error: null as unknown, stale: false, settledRevision: 0, refresh: vi.fn() },
 }));
 vi.mock("../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
@@ -22,28 +22,41 @@ vi.mock("../components/play/useTurn", () => ({ useTurn: (_sessionId: number, opt
 vi.mock("../components/journal/api", () => ({ useJournal: () => harness.journal }));
 vi.mock("../components/MessageList", () => ({ MessageList: (props: { openEventId?: number | null }) => <p data-open-event-id={props.openEventId ?? "none"}>A recently saved turn</p> }));
 const campaign: CampaignRead = { id: 2, title: "Lost module", system: "5e", created_by: 1, created_at: "2026-10-14", adventure_collections: ["lost_module"], source_mode: "module", status: "active", ended_at: null, retrieval_degraded: false, play_allowed: true, sources: [] };
+const ready: ReadinessRead = { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] };
+const blocked: ReadinessRead = { play_allowed: false, history_allowed: true, state: "source_missing", primary_action: "recover_source", blockers: [{ code: "source_missing", message: "The campaign source is missing or has no usable text. Recover the source to continue.", action: "recover_source" }] };
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); localStorage.clear(); harness.busy = false; harness.historyReady = true; harness.announcement = ""; harness.turnOptions = null; harness.journal = { data: null, loading: false, error: null, stale: false, settledRevision: 0, refresh: vi.fn() }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(() => root.unmount()); container.remove(); window.history.replaceState({}, "", "/"); vi.unstubAllGlobals(); });
 it("preserves live transcript when readiness changes and disables module actions", async () => {
   const boot = { history: [{ role: "dm" as const, content: "Older boot history", created_at: "2026-10-14" }], campaignEnded: false };
-  const game = { loading: false, error: null, title: "Lost module", campaignId: 2, campaign, campaignComplete: false, character: null, sceneId: null, combat: null, boot, applyTurnResult: vi.fn(), setCampaignComplete: vi.fn(), setSceneId: vi.fn(), reload: vi.fn(), updateCampaign: vi.fn() };
+  const game = { loading: false, error: null, title: "Lost module", campaignId: 2, campaign, readiness: ready, refreshReadiness: vi.fn(), campaignComplete: false, character: null, sceneId: null, combat: null, boot, applyTurnResult: vi.fn(), setCampaignComplete: vi.fn(), setSceneId: vi.fn(), reload: vi.fn(), updateCampaign: vi.fn() };
   const render = () => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>);
   harness.game = game; await act(render);
   expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
-  harness.game = { ...game, campaign: { ...campaign, retrieval_degraded: true, play_allowed: false, sources: [{ slug: "lost_module", title: "Lost module", status: "missing", usable_chunks: 0, expected_chunks: null, collection_exists: false, source_pdf_available: false, message: "Missing source" }] } };
+  const draftInput = container.querySelector<HTMLTextAreaElement>("textarea")!;
+  const setTextareaValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  await act(() => {
+    setTextareaValue?.call(draftInput, "I check the doorway before entering.");
+    draftInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  harness.game = { ...game, readiness: blocked, campaign: { ...campaign, retrieval_degraded: true, play_allowed: false, sources: [{ slug: "lost_module", title: "Lost module", status: "missing", usable_chunks: 0, expected_chunks: null, collection_exists: false, source_pdf_available: false, message: "Missing source" }] } };
   await act(render);
   expect(container.textContent).toContain("Adventure sources need recovery"); expect(container.textContent).toContain("A recently saved turn"); expect(container.querySelector("textarea")?.disabled).toBe(true);
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("I check the doorway before entering.");
+  const readinessNotices = Array.from(container.querySelectorAll("section")).filter((section) => section.textContent?.includes(blocked.blockers[0].message));
+  expect(readinessNotices).toHaveLength(2);
+  expect(readinessNotices.filter((section) => section.getAttribute("aria-live") === "polite")).toHaveLength(0);
+  expect(Array.from(container.querySelectorAll('[role="status"][aria-live="polite"]')).filter((section) => section.textContent?.includes(blocked.blockers[0].message))).toHaveLength(1);
   expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
-  harness.game = { ...game, campaign: { ...campaign, source_mode: "homebrew", retrieval_degraded: true } };
+  harness.game = { ...game, readiness: ready, campaign: { ...campaign, source_mode: "homebrew", retrieval_degraded: true } };
   await act(render);
   expect(container.querySelector("textarea")?.disabled).toBe(false); expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
 });
 
 function gameFixture() {
   const boot = { history: [{ role: "dm" as const, content: "Older boot history", created_at: "2026-10-14" }], campaignEnded: false };
-  return { loading: false, error: null, title: "Lost module", campaignId: 2, campaign, campaignComplete: false, character: null, sceneId: null, combat: null, boot, applyTurnResult: vi.fn(), setCampaignComplete: vi.fn(), setSceneId: vi.fn(), reload: vi.fn(), updateCampaign: vi.fn() };
+  return { loading: false, error: null, title: "Lost module", campaignId: 2, campaign, readiness: ready, refreshReadiness: vi.fn(), campaignComplete: false, character: null, sceneId: null, combat: null, boot, applyTurnResult: vi.fn(), setCampaignComplete: vi.fn(), setSceneId: vi.fn(), reload: vi.fn(), updateCampaign: vi.fn() };
 }
 
 function journalFixture(): JournalRead {

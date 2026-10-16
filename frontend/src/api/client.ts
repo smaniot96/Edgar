@@ -1,3 +1,5 @@
+import { safeTurnError, GENERIC_SAFE_ERROR, type TurnError } from "./turnStream";
+
 import type {
   AdventureGenerateRequest,
   AdventureGenerateResponse,
@@ -31,57 +33,58 @@ export function getExtractionPreview(slug: string): Promise<ExtractionPreview> {
 /** Shown whenever the browser cannot talk to the API (server down, proxy 502, offline). */
 export const OFFLINE_MESSAGE = "Can't reach the Edgar server. Is it running?";
 
-/** Pull FastAPI's `{"detail": "..."}` string out of a response body, if present. */
-function parseDetail(body: string): string | null {
-  try {
-    const parsed = JSON.parse(body) as { detail?: unknown };
-    if (parsed && typeof parsed.detail === "string" && parsed.detail.trim()) return parsed.detail;
-    if (parsed?.detail && typeof parsed.detail === "object" && "message" in parsed.detail && typeof parsed.detail.message === "string") return parsed.detail.message;
-  } catch {
-    // body wasn't JSON
-  }
-  return null;
-}
-
-/** 502/503/504 with no FastAPI detail = the dev proxy / gateway couldn't reach the API. */
+/** A gateway response without a recognized structured failure has unknown outcome. */
 function isGatewayFailure(status: number, body: string): boolean {
-  return (status === 502 || status === 503 || status === 504) && parseDetail(body) == null;
+  if (![502, 503, 504].includes(status)) return false;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    return !parsed || typeof parsed !== "object";
+  } catch { return true; }
 }
 
-function friendlyMessage(status: number, body: string): string {
-  if (status === 0 || isGatewayFailure(status, body)) return OFFLINE_MESSAGE;
-  const detail = parseDetail(body);
-  if (status >= 400 && status < 500) {
-    if (detail) return detail;
-    if (status === 404) return "That item no longer exists.";
-    if (status === 409) return "That conflicts with the current state. Refresh and try again.";
-    return "The request was rejected. Please check your input and try again.";
-  }
-  return "Something went wrong on the server. Please try again.";
+function fallbackCode(status: number): string {
+  if (status === 404) return "not_found";
+  if (status === 400 || status === 422) return "validation_failed";
+  if (status === 409) return "busy";
+  if (status === 429) return "rate_limited";
+  if (status === 0 || [502, 503, 504].includes(status)) return "interrupted";
+  return "turn_failed";
 }
 
-/**
- * Error thrown by `apiFetch`. `message` is safe to show to players; `body`/`status`/`requestId`
- * carry the raw details (show those only in Developer mode — see `errorDetails`).
- * `status === 0` means the request never reached the server (network error).
- */
+/** Error state contains only the bounded public contract, never the raw response body. */
 export class ApiError extends Error {
   readonly name = "ApiError";
   readonly status: number;
   readonly body: string;
   readonly requestId?: string;
+  readonly failure: TurnError;
+  private readonly offline: boolean;
 
   constructor(status: number, body: string, requestId?: string) {
-    super(friendlyMessage(status, body));
+    let failure = safeTurnError(body);
+    let explicitInternal = false;
+    try {
+      const parsed = JSON.parse(body) as { code?: unknown; detail?: { code?: unknown } };
+      explicitInternal = parsed.code === "turn_failed" || parsed.detail?.code === "turn_failed";
+    } catch { /* An unstructured gateway response has no classified code. */ }
+    if (failure.code === "turn_failed" && !failure.supportRef && !explicitInternal) {
+      failure = safeTurnError({ code: fallbackCode(status) });
+    }
+    const offline = status === 0 || isGatewayFailure(status, body);
+    super(offline ? OFFLINE_MESSAGE : failure.message);
     this.status = status;
-    this.body = body;
-    this.requestId = requestId;
+    this.failure = failure;
+    this.offline = offline;
+    this.body = JSON.stringify({
+      code: failure.code, category: failure.category, detail: failure.message,
+      message: failure.message, recovery_action: failure.recoveryAction,
+      retryable: failure.retryable, outcome: failure.outcome, support_ref: failure.supportRef,
+    });
+    this.requestId = requestId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId)
+      ? requestId : undefined;
   }
 
-  /** True when the API is unreachable (network failure or gateway error). */
-  get isOffline(): boolean {
-    return this.status === 0 || isGatewayFailure(this.status, this.body);
-  }
+  get isOffline(): boolean { return this.offline; }
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -102,23 +105,25 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   return res;
 }
 
-/** Player-facing message for any error (never raw response bodies). */
+/** Player-facing fixed copy; arbitrary Error messages can contain private input. */
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   if (err instanceof TypeError) return OFFLINE_MESSAGE;
-  if (err instanceof Error && err.message) return err.message;
-  return "Something went wrong. Please try again.";
+  return GENERIC_SAFE_ERROR;
 }
 
-/** Raw technical details for Developer mode (status, request id, response body). */
+/** Bounded diagnostics are safe in both Player and Developer mode. */
 export function errorDetails(err: unknown): string | null {
-  if (err instanceof ApiError) {
-    const head = err.status === 0 ? "Network error" : `HTTP ${err.status}`;
-    const rid = err.requestId ? ` · request ${err.requestId}` : "";
-    return `${head}${rid}${err.body ? `\n${err.body}` : ""}`;
-  }
-  if (err instanceof Error) return err.stack ?? err.message;
-  return err == null ? null : String(err);
+  if (!(err instanceof ApiError)) return null;
+  const failure = err.failure;
+  return [
+    err.status === 0 ? "Network error" : `HTTP ${err.status}`,
+    err.requestId ? `Request: ${err.requestId}` : null,
+    failure.code ? `Code: ${failure.code}` : null,
+    failure.category ? `Category: ${failure.category}` : null,
+    failure.outcome ? `Outcome: ${failure.outcome}` : null,
+    failure.supportRef ? `Reference: ${failure.supportRef}` : null,
+  ].filter(Boolean).join("\n");
 }
 
 /** True when the error means the API could not be reached at all. */

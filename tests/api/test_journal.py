@@ -67,7 +67,7 @@ async def _add_fact(db_session, session_id: int, *, canonical_id: str, text: str
     await db_session.commit()
 
 
-async def test_journal_routes_are_safe_and_session_scoped(api_client, db_session) -> None:
+async def test_journal_routes_are_safe_and_session_scoped(api_client, db_session, fake_retrieval) -> None:
     first_id = (await api_client.post("/api/seed")).json()["session_id"]
     campaign_id = (await api_client.get(f"/api/sessions/{first_id}")).json()["campaign_id"]
     second_response = await api_client.post("/api/sessions", json={"campaign_id": campaign_id})

@@ -136,6 +136,23 @@ async def test_explicit_homebrew_preserves_bindings_and_empty_means_no_module(
     assert (await api_client.post("/api/campaigns", json=body)).status_code == 422
 
 
+async def test_ready_adventure_does_not_return_stale_raw_error_metadata(
+    api_client, source_corpus
+):
+    private_detail = "private player prompt and sk-provider-secret"
+    source(source_corpus, "ready_source", ["The complete adventure"], expected=1)
+    adventures_meta.save_meta(
+        "ready_source",
+        {"status": "ready", "chunks": 1, "error": private_detail},
+    )
+
+    response = await api_client.get("/api/adventures/ready_source")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["error"] is None
+    assert private_detail not in response.text
+
+
 async def test_reupload_restores_exact_bound_slug_and_preserves_history(
     api_client, source_corpus, db_session, monkeypatch
 ):

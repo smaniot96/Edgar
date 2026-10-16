@@ -1,7 +1,9 @@
 import { useState } from "react";
 
 import { cancelAdventure, retryAdventure } from "../../api/client";
-import type { AdventureRead } from "../../api/types";
+import type { AdventureRead, ReadinessRead } from "../../api/types";
+import { safeTurnError } from "../../api/turnStream";
+import { ReadinessNotice } from "./ReadinessNotice";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
 import { isPublicationCommitting, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
@@ -15,7 +17,10 @@ import { cardClasses } from "../ui/styles";
 import { ExtractionPreview } from "./ExtractionPreview";
 import { PreparationRecovery } from "./PreparationRecovery";
 
-function StatusBadge({ state }: { state: CardModel["state"] }) {
+function StatusBadge({ state, readiness }: { state: CardModel["state"]; readiness: ReadinessRead | null }) {
+  if (state === "ready" && readiness?.play_allowed !== true) {
+    return <Pill tone="warning">{readiness ? "Needs attention" : "Readiness unknown"}</Pill>;
+  }
   switch (state) {
     case "ready":
       return <Pill tone="success">Ready</Pill>;
@@ -85,7 +90,8 @@ export function CampaignCard({
   const { adventure, name, state, lastPlayed } = card;
   const job = adventure.job;
   const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
-  const playable = state === "ready" || state === "ended" || (state === "recovery" && !!card.campaign);
+  const playable = !!card.campaign || (state === "ready" && card.readiness?.play_allowed === true) || state === "ended";
+  const showReadiness = (state === "ready" && card.readiness?.play_allowed !== true) || card.readiness?.play_allowed === false;
   const showAdventureTitle = name !== adventure.title;
   const recoverable = state === "failed" || state === "recovery";
   const canRetryJob = job
@@ -121,6 +127,8 @@ export function CampaignCard({
   }
 
   const progress = preparationProgress(job);
+  const failure = job?.failure ?? (adventure.failure_code ? { code: adventure.failure_code } : null);
+  const failureMessage = failure ? safeTurnError(failure).message : null;
 
   return (
     <article className={cn(cardClasses, "flex flex-col")}>
@@ -128,7 +136,7 @@ export function CampaignCard({
       <div className="flex flex-1 flex-col p-4">
         <div className="mb-1 flex items-start justify-between gap-2">
           <h3 className="font-display text-display-sm leading-tight">{name}</h3>
-          <StatusBadge state={state} />
+          <StatusBadge state={state} readiness={card.readiness} />
         </div>
         {showAdventureTitle ? (
           <p className="mb-1 text-xs text-ink-muted">{adventure.title}</p>
@@ -139,16 +147,19 @@ export function CampaignCard({
         {adventure.description ? (
           <p className="mb-2 line-clamp-2 text-sm text-ink-muted">{adventure.description}</p>
         ) : null}
+        {showReadiness ? (
+          <ReadinessNotice readiness={card.readiness} onRetry={onRetried} className="mb-3 text-xs" />
+        ) : null}
         <div className="mb-3 flex flex-wrap gap-1.5">
           {adventure.level_range ? <Pill>Levels {adventure.level_range}</Pill> : null}
           {isDev ? <Pill className="font-mono">{adventure.slug}</Pill> : null}
           {isDev && adventure.chunks != null ? <Pill>{adventure.chunks} chunks</Pill> : null}
           {isDev && card.campaign ? <Pill className="font-mono">campaign #{card.campaign.id}</Pill> : null}
         </div>
-        {state === "recovery" ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : adventure.error || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
+        {state === "recovery" ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : failureMessage || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
         {state === "failed" ? (
           <p className="mb-3 rounded-control bg-danger-soft px-2 py-1.5 text-xs text-danger">
-            {adventure.error || (job?.kind === "generation"
+            {failureMessage || (job?.kind === "generation"
               ? "Edgar couldn't finish generating this campaign. Resume the saved chapters or restart generation if retained work is unavailable."
               : "Edgar couldn't prepare this campaign. Retry the retained source or upload a corrected PDF.")}
           </p>
@@ -170,6 +181,7 @@ export function CampaignCard({
         {job && ["interrupted", "failed", "cancelled"].includes(job.state) ? (
           <div role="status" className="mb-3 rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-ink">
             <p className="font-medium">{jobFailureHeading(job)}</p>
+            {job.failure ? <ErrorNotice error={job.failure} className="mt-2" /> : null}
             {job.explanation ? <p className="mt-1 text-xs text-ink-muted">{job.explanation}</p> : null}
           </div>
         ) : null}
@@ -197,7 +209,11 @@ export function CampaignCard({
             loadingText="Opening…"
             onClick={() => onPlay(card)}
           >
-            {state === "ready" ? (
+            {card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
+              "View campaign"
+            ) : !card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
+              card.readiness ? "Needs attention" : "Readiness unknown"
+            ) : state === "ready" ? (
               <>
                 <PlayIcon className="h-3.5 w-3.5" /> Play
               </>

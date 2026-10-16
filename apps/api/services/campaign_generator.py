@@ -24,6 +24,8 @@ from pydantic import BaseModel, Field
 from agent.llm import make_chat_model, message_text
 from edgar_core.model_profiles import ModelProfileSnapshot, model_profile_snapshot
 
+from .safe_errors import classify_error, log_failure, safe_failure_metadata
+
 log = structlog.get_logger()
 
 # Chapters per size tier — the main lever on length. Concurrency is bounded so a "gigantic"
@@ -323,7 +325,8 @@ async def build_generated_campaign(
         checkpoint = store.load_generation_checkpoint(
             slug, job_id, expected_chapters=SIZE_CHAPTERS.get(size, SIZE_CHAPTERS["medium"])
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):
+        failure = classify_error("checkpoint_unreadable")
         store.update_job(
             slug,
             token,
@@ -337,11 +340,12 @@ async def build_generated_campaign(
             token,
             {
                 "status": "failed",
-                "failure_code": "checkpoint_unreadable",
-                "error": "Saved generation progress is unreadable. Create a new campaign to generate again.",
+                **safe_failure_metadata(
+                    "checkpoint_unreadable", support_ref=failure.support_ref
+                ),
             },
         )
-        log.warning("campaign_checkpoint_unreadable", slug=slug, error=type(exc).__name__)
+        log_failure("campaign_checkpoint_unreadable", failure, level="warning")
         return
 
     def checkpointed(value: dict[str, Any], stage: str) -> None:
@@ -430,40 +434,39 @@ async def build_generated_campaign(
     except SupersededIngestion:
         log.info("campaign_generation_superseded", slug=slug)
     except IngestionRejected as exc:
+        failure = classify_error(exc.code)
         store.finish_attempt(
             slug,
             token,
             {
                 "status": "failed",
                 "chunks": 0,
-                "failure_code": exc.code,
-                "error": str(exc),
+                **safe_failure_metadata(exc.code, support_ref=failure.support_ref),
                 "ingestion": report_summary(exc.report),
             },
         )
-        log.warning("campaign_quality_rejected", slug=slug, code=exc.code)
-    except IncompleteGeneration as exc:
+        log_failure("campaign_quality_rejected", failure, level="warning")
+    except IncompleteGeneration:
+        failure = classify_error("generation_incomplete")
         store.finish_attempt(
             slug,
             token,
             {
                 "status": "failed",
                 "chunks": 0,
-                "failure_code": "generation_incomplete",
-                "error": str(exc),
+                **safe_failure_metadata("generation_incomplete", support_ref=failure.support_ref),
             },
         )
-        log.warning("campaign_generation_incomplete", slug=slug)
+        log_failure("campaign_generation_incomplete", failure, level="warning")
     except Exception as exc:
-        log.exception("campaign_generation_failed", slug=slug)
-        # Raw exception text can carry provider internals; the full trace is in the logs.
+        failure = classify_error(exc)
+        log_failure("campaign_generation_failed", failure)
         store.finish_attempt(
             slug,
             token,
             {
                 "status": "failed",
-                "failure_code": "generation_error",
-                "error": f"Generation failed ({type(exc).__name__}); retry generation or see server logs.",
+                **safe_failure_metadata(exc, support_ref=failure.support_ref),
             },
         )
     finally:

@@ -33,6 +33,20 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-for-ci")
 _REQUIRE_DOCKER = bool(os.environ.get("CI"))
 
 
+@pytest.fixture
+def fresh_safe_error_logger(monkeypatch):
+    """Capture the real event processors even after lifespan has cached a logger.
+
+    structlog.capture_logs cannot replace processors on an already cached bound
+    logger. A fresh lazy proxy binds inside each test's capture context instead.
+    """
+    import structlog
+
+    from apps.api.services import safe_errors
+
+    monkeypatch.setattr(safe_errors, "log", structlog.get_logger())
+
+
 def _db_components_from_container(pg: PostgresContainer) -> dict[str, str]:
     raw = pg.get_connection_url()
     parsed = urlparse(raw)
@@ -200,6 +214,7 @@ def fake_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         manifest = AdventureManifest(
             source=slug,
+            rules_edition="2014",
             source_sha256=extraction.source_sha256,
             extraction_sha256=extraction.text_sha256(),
             opening_scene_id="forest_trail",

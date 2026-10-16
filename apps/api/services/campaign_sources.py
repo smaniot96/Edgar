@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 from fastapi import HTTPException
@@ -10,6 +11,8 @@ from starlette.concurrency import run_in_threadpool
 from db.vector.collections import is_campaign_lore_collection, is_rules_collection
 from db.vector.source_status import inspect_source
 from db.vector.versions import active_index_version
+from edgar_core.preparation import SafePreparationFailure
+from edgar_core.safe_errors import OutcomeState, classify_failure
 
 from ..schemas.adventure import AdventureJobRead
 from ..schemas.campaign import CampaignRead, SourceRead
@@ -80,6 +83,7 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             explanation=action_copy,
             source_version=(meta.get("prepared_bundle") or {}).get("bundle_sha256")
             if projected.status.value == "ready" else None,
+            failure=projected.failure,
         )
     if kind not in ("generation", "ingestion") or state not in allowed_states:
         return None
@@ -140,6 +144,7 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
     source_version = ingestion.get("index_version") if isinstance(ingestion, dict) else None
     if not isinstance(source_version, str):
         source_version = None
+    safe_failure = _job_failure(meta, job, state, job_id)
     return AdventureJobRead(
         version=1,
         job_id=job_id,
@@ -154,6 +159,58 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
         action_label=action_label,
         explanation=explanation,
         source_version=source_version,
+        failure=safe_failure,
+    )
+
+
+def _job_failure(meta: dict, job: dict, state: str, job_id: str) -> SafePreparationFailure | None:
+    """Project a persisted job failure through fixed copy and a stable reference."""
+    if state not in ("failed", "interrupted", "cancelled"):
+        return None
+    if state == "interrupted":
+        code = "turn_interrupted"
+    elif state == "cancelled":
+        code = "cancelled"
+    else:
+        last_attempt = meta.get("last_attempt")
+        last_attempt = last_attempt if isinstance(last_attempt, dict) else {}
+        code = meta.get("failure_code") or last_attempt.get("failure_code") or "turn_failed"
+    last_attempt = meta.get("last_attempt")
+    last_attempt = last_attempt if isinstance(last_attempt, dict) else {}
+    ref = meta.get("support_ref") or job.get("support_ref") or last_attempt.get("support_ref")
+    if not isinstance(ref, str) or not re.fullmatch(r"err-[0-9a-f]{16}", ref):
+        ref = "err-" + hashlib.sha256(f"{job_id}:{code}".encode()).hexdigest()[:16]
+    safe = classify_failure(code, outcome=OutcomeState.UNKNOWN, support_ref=ref)
+    return SafePreparationFailure(
+        code=safe.code,
+        category=safe.category.value,
+        message=safe.message,
+        recovery_action=safe.recovery_action.value,
+        retryable=safe.retryable,
+        support_ref=safe.support_ref,
+        outcome=safe.outcome.value,
+    )
+
+
+def _stored_failure(meta: dict, identity: str) -> SafePreparationFailure | None:
+    """Safely expose source failure metadata when a legacy record has no job object."""
+    last_attempt = meta.get("last_attempt")
+    last_attempt = last_attempt if isinstance(last_attempt, dict) else {}
+    code = meta.get("failure_code") or last_attempt.get("failure_code")
+    if not isinstance(code, str):
+        return None
+    ref = meta.get("support_ref") or last_attempt.get("support_ref")
+    if not isinstance(ref, str) or not re.fullmatch(r"err-[0-9a-f]{16}", ref):
+        ref = "err-" + hashlib.sha256(f"{identity}:{code}".encode()).hexdigest()[:16]
+    safe = classify_failure(code, outcome=OutcomeState.UNKNOWN, support_ref=ref)
+    return SafePreparationFailure(
+        code=safe.code,
+        category=safe.category.value,
+        message=safe.message,
+        recovery_action=safe.recovery_action.value,
+        retryable=safe.retryable,
+        support_ref=safe.support_ref,
+        outcome=safe.outcome.value,
     )
 
 
@@ -250,10 +307,13 @@ def source_read(slug: str) -> SourceRead:
                 collection_exists=False,
                 source_pdf_available=False,
                 message=(
-                    "Private preparation needs attention. Retry the saved work or start a new adventure."
-                    if failed else "Your adventure is being prepared privately."
+                    projected.failure.message
+                    if failed and projected and projected.failure
+                    else "Private preparation needs attention. Check its saved status."
+                    if failed
+                    else "Your adventure is being prepared privately."
                 ),
-                failure_code="preparation_blocked" if failed else None,
+                failure_code=projected.failure.code if failed and projected and projected.failure else None,
                 extraction_preview_available=False,
                 extraction_preview_current=False,
                 ingestion=None,
@@ -315,21 +375,26 @@ def source_read(slug: str) -> SourceRead:
                 preview_current = source_digest(candidate_pdf) == preview_data.get("source_sha256")
         except (OSError, ValueError):
             preview_current = False
+    public_job = safe_job_read(raw_meta, slug)
+    failure = public_job.failure if public_job else _stored_failure(raw_meta, slug)
     return SourceRead(
         **live,
         title=meta.get("title") or slug.replace("_", " ").title(),
         source_pdf_available=(
             False if is_private_preparation else source_pdf_path(slug, meta).is_file()
         ),
-        message=meta.get("error")
-        if live["status"] == "failed" and meta.get("error")
-        else messages.get(live["status"]),
-        failure_code=meta.get("failure_code"),
+        message=(failure.message if failure else messages.get(live["status"])),
+        failure_code=failure.code if failure else None,
         extraction_preview_available=preview_available,
         extraction_preview_current=preview_current,
         ingestion=ingestion if isinstance(ingestion, dict) else None,
-        job=safe_job_read(raw_meta, slug),
+        job=public_job,
     )
+
+
+def is_private_preparation_source(slug: str) -> bool:
+    """Inspect the internal source kind without inferring it from player-facing copy."""
+    return load_meta(slug).get("private_preparation") is True
 
 
 async def source_reads(slugs: list[str]) -> list[SourceRead]:
@@ -366,4 +431,9 @@ async def campaign_read(campaign) -> CampaignRead:
         result.source_mode == "module" and not result.sources
     )
     result.play_allowed = result.source_mode == "homebrew" or not result.retrieval_degraded
+    # `play_allowed` keeps its historical index-only meaning for existing API clients.
+    # New callers use the additive full projection, which includes review/version gates.
+    from .campaign_readiness import evaluate_play_readiness
+
+    result.readiness = await evaluate_play_readiness(None, campaign, observed_sources=result.sources)
     return result

@@ -200,7 +200,7 @@ async def test_unknown_failed_provider_usage_charges_the_full_reservation(
 
     result = await supervisor.step("mystery", run.run_id, "worker-1", lambda _binding: True)
 
-    assert result.state.tasks["P01:brief"].status.value == "failed"
+    assert result.state.tasks["P01:brief"].status.value == "blocked"
     assert result.state.provider_calls_spent == 1
     assert result.state.tokens_spent == 200
     assert result.state.cost_microusd_spent == 10

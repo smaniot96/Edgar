@@ -107,14 +107,14 @@ describe("consumeTurnStream", () => {
     expect(out).toEqual({ kind: "incomplete" });
   });
 
-  it("parses error frames with {code, message} and legacy {detail}", async () => {
+  it("uses safe fallback copy for unrecognized error codes and details", async () => {
     const a = await consumeTurnStream(
       streamResponse(['event: error\ndata: {"code":"llm_timeout","message":"Too slow"}\n\n']),
       {},
     );
-    expect(a).toEqual({ kind: "error", error: { code: "llm_timeout", message: "Too slow" } });
+    expect(a).toMatchObject({ kind: "error", error: { code: "turn_failed", category: "internal" } });
     const b = await consumeTurnStream(streamResponse(['event: error\ndata: {"detail":"Nope"}\n\n']), {});
-    expect(b).toEqual({ kind: "error", error: { message: "Nope" } });
+    expect(b).toMatchObject({ kind: "error", error: { code: "turn_failed", category: "internal" } });
   });
 
   it("signals activity for every chunk (watchdog feed)", async () => {
@@ -125,22 +125,21 @@ describe("consumeTurnStream", () => {
     expect(n).toBe(3);
   });
 
-  it("preserves raw error frames when the server sends plain text", async () => {
+  it("replaces plain-text error frames with safe fallback copy", async () => {
     const out = await consumeTurnStream(streamResponse(["event: error\ndata: Busy\n\n"]), {});
-    expect(out).toEqual({ kind: "error", error: { message: "Busy" } });
+    expect(out).toMatchObject({ kind: "error", error: { message: "The turn could not be completed.", category: "internal" } });
   });
 });
 
 describe("parseTurnError", () => {
-  it("handles FastAPI bodies, nested detail objects and raw text", () => {
-    expect(parseTurnError('{"detail":"Campaign has ended; reopen it to continue."}')).toEqual({
-      message: "Campaign has ended; reopen it to continue.",
+  it("uses safe fallback copy for unknown codes and free-form details", () => {
+    expect(parseTurnError('{"detail":"Campaign has ended; reopen it to continue."}')).toMatchObject({
+      code: "turn_failed", category: "internal",
     });
-    expect(parseTurnError({ detail: { code: "turn_locked", message: "Busy" } })).toEqual({
-      code: "turn_locked",
-      message: "Busy",
+    expect(parseTurnError({ detail: { code: "turn_locked", message: "Busy" } })).toMatchObject({
+      code: "turn_failed", category: "internal",
     });
-    expect(parseTurnError("Bad Gateway")).toEqual({ message: "Bad Gateway" });
-    expect(parseTurnError("", "fallback")).toEqual({ message: "fallback" });
+    expect(parseTurnError("Bad Gateway")).toMatchObject({ code: "turn_failed", category: "internal" });
+    expect(parseTurnError("", "fallback")).toMatchObject({ message: "fallback", code: "turn_failed" });
   });
 });

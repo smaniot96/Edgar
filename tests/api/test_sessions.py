@@ -2,7 +2,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_create_session(api_client) -> None:
+async def test_create_session(api_client, fake_retrieval) -> None:
     seed = await api_client.post("/api/seed")
     camp_id = seed.json()["campaign_id"]
 
@@ -16,7 +16,7 @@ async def test_create_session(api_client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_session(api_client) -> None:
+async def test_delete_session(api_client, fake_retrieval) -> None:
     seed = await api_client.post("/api/seed")
     camp_id = seed.json()["campaign_id"]
     r = await api_client.post("/api/sessions", json={"campaign_id": camp_id})

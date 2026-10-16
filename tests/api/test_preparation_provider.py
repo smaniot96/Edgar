@@ -5,6 +5,7 @@ import json
 import httpx
 import pytest
 from langchain_openai import ChatOpenAI
+from openai import APIConnectionError, AuthenticationError, RateLimitError
 from pydantic import BaseModel
 from test_preparation_supervisor import binding
 
@@ -163,3 +164,56 @@ async def test_oversized_evidence_fails_before_provider_with_known_zero_usage(mo
     assert error.value.code == "task_context_limit"
     assert error.value.usage.provider_called is False
     assert error.value.usage.usage_known
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "expected_code"),
+    [
+        ("connection", "provider_unavailable"),
+        ("internal", "turn_failed"),
+        ("quota", "quota_exceeded"),
+        ("configuration", "provider_configuration"),
+    ],
+)
+async def test_invoke_preparation_classifies_sdk_and_internal_failures_safely(
+    monkeypatch, kind, expected_code
+):
+    from apps.api.services import preparation_provider
+
+    sentinel = "private prompt text and sk-provider-secret"
+    request = httpx.Request("POST", "https://offline.invalid/v1/responses")
+    if kind == "connection":
+        failure = APIConnectionError(request=request)
+        failure.args = (sentinel,)
+    elif kind == "internal":
+        failure = TypeError(sentinel)
+    elif kind == "quota":
+        body = {"error": {"code": "insufficient_quota", "message": sentinel}}
+        response = httpx.Response(429, request=request, json=body)
+        failure = RateLimitError(sentinel, response=response, body=body)
+    else:
+        response = httpx.Response(401, request=request, json={"error": sentinel})
+        failure = AuthenticationError(sentinel, response=response, body={"error": sentinel})
+
+    class Structured:
+        def with_structured_output(self, *_args, **_kwargs):
+            return self
+
+        async def ainvoke(self, *_args, **_kwargs):
+            raise failure
+
+    monkeypatch.setattr(preparation_provider, "make_chat_model", lambda **_kwargs: Structured())
+
+    with pytest.raises(PreparationTaskFailure) as caught:
+        await invoke_preparation(
+            frozen(), task(), Answer,
+            instruction="Return the assigned text.",
+            evidence={"source": "offline"},
+            idempotency_key="offline-failure-key",
+        )
+
+    assert caught.value.code == expected_code
+    assert caught.value.usage.provider_called is True
+    assert caught.value.usage.usage_known is False
+    assert sentinel not in repr(caught.value)

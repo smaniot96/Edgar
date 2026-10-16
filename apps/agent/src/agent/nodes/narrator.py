@@ -31,7 +31,7 @@ from agent.supported_rules import (
     engine_applied_for_state,
 )
 from db.vector.retrieval import rule_policy
-from edgar_core.log_safety import error_summary
+from edgar_core.safe_errors import provider_error_code
 from edgar_core.sources import cited_excerpt, eligible_context
 from edgar_core.story import player_story_effect
 
@@ -199,7 +199,11 @@ async def narrator_node(state: AgentState) -> dict:
         try:
             response = await llm.ainvoke(prompt)
         except Exception as e:
-            return {"narration": "", "error": error_summary(e)}
+            return {
+                "narration": "",
+                "error": "Narration could not be completed.",
+                "error_code": provider_error_code(e),
+            }
         narration = apply_narration_boundary(
             message_text(response),
             actions_for_state(state),

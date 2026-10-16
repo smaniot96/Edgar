@@ -158,11 +158,12 @@ function ErrorRow({
   onCheckReceipt?: (turnId: string, requestId: string, input: string, draftRevision?: number) => void;
   canRetry: boolean;
 }) {
-  const retryable = !!(onRetry && line.turnId && line.retryInput && line.retryRequestId && !line.uncertain);
+  const retryable = !!(onRetry && line.turnId && line.retryInput && line.retryRequestId && !line.uncertain && line.retryable === true);
   const checkable = !!(onCheckReceipt && line.turnId && line.retryInput && line.retryRequestId && line.uncertain);
   return (
     <div
-      role="alert"
+      role="group"
+      aria-label="Action failed"
       className="flex max-w-[65ch] flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-danger-strong/60 bg-danger-soft/60 px-3 py-2 text-sm text-danger"
     >
       <span className="min-w-0 flex-1">{line.content}</span>

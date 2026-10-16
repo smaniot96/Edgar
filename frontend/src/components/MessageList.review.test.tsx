@@ -60,7 +60,7 @@ it("leaves the persisted reading anchor untouched until boot history is seeded",
   }
 });
 
-it("keeps the log silent while narration streams and alerts once for a failed turn", async () => {
+it("keeps the log silent while narration streams and shows a failed turn as a labelled group, not a second alert", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
@@ -86,9 +86,27 @@ it("keeps the log silent while narration streams and alerts once for a failed tu
         pending={null}
       />,
     ));
-    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection lost");
+    // The Play status region announces the failure once; the row itself must not announce it again.
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
+    expect(container.querySelector('[role="group"][aria-label="Action failed"]')?.textContent).toContain("Connection lost");
   } finally {
     await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});
+
+it("offers paid retry only after a definitive retryable failure", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(() => root.render(<MessageList messages={[
+      {id:"internal",turnId:"internal",role:"error",content:"Internal failure",code:"turn_failed",retryInput:"Look",retryRequestId:"r1",retryable:false},
+      {id:"provider",turnId:"provider",role:"error",content:"Provider failure",code:"provider_unavailable",retryInput:"Wait",retryRequestId:"r2",retryable:true},
+      {id:"unknown",turnId:"unknown",role:"error",content:"Save uncertain",code:"turn_save_failed",retryInput:"Go",retryRequestId:"r3",uncertain:true},
+    ]} pending={null} onRetry={vi.fn()} onCheckReceipt={vi.fn()} />));
+    expect([...container.querySelectorAll('button')].filter(b=>b.textContent==='Retry')).toHaveLength(1);
+    expect([...container.querySelectorAll('button')].filter(b=>b.textContent==='Check save status')).toHaveLength(1);
+  } finally {
+    await act(()=>root.unmount()); container.remove(); vi.unstubAllGlobals();
   }
 });
