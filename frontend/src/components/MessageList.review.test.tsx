@@ -60,6 +60,40 @@ it("leaves the persisted reading anchor untouched until boot history is seeded",
   }
 });
 
+it("keeps the log silent while narration streams and shows a failed turn as a labelled group, not a second alert", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  const pending = { turnId: "t1", requestId: "r1", input: "look", stage: "narrating", text: "The door creaks", adjudication: null, debug: null };
+  try {
+    await act(() => root.render(
+      <MessageList
+        messages={[{ id: "h0", role: "dm", content: "Old saved narration." }]}
+        pending={pending}
+      />,
+    ));
+    const log = container.querySelector('[role="log"]')!;
+    expect(log.getAttribute("aria-live")).toBe("off");
+    expect(log.textContent).toContain("The door creaks");
+    expect(container.querySelectorAll("[aria-live]:not([aria-live='off']), [role='status'], [role='alert']")).toHaveLength(0);
+
+    await act(() => root.render(
+      <MessageList
+        messages={[
+          { id: "h0", role: "dm", content: "Old saved narration." },
+          { id: "t1:error", role: "error", content: "Connection lost" },
+        ]}
+        pending={null}
+      />,
+    ));
+    // The Play status region announces the failure once; the row itself must not announce it again.
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
+    expect(container.querySelector('[role="group"][aria-label="Action failed"]')?.textContent).toContain("Connection lost");
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});
+
 it("offers paid retry only after a definitive retryable failure", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div"); document.body.append(container);

@@ -51,6 +51,19 @@ describe("turnReducer", () => {
     expect(s.announcement).toBe("Saved action confirmed.");
   });
 
+  it("announces appended narration but never history reloads or streamed tokens", () => {
+    const streaming = run([
+      { type: "reset", lines: linesFromHistory([{ role: "dm", content: "Old saved narration.", created_at: "" }]) },
+      { type: "start", turnId: "t1", requestId: "r1", input: "look" },
+      { type: "token", turnId: "t1", text: "The door " },
+      { type: "token", turnId: "t1", text: "opens." },
+    ]);
+    expect(streaming.announcement).toBe("");
+    const opening = run([{ type: "append", line: { id: "intro", role: "dm", content: "Rain beats on the harbor." } }], streaming);
+    expect(opening.announcement).toBe("Rain beats on the harbor.");
+    expect(run([{ type: "reset", lines: [] }], opening).announcement).toBe("");
+  });
+
   it("falls back to the done payload's narration when no tokens streamed", () => {
     const s = run([
       { type: "start", turnId: "t1", requestId: "r1", input: "look" },

@@ -292,8 +292,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "Blindness/Deafness is a Constitution save against the spell save DC, with no damage; it "
             "casts blindness only, at one foe (a declaration naming deafness is refused), and does not "
             "scale to extra targets. Hold Person is a Wisdom save against the spell save DC that paralyzes "
-            "one humanoid foe for up to a minute, is held by concentration (see concentration) and does not "
-            "scale to extra targets. Cantrips cost no slot. A leveled spell spends the named slot or the "
+            "one humanoid foe for up to a minute and is held by concentration (see concentration). Cast "
+            "with a slot of 3rd level or higher it holds one more humanoid foe per level above 2nd, each "
+            "making its own save: the foes the player names first, then the next humanoids in roster "
+            "order, and fewer when fewer humanoids stand; the book's 30-foot limit between the targets "
+            "is not modelled. Cantrips cost no slot. A leveled spell spends the named slot or the "
             "lowest one available; slot totals follow class and level for the full and half casters, and "
             "a long rest restores them. Other spells get a narrative ruling."
         ),
@@ -324,9 +327,12 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         id="concentration",
         title="Concentration on one spell, with its damage save",
         scope=(
-            "The caster holds at most one concentration spell (Hold Person). Casting another such spell "
+            "The caster holds at most one concentration spell; Hold Person is the only catalog spell that "
+            "needs it (Blindness/Deafness lasts a minute and Guiding Bolt a round, neither with "
+            "concentration; the others are instantaneous). Casting another such spell "
             "ends the first, and the first spell's effects on foes end with it. Concentration ends when "
-            "the spell's minute passes, when no foe still carries its effect, and when the caster falls to "
+            "the spell's minute passes, when no foe still carries its effect (a spell on several foes lasts "
+            "while any one is held), and when the caster falls to "
             "0 HP. Taking damage while concentrating requires a Constitution save, engine-rolled with the "
             "sheet's save modifier (proficiency included when the sheet lists it): DC 10 or half the damage, "
             "whichever is higher, rounded down; a failure ends the spell. A spell with no effect on a foe "

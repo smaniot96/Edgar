@@ -189,7 +189,7 @@ from agent.resolution import (
     spend_second_wind,
     wears_heavy_armor,
 )
-from agent.spells import CastPlan, cast_request, narrate, resolve_spell
+from agent.spells import CastPlan, SpellSpec, cast_request, narrate, resolve_spell, target_count
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
@@ -676,6 +676,26 @@ def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict 
     return None, f"You don't see {named[0]} among your foes. Who do you attack? ({foes})"
 
 
+def additional_spell_targets(
+    enemies_in_order: list[dict], named: list[str], first: dict, spec: SpellSpec, count: int
+) -> list[dict]:
+    """Up to `count` more standing foes for an upcast spell: those the player named, then roster order.
+
+    A humanoid-only spell takes only foes whose record reads humanoid; none is refused, the cast
+    simply reaches fewer foes.
+    """
+    eligible = [
+        e
+        for e in enemies_in_order
+        if e is not first
+        and is_standing(e)
+        and not (spec.humanoid_only and humanoid_refusal(spec.name, e))
+    ]
+    # The sort is stable: named foes come first, the rest keep their roster order.
+    eligible.sort(key=lambda e: not any(_name_matches(n, e["name"]) for n in named))
+    return eligible[:count]
+
+
 def _strike(
     target: dict, amount: int, parsed: Any, player_input: str, damage_type: str | None = None
 ) -> str:
@@ -951,6 +971,7 @@ async def combat_round_node(state: AgentState) -> dict:
         if question:
             return _ask_player(state, question, combat_state=combat_state)
     spell_target: dict | None = None
+    spell_targets: list[dict | None] = [None]  # a heal has no foe
     if spell_plan is not None and spell_plan.spell.kind != "heal":
         spell_target, question = select_target(enemies, named)
         if question:
@@ -964,6 +985,15 @@ async def combat_round_node(state: AgentState) -> dict:
             refusal = humanoid_refusal(spell_plan.spell.name, spell_target)
             if refusal:
                 return _ask_player(state, refusal, combat_state=combat_state)
+        spell_targets = [spell_target]
+        if spell_plan.spell.upcast_targets:
+            spell_targets += additional_spell_targets(
+                enemies,
+                named,
+                spell_target,
+                spell_plan.spell,
+                target_count(spell_plan.spell, spell_plan.slot_level) - 1,
+            )
     # EDG-044: declared moves are free but change band at most once (twice with Dash). Planned on
     # copies only: a refused turn changes no foe and rolls no die.
     moves = plan_moves(
@@ -1436,100 +1466,105 @@ async def combat_round_node(state: AgentState) -> dict:
         log_lines.append(extra_outcome)
     elif spell_plan is not None and spell_plan.spell.action == ACTION:
         # Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the
-        # chosen foe the same way a weapon hit does.
-        target_stats = stats_of(spell_target) if spell_target else None
-        if target_stats is not None:
-            save_bonus = target_stats.save_bonus(spell_plan.spell.save_ability or "DEX")
-        elif spell_target is not None and spell_plan.spell.save_ability == "DEX":
-            # A legacy foe has only its initiative (DEX) bonus; other saves stay unmodified.
-            save_bonus = int(spell_target.get("initiative_bonus", 0) or 0)
-        else:
-            save_bonus = 0
-        # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
-        spell_mode = (
-            attack_roll_mode(
-                player,
-                spell_target,
-                ranged=True,
-                within_five_feet=band_of(spell_target) == MELEE,
-            )
-            if spell_target is not None and spell_plan.spell.kind == "attack"
-            else "normal"
-        )
-        round_modes.append(spell_mode)
-        # A restrained foe makes its Dexterity saves at disadvantage (PHB Appendix A, PDF p.293).
-        save_mode = (
-            "disadvantage"
-            if spell_target is not None
-            and spell_plan.spell.save_ability == "DEX"
-            and has_effect(spell_target, "restrained")
-            else "normal"
-        )
-        spell_result = resolve_spell(
-            character,
-            spell_plan,
-            target_ac=int(spell_target.get("ac", 12)) if spell_target else None,
-            target_save_bonus=save_bonus,
-            save_mode=save_mode,
-            roll_mode=spell_mode,
-        )
-        dice_log += spell_result.dice_log
-        spell_expended = spell_result.expended
-        target_name = spell_target["name"] if spell_target else None
-        extra_outcome = narrate(spell_result, hero=hero, target=target_name)
-        if spell_result.healing:
-            hp = min(player_hp_max, hp + spell_result.healing)
-        if spell_result.damage and spell_target is not None:
-            spell_type = spell_plan.spell.damage_type
-            dealt, resist_note = adjust_monster_damage(
-                spell_target, spell_result.damage, spell_type, magical=True
-            )
-            status = _strike(spell_target, dealt, parsed, player_input, damage_type=spell_type)
-            extra_outcome = f"{extra_outcome}{resist_note} {status}"
-        if spell_target is not None and spell_result.attack is not None:
-            consume_mark(spell_target)  # the attack roll spends a mark it was made against
-        applied_condition: str | None = None
+        # chosen foe the same way a weapon hit does. An upcast spell reaches its extra foes, each
+        # with its own save, from the one slot.
         spec = spell_plan.spell
         if spec.concentration:
             # Casting a concentration spell ends the caster's earlier one (EDG-043).
             if previous := drop_concentration(player, enemies):
                 log_lines.append(f"{hero}'s concentration on {previous} ends.")
-        if spell_result.condition and spell_target is not None and is_standing(spell_target):
-            # A foe that the spell defeated keeps no condition (defeat clears effects anyway).
-            applied = apply_spell_condition(
-                spell_target,
-                spell_result.condition,
-                source=spec.name,
-                round_applied=int(combat_state.get("round", 1) or 1),
-                duration_rounds=spec.duration_rounds,
-                repeat_save=(
-                    {"ability": spec.save_ability, "dc": spell_result.save_dc}
-                    if spec.save_ability and spell_result.save_dc is not None
-                    else None
-                ),
+        applied_condition: str | None = None
+        outcomes: list[str] = []
+        for spell_target in spell_targets:
+            target_stats = stats_of(spell_target) if spell_target else None
+            if target_stats is not None:
+                save_bonus = target_stats.save_bonus(spell_plan.spell.save_ability or "DEX")
+            elif spell_target is not None and spell_plan.spell.save_ability == "DEX":
+                # A legacy foe has only its initiative (DEX) bonus; other saves stay unmodified.
+                save_bonus = int(spell_target.get("initiative_bonus", 0) or 0)
+            else:
+                save_bonus = 0
+            # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
+            spell_mode = (
+                attack_roll_mode(
+                    player,
+                    spell_target,
+                    ranged=True,
+                    within_five_feet=band_of(spell_target) == MELEE,
+                )
+                if spell_target is not None and spell_plan.spell.kind == "attack"
+                else "normal"
             )
-            if applied:
-                round_effects.append(spell_result.condition)
-                applied_condition = spell_result.condition
-                if spec.concentration:
-                    start_concentration(
-                        player,
-                        spec.name,
-                        round_applied=int(combat_state.get("round", 1) or 1),
-                        duration_rounds=spec.duration_rounds,
-                    )
-            extra_outcome = " ".join(
-                [
-                    extra_outcome,
-                    spell_condition_sentence(
-                        spell_result.condition, spell_target["name"], applied=applied
+            round_modes.append(spell_mode)
+            # A restrained foe makes its Dexterity saves at disadvantage (PHB Appendix A, PDF p.293).
+            save_mode = (
+                "disadvantage"
+                if spell_target is not None
+                and spell_plan.spell.save_ability == "DEX"
+                and has_effect(spell_target, "restrained")
+                else "normal"
+            )
+            spell_result = resolve_spell(
+                character,
+                spell_plan,
+                target_ac=int(spell_target.get("ac", 12)) if spell_target else None,
+                target_save_bonus=save_bonus,
+                save_mode=save_mode,
+                roll_mode=spell_mode,
+            )
+            dice_log += spell_result.dice_log
+            spell_expended = spell_result.expended
+            target_name = spell_target["name"] if spell_target else None
+            extra_outcome = narrate(spell_result, hero=hero, target=target_name)
+            if spell_result.healing:
+                hp = min(player_hp_max, hp + spell_result.healing)
+            if spell_result.damage and spell_target is not None:
+                spell_type = spell_plan.spell.damage_type
+                dealt, resist_note = adjust_monster_damage(
+                    spell_target, spell_result.damage, spell_type, magical=True
+                )
+                status = _strike(spell_target, dealt, parsed, player_input, damage_type=spell_type)
+                extra_outcome = f"{extra_outcome}{resist_note} {status}"
+            if spell_target is not None and spell_result.attack is not None:
+                consume_mark(spell_target)  # the attack roll spends a mark it was made against
+            if spell_result.condition and spell_target is not None and is_standing(spell_target):
+                # A foe that the spell defeated keeps no condition (defeat clears effects anyway).
+                applied = apply_spell_condition(
+                    spell_target,
+                    spell_result.condition,
+                    source=spec.name,
+                    round_applied=int(combat_state.get("round", 1) or 1),
+                    duration_rounds=spec.duration_rounds,
+                    repeat_save=(
+                        {"ability": spec.save_ability, "dc": spell_result.save_dc}
+                        if spec.save_ability and spell_result.save_dc is not None
+                        else None
                     ),
-                ]
-            )
+                )
+                if applied:
+                    round_effects.append(spell_result.condition)
+                    applied_condition = spell_result.condition
+                    if spec.concentration:
+                        start_concentration(
+                            player,
+                            spec.name,
+                            round_applied=int(combat_state.get("round", 1) or 1),
+                            duration_rounds=spec.duration_rounds,
+                        )
+                extra_outcome = " ".join(
+                    [
+                        extra_outcome,
+                        spell_condition_sentence(
+                            spell_result.condition, spell_target["name"], applied=applied
+                        ),
+                    ]
+                )
+            outcomes.append(extra_outcome)
+        extra_outcome = " ".join(outcomes)
         player_action = {
             "action": "catalog_spell",
             "spell": spell_result.spec.name,
-            "target": stable_id(spell_target) if spell_target else None,
+            "target": stable_id(spell_targets[0]) if spell_targets[0] else None,
             "slot_level": spell_result.slot_level,
             "damage": spell_result.damage,
             "healing": spell_result.healing,
