@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import fcntl
 import json
 import re
+import uuid
 from collections.abc import Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,10 +32,65 @@ from edgar_core.preparation import (
 
 from . import adventures_meta as meta_store
 from .preparation import PreparationError, PreparationSupervisor
-from .preparation_store import PreparationStore, PreparationStoreError
+from .preparation_store import PreparationStore, PreparationStoreError, preparation_path
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+_RECOVERY_TASKS: set[asyncio.Task] = set()
+_RESTART_PREPARATION_CODES = {
+    "required_books_unavailable",
+    "required_book_unavailable",
+    "required_books_missing",
+    "book_version_unavailable",
+    "unsupported_party",
+    "unsupported_edition",
+    "unsupported_progression",
+    "unsupported_hero_capability",
+    "budget_exhausted",
+    "run_budget_exhausted",
+    "attempt_budget_exhausted",
+    "provider_budget_exhausted",
+    "providerbudget_exhausted",
+    "repair_budget_exhausted",
+    "required_assets_unavailable",
+}
+_PREPARATION_FAILURE_MESSAGES = {
+    "required_books_unavailable": "Required sourcebooks are unavailable for this edition. Choose an available edition or sourcebook and start a new preparation.",
+    "required_book_unavailable": "A required sourcebook is unavailable for this edition. Choose an available edition or sourcebook and start a new preparation.",
+    "required_books_missing": "Required sourcebooks are missing. Choose an available edition or sourcebook and start a new preparation.",
+    "book_version_unavailable": "A required sourcebook version is unavailable. Choose an available edition or sourcebook and start a new preparation.",
+    "unsupported_party": "The selected hero party is not supported by this preparation. Choose a supported party and start a new adventure.",
+    "unsupported_edition": "This rules edition is not supported for preparation. Choose a supported edition and start a new adventure.",
+    "unsupported_progression": "The requested character progression is not supported. Change the target level or party and start a new adventure.",
+    "unsupported_hero_capability": "A selected hero capability is not supported by preparation. Choose a different party and start a new adventure.",
+    "budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
+    "run_budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
+    "attempt_budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
+    "provider_budget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
+    "providerbudget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
+    "repair_budget_exhausted": "The adventure needs more repair work than this commission allows. Start a new preparation with a larger repair budget.",
+    "required_assets_unavailable": "Required maps or handouts could not be prepared. Change asset requirements and start a new preparation.",
+}
+
+
+def _needs_new_commission(code: str | None) -> bool:
+    return code in _RESTART_PREPARATION_CODES or (
+        isinstance(code, str) and "budget" in code.lower()
+    )
+
+
+def _preparation_failure_message(code: str | None) -> str:
+    if isinstance(code, str):
+        return _PREPARATION_FAILURE_MESSAGES.get(
+            code,
+            "The preparation needs a new commission. Review the party, rules edition, sourcebooks, assets, and budget before starting again."
+            if _needs_new_commission(code)
+            else "Preparation needs attention. Retry the saved work or start a new adventure.",
+        )
+    return "Preparation needs attention. Retry the saved work or start a new adventure."
+
+
 def make_preparation_supervisor(
     *, store: PreparationStore | None = None, provider: Any = None, book_client: Any = None
 ) -> PreparationSupervisor:
@@ -75,10 +133,17 @@ def _setup_snapshot(meta: dict) -> dict | None:
         raise ValueError("Captured hero selection contains duplicates.")
     heroes = setup.get("heroes")
     if isinstance(heroes, list) and heroes:
-        ids = [item.get("id") for item in heroes if isinstance(item, dict)]
+        from edgar_core.grounding import HeroPartySnapshot
+
+        try:
+            party = HeroPartySnapshot.model_validate({"heroes": heroes})
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Captured hero snapshot is invalid.") from exc
+        canonical_party = party.model_dump(mode="json")
+        ids = [hero.character_id for hero in party.heroes]
         if ids != request.character_ids:
             raise ValueError("Captured hero selection does not match the setup request.")
-        return {"request": request.model_dump(), "heroes": copy.deepcopy(heroes)}
+        return {"request": request.model_dump(), "heroes": canonical_party}
     return None
 
 
@@ -88,6 +153,12 @@ def _generation_commission(meta: dict, setup: dict) -> dict[str, Any]:
         raise ValueError("AI preparation commission is missing.")
     allowed = {"kind", "size", "theme", "title_hint", "duration", "starting_level"}
     request = {key: copy.deepcopy(value) for key, value in generation.items() if key in allowed}
+    act_counts = {"small": 3, "medium": 6, "large": 12, "gigantic": 24}
+    size = request.get("size")
+    if size not in act_counts:
+        raise ValueError("AI preparation size is invalid.")
+    request["act_count"] = act_counts[size]
+    request["target_level"] = setup["request"].get("target_level")
     request["setup"] = copy.deepcopy(setup["request"])
     return request
 
@@ -118,7 +189,9 @@ def _binding_for(
         if retained_pdf.is_file() and extraction_path.is_file():
             extraction = load_reviewed_extraction(retained_pdf, extraction_path)
         else:
-            candidate = Path(pdf_path) if pdf_path is not None else meta_store.source_pdf_path(slug, meta)
+            candidate = (
+                Path(pdf_path) if pdf_path is not None else meta_store.source_pdf_path(slug, meta)
+            )
             if not candidate.is_file():
                 raise ValueError("The retained PDF source is unavailable.")
             from .preparation_sources import retain_pdf
@@ -240,9 +313,13 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             if canonical_sha256(expected_commission) != binding.commission_sha256:
                 return False
         else:
-            if canonical_sha256(_generation_commission(meta, setup) | {
-                "source_kind": "ai", "rules_edition": binding.rules_edition
-            }) != binding.commission_sha256:
+            if (
+                canonical_sha256(
+                    _generation_commission(meta, setup)
+                    | {"source_kind": "ai", "rules_edition": binding.rules_edition}
+                )
+                != binding.commission_sha256
+            ):
                 return False
         frozen = meta.get("preparation_binding")
         return not frozen or (
@@ -256,15 +333,15 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
 
 
 def _find_artifact(publication: PreparationPublication, kind: str) -> dict[str, Any]:
-    matches = [artifact.payload for artifact in publication.artifacts if artifact.artifact_kind == kind]
+    matches = [
+        artifact.payload for artifact in publication.artifacts if artifact.artifact_kind == kind
+    ]
     if len(matches) != 1 or not isinstance(matches[0], dict):
         raise PreparationError(f"Publication requires exactly one {kind} artifact.")
     return matches[0]
 
 
-def _validated_asset_coverage(
-    value: Any, *, manifest_sha256: str, prepared_sha256: str
-):
+def _validated_asset_coverage(value: Any, *, manifest_sha256: str, prepared_sha256: str):
     """Require an exact final-manifest receipt before any source can be indexed."""
 
     from edgar_core.assets import AssetCoverageReceipt
@@ -320,7 +397,9 @@ def _make_extraction(slug: str, binding: PreparationRunBinding, payload: dict[st
     ):
         raise PreparationError("PDF source or extraction changed after run binding.")
     if binding.source_mode == "ai" and extraction.source_sha256 != extraction.text_sha256():
-        raise PreparationError("Generated source identity does not match its exact manuscript text.")
+        raise PreparationError(
+            "Generated source identity does not match its exact manuscript text."
+        )
     # For generated sources, the final exact digest is supplied by this accepted P08/P09
     # extraction and cross-checked against the manifest and retained manuscript artifact.
     return extraction
@@ -332,19 +411,73 @@ def _render_private_manuscript(value: Any) -> tuple[str, str]:
     from edgar_core.coherence import RetainedManuscript
 
     try:
-        manuscript = RetainedManuscript.model_validate(value)
+        manuscript = RetainedManuscript.model_validate_json(json.dumps(value))
     except (TypeError, ValueError) as exc:
         raise PreparationError("The retained manuscript chapter inventory is invalid.") from exc
     guide = "\n\n".join(chapter.text for chapter in manuscript.chapters)
     serialized = json.dumps(
-        manuscript.model_dump(mode="json"), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+        manuscript.model_dump(mode="json"),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     return guide, serialized
 
 
-def _publish_candidate(
-    slug: str, token: str, publication: PreparationPublication
-) -> str:
+@contextmanager
+def _publication_lock(slug: str, run_id: str):
+    """Serialize publication across workers and API processes for one immutable run."""
+
+    lock_path = preparation_path(slug, run_id).with_name("publication.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _publication_candidate_complete(slug: str, publication: PreparationPublication) -> bool:
+    candidate = meta_store.load_meta(slug).get("preparation_publication_candidate")
+    return (
+        isinstance(candidate, dict)
+        and candidate.get("run_id") == publication.run_id
+        and candidate.get("bundle_sha256") == publication.bundle_sha256
+        and candidate.get("artifact_inventory") == publication.artifact_digests
+        and candidate.get("publication_complete") is True
+        and isinstance(candidate.get("chunk_count"), int)
+        and _HEX64.fullmatch(str(candidate.get("index_version", ""))) is not None
+        and isinstance(candidate.get("ingestion"), dict)
+    )
+
+
+def _publish_candidate(slug: str, token: str, publication: PreparationPublication) -> str:
+    """Serialize exact publication and return idempotently after a completed activation."""
+
+    with _publication_lock(slug, publication.run_id):
+        state = PreparationStore().load_run(slug, publication.run_id)
+        if state.status not in (PreparationJobStatus.PUBLISHING, PreparationJobStatus.READY):
+            raise PreparationError("The preparation run is not in its publication phase.")
+        if (
+            publication.binding_sha256 != state.binding.binding_sha256
+            or publication.artifact_digests
+            != {
+                artifact.artifact_id: artifact.content_sha256
+                for artifact in state.artifacts.values()
+            }
+        ):
+            raise PreparationError("Publication does not match the accepted checkpoint inventory.")
+        if not _current_source_matches(slug, token, state.binding):
+            raise PreparationError(
+                "Source changed or preparation was cancelled before publication."
+            )
+        if _publication_candidate_complete(slug, publication):
+            return publication.bundle_sha256
+        return _publish_candidate_locked(slug, token, publication)
+
+
+def _publish_candidate_locked(slug: str, token: str, publication: PreparationPublication) -> str:
     """Validate and atomically index the exact private bundle, leaving metadata processing."""
 
     from edgar_core.manifests import AdventureManifest, manifest_digest
@@ -356,9 +489,14 @@ def _publish_candidate(
     binding = state.binding
     if state.status != PreparationJobStatus.PUBLISHING:
         raise PreparationError("The preparation run is not in its publication phase.")
-    if not publication.run_id.startswith("prep-") or publication.binding_sha256 != binding.binding_sha256:
+    if (
+        not publication.run_id.startswith("prep-")
+        or publication.binding_sha256 != binding.binding_sha256
+    ):
         raise PreparationError("Publication does not match the frozen run binding.")
-    if set(publication.artifact_digests) != {artifact.artifact_id for artifact in publication.artifacts}:
+    if set(publication.artifact_digests) != {
+        artifact.artifact_id for artifact in publication.artifacts
+    }:
         raise PreparationError("Publication inventory changed before indexing.")
     if not _current_source_matches(slug, token, binding):
         raise PreparationError("Source changed or preparation was cancelled before publication.")
@@ -395,29 +533,26 @@ def _publish_candidate(
     prepared_value = prepared_payload.get("prepared")
     if not isinstance(prepared_value, dict):
         raise PreparationError("The final prepared campaign contract is missing.")
-    from edgar_core.prepared import prepared_digest, validate_prepared_campaign
+    from edgar_core.prepared import PreparedCampaign, prepared_digest, validate_prepared_campaign
 
-    validate_prepared_campaign(manifest, prepared_value)
+    prepared_report = validate_prepared_campaign(manifest, prepared_value)
+    if not prepared_report.valid:
+        raise PreparationError(
+            "The final prepared campaign contract failed deterministic validation."
+        )
+    try:
+        prepared_campaign = PreparedCampaign.model_validate_json(json.dumps(prepared_value))
+    except (TypeError, ValueError) as exc:
+        raise PreparationError("The final prepared campaign contract is invalid.") from exc
+    if manifest.prepared is None or prepared_campaign.model_dump(
+        mode="json"
+    ) != manifest.prepared.model_dump(mode="json"):
+        raise PreparationError("The prepared campaign differs from the canonical manifest.")
     _validated_asset_coverage(
         coverage_payload.get("receipt"),
         manifest_sha256=manifest.reviewed_sha256,
         prepared_sha256=prepared_digest(manifest.prepared),
     )
-    coverage_artifact = next(
-        artifact for artifact in publication.artifacts
-        if artifact.artifact_kind == "asset_coverage"
-    )
-    manifest_artifacts = [
-        artifact for artifact in publication.artifacts
-        if artifact.artifact_kind == "canonical_manifest"
-    ]
-    if (
-        len(manifest_artifacts) != 1
-        or coverage_artifact.dependency_digests.get(manifest_artifacts[0].artifact_id)
-        != manifest_artifacts[0].content_sha256
-    ):
-        raise PreparationError("Asset coverage is not bound to the exact final manifest.")
-
     source_dir = _run_source_dir(slug, binding.run_id)
     # Save the canonical extraction and exact rendered retained manuscript under this
     # immutable run. The source-mode-specific helper retains the original PDF separately.
@@ -442,7 +577,7 @@ def _publish_candidate(
     manuscript_value = manuscript_payload["manuscript"]
     from edgar_core.coherence import RetainedManuscript
 
-    manuscript = RetainedManuscript.model_validate(manuscript_value)
+    manuscript = RetainedManuscript.model_validate_json(json.dumps(manuscript_value))
     if manuscript.source_mode != binding.source_mode:
         raise PreparationError("The retained manuscript source mode does not match the run.")
     manuscript_guide, manuscript_json = _render_private_manuscript(manuscript_value)
@@ -453,7 +588,9 @@ def _publish_candidate(
             for page, chapter in zip(extraction.pages, manuscript.chapters, strict=True)
         )
     ):
-        raise PreparationError("AI manuscript chapters do not match the final canonical extraction.")
+        raise PreparationError(
+            "AI manuscript chapters do not match the final canonical extraction."
+        )
     manuscript_path = source_dir / "retained-manuscript.json"
     manuscript_path.write_text(manuscript_json, encoding="utf-8")
     guide_path = source_dir / "private-dm-guide.md"
@@ -489,9 +626,16 @@ def _publish_candidate(
         if meta.get("private_preparation") is not True:
             raise PreparationError("The source is no longer private.")
         prior = meta.get("preparation_publication_candidate")
-        if prior and any(prior.get(key) != candidate.get(key) for key in (
-            "run_id", "bundle_sha256", "artifact_inventory", "source_sha256", "extraction_sha256"
-        )):
+        if prior and any(
+            prior.get(key) != candidate.get(key)
+            for key in (
+                "run_id",
+                "bundle_sha256",
+                "artifact_inventory",
+                "source_sha256",
+                "extraction_sha256",
+            )
+        ):
             raise PreparationError("A different candidate bundle already owns publication.")
         meta["preparation_publication_candidate"] = candidate
         meta_store.save_meta(slug, meta)
@@ -509,6 +653,7 @@ def _publish_candidate(
         raise PreparationError("Source changed or preparation was cancelled during publication.")
     candidate["chunk_count"] = chunks_count
     candidate["ingestion"] = report_summary(report_holder)
+    candidate["publication_complete"] = True
     with meta_store.attempt_guard(slug, token) as meta:
         existing = meta.get("preparation_publication_candidate") or {}
         if existing.get("bundle_sha256") != publication.bundle_sha256:
@@ -532,6 +677,15 @@ def _finalize_ready(slug: str, token: str, state: PreparationRunState) -> None:
     manifest = canonical.get("manifest")
     if not isinstance(manifest, dict):
         raise PreparationError("Final manifest artifact disappeared after publication.")
+    from edgar_core.manifests import AdventureManifest, manifest_digest
+
+    reviewed_manifest = AdventureManifest.model_validate(manifest)
+    reviewed_digest = manifest_digest(reviewed_manifest)
+    if reviewed_manifest.reviewed_sha256 not in (None, reviewed_digest):
+        raise PreparationError("Final manifest contains a stale internal receipt.")
+    reviewed_manifest.reviewed_by = "private-preparation-supervisor"
+    reviewed_manifest.reviewed_sha256 = reviewed_digest
+    manifest = reviewed_manifest.model_dump(mode="json")
     with meta_store.attempt_guard(slug, token) as meta:
         candidate = meta.get("preparation_publication_candidate") or {}
         if (
@@ -596,7 +750,8 @@ def _private_binding(meta: dict, slug: str) -> tuple[str, PreparationRunBinding 
         if (
             isinstance(job_id, str)
             and _HEX32.fullmatch(job_id)
-            and meta.get("failure_code") in {
+            and meta.get("failure_code")
+            in {
                 "preparation_setup_required",
                 "preparation_setup_invalid",
                 "preparation_profile_invalid",
@@ -651,7 +806,11 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
         ):
             return False
         from edgar_core.manifests import AdventureManifest, manifest_digest
-        from edgar_core.prepared import prepared_digest, validate_prepared_campaign
+        from edgar_core.prepared import (
+            PreparedCampaign,
+            prepared_digest,
+            validate_prepared_campaign,
+        )
 
         final_manifest = AdventureManifest.model_validate(current.get("manifest"))
         accepted_manifest = AdventureManifest.model_validate(manifest)
@@ -663,24 +822,37 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
             or current.get("prepared_campaign") != prepared_campaign
         ):
             return False
-        validate_prepared_campaign(accepted_manifest, prepared_campaign)
+        prepared_report = validate_prepared_campaign(accepted_manifest, prepared_campaign)
+        try:
+            prepared_value = PreparedCampaign.model_validate_json(json.dumps(prepared_campaign))
+        except (TypeError, ValueError):
+            return False
+        if (
+            not prepared_report.valid
+            or accepted_manifest.prepared is None
+            or prepared_value.model_dump(mode="json")
+            != accepted_manifest.prepared.model_dump(mode="json")
+        ):
+            return False
         _validated_asset_coverage(
             coverage_payload.get("receipt"),
-            manifest_sha256=accepted_manifest.reviewed_sha256,
+            manifest_sha256=final_manifest.reviewed_sha256,
             prepared_sha256=prepared_digest(accepted_manifest.prepared),
         )
         manuscript_value = manuscript_payload.get("manuscript")
         manuscript_guide, manuscript_json = _render_private_manuscript(manuscript_value)
         from edgar_core.coherence import RetainedManuscript
 
-        manuscript = RetainedManuscript.model_validate(manuscript_value)
+        manuscript = RetainedManuscript.model_validate_json(json.dumps(manuscript_value))
         if manuscript.source_mode != binding.source_mode:
             return False
         if binding.source_mode == "ai" and (
             len(manuscript.chapters) != len(canonical_extraction.pages)
             or any(
                 not page.text.endswith("\n\n" + chapter.text)
-                for page, chapter in zip(canonical_extraction.pages, manuscript.chapters, strict=True)
+                for page, chapter in zip(
+                    canonical_extraction.pages, manuscript.chapters, strict=True
+                )
             )
         ):
             return False
@@ -693,14 +865,18 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
             retained.source_sha256 != canonical_extraction.source_sha256
             or retained.text_sha256() != canonical_extraction.text_sha256()
             or retained.rules_edition != binding.rules_edition
-            or (source_dir / "retained-manuscript.json").read_text(encoding="utf-8") != manuscript_json
+            or (source_dir / "retained-manuscript.json").read_text(encoding="utf-8")
+            != manuscript_json
             or (source_dir / "private-dm-guide.md").read_text(encoding="utf-8") != manuscript_guide
         ):
             return False
         from db.vector.versions import active_index_version
 
         active_version = active_index_version(slug)
-        if active_version != receipt.get("index_version") or ingestion.get("index_version") != active_version:
+        if (
+            active_version != receipt.get("index_version")
+            or ingestion.get("index_version") != active_version
+        ):
             return False
     except Exception:
         return False
@@ -708,7 +884,9 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
         state.status == PreparationJobStatus.READY
         and state.published_bundle_sha256 is not None
         and receipt.get("run_id") == run_id == prepared.get("run_id")
-        and receipt.get("bundle_sha256") == state.published_bundle_sha256 == prepared.get("bundle_sha256")
+        and receipt.get("bundle_sha256")
+        == state.published_bundle_sha256
+        == prepared.get("bundle_sha256")
         and receipt.get("artifact_inventory") == inventory == prepared.get("artifact_inventory")
         and receipt.get("binding_sha256") == binding.binding_sha256
         and receipt.get("source_binding_sha256") == binding.source_binding_sha256
@@ -748,6 +926,18 @@ def safe_preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | 
             retryable=False,
             action="restart",
         )
+    if _needs_new_commission(state.last_safe_error_code):
+        return PublicPreparationStatus(
+            run_id=run_id,
+            status=state.status,
+            stage=(
+                safe_public_stage(state.current_stage)
+                if state.current_stage is not None
+                else "Preparation needs attention"
+            ),
+            retryable=False,
+            action="restart",
+        )
     if private_preparation_ready(slug, meta):
         return PublicPreparationStatus(
             run_id=run_id,
@@ -764,7 +954,9 @@ def safe_preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | 
             retryable=False,
             action="wait",
         )
-    return PreparationSupervisor(adapters={}, validators={}, store=PreparationStore()).status(slug, run_id)
+    return PreparationSupervisor(adapters={}, validators={}, store=PreparationStore()).status(
+        slug, run_id
+    )
 
 
 def _mark_setup_blocked(slug: str, token: str, code: str) -> None:
@@ -777,7 +969,11 @@ def _mark_setup_blocked(slug: str, token: str, code: str) -> None:
         "preparation_source_invalid": "The retained adventure source needs attention before preparation can continue.",
     }
     with meta_store.attempt_guard(slug, token) as meta:
-        meta.update(status="failed", failure_code=code, error=safe_messages.get(code, safe_messages["preparation_setup_invalid"]))
+        meta.update(
+            status="failed",
+            failure_code=code,
+            error=safe_messages.get(code, safe_messages["preparation_setup_invalid"]),
+        )
         job = meta.get("job") or {}
         job.update(state="failed", stage="preparation", retryable=False, updated_at=_now())
         meta["job"] = job
@@ -795,7 +991,8 @@ def _sync_terminal_meta(slug: str, token: str, state: PreparationRunState) -> No
         return
     public_stage = (
         safe_public_stage(state.current_stage)
-        if state.current_stage is not None else "Preparation needs attention"
+        if state.current_stage is not None
+        else "Preparation needs attention"
     )
     retained = "none"
     if any(a.artifact_kind == "retained_manuscript" for a in state.artifacts.values()):
@@ -805,21 +1002,145 @@ def _sync_terminal_meta(slug: str, token: str, state: PreparationRunState) -> No
     with meta_store.attempt_guard(slug, token) as meta:
         if meta.get("private_preparation") is not True:
             return
+        error_code = state.last_safe_error_code
+        supervisor_status = PreparationSupervisor(
+            adapters={}, validators={}, store=PreparationStore()
+        ).status(slug, state.binding.run_id)
+        restart_required = _needs_new_commission(error_code)
         meta.update(
             status="failed",
-            error="Preparation needs attention. Retry the saved work or start a new adventure.",
-            failure_code="preparation_blocked",
+            error=_preparation_failure_message(error_code),
+            failure_code=error_code or "preparation_blocked",
         )
         job = meta.get("job") or {}
         job.update(
             state="failed",
             stage=public_stage,
-            retryable=True,
+            retryable=not restart_required and supervisor_status.action == "retry",
             retained_work=retained,
             updated_at=_now(),
         )
         meta["job"] = job
         meta_store.save_meta(slug, meta)
+
+
+def _active_lease_wait_seconds(state: PreparationRunState) -> float | None:
+    """Return time to the next current-stage lease expiry when no task is claimable."""
+
+    if state.current_stage is None:
+        return None
+    plan = state.stage_plans.get(state.current_stage.value)
+    if plan is None:
+        return None
+    active = []
+    for task in plan.tasks:
+        task_state = state.tasks.get(f"{task.stage.value}:{task.task_id}")
+        if task_state is None:
+            continue
+        if task_state.status.value == "pending":
+            return None
+        if task_state.status.value in ("leased", "running") and task_state.lease_expires_at:
+            try:
+                expires = datetime.fromisoformat(task_state.lease_expires_at)
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=UTC)
+            except ValueError:
+                return None
+            active.append(max(0.0, (expires - datetime.now(UTC)).total_seconds()))
+    return min(active) if active else None
+
+
+def _recovery_task_finished(task: asyncio.Task) -> None:
+    _RECOVERY_TASKS.discard(task)
+    if not task.cancelled():
+        task.exception()
+
+
+async def recover_private_preparations() -> list[str]:
+    """Schedule interrupted private runs with valid durable checkpoints for safe resume.
+
+    Call after ``fail_stale_processing`` has cleared the dead attempt and marked its job
+    interrupted. Active task leases are left untouched; the supervisor waits for their
+    original expiry, then charges reserved usage and advances their fences as usual.
+    """
+
+    scheduled: list[str] = []
+    store = PreparationStore()
+    recoverable = {
+        PreparationJobStatus.QUEUED,
+        PreparationJobStatus.PREPARING,
+        PreparationJobStatus.REVIEWING,
+        PreparationJobStatus.REPAIRING,
+        PreparationJobStatus.PUBLISHING,
+    }
+    for slug in sorted(meta_store.metadata_slugs()):
+        meta = meta_store.load_meta(slug)
+        job = meta.get("job") or {}
+        run_id = meta.get("preparation_run_id")
+        job_id = job.get("job_id")
+        if not isinstance(run_id, str) and isinstance(job_id, str) and _HEX32.fullmatch(job_id):
+            # The process can stop after the run checkpoint is durable but before its ID
+            # is mirrored into metadata. The job ID is the deterministic run identity.
+            candidate_run_id = "prep-" + job_id
+            try:
+                store.load_run(slug, candidate_run_id)
+            except (PreparationStoreError, ValueError):
+                pass
+            else:
+                run_id = candidate_run_id
+        if (
+            meta.get("private_preparation") is not True
+            or job.get("state") != "interrupted"
+            or not isinstance(run_id, str)
+            or not re.fullmatch(r"prep-[0-9a-f]{32}", run_id)
+            or job_id != run_id.removeprefix("prep-")
+        ):
+            continue
+        try:
+            state = store.load_run(slug, run_id)
+        except (PreparationStoreError, ValueError):
+            continue
+        if state.status not in recoverable or state.binding.run_id != run_id:
+            continue
+
+        # Claim the interrupted metadata record under the same lock used by attempts so
+        # concurrent lifespan callers cannot dispatch two new workers for this run.
+        with meta_store.lifecycle_lock(slug):
+            current = meta_store.load_meta(slug)
+            current_job = current.get("job") or {}
+            if (
+                current.get("private_preparation") is not True
+                or current.get("preparation_run_id") != run_id
+                or current_job.get("state") != "interrupted"
+                or (current.get("attempt") or {}).get("id")
+            ):
+                continue
+            token = uuid.uuid4().hex
+            current.update(
+                status="processing",
+                error=None,
+                failure_code=None,
+                preparation_run_id=run_id,
+                attempt={"id": token},
+            )
+            current_job.update(
+                state="queued",
+                attempt_id=token,
+                retryable=False,
+                updated_at=_now(),
+            )
+            current_job.pop("interruption", None)
+            current["job"] = current_job
+            meta_store.save_meta(slug, current)
+
+        task = asyncio.create_task(
+            prepare_adventure(slug, attempt_token=token),
+            name=f"private-preparation-recovery-{slug}",
+        )
+        _RECOVERY_TASKS.add(task)
+        task.add_done_callback(_recovery_task_finished)
+        scheduled.append(slug)
+    return scheduled
 
 
 async def prepare_adventure(
@@ -881,13 +1202,14 @@ async def prepare_adventure(
             slug,
             current_token,
             stage=safe_public_stage(state.current_stage)
-            if state.current_stage is not None else "Starting preparation",
+            if state.current_stage is not None
+            else "Starting preparation",
         )
         supervisor = make_preparation_supervisor(store=run_path)
+
         async def publisher(publication: PreparationPublication) -> str:
-            return await asyncio.to_thread(
-                _publish_candidate, slug, current_token, publication
-            )
+            return await asyncio.to_thread(_publish_candidate, slug, current_token, publication)
+
         worker_id = f"prep-{current_token}"
         # Keep each loop iteration bounded and cancellation/restart responsive.
         for _ in range(state.binding.budget.max_provider_calls * 5 + 100):
@@ -921,12 +1243,23 @@ async def prepare_adventure(
                     # A newer attempt/cancel fences metadata progress; supervisor source_guard
                     # will stop the stale worker on the next boundary.
                     return state
+            lease_wait = _active_lease_wait_seconds(state)
+            if lease_wait is not None:
+                # Never spin through the bounded iteration budget while a valid lease
+                # belongs to a worker that may still be finishing elsewhere.
+                await asyncio.sleep(max(0.05, min(lease_wait, 15.0)))
         raise PreparationError("Preparation exceeded the bounded runtime iteration limit.")
     except PreparationError:
         raise
     except Exception as exc:
-        code = "preparation_profile_invalid" if "profile" in str(exc).lower() else (
-            "preparation_source_invalid" if "source" in str(exc).lower() else "preparation_setup_invalid"
+        code = (
+            "preparation_profile_invalid"
+            if "profile" in str(exc).lower()
+            else (
+                "preparation_source_invalid"
+                if "source" in str(exc).lower()
+                else "preparation_setup_invalid"
+            )
         )
         try:
             token = attempt_token or _job_identity(meta_store.load_meta(slug))[1]
@@ -945,6 +1278,9 @@ def retry_preparation(slug: str) -> tuple[str, str]:
     run_id = meta.get("preparation_run_id")
     if not isinstance(run_id, str):
         raise PreparationError("No retained preparation run is available to retry.")
+    state = PreparationStore().load_run(slug, run_id)
+    if _needs_new_commission(state.last_safe_error_code):
+        raise PreparationError("This preparation needs a new commission and cannot be retried.")
     supervisor = make_preparation_supervisor()
     supervisor.retry(slug, run_id)
     token = meta_store.begin_attempt(slug, job_attempt=True, job_kind="generation")
@@ -976,4 +1312,3 @@ def cancel_preparation(slug: str) -> PreparationRunState:
         except Exception:
             pass
     return cancelled
-
