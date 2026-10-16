@@ -141,6 +141,8 @@ class PreparationStore:
             current = self.load_run(slug, run_id)
             if current.revision != expected_revision:
                 raise StalePreparationRevision("A newer worker checkpoint superseded this update.")
+            if current.status.value == "ready":
+                raise PreparationStoreError("Published preparation is immutable.")
             payload = current.model_dump(mode="json")
             update(payload)
             payload["revision"] = current.revision + 1
@@ -164,6 +166,8 @@ class PreparationStore:
         path = preparation_path(slug, run_id)
         with adventures_meta.lifecycle_lock(slug):
             current = self.load_run(slug, run_id)
+            if current.status.value == "ready":
+                raise PreparationStoreError("Published preparation is immutable.")
             payload = current.model_dump(mode="json")
             update(payload)
             payload["revision"] = current.revision + 1

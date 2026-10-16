@@ -38,7 +38,7 @@ from edgar_core.preparation import (
     safe_public_stage,
 )
 
-from .preparation_store import PreparationStore
+from .preparation_store import PreparationStore, StalePreparationRevision
 
 
 class PreparationError(RuntimeError):
@@ -321,6 +321,8 @@ class PreparationSupervisor:
     ) -> PreparationRunState:
         """Invalidate the transitive dependent closure when a source artifact is amended."""
         state = self.store.load_run(slug, run_id)
+        if state.status == PreparationJobStatus.READY:
+            raise PreparationError("Published preparation is immutable; create a new version.")
         known = set(state.artifacts)
         if not artifact_ids or not set(artifact_ids) <= known:
             raise PreparationError("Invalidation roots must name accepted run artifacts.")
@@ -334,6 +336,8 @@ class PreparationSupervisor:
                     changed = True
 
         def update(payload: dict[str, Any]) -> None:
+            if payload["status"] == "ready":
+                raise PreparationError("Published preparation is immutable.")
             root_tasks = {
                 f"{artifact['stage']}:{artifact['task_id']}"
                 for key, artifact in payload["artifacts"].items() if key in invalid
@@ -440,7 +444,7 @@ class PreparationSupervisor:
                 raise ValueError("Stage plan names an unavailable dependency.")
             if task.stage.ordinal > 1 and not task.dependency_artifact_ids:
                 raise ValueError("Downstream tasks must bind accepted dependencies.")
-        if plan.stage in (PreparationStage.P06, PreparationStage.P08):
+        if plan.stage in (PreparationStage.P05, PreparationStage.P06, PreparationStage.P08):
             backbones = [a for a in state.artifacts.values()
                          if a.stage == PreparationStage.P03 and "scope_contract" in a.payload]
             if len(backbones) != 1 or not isinstance(backbones[0].payload["scope_contract"], dict):
@@ -507,11 +511,15 @@ class PreparationSupervisor:
                 or state.tokens_spent + state.tokens_reserved + reserved_tokens > available.max_total_tokens
                 or state.cost_microusd_spent + state.cost_microusd_reserved + reserved_cost > available.max_cost_microusd):
             return PreparationStep(self._block_task(slug, run_id, task, "run_budget_exhausted"))
-        now = _now()
         semaphore = self._semaphores.setdefault(run_id, asyncio.Semaphore(available.max_parallel_tasks))
         async with semaphore:
-            state = self._claim_task(slug, run_id, worker_id, task, reserved_calls,
-                                     reserved_tokens, reserved_cost, now)
+            try:
+                state = self._claim_task(slug, run_id, worker_id, task, reserved_calls,
+                                         reserved_tokens, reserved_cost)
+            except PreparationError:
+                # A duplicate worker may have claimed the same pending task, or the
+                # run was cancelled while this worker waited for its semaphore.
+                return PreparationStep(self.store.load_run(slug, run_id))
             task_state = state.tasks[_task_key(task)]
             deps = tuple(state.artifacts[artifact_id] for artifact_id in task.dependency_artifact_ids)
             adapter = self.adapters[task.stage]
@@ -547,7 +555,7 @@ class PreparationSupervisor:
 
     def _claim_task(
         self, slug: str, run_id: str, worker_id: str, task: PreparationTask,
-        calls: int, tokens: int, cost: int, now: datetime,
+        calls: int, tokens: int, cost: int,
     ) -> PreparationRunState:
         def update(payload: dict[str, Any]) -> None:
             if payload["cancel_requested"] or payload["status"] in ("cancelled", "ready"):
@@ -564,6 +572,7 @@ class PreparationSupervisor:
                     or payload["tokens_spent"] + payload["tokens_reserved"] + tokens > payload["binding"]["budget"]["max_total_tokens"]
                     or payload["cost_microusd_spent"] + payload["cost_microusd_reserved"] + cost > payload["binding"]["budget"]["max_cost_microusd"]):
                 raise PreparationError("Run budget was reserved by another worker.")
+            now = _now()  # Start the lease only after acquiring semaphore and lock.
             saved.update(status="running", attempt_count=saved["attempt_count"] + 1,
                          lease_owner=worker_id, lease_fence=saved["lease_fence"] + 1,
                          lease_expires_at=_iso(now + timedelta(seconds=self.lease_seconds)),
@@ -716,7 +725,10 @@ class PreparationSupervisor:
                          last_safe_error_code=code, updated_at=now)
             payload["status"] = "failed" if saved["status"] == "failed" else "blocked"
             payload["last_safe_error_code"] = code
-        return self.store.mutate_run(slug, run_id, update=update)
+        try:
+            return self.store.mutate_run(slug, run_id, update=update)
+        except PreparationError:
+            return self.store.load_run(slug, run_id)
 
     def _block_task(self, slug: str, run_id: str, task: PreparationTask, code: str) -> PreparationRunState:
         def update(payload: dict[str, Any]) -> None:
@@ -728,6 +740,8 @@ class PreparationSupervisor:
 
     def _block_run(self, slug: str, run_id: str, code: str) -> PreparationRunState:
         def update(payload: dict[str, Any]) -> None:
+            if payload["status"] in ("ready", "cancelled"):
+                return
             payload["status"] = "blocked"
             payload["stage_statuses"][payload["current_stage"] or "P01"] = "blocked"
             payload["last_safe_error_code"] = code
@@ -736,6 +750,8 @@ class PreparationSupervisor:
     def _finish_stage(
         self, slug: str, run_id: str, state: PreparationRunState, stage: PreparationStage
     ) -> PreparationRunState:
+        if stage == PreparationStage.P12 and state.status == PreparationJobStatus.PUBLISHING:
+            return state
         def update(payload: dict[str, Any]) -> None:
             if payload["cancel_requested"]:
                 raise PreparationError("Run was cancelled.")
@@ -774,9 +790,18 @@ class PreparationSupervisor:
                 payload["publication_inventory"] = publication.artifact_digests
                 payload["published_bundle_sha256"] = publication.bundle_sha256
                 payload["status"] = "ready"
-            ready_state = self.store.mutate_run(slug, run_id, update=ready)
+            ready_state = self.store.update_run(
+                slug, run_id, expected_revision=state.revision, update=ready
+            )
             return PreparationStep(ready_state, publication_digest=digest)
+        except StalePreparationRevision:
+            return PreparationStep(self.store.load_run(slug, run_id))
         except Exception:
+            current = self.store.load_run(slug, run_id)
+            if current.revision != state.revision or current.status in (
+                PreparationJobStatus.READY, PreparationJobStatus.CANCELLED
+            ):
+                return PreparationStep(current)
             return PreparationStep(self._block_run(slug, run_id, "publication_failed"))
 
     def _check_ready_inventory(self, state: PreparationRunState) -> None:
@@ -801,7 +826,7 @@ class PreparationSupervisor:
             raise PreparationError("Validated receipts are required for publication.")
         if any(not receipt.passed for receipt in state.validation_receipts.values()):
             raise PreparationError("Failed receipts cannot be published.")
-        if any(f.status == "open" and f.severity in ("high", "critical") for f in state.findings):
+        if any(f.status == "open" and f.severity in ("medium", "high", "critical") for f in state.findings):
             raise PreparationError("Unresolved critical findings block publication.")
 
     @staticmethod
