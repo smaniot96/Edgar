@@ -16,5 +16,7 @@ it("shows orphan campaigns when the adventure library is completely empty", () =
 it("surfaces campaign loading failures instead of claiming library is empty", () => {
   data.campaigns = []; data.campaignError = new Error("Campaign sources unavailable");
   const html = renderToStaticMarkup(<MemoryRouter><Home /></MemoryRouter>);
-  expect(html).toContain("Campaign sources unavailable"); expect(html).not.toContain("No campaigns yet");
+  expect(html).toContain("Something went wrong while processing this action.");
+  expect(html).not.toContain("Campaign sources unavailable");
+  expect(html).not.toContain("No campaigns yet");
 });

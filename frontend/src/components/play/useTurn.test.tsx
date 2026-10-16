@@ -6,23 +6,68 @@ import { useTurn } from "./useTurn";
 
 it("reports lost source truthfully and requests recovery state after an HTTP 409", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: {
-    code: "campaign_sources_unavailable", message: "Recover the campaign adventure source or choose homebrew play.", retrieval_degraded: true,
-  } }), { status: 409 })));
+  const privateDetail = "the duke is secretly the thief sk-private-token";
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: {
+    code: "campaign_sources_unavailable", message: privateDetail, retrieval_degraded: true,
+    outcome: "not_committed",
+  } }), { status: 409 }));
+  vi.stubGlobal("fetch", fetchMock);
   const unavailable = vi.fn();
+  const readinessRejected = vi.fn();
   const restored = vi.fn();
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
   function Harness() {
-    const turn = useTurn(1, { debug: false, onSourcesUnavailable: unavailable, onFailed: restored });
-    return <><button onClick={() => void turn.send("Explore")}>Explore</button>{turn.state.lines.map((line) => <p key={line.id}>{line.content}</p>)}</>;
+    const turn = useTurn(1, { debug: false, onSourcesUnavailable: unavailable, onReadinessRejected: readinessRejected, onFailed: restored });
+    const error = turn.state.lines.find((line) => line.role === "error");
+    return <>
+      <button onClick={() => void turn.send("Explore")}>Explore</button>
+      <button onClick={() => {
+        if (error?.role === "error" && error.turnId && error.retryInput && error.retryRequestId) {
+          turn.retry(error.turnId, error.retryInput, error.retryRequestId, error.draftRevision);
+        }
+      }}>Retry failed action</button>
+      {turn.state.lines.map((line) => <p key={line.id}>{line.content}</p>)}
+    </>;
   }
   try {
     await act(() => root.render(<Harness />));
     await act(async () => { container.querySelector("button")!.click(); });
-    expect(container.textContent).toContain("Recover the campaign adventure source");
+    expect(container.textContent).toContain("The adventure source needs attention");
+    expect(container.textContent).not.toContain(privateDetail);
     expect(container.textContent).not.toContain("resolving a previous action");
     expect(unavailable).toHaveBeenCalledOnce(); expect(restored).toHaveBeenCalledWith("Explore", undefined);
+    expect(readinessRejected).toHaveBeenCalledOnce();
+    await act(async () => { container.querySelectorAll("button")[1].click(); });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});
+
+it("refreshes readiness for a preparation-busy 409 without treating it as a source error", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const privateDetail = "private preparation input sk-private-token";
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    code: "preparation_in_progress",
+    message: privateDetail,
+    outcome: "not_committed",
+  }), { status: 409 })));
+  const onSourcesUnavailable = vi.fn();
+  const onReadinessRejected = vi.fn();
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  function Harness() {
+    const turn = useTurn(3, { debug: false, onSourcesUnavailable, onReadinessRejected });
+    return <><button onClick={() => void turn.send("Continue")}>Continue</button>{turn.state.lines.map((line) => <p key={line.id}>{line.content}</p>)}</>;
+  }
+  try {
+    await act(() => root.render(<Harness />));
+    await act(async () => { container.querySelector("button")!.click(); });
+    expect(container.textContent).toContain("Preparation is still running");
+    expect(container.textContent).not.toContain(privateDetail);
+    expect(onReadinessRejected).toHaveBeenCalledOnce();
+    expect(onSourcesUnavailable).not.toHaveBeenCalled();
   } finally {
     await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
   }
@@ -32,7 +77,7 @@ it("requires an authoritative receipt check before retrying an ambiguous disconn
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const fetchMock = vi.fn()
     .mockRejectedValueOnce(new TypeError("offline"))
-    .mockResolvedValueOnce(new Response(null, { status: 404 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "turn_not_found", outcome: "not_committed", recovery_action: "retry", retryable: true }), { status: 404 }))
     .mockResolvedValueOnce(new Response(
       `event: done\ndata: ${JSON.stringify({ narration: "The gate opens." })}\n\n`,
       { headers: { "content-type": "text/event-stream" } },
@@ -110,6 +155,46 @@ it("accepts a committed receipt after a lost stream and acknowledges only then",
     expect(onResult).toHaveBeenCalledWith(result);
     expect(container.textContent).toContain("The door is open.");
     expect(container.textContent).not.toContain("Check again before retrying");
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});
+
+it("does not unlock a paid retry from an unstructured 404 receipt response", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const fetchMock = vi.fn()
+    .mockRejectedValueOnce(new TypeError("private network detail"))
+    .mockResolvedValueOnce(new Response("proxy page not found", { status: 404 }));
+  vi.stubGlobal("fetch", fetchMock);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  function Harness() {
+    const turn = useTurn(7, { debug: false });
+    const error = turn.state.lines.find((line) => line.role === "error");
+    return <>
+      <button onClick={() => void turn.send("Open the gate")}>Send</button>
+      <button onClick={() => {
+        if (error?.role === "error" && error.turnId && error.retryRequestId && error.retryInput) {
+          turn.checkReceipt(error.turnId, error.retryRequestId, error.retryInput);
+        }
+      }}>Check</button>
+      <button onClick={() => {
+        if (error?.role === "error" && error.turnId && error.retryRequestId && error.retryInput) {
+          turn.retry(error.turnId, error.retryInput, error.retryRequestId);
+        }
+      }}>Retry</button>
+      <p>{error?.content}</p>
+    </>;
+  }
+  try {
+    await act(() => root.render(<Harness />));
+    await act(async () => container.querySelectorAll("button")[0].click());
+    await act(async () => container.querySelectorAll("button")[1].click());
+    expect(container.textContent).toContain("Couldn't confirm whether this action was saved");
+    await act(async () => container.querySelectorAll("button")[2].click());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("private network detail");
+    expect(container.textContent).not.toContain("proxy page not found");
   } finally {
     await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
   }

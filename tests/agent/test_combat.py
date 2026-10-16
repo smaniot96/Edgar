@@ -389,7 +389,9 @@ async def test_narrator_error_propagates(fake_llm_schema, fake_retrieval, monkey
 
     monkeypatch.setattr(fake_llm_schema, "ainvoke", boom)
     out = await _round(fake_llm_schema, _state([_player(), _enemy("Goblin")], "I attack the goblin"))
-    assert out["error"] == "RuntimeError"
+    assert out["error"] == "Narration could not be completed."
+    assert out["error_code"] == "turn_failed"
+    assert "provider down" not in out["error"]
     assert out["retrieval_degraded"] is False
     assert "source_status" in out
 

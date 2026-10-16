@@ -273,6 +273,26 @@ class PreparationJobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class SafePreparationFailure(PreparationRecord):
+    """Fixed taxonomy projection safe to expose in a preparation job response."""
+
+    code: str
+    category: Literal[
+        "source", "review", "validation", "assignment", "busy", "provider_unavailable",
+        "rate_limited", "quota_exceeded", "provider_configuration", "cancelled",
+        "interrupted", "internal", "not_found",
+    ]
+    message: str
+    recovery_action: Literal[
+        "repair_source", "review_source", "fix_input", "assign_character", "wait", "retry",
+        "check_existing_result", "configure_provider", "restart_preparation", "contact_support",
+        "read_history",
+    ]
+    retryable: bool
+    support_ref: str = Field(pattern=r"^err-[0-9a-f]{16}$")
+    outcome: Literal["not_committed", "committed", "unknown"]
+
+
 class PreparationTaskStatus(StrEnum):
     PENDING = "pending"
     LEASED = "leased"
@@ -310,6 +330,7 @@ class PreparationRunState(PreparationRecord):
     status: PreparationJobStatus = PreparationJobStatus.QUEUED
     current_stage: PreparationStage | None = None
     last_safe_error_code: TaskId | None = None
+    last_safe_error_ref: str | None = Field(default=None, pattern=r"^err-[0-9a-f]{16}$")
     cancel_requested: bool = False
     stage_statuses: dict[str, PreparationTaskStatus] = Field(default_factory=dict)
     stage_plans: dict[str, StagePlan] = Field(default_factory=dict)
@@ -342,6 +363,7 @@ class PublicPreparationStatus(PreparationRecord):
     stage: str
     retryable: bool
     action: Literal["wait", "retry", "restart", "none"]
+    failure: SafePreparationFailure | None = None
 
 
 class PreparationPublication(PreparationRecord):

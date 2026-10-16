@@ -7,6 +7,8 @@ import {
   createSession,
   deleteSession,
   getSession,
+  errorDetails,
+  errorMessage,
   listNpcs,
   uploadAdventure,
 } from "./client";
@@ -44,7 +46,7 @@ describe("API transport", () => {
     });
   });
 
-  it("retains request IDs and raw errors without exposing internal details in the message", async () => {
+  it("retains safe correlation while discarding raw response diagnostics", async () => {
     const body = '{"detail":"internal diagnostic"}';
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
       status: 500,
@@ -53,9 +55,21 @@ describe("API transport", () => {
     const err = await apiFetch("/api/sessions").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({
-      status: 500, body, requestId: "request-123",
-      message: "Something went wrong on the server. Please try again.",
+      status: 500, requestId: "request-123",
     });
+    expect(JSON.stringify(err)).not.toContain("internal diagnostic");
+    expect(errorMessage(err)).not.toContain("internal diagnostic");
+    expect(errorDetails(err)).not.toContain("internal diagnostic");
+    expect(errorDetails(err)).toContain("request-123");
+  });
+
+  it.each([400, 409, 422, 429, 500, 503])("bounds both ordinary and expanded errors at HTTP %s", (status) => {
+    const secret = "PRIVATE-PLAYER-PROMPT-/private/manuscript-sk-sensitive";
+    const err = new ApiError(status, JSON.stringify({ detail: secret, error: { prompt: secret } }), `invalid ${secret}`);
+    expect(errorMessage(err) + errorDetails(err) + JSON.stringify(err)).not.toContain(secret);
+    expect(err.requestId).toBeUndefined();
+    expect(errorMessage(new Error(secret))).not.toContain(secret);
+    expect(errorDetails(new Error(secret))).toBeNull();
   });
 });
 

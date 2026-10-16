@@ -77,6 +77,32 @@ def _checkpoint_chapters() -> dict[str, str]:
     }
 
 
+def test_failed_job_projection_uses_safe_copy_and_stable_support_reference():
+    private_detail = "private generation prompt and sk-secret-123"
+    metadata = {
+        "status": "failed",
+        "failure_code": "turn_save_failed",
+        "error": private_detail,
+        "support_ref": "err-0123456789abcdef",
+        "job": {
+            "job_id": "a" * 32,
+            "kind": "ingestion",
+            "state": "failed",
+            "stage": "failed",
+        },
+    }
+
+    first = campaign_sources.safe_job_read(metadata, "failed_job")
+    second = campaign_sources.safe_job_read(metadata, "failed_job")
+
+    assert first is not None and second is not None
+    assert first.failure is not None and second.failure is not None
+    assert first.failure.code == "turn_save_failed"
+    assert first.failure.support_ref == second.failure.support_ref == "err-0123456789abcdef"
+    assert first.failure.message != private_detail
+    assert private_detail not in first.model_dump_json()
+
+
 def test_restart_at_outline_stage_reports_paid_restart_without_calling_provider(
     recovery_store, monkeypatch
 ):

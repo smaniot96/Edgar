@@ -52,6 +52,17 @@ export interface AdventureJobRead {
   action_label: string | null;
   explanation: string | null;
   source_version: string | null;
+  failure?: SafeFailureRead | null;
+}
+
+export interface SafeFailureRead {
+  code: string;
+  category: "source" | "review" | "validation" | "assignment" | "busy" | "provider_unavailable" | "rate_limited" | "quota_exceeded" | "provider_configuration" | "cancelled" | "interrupted" | "internal" | "not_found";
+  message: string;
+  recovery_action: "repair_source" | "review_source" | "fix_input" | "assign_character" | "wait" | "retry" | "check_existing_result" | "configure_provider" | "restart_preparation" | "contact_support" | "read_history";
+  retryable: boolean;
+  support_ref: string;
+  outcome: "not_committed" | "committed" | "unknown";
 }
 
 export interface ExtractionPreview extends IngestionSummary {

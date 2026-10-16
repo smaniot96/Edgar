@@ -47,6 +47,7 @@ export interface DmLine extends BaseLine {
 }
 
 export interface ErrorLine extends BaseLine {
+  retryable?: boolean;
   role: "error";
   content: string;
   code?: string;
@@ -105,6 +106,7 @@ export type TurnAction =
       reason: FailReason;
       message: string;
       code?: string;
+      retryable?: boolean;
       uncertain?: boolean;
     }
   | { type: "markRetryable"; turnId: string; message: string }
@@ -177,7 +179,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
     return {
       ...state,
       lines: state.lines.map((line) => line.turnId === action.turnId
-        ? { ...line, ...(line.role === "error" ? { content: action.message } : {}), uncertain: false }
+        ? { ...line, ...(line.role === "error" ? { content: action.message, retryable: true, code: "turn_not_found" } : {}), uncertain: false }
         : line),
     };
   }
@@ -282,6 +284,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         role: "error",
         content: action.message,
         code: action.code,
+        retryable: action.retryable === true,
         retryInput: p.input,
         retryRequestId: p.requestId,
         draftRevision: p.draftRevision,
