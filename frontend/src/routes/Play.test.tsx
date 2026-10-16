@@ -45,7 +45,7 @@ it("preserves live transcript when readiness changes and disables module actions
   expect(container.textContent).toContain("Adventure sources need recovery"); expect(container.textContent).toContain("A recently saved turn"); expect(container.querySelector("textarea")?.disabled).toBe(true);
   expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("I check the doorway before entering.");
   const readinessNotices = Array.from(container.querySelectorAll("section")).filter((section) => section.textContent?.includes(blocked.blockers[0].message));
-  expect(readinessNotices).toHaveLength(2);
+  expect(readinessNotices).toHaveLength(1);
   expect(readinessNotices.filter((section) => section.getAttribute("aria-live") === "polite")).toHaveLength(0);
   expect(Array.from(container.querySelectorAll('[role="status"][aria-live="polite"]')).filter((section) => section.textContent?.includes(blocked.blockers[0].message))).toHaveLength(1);
   expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
@@ -136,6 +136,50 @@ it("opens selected journal entries from safe links and supports expanded, larger
   await act(() => button("Larger text")?.click());
   expect(container.querySelector("#journal-entry-clue-1 .journal-entry-copy")?.className).toContain("text-base");
   expect(container.querySelector("#journal-entry-clue-1 .journal-entry-copy")?.textContent).toBe("A wax seal bears a star.");
+});
+
+it("keeps very long campaign and hero names compact while exposing their full names", async () => {
+  stubViewport(true);
+  const campaignTitle = "C".repeat(150);
+  const heroName = "長".repeat(255);
+  const clueTitle = "The letter carried by the tide";
+  harness.game = { ...gameFixture(), title: campaignTitle, character: { ...sheetCharacter, name: heroName } };
+  const journal = journalFixture();
+  journal.entries.push({ ...journal.entries[0], id: "clue-long", title: clueTitle, text: `“${"A quoted clue with a very long unbroken inscription ".repeat(8)}”` });
+  harness.journal = { ...harness.journal, data: journal };
+  await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+
+  const title = container.querySelector<HTMLAnchorElement>("h1 a")!;
+  expect(title.textContent).toBe(campaignTitle);
+  expect(title.className).toContain("overflow-wrap:anywhere");
+  expect(title.className).toContain("line-clamp-2");
+  expect(title.hasAttribute("title")).toBe(false);
+  const titleDisclosure = container.querySelector<HTMLDetailsElement>("header details")!;
+  const titleSummary = titleDisclosure.querySelector<HTMLElement>("summary")!;
+  expect(titleSummary.textContent).toBe("Full title");
+  expect(titleSummary.className).toContain("min-h-11");
+  await act(() => titleSummary.click());
+  expect(titleDisclosure.open).toBe(true);
+  const fullTitle = titleDisclosure.querySelector<HTMLElement>("div")!;
+  expect(fullTitle.textContent).toBe(campaignTitle);
+  expect(fullTitle.className).toContain("max-h-[min(35dvh,14rem)]");
+  expect(fullTitle.className).toContain("overflow-y-auto");
+  const heroButton = container.querySelector<HTMLButtonElement>('button[aria-controls="character-sheet"]')!;
+  expect(heroButton.textContent).toContain(heroName);
+  expect(heroButton.getAttribute("aria-label")).toContain(heroName);
+  expect(heroButton.className).toContain("min-h-11");
+  expect(heroButton.querySelector("span span")?.className).toContain("line-clamp-1");
+
+  await act(() => heroButton.click());
+  const sheet = container.querySelector<HTMLElement>("#character-sheet")!;
+  expect(sheet.querySelector("h2")?.textContent).toBe(heroName);
+  expect(sheet.querySelector("h2")?.className).toContain("overflow-wrap:anywhere");
+  expect(sheet.querySelector<HTMLButtonElement>('button[aria-label="Close character sheet"]')?.className).toContain("min-w-11");
+  await act(() => sheet.querySelector<HTMLButtonElement>('button[aria-label="Close character sheet"]')?.click());
+
+  await act(() => Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((button) => button.textContent === "Journal")?.click());
+  expect(container.querySelector('[aria-label="Journal tool"]')?.textContent).toContain(clueTitle);
+  expect(container.querySelector("[aria-label='Current adventure context']")?.className).toContain("overflow-wrap:anywhere");
 });
 
 
@@ -247,6 +291,58 @@ it("keeps the desktop character sheet nonmodal and follows a breakpoint change w
   expect(sheet.getAttribute("role")).toBeNull();
   expect(container.querySelector("[inert]")).toBeNull();
   expect(trigger.closest("[aria-hidden='true']")).toBeNull();
+});
+
+it("reflows journal and expanded map tools across breakpoints without losing the draft or return focus", async () => {
+  const setNarrow = stubViewport(false);
+  harness.game = gameFixture();
+  harness.journal = { ...harness.journal, data: journalFixture() };
+  await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+  const toolbar = (name: string) => Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find((item) => item.textContent === name)!;
+  const composer = container.querySelector<HTMLTextAreaElement>("textarea")!;
+  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  await act(() => { setValue?.call(composer, "Keep this draft through a viewport resize."); composer.dispatchEvent(new Event("input", { bubbles: true })); });
+
+  toolbar("Journal").focus();
+  await act(() => toolbar("Journal").click());
+  const journalPanel = () => container.querySelector<HTMLElement>('[aria-label="Journal tool"]');
+  expect(journalPanel()?.getAttribute("role")).toBeNull();
+  expect(container.querySelector("[aria-label='Close adventure tool']")).toBeNull();
+  await act(() => setNarrow(true));
+  await frame();
+  expect(journalPanel()?.getAttribute("role")).toBe("dialog");
+  expect(journalPanel()?.getAttribute("aria-modal")).toBe("true");
+  expect(container.querySelectorAll("[aria-label='Close adventure tool']")).toHaveLength(1);
+  expect(container.querySelector("[inert]")).not.toBeNull();
+  expect(composer.value).toBe("Keep this draft through a viewport resize.");
+
+  await act(() => setNarrow(false));
+  await frame();
+  expect(journalPanel()?.getAttribute("role")).toBeNull();
+  expect(container.querySelector("[inert]")).toBeNull();
+  expect(container.querySelectorAll("[aria-label='Close adventure tool']")).toHaveLength(0);
+  expect(composer.value).toBe("Keep this draft through a viewport resize.");
+  const search = container.querySelector<HTMLInputElement>('input[type="search"]')!;
+  search.focus();
+  key(search, { key: "Escape" });
+  expect(journalPanel()).toBeNull();
+  expect(document.activeElement).toBe(toolbar("Journal"));
+
+  toolbar("Map").focus();
+  await act(() => toolbar("Map").click());
+  const mapPanel = () => container.querySelector<HTMLElement>('[aria-label="Map tool"]');
+  const fullView = Array.from(mapPanel()!.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === "Full view")!;
+  fullView.focus();
+  await act(() => fullView.click());
+  expect(mapPanel()?.getAttribute("aria-modal")).toBe("true");
+  await act(() => setNarrow(true));
+  await frame();
+  expect(mapPanel()?.getAttribute("aria-modal")).toBe("true");
+  expect(container.querySelector("[inert]")).not.toBeNull();
+  await act(() => mapPanel()?.querySelector<HTMLButtonElement>('button[aria-label="Close map"]')?.click());
+  expect(mapPanel()).toBeNull();
+  expect(document.activeElement).toBe(toolbar("Map"));
+  expect(composer.value).toBe("Keep this draft through a viewport resize.");
 });
 
 it("closes a desktop tool from inside it and returns focus, but leaves Escape to the composer and IME", async () => {

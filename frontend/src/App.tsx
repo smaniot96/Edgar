@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 
 import EdgarLogo from "./components/EdgarLogo";
+import { useVisualViewportStyle } from "./components/play/useVisualViewportStyle";
 import { GearIcon } from "./components/ui/icons";
 import { useMode } from "./dev/ModeContext";
 import { ModeToggle } from "./dev/ModeToggle";
@@ -9,7 +10,7 @@ import { cn } from "./lib/cn";
 
 function navClass({ isActive }: { isActive: boolean }) {
   return cn(
-    "inline-flex h-8 items-center gap-1.5 rounded-control px-2.5 text-sm font-medium transition-colors",
+    "inline-flex min-h-11 items-center gap-1.5 rounded-control px-2.5 text-sm font-medium transition-colors",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400",
     isActive
       ? "bg-surface-raised text-ink"
@@ -23,6 +24,7 @@ function navClass({ isActive }: { isActive: boolean }) {
  */
 export default function App() {
   const { isDev } = useMode();
+  const viewportStyle = useVisualViewportStyle();
   const { pathname } = useLocation();
   const pageRef = useRef<HTMLDivElement>(null);
   const lastPathname = useRef(pathname);
@@ -37,21 +39,21 @@ export default function App() {
     target.focus({ preventScroll: true });
   }, [pathname]);
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-canvas font-sans text-ink">
+    <div style={viewportStyle} className="fixed inset-x-0 top-[var(--edgar-visible-top,0px)] flex h-[var(--edgar-visible-height,100dvh)] flex-col overflow-hidden bg-canvas font-sans text-ink">
       <header
         className={cn(
-          "shrink-0 border-b border-line bg-canvas/95",
+          "shrink-0 border-b border-line bg-canvas/95 pt-[env(safe-area-inset-top)]",
           // Thin amber top border makes Developer mode obvious at a glance.
           isDev && "border-t-2 border-t-ember-500",
         )}
       >
         <nav
           aria-label="Main"
-          className="mx-auto flex h-12 w-full items-center gap-1 px-2 sm:gap-2 sm:px-4"
+          className="mx-auto flex min-h-12 w-full flex-wrap items-center gap-1 px-2 py-1 sm:gap-2 sm:px-4"
         >
           <Link
             to="/"
-            className="mr-1 flex w-16 shrink-0 items-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400 sm:mr-3 sm:w-[4.5rem]"
+            className="mr-1 flex min-h-11 w-12 shrink-0 items-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400 sm:mr-3 sm:w-[4.5rem]"
           >
             <EdgarLogo variant="mark" title="Edgar — home" />
           </Link>
@@ -66,7 +68,7 @@ export default function App() {
               <GearIcon className="h-4 w-4" />
               <span className="sr-only sm:not-sr-only">Settings</span>
             </NavLink>
-            <ModeToggle />
+            <ModeToggle className="min-h-11 min-w-11" />
           </div>
         </nav>
       </header>

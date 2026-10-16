@@ -55,13 +55,13 @@ export function CharacterSheet({
         aria-modal={narrow ? true : undefined}
         tabIndex={narrow ? -1 : undefined}
         className={cn(
-          "fixed inset-y-0 right-0 z-40 flex w-[min(20rem,88vw)] flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60",
+          "fixed inset-y-0 right-0 z-40 flex w-[min(20rem,88vw)] flex-col border-l border-line bg-canvas pt-[env(safe-area-inset-top)] shadow-2xl shadow-black/60",
           "lg:static lg:z-auto lg:w-72 lg:shadow-none",
         )}
       >
         <div className="flex items-start gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate font-display text-display-sm text-ink">{c.name || "Adventurer"}</h2>
+            <h2 className="whitespace-normal break-words font-display text-display-sm text-ink [overflow-wrap:anywhere]">{c.name || "Adventurer"}</h2>
             <p className="text-xs text-ink-muted">
               {[c.className, c.level != null ? `Level ${c.level}` : null].filter(Boolean).join(" · ") || "—"}
             </p>
@@ -70,7 +70,7 @@ export function CharacterSheet({
             type="button"
             onClick={onClose}
             aria-label="Close character sheet"
-            className="rounded p-1 text-ink-muted hover:bg-surface-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+            className="min-h-11 min-w-11 shrink-0 rounded p-1 text-ink-muted hover:bg-surface-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
           >
             ✕
           </button>
@@ -154,13 +154,13 @@ export function CharacterSheet({
                     <dd>
                       <ul className="space-y-0.5 text-ink">
                         {g.items.map((it, i) => (
-                        <li key={`${it}-${i}`} className="flex items-center gap-2 before:text-ember-600/70 before:content-['•']">
-                          <span className="min-w-0 flex-1">{it}</span>
+                        <li key={`${it}-${i}`} className="flex min-w-0 items-center gap-2 before:shrink-0 before:text-ember-600/70 before:content-['•']">
+                          <span className="min-w-0 flex-1 whitespace-normal break-words [overflow-wrap:anywhere]">{it}</span>
                           {readableItems?.get(it) && onReadItem ? (
                             <button
                               type="button"
                               aria-label={`Read ${it}`}
-                              className="shrink-0 text-xs font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
+                              className="min-h-11 shrink-0 px-2 text-xs font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
                               onClick={() => onReadItem(readableItems.get(it)!)}
                             >
                               Read
