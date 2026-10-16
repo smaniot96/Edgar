@@ -1,6 +1,6 @@
 """Retire the legacy combat_state.active_character pointer.
 
-Revision ID: 15_retire_combat_active_character
+Revision ID: 15_retire_combat_pointer
 Revises: 14_session_story_ledger
 Create Date: 2026-10-16
 
@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "15_retire_combat_active_character"
+revision: str = "15_retire_combat_pointer"
 down_revision: str | Sequence[str] | None = "14_session_story_ledger"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
