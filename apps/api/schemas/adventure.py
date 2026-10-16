@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 from edgar_core.sources import RulesEdition, SourceEdition
 
+from .preparation_setup import PreparationSetup
+
 AdventureStatus = Literal[
     "processing", "ready", "failed", "missing", "empty", "partial", "unavailable"
 ]
@@ -84,3 +86,4 @@ class AdventureGenerateRequest(BaseModel):
     theme: str | None = None  # free-text premise/setting/tone the player wants
     size: CampaignSize = "medium"
     rules_edition: RulesEdition = "2014"
+    preparation: PreparationSetup | None = None

@@ -467,9 +467,24 @@ def retrieve_active_scene(
         raise RetrievalError(f"Reviewed scene retrieval failed for {collection}") from exc
     if set(found) != set(wanted):
         raise ManifestError("Reviewed scene passages are missing or stale in the adventure index.")
+    # Extensions are sealed into this exact manifest receipt. Read them directly from
+    # that immutable definition, keeping invented DM prose out of the physical PDF
+    # page-coverage index. The same current-scene and committed flag gates apply.
+    extension_context = {"player": [], "planner": []}
+    if manifest.prepared is not None:
+        from edgar_core.prepared import project_prepared_extension_chunks
+
+        for audience in ("player", "planner"):
+            extension_context[audience] = [
+                {**chunk, "kind": "adventure", "collection": collection, "score": None}
+                for chunk in project_prepared_extension_chunks(
+                    manifest, scene_id=current_scene_id, world_flags=world_flags or {},
+                    audience=audience,
+                )
+            ]
     return {
-        "adventure_context": [found[pid] for pid in selection["player_passage_ids"]],
-        "planner_context": [found[pid] for pid in selection["planner_passage_ids"]],
+        "adventure_context": [found[pid] for pid in selection["player_passage_ids"]] + extension_context["player"],
+        "planner_context": [found[pid] for pid in selection["planner_passage_ids"]] + extension_context["planner"],
         "allowed_scene_ids": selection["allowed_scene_ids"],
         "discovery_entities": selection["entities"],
     }

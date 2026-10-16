@@ -304,6 +304,13 @@ def _ingest_adventure(
     source_filename: str | None = None,
 ) -> None:
     """Background worker: embed the PDF and flip the adventure's status to ready/failed."""
+    if load_adventure_metadata(slug).get("private_preparation"):
+        import asyncio
+
+        from ..services.preparation_runtime import prepare_adventure
+
+        asyncio.run(prepare_adventure(slug, pdf_path=pdf_path))
+        return
     # Imported here so the API process only pays the ingestion import cost on first upload.
     from db.vector.versions import SupersededIngestion
     from ingestion.embed import run_pipeline
@@ -450,12 +457,21 @@ async def upload_adventure(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     rules_edition: SourceEdition = Form(default="unspecified"),
+    preparation: str | None = Form(default=None, max_length=16000),
 ):
     """Upload a campaign PDF; it embeds in the background and becomes a playable adventure.
 
     Returns 202 immediately with status "processing"; poll GET /adventures for the slug to see
     it flip to "ready" (or "failed").
     """
+    from ..schemas.preparation_setup import PreparationSetup
+    from ..services.preparation_commission import capture_setup
+
+    try:
+        setup = PreparationSetup.model_validate_json(preparation) if preparation else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Choose a hero and a valid preparation budget.") from exc
+    captured = await capture_setup(setup)
     filename = file.filename or "adventure.pdf"
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -473,6 +489,8 @@ async def upload_adventure(
             "chunks": None,
             "error": None,
             "source_filename": filename,
+            "private_preparation": True,
+            "preparation_setup": captured,
             "created_at": datetime.now(UTC).isoformat(),
             "job": new_job("ingestion", "queued", retained_work="source_pdf"),
         },
@@ -516,6 +534,9 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
     """
     from ..services.campaign_generator import build_generated_campaign
 
+    from ..services.preparation_commission import capture_setup
+
+    captured = await capture_setup(body.preparation)
     title_hint = (body.title or "").strip()
     base = _slugify(title_hint or body.theme or "ai campaign")
     slug = await run_in_threadpool(
@@ -528,6 +549,8 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
             "chunks": None,
             "error": None,
             "source_filename": None,
+            "private_preparation": True,
+            "preparation_setup": captured,
             "created_at": datetime.now(UTC).isoformat(),
             "generation": {
                 "kind": "ai",

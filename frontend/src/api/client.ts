@@ -186,10 +186,11 @@ export function getAdventure(slug: string, signal?: AbortSignal): Promise<Advent
   return getJson(`/api/adventures/${encodeURIComponent(slug)}`, signal);
 }
 
-export async function uploadAdventure(file: File, title?: string, rulesEdition: "2014" | "2024" | "unspecified" = "unspecified"): Promise<AdventureRead> {
+export async function uploadAdventure(file: File, title?: string, rulesEdition: "2014" | "2024" | "unspecified" = "unspecified", preparation?: import("./types").PreparationSetup): Promise<AdventureRead> {
   const form = new FormData();
   form.append("file", file);
   form.append("rules_edition", rulesEdition);
+  if (preparation) form.append("preparation", JSON.stringify(preparation));
   if (title && title.trim()) form.append("title", title.trim());
   return json(await apiFetch("/api/adventures/upload", { method: "POST", body: form }));
 }

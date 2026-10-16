@@ -13,8 +13,10 @@ const SIZES: { value: AdventureSize; label: string; blurb: string }[] = [
   { value: "small", label: "Small", blurb: "A quick one-shot (~1–2h)" },
   { value: "medium", label: "Medium", blurb: "A short adventure, a few scenes" },
   { value: "large", label: "Large", blurb: "A multi-act adventure with subplots" },
-  { value: "gigantic", label: "Gigantic", blurb: "An epic, many chapters (takes a few minutes)" },
+  { value: "gigantic", label: "Gigantic", blurb: "An epic with many distinct acts" },
 ];
+
+import { usePreparationSetup } from "./PreparationFields";
 
 type CreateMode = "ai" | "upload";
 const CREATE_TABS = [
@@ -42,6 +44,7 @@ export function CreatePanel({ onCreated }: { onCreated: (a: AdventureRead) => vo
 }
 
 function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
+  const preparation = usePreparationSetup();
   const [title, setTitle] = useState("");
   const [theme, setTheme] = useState("");
   const [size, setSize] = useState<AdventureSize>("medium");
@@ -50,6 +53,7 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!preparation.setup) return;
     setBusy(true);
     setError(null);
     try {
@@ -57,6 +61,7 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
         title: title.trim() || undefined,
         theme: theme.trim() || undefined,
         size,
+        preparation: preparation.setup,
       });
       setTitle("");
       setTheme("");
@@ -124,8 +129,9 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
         </div>
       </fieldset>
 
+      {preparation.fields}
       <ErrorNotice error={error} />
-      <Button type="submit" loading={busy} loadingText="Starting…">
+      <Button type="submit" disabled={!preparation.setup} loading={busy} loadingText="Starting…">
         Generate campaign
       </Button>
     </form>
@@ -133,8 +139,9 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
 }
 
 function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
+  const preparation = usePreparationSetup();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [rulesEdition, setRulesEdition] = useState<"2014" | "2024" | "unspecified">("unspecified");
+  const [rulesEdition, setRulesEdition] = useState<"2014" | "2024" | "unspecified">("2014");
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -142,11 +149,11 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!file) return;
+    if (!file || !preparation.setup) return;
     setBusy(true);
     setError(null);
     try {
-      const created = await uploadAdventure(file, title, rulesEdition);
+      const created = await uploadAdventure(file, title, rulesEdition, preparation.setup);
       setFile(null);
       setTitle("");
       if (fileRef.current) fileRef.current.value = "";
@@ -161,8 +168,8 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
   return (
     <form onSubmit={(e) => void submit(e)} className="space-y-4">
       <p className="text-sm text-ink-muted">
-        Already have an adventure module? Pick a PDF — it is indexed in the background (this can
-        take a few minutes) and becomes playable when ready.
+        Already have an adventure module? Pick a PDF. Edgar studies it privately, prepares the
+        whole adventure for your hero and checks it before play.
       </p>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <Field label="Source rules edition" hint="Use unspecified when the publication does not declare an edition.">
@@ -191,8 +198,9 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
           onChange={(e) => setTitle(e.target.value)}
         />
       </div>
+      {preparation.fields}
       <ErrorNotice error={error} />
-      <Button type="submit" disabled={!file} loading={busy} loadingText="Uploading…">
+      <Button type="submit" disabled={!file || !preparation.setup} loading={busy} loadingText="Uploading…">
         Upload
       </Button>
     </form>

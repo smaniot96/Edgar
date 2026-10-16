@@ -62,7 +62,17 @@ export interface ExtractionPreview extends IngestionSummary {
 
 export type AdventureSize = "small" | "medium" | "large" | "gigantic";
 
+export interface PreparationSetup {
+  character_ids: number[];
+  target_level?: number;
+  max_cost_microusd: number;
+  required_maps: boolean;
+  required_handouts: boolean;
+}
+
 export interface AdventureGenerateRequest {
+  preparation?: PreparationSetup;
+  rules_edition?: RulesEdition;
   title?: string;
   theme?: string;
   size: AdventureSize;
