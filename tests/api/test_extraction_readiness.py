@@ -231,7 +231,7 @@ async def test_partial_generated_outline_fails_without_expanding_or_indexing(
 
 
 async def test_unreadable_generation_checkpoint_persists_the_logged_support_reference(
-    local_sources, monkeypatch
+    local_sources, monkeypatch, fresh_safe_error_logger
 ):
     adventures_meta.save_meta(
         "bridge", {"status": "processing", "generation": {"kind": "ai"}}

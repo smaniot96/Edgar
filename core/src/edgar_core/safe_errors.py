@@ -92,6 +92,9 @@ _register(
     FailureSpec(ErrorCategory.VALIDATION, "creature_identity_unresolved", "Choose an exact verified creature name before starting the encounter.", 409, RecoveryAction.FIX_INPUT),
 )
 _register(
+    FailureSpec(ErrorCategory.VALIDATION, "turn_identity_conflict", "This action identifier already belongs to a different action. Check its saved result before continuing.", 409, RecoveryAction.CHECK_EXISTING_RESULT),
+)
+_register(
     FailureSpec(ErrorCategory.ASSIGNMENT, "character_not_assigned", "Choose a character assigned to this campaign before continuing.", 409, RecoveryAction.ASSIGN_CHARACTER),
     "assignment_required", "character_assignment_required", "assignment_conflict",
     "choose_character", "character_assignment_conflict",
@@ -123,7 +126,7 @@ _register(
     FailureSpec(ErrorCategory.SOURCE, "preparation_failed", "Adventure preparation needs attention. Review its setup and restart preparation to continue.", 409, RecoveryAction.RESTART_PREPARATION),
 )
 _register(
-    FailureSpec(ErrorCategory.VALIDATION, "campaign_ended", "This campaign is complete. You can read its saved history.", 409, RecoveryAction.READ_HISTORY),
+    FailureSpec(ErrorCategory.VALIDATION, "campaign_ended", "This campaign has ended. You can read its saved history.", 409, RecoveryAction.READ_HISTORY),
     "completed",
 )
 _register(

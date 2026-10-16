@@ -125,7 +125,14 @@ async def player_http_error_handler(request: Request, exc: HTTPException):
             outcome="not_committed",
             support_ref=failure.support_ref,
         )
-    return JSONResponse(status_code=exc.status_code, content=failure.to_payload())
+    payload = failure.to_payload()
+    # Retain the historical gate envelope used by clients while replacing every
+    # free-form field. No source details, paths, exception text or input are copied.
+    if isinstance(exc.detail, dict) and failure.category in {"source", "review"}:
+        payload["detail"] = {"code": failure.code, "message": failure.message}
+        if failure.code == "campaign_sources_unavailable":
+            payload["detail"]["retrieval_degraded"] = True
+    return JSONResponse(status_code=exc.status_code, content=payload)
 
 
 @app.exception_handler(Exception)

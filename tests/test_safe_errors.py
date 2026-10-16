@@ -89,7 +89,7 @@ def test_turn_save_failed_keeps_distinct_stable_code_and_check_action() -> None:
     assert failure.to_payload()["outcome"] == "unknown"
 
 
-def test_structured_log_contains_no_exception_or_provider_text() -> None:
+def test_structured_log_contains_no_exception_or_provider_text(fresh_safe_error_logger) -> None:
     error = APIConnectionError(
         request=httpx.Request("POST", "https://api.example.test/v1/responses")
     )

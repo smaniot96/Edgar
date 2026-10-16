@@ -21,7 +21,7 @@ from apps.api.routers._common import HTTPErrorWithContext
 SECRET = "PRIVATE-PROMPT-and-future-branch-/private/manuscript-sk-sensitive"
 
 
-async def test_internal_fault_response_and_log_drop_arbitrary_private_exception():
+async def test_internal_fault_response_and_log_drop_arbitrary_private_exception(fresh_safe_error_logger):
     app = FastAPI()
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
@@ -85,7 +85,7 @@ async def test_assignment_error_keeps_safe_repair_context_only():
 
 @pytest.mark.parametrize("provider", [False, True])
 async def test_sync_and_stream_preserve_failure_attribution_and_uncommitted_outcome(
-    monkeypatch, provider
+    monkeypatch, provider, fresh_safe_error_logger
 ):
     from openai import APIConnectionError
 
@@ -179,3 +179,31 @@ async def test_receipt_not_found_retains_definitive_outcome_and_reference():
     assert response.json()["outcome"] == "not_committed"
     assert response.json()["retryable"] is True
     assert response.json()["support_ref"] == "err-0123456789abcdef"
+
+
+@pytest.mark.parametrize("code", ["campaign_sources_unavailable", "adventure_manifest_review_required", "turn_identity_conflict"])
+async def test_safe_http_boundary_preserves_actionable_codes_and_gate_envelopes(code):
+    from fastapi import HTTPException
+
+    from apps.api.main import player_http_error_handler
+
+    app = FastAPI()
+    app.add_exception_handler(HTTPException, player_http_error_handler)
+
+    @app.post("/api/sessions/1/turn")
+    async def blocked():
+        raise HTTPException(409, detail={"code": code, "message": SECRET, "sources": [SECRET]})
+
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+        response = await client.post("/api/sessions/1/turn")
+    payload = response.json()
+    assert response.status_code == 409
+    assert payload["code"] == code
+    assert payload["outcome"] == "not_committed"
+    assert payload["retryable"] is False
+    assert SECRET not in response.text
+    if code != "turn_identity_conflict":
+        assert payload["detail"]["code"] == code
+        assert "sources" not in payload["detail"]
+    if code == "campaign_sources_unavailable":
+        assert payload["detail"]["retrieval_degraded"] is True
