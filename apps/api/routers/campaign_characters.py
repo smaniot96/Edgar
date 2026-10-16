@@ -61,7 +61,9 @@ async def list_campaign_characters(
     return [_roster_row(a, a.character) for a in r.scalars().all()]
 
 
-@router.post("/campaigns/{campaign_id}/characters", response_model=CampaignCharacterRead, status_code=201)
+@router.post(
+    "/campaigns/{campaign_id}/characters", response_model=CampaignCharacterRead, status_code=201
+)
 async def assign_character_to_campaign(
     campaign_id: int,
     body: CampaignCharacterAssignBody,
@@ -86,6 +88,17 @@ async def assign_character_to_campaign(
     existing_here = await load_active_assignment(db, body.character_id, campaign_id)
     if existing_here is not None:
         return _roster_row(existing_here, character)
+
+    from starlette.concurrency import run_in_threadpool
+
+    from ..services.prepared_play import require_prepared_play
+
+    await run_in_threadpool(
+        require_prepared_play,
+        campaign.adventure_collections,
+        campaign.rules_edition,
+        character=character,
+    )
 
     other_active = await load_active_assignment_any_campaign(db, body.character_id)
     if other_active is not None:
@@ -133,7 +146,9 @@ async def patch_campaign_character(
 
     assignment = await load_active_assignment(db, character_id, campaign_id)
     if assignment is None:
-        raise HTTPException(status_code=404, detail="No active assignment for this character in this campaign")
+        raise HTTPException(
+            status_code=404, detail="No active assignment for this character in this campaign"
+        )
 
     data = body.model_dump(exclude_unset=True)
     new_hp_current = data.get("hp_current", assignment.hp_current)
@@ -173,7 +188,9 @@ async def release_character_from_campaign(
     await db.execute(select(Campaign.id).where(Campaign.id == campaign_id).with_for_update())
     assignment = await load_active_assignment(db, character_id, campaign_id)
     if assignment is None:
-        raise HTTPException(status_code=404, detail="No active assignment for this character in this campaign")
+        raise HTTPException(
+            status_code=404, detail="No active assignment for this character in this campaign"
+        )
 
     assignment.ended_at = datetime.now(UTC)
     await db.commit()

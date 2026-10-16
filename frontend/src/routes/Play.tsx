@@ -17,6 +17,7 @@ import { linesFromHistory } from "../components/play/turnState";
 import { useJournal } from "../components/journal/api";
 import { usePlaySession } from "../components/play/usePlaySession";
 import { useSessionDraft } from "../components/play/useSessionDraft";
+import { useSessionMap } from "../components/play/useSessionMap";
 import { useTurn } from "../components/play/useTurn";
 import { useNarrowViewport } from "../components/play/useNarrowViewport";
 import { usePlayWorkspaceState, type PlayTool } from "../components/play/usePlayWorkspaceState";
@@ -67,12 +68,20 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const game = usePlaySession(sessionId);
   const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign } = game;
 
-  const sessionDraft = useSessionDraft(sessionId);
-  const draft = sessionDraft.draft;
+  const {
+    draft,
+    revision: draftRevision,
+    pendingRequest: pendingDraftRequest,
+    edit: editDraft,
+    clearIfRevision: clearDraftIfRevision,
+    beginRequest: beginDraftRequest,
+    clearRequest: clearDraftRequest,
+  } = useSessionDraft(sessionId);
   const [workspace, setWorkspace] = usePlayWorkspaceState(sessionId, null);
   const activeTool = workspace.activeTool;
   const narrow = useNarrowViewport();
   const journal = useJournal(sessionId);
+  const { data: sessionMapData, loading: sessionMapLoading, error: sessionMapError, refresh: refreshSessionMap } = useSessionMap(sessionId, activeTool === "map");
   const { data: journalData, refresh: refreshJournal, settledRevision: journalSettledRevision } = journal;
   const [introPending, setIntroPending] = useState(false);
   const [openEventId, setOpenEventId] = useState<number | null>(null);
@@ -130,6 +139,12 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     closeTool();
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [closeTool]);
+  const prepareTravel = useCallback((place: string) => {
+    const travelIdea = `I want to travel to ${place}.`;
+    editDraft(draft.trim() ? `${draft.trim()}\n${travelIdea}` : travelIdea);
+    closeTool();
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [closeTool, draft, editDraft]);
   const openJournalHistory = useCallback((eventId: number) => {
     setOpenEventId(eventId);
     closeTool();
@@ -161,17 +176,18 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     setJournalFeedback("");
     setJournalFeedbackEntryId(null);
     refreshJournal();
-  }, [applyTurnResult, journalData, refreshJournal, journalSettledRevision]);
+    refreshSessionMap();
+  }, [applyTurnResult, journalData, refreshJournal, journalSettledRevision, refreshSessionMap]);
   const turn = useTurn(sessionId, {
     debug: isDev,
     onResult: handleCommittedResult,
     onRequestStarted: (request) => {
       knownRequestRef.current = request.requestId;
-      sessionDraft.beginRequest(request);
+      beginDraftRequest(request);
     },
     onAcknowledged: (revision, requestId) => {
-      sessionDraft.clearIfRevision(revision);
-      sessionDraft.clearRequest(requestId);
+      clearDraftIfRevision(revision);
+      clearDraftRequest(requestId);
     },
     onCampaignEnded: () => setCampaignComplete(true),
     onSourcesUnavailable: () => {
@@ -208,11 +224,11 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   // A browser can close after the server commits but before the stream acknowledges it.
   // Resume by checking the durable receipt before offering a retry or another action.
   useEffect(() => {
-    const request = sessionDraft.pendingRequest;
+    const request = pendingDraftRequest;
     if (!boot || !turn.state.historyReady || !request || busy || knownRequestRef.current === request.requestId || recoveredRequestRef.current === request.requestId) return;
     recoveredRequestRef.current = request.requestId;
     void recoverTurn(request);
-  }, [boot, busy, sessionDraft.pendingRequest, recoverTurn, turn.state.historyReady]);
+  }, [boot, busy, pendingDraftRequest, recoverTurn, turn.state.historyReady]);
 
   const introRequested = useRef(false);
   useEffect(() => {
@@ -245,8 +261,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const handleSend = useCallback(() => {
     const msg = draft.trim();
     if (!msg || busy || hasUncertainAction || campaignComplete || game.campaign?.play_allowed === false) return;
-    void send(msg, sessionDraft.revision);
-  }, [draft, busy, hasUncertainAction, campaignComplete, send, game.campaign?.play_allowed, sessionDraft.revision]);
+    void send(msg, draftRevision);
+  }, [draft, draftRevision, busy, hasUncertainAction, campaignComplete, send, game.campaign?.play_allowed]);
 
   const handleQuickReply = useCallback(
     (text: string) => {
@@ -331,7 +347,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           <PlayIdeas
             data={journal.data}
             hasDraft={draft.trim().length > 0}
-            onAppend={(idea) => sessionDraft.edit(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${idea}`)}
+            onAppend={(idea) => editDraft(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${idea}`)}
           />
           <PlayToolBar activeTool={activeTool} onToggle={toggleTool} />
           {journalFeedback ? (
@@ -379,7 +395,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                   <ComposerBar
                     inputRef={inputRef}
                     value={draft}
-                    onChange={sessionDraft.edit}
+                    onChange={editDraft}
                     onSend={handleSend}
                     onStop={stop}
                     busy={busy}
@@ -412,6 +428,13 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           onRefresh={journal.refresh}
           onClose={closeTool}
           onOpenHistory={openJournalHistory}
+          sessionId={sessionId}
+          map={sessionMapData}
+          mapLoading={sessionMapLoading}
+          mapError={sessionMapError}
+          onMapRefresh={refreshSessionMap}
+          onOpenMapJournalEntry={openJournalEntry}
+          onPrepareTravel={prepareTravel}
         />
       </div>
 

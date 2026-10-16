@@ -32,6 +32,7 @@ from edgar_core.sources import SourceEdition
 from ..schemas.adventure import (
     AdventureGenerateRequest,
     AdventureJobRead,
+    AdventurePreparationRequest,
     AdventureRead,
     AdventureRetryRequest,
     AdventureUpdate,
@@ -117,10 +118,15 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
         can_retry=(
             job_read.retryable
             if job_read is not None
-            else source.source_pdf_available
-            or (meta.get("generation") or {}).get("kind") == "ai"
+            else source.source_pdf_available or (meta.get("generation") or {}).get("kind") == "ai"
         ),
         job=job_read,
+        preparation_setup_required=(
+            meta.get("private_preparation") is True
+            and not meta.get("preparation_run_id")
+            and not meta.get("prepared_bundle")
+            and (not meta.get("preparation_setup") or meta.get("status") == "failed")
+        ),
     )
 
 
@@ -149,12 +155,13 @@ def get_adventure(slug: str):
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
 
 
-def _extraction_path(
-    slug: str, name: str, *, candidate_attempt_id: str | None = None
-) -> Path:
+def _extraction_path(slug: str, name: str, *, candidate_attempt_id: str | None = None) -> Path:
     from ..services.campaign_sources import validate_binding
 
     validate_binding(slug)
+    from ..services.preparation_privacy import require_public_source
+
+    require_public_source(slug)
     from ..services.adventures_meta import attempt_dir
     from ..services.campaign_sources import active_metadata
 
@@ -274,7 +281,9 @@ def _preview_source_current(slug: str, data: dict) -> bool:
             raw = load_adventure_metadata(slug)
             job = raw.get("job") or {}
             candidate_id = job.get("retained_source_attempt_id") or job.get("attempt_id")
-            candidate = candidate_pdf_path(slug, candidate_id) if isinstance(candidate_id, str) else None
+            candidate = (
+                candidate_pdf_path(slug, candidate_id) if isinstance(candidate_id, str) else None
+            )
             if candidate is not None and candidate.is_file():
                 return source_digest(candidate) == data.get("source_sha256")
             meta = active_metadata(slug, raw)
@@ -301,6 +310,13 @@ def _ingest_adventure(
     source_filename: str | None = None,
 ) -> None:
     """Background worker: embed the PDF and flip the adventure's status to ready/failed."""
+    if load_adventure_metadata(slug).get("private_preparation"):
+        import asyncio
+
+        from ..services.preparation_runtime import prepare_adventure
+
+        asyncio.run(prepare_adventure(slug, pdf_path=pdf_path, attempt_token=attempt_id))
+        return
     # Imported here so the API process only pays the ingestion import cost on first upload.
     from db.vector.versions import SupersededIngestion
     from ingestion.embed import run_pipeline
@@ -447,12 +463,23 @@ async def upload_adventure(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     rules_edition: SourceEdition = Form(default="unspecified"),
+    preparation: str | None = Form(default=None, max_length=16000),
 ):
     """Upload a campaign PDF; it embeds in the background and becomes a playable adventure.
 
     Returns 202 immediately with status "processing"; poll GET /adventures for the slug to see
     it flip to "ready" (or "failed").
     """
+    from ..schemas.preparation_setup import PreparationSetup
+    from ..services.preparation_commission import capture_setup
+
+    try:
+        setup = PreparationSetup.model_validate_json(preparation) if preparation else None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Choose a hero and a valid preparation budget."
+        ) from exc
+    captured = await capture_setup(setup)
     filename = file.filename or "adventure.pdf"
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -470,6 +497,8 @@ async def upload_adventure(
             "chunks": None,
             "error": None,
             "source_filename": filename,
+            "private_preparation": True,
+            "preparation_setup": captured,
             "created_at": datetime.now(UTC).isoformat(),
             "job": new_job("ingestion", "queued", retained_work="source_pdf"),
         },
@@ -512,7 +541,9 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
     chapters are generated), so the card stays "processing" for a while.
     """
     from ..services.campaign_generator import build_generated_campaign
+    from ..services.preparation_commission import capture_setup
 
+    captured = await capture_setup(body.preparation)
     title_hint = (body.title or "").strip()
     base = _slugify(title_hint or body.theme or "ai campaign")
     slug = await run_in_threadpool(
@@ -525,6 +556,8 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
             "chunks": None,
             "error": None,
             "source_filename": None,
+            "private_preparation": True,
+            "preparation_setup": captured,
             "created_at": datetime.now(UTC).isoformat(),
             "generation": {
                 "kind": "ai",
@@ -581,6 +614,47 @@ def retry_adventure(
         return _retry_adventure(slug, background, body)
 
 
+@router.post(
+    "/adventures/{slug}/preparation/setup", response_model=AdventureUploadResponse, status_code=202
+)
+async def setup_preparation(
+    slug: str, body: AdventurePreparationRequest, background: BackgroundTasks
+):
+    """Complete only missing non-spoiler setup before the first frozen run exists."""
+    from ..services import adventures_meta as store
+    from ..services.campaign_sources import validate_binding
+    from ..services.preparation_commission import capture_setup
+    from ..services.preparation_runtime import prepare_adventure
+
+    validate_binding(slug)
+    captured = await capture_setup(body.preparation)
+    with _source_lock(slug):
+        with store.lifecycle_lock(slug):
+            meta = store.load_meta(slug)
+            if meta.get("private_preparation") is not True:
+                raise HTTPException(status_code=404, detail="Adventure not found")
+            if meta.get("preparation_run_id") or meta.get("prepared_bundle"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="This preparation is already bound. Create a new adventure to change its setup.",
+                )
+            if meta.get("preparation_setup") and meta.get("status") == "processing":
+                raise HTTPException(status_code=409, detail="Preparation is already starting.")
+            meta.update(preparation_setup=captured, rules_edition=body.rules_edition)
+            store.save_meta(slug, meta)
+        token = store.begin_attempt(
+            slug,
+            job_attempt=True,
+            job_kind="generation"
+            if (meta.get("generation") or {}).get("kind") == "ai"
+            else "ingestion",
+        )
+    background.add_task(prepare_adventure, slug, attempt_token=token)
+    return AdventureUploadResponse(
+        slug=slug, title=meta.get("title") or "Adventure", status="processing"
+    )
+
+
 def _retry_adventure(
     slug: str, background: BackgroundTasks, body: AdventureRetryRequest | None = None
 ):
@@ -593,11 +667,28 @@ def _retry_adventure(
     meta = load_adventure_metadata(slug)
     if not meta:
         raise HTTPException(status_code=404, detail="Adventure not found")
+    if meta.get("private_preparation") is True:
+        from ..services.preparation import PreparationError
+        from ..services.preparation_runtime import prepare_adventure, retry_preparation
+
+        try:
+            _, token = retry_preparation(slug)
+        except (PreparationError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Saved preparation cannot be retried. Check its setup or start a new adventure.",
+            ) from exc
+        background.add_task(prepare_adventure, slug, attempt_token=token)
+        return AdventureUploadResponse(
+            slug=slug, title=meta.get("title") or "Adventure", status="processing"
+        )
     from ..services.campaign_sources import source_read
 
     job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
     recoverable_job = bool(job.get("retryable")) and job.get("state") in (
-        "interrupted", "failed", "cancelled"
+        "interrupted",
+        "failed",
+        "cancelled",
     )
     if meta.get("status") == "processing" or (
         source_read(slug).status not in ("failed", "missing", "empty", "partial")
@@ -699,7 +790,11 @@ def _retry_adventure(
         job_attempt=True,
         job_kind="generation" if generation.get("kind") == "ai" else "ingestion",
     )
-    if retained_candidate_path and retained_candidate_path.is_file() and generation.get("kind") != "ai":
+    if (
+        retained_candidate_path
+        and retained_candidate_path.is_file()
+        and generation.get("kind") != "ai"
+    ):
         from ..services.adventures_meta import stage_attempt_pdf
 
         candidate_path = stage_attempt_pdf(
@@ -740,7 +835,12 @@ def cancel_adventure(slug: str):
     validate_binding(slug)
     with _source_lock(slug):
         try:
-            request_job_cancel(slug)
+            if load_adventure_metadata(slug).get("private_preparation") is True:
+                from ..services.preparation_runtime import cancel_preparation
+
+                cancel_preparation(slug)
+            else:
+                request_job_cancel(slug)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     return safe_job_read(load_adventure_metadata(slug), slug)
@@ -761,6 +861,9 @@ def update_adventure(slug: str, body: AdventureUpdate):
             raise HTTPException(
                 status_code=409, detail="Wait for source processing before editing its metadata."
             )
+        from ..services.preparation_privacy import require_mutable_source
+
+        require_mutable_source(meta)
         meta.update(body.model_dump(exclude_unset=True))
         _save_adventure_metadata(slug, meta)
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
@@ -782,6 +885,9 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
     if slug not in collection_slugs and not _metadata_path(slug).is_file():
         raise HTTPException(status_code=404, detail="Adventure not found")
 
+    from ..services.preparation_privacy import require_mutable_source
+
+    require_mutable_source(load_adventure_metadata(slug))
     if slug in collection_slugs:
         client = get_qdrant_client()
         try:
@@ -841,9 +947,7 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
                     )
                 from ..services.adventures_meta import begin_attempt, stage_attempt_pdf
 
-                token = begin_attempt(
-                    slug, job_attempt=True, job_kind="ingestion", reset_job=True
-                )
+                token = begin_attempt(slug, job_attempt=True, job_kind="ingestion", reset_job=True)
                 candidate = stage_attempt_pdf(slug, token, staged_path, filename)
                 meta = load_adventure_metadata(slug)
                 meta.update(title=source.title, chunks=None, error=None, failure_code=None)

@@ -5,7 +5,7 @@ export function isJobActive(job?: AdventureJobRead | null): boolean {
 }
 
 export function isPublicationCommitting(job?: AdventureJobRead | null): boolean {
-  return !!job && job.stage === "publishing";
+  return !!job && ["publishing", "Finalizing your adventure", "Making your adventure ready"].includes(job.stage);
 }
 
 export function preparationProgress(job?: AdventureJobRead | null): string | null {
@@ -20,6 +20,10 @@ export function preparationProgress(job?: AdventureJobRead | null): string | nul
   if (job.stage === "embedding") return "Building the searchable campaign index.";
   if (job.stage === "indexing") return "Preparing the validated campaign index.";
   if (job.stage === "publishing") return "Publishing the validated campaign source.";
+  if (["Starting preparation", "Checking sources", "Planning your adventure", "Preparing the campaign world",
+    "Checking game rules", "Preparing scenes", "Planning campaign materials", "Writing your adventure",
+    "Checking consistency", "Checking possible paths", "Finishing preparation checks",
+    "Making your adventure ready", "Finalizing your adventure"].includes(job.stage)) return `${job.stage}.`;
   return "Preparation is in progress.";
 }
 

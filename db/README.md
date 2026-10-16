@@ -31,6 +31,7 @@ Sessions keep loaded fields available after commit (`expire_on_commit=False`); w
 | `narration` | `turn_runner.persist_turn`; opening scene in `session_intro` | chat reload (`GET /sessions/{id}/messages`); journal and export (`services/journal.py`); NPC tracking (`routers/npc.py`); turn continuity and summary coverage (`services/session_messages.py`); idempotent turn receipts (`turn_receipts.py`, `turn_runner.py`); story-fact ownership (`story_state.py`); `story_facts.event_id` cascades from it | durable |
 | `adjudication` | `world_state_updater_node`, written by `persist_turn` | private ruling record with exact references (`tests/test_source_contract.py`); no application reader yet | durable |
 | `memory_summary` | `session_messages._publish_memory_summary` | `load_memory_summary` and the summary chain, which feed the narrator's story-so-far | durable |
+| `prepared_amendment` | Private engine-validated session additions in `prepared_amendments.append_session_prepared_amendment` | Exact version-bound overlay replay for the current session (`load_session_prepared_amendments`) | durable |
 | `combat_round` | `combat_round_event`, staged by `combat_round_node` | developer diagnostics `GET /sessions/{id}/diagnostics/combat` (`EDGAR_DEBUG` only) | diagnostic |
 
 Policy:
