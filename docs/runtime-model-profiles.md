@@ -70,6 +70,33 @@ model, effort, or API fails configuration validation. The effective profiles car
 output budgets and may use stage-specific timeouts and retries. This offline policy does not
 make provider calls or certify account access.
 
+## Input budgets
+
+A text profile may set `max_input_tokens`, an estimated prompt budget (not the provider's hard
+limit; leave headroom for output). The checked-in file sets 32000 for `play.parser`,
+`play.consequence_planner`, `play.narrator`, `play.combat_narrator` and
+`play.memory_summarizer`; a stage without it is unbounded, as before. The effective value is part
+of `profile_diagnostics()`. Tokens are estimated as one per three UTF-8 bytes
+(`edgar_core.token_budget`), which over-counts English prose, so no tokenizer is needed.
+
+The parser, planner and narrator prompts bound only their continuity context (story summary plus
+verbatim exchanges after the summary boundary). Everything else is fixed: system prompt, committed
+story facts with their exact quotations and sources, recorded combat outcomes, character and
+world state, and retrieved rules and adventure excerpts. Degradation order when the estimate
+exceeds the budget:
+
+1. Drop the oldest verbatim messages, newest kept, replaced by a marker line stating how many
+   were omitted.
+2. Never drop the story summary, committed facts or recorded combat outcomes. If the fixed
+   content alone exceeds the budget, the prompt is sent over budget with no verbatim history.
+
+Each trimmed prompt logs `continuity_trimmed` with stage, budget, estimated token counts and
+`over_budget`, never text. Omitted verbatim turns are not lost: the post-turn summarizer treats
+verbatim history above half of the tightest parser/planner/narrator budget as aged out and
+folds it into the summary even before `SUMMARY_EVERY_N_TURNS` have accumulated, and a single
+summarizer call takes only as many turns as `play.memory_summarizer` can accept (at least one;
+the rest follows on later turns).
+
 ## Image stages
 
 Image settings are separate `ImageProfile` records resolved with

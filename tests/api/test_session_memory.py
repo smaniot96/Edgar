@@ -14,6 +14,8 @@ from sqlalchemy.util.concurrency import await_only
 import db.postgres.session as db_session_module
 from apps.api.services import session_messages as memory
 from db.postgres.models import Campaign, EventLog, Session, User
+from edgar_core.model_profiles import model_profile_snapshot
+from tests.agent.test_token_budget import limits_snapshot
 
 
 @pytest_asyncio.fixture
@@ -566,3 +568,60 @@ async def test_publication_lock_serializes_competing_connections(memory_db, monk
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+
+
+async def _long_narrations(factory, session_id, count):
+    async with factory() as db, db.begin():
+        db.add_all(
+            EventLog(
+                session_id=session_id,
+                event_type="narration",
+                payload={"player_input": f"p{i}", "narration": f"n{i} " + "z" * 3000},
+            )
+            for i in range(1, count + 1)
+        )
+
+
+async def test_token_pressure_summarizes_turns_the_count_rule_would_keep(
+    memory_db, monkeypatch, tmp_path
+):
+    _, factory, (sid, _) = memory_db
+    await _long_narrations(factory, sid, 4)
+    seen = []
+
+    async def summarize(previous, messages):
+        seen.append([m.content[:2] for m in messages])
+        return "folded"
+
+    monkeypatch.setattr(memory, "summarize_story", summarize)
+    await memory.maybe_update_memory_summary(sid)
+    assert seen == []
+
+    # Each turn is about 1000 estimated tokens; a 3000-token history keeps the newest two.
+    limits = dict.fromkeys(("play.parser", "play.consequence_planner", "play.narrator"), 6000)
+    with model_profile_snapshot(limits_snapshot(tmp_path, limits)):
+        await memory.maybe_update_memory_summary(sid)
+    assert seen == [["p1", "n1", "p2", "n2"]]
+    ids = [row.id for row in await _rows(factory, sid, "narration")]
+    (summary,) = await _rows(factory, sid)
+    assert summary.payload["through_event_id"] == ids[1]
+    async with factory() as db:
+        _, tail = await memory.load_session_context(db, sid)
+    assert [m.content for m in tail[::2]] == ["p3", "p4"]
+
+
+async def test_summarizer_batch_is_bounded_by_its_input_budget(memory_db, monkeypatch, tmp_path):
+    _, factory, (sid, _) = memory_db
+    await _long_narrations(factory, sid, memory.RECENT_TURNS + memory.SUMMARY_EVERY_N_TURNS)
+    seen = []
+
+    async def summarize(previous, messages):
+        seen.append(len(messages) // 2)
+        return "folded"
+
+    monkeypatch.setattr(memory, "summarize_story", summarize)
+    with model_profile_snapshot(limits_snapshot(tmp_path, {"play.memory_summarizer": 3500})):
+        await memory.maybe_update_memory_summary(sid)
+    assert seen == [3]
+    (summary,) = await _rows(factory, sid)
+    assert summary.payload["turns_summarized"] == 3

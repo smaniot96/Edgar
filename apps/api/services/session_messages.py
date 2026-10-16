@@ -1,9 +1,12 @@
 """Load LangChain messages from event_log for turn continuity, plus the rolling memory summary.
 
-The narrator sees the last RECENT_TURNS turns verbatim. Turns older than that are folded into a
-persisted "story so far" summary (an event_log row with event_type=MEMORY_SUMMARY_EVENT whose
+The narrator sees the last RECENT_TURNS turns verbatim. Turns older than that, or older than the
+token budget for verbatim history allows (`agent.history.history_token_budget`), are folded into
+a persisted "story so far" summary (an event_log row with event_type=MEMORY_SUMMARY_EVENT whose
 payload records which narration row it covers up to), updated off the critical path after a
-turn commits and only once SUMMARY_EVERY_N_TURNS new turns have aged out of the window.
+turn commits and only once SUMMARY_EVERY_N_TURNS new turns have aged out of the window. Token
+pressure alone summarizes immediately, and one job folds in only what fits the summarizer's
+`max_input_tokens`; any remainder waits for the next job.
 """
 
 from dataclasses import dataclass
@@ -16,8 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 import db.postgres.session as db_session_module
-from agent.nodes.memory_summarizer import summarize_story
+from agent.history import history_token_budget
+from agent.nodes.memory_summarizer import MEMORY_SUMMARY_PROMPT, summarize_story
 from db.postgres.models import EventLog, Session as SessionModel
+from edgar_core.model_profiles import effective_profile
+from edgar_core.token_budget import estimate_tokens, fit_count
 
 log = structlog.get_logger()
 
@@ -190,12 +196,29 @@ async def _read_memory_snapshot(session_id: int, *, min_turns: int) -> _MemorySn
             .order_by(EventLog.id.asc())
         )
         pending = list(result.scalars().all())
-        aged_out = pending[:-RECENT_TURNS] if len(pending) > RECENT_TURNS else []
-        if len(aged_out) < min_turns:
+        turn_tokens = [
+            sum(estimate_tokens(str(m.content)) for m in _events_to_messages([event]))
+            for event in pending
+        ]
+        by_count = max(len(pending) - RECENT_TURNS, 0)
+        aged = by_count
+        if (history_budget := history_token_budget()) is not None:
+            aged = max(aged, len(pending) - fit_count(reversed(turn_tokens), history_budget))
+        # The count rule batches summaries; token pressure cannot wait for a full batch.
+        if not aged or (aged == by_count and aged < min_turns):
             return None
+        previous_summary = latest[0].payload["summary"] if through_id else None
+        if (limit := effective_profile("play.memory_summarizer").max_input_tokens) is not None:
+            room = (
+                limit
+                - estimate_tokens(MEMORY_SUMMARY_PROMPT)
+                - estimate_tokens(previous_summary or "")
+            )
+            aged = max(fit_count(turn_tokens[:aged], room), 1)
+        aged_out = pending[:aged]
         return _MemorySnapshot(
             base_summary_id=latest[0].id if latest is not None else None,
-            previous_summary=latest[0].payload["summary"] if through_id else None,
+            previous_summary=previous_summary,
             through_event_id=aged_out[-1].id,
             turns_summarized=len(aged_out),
             messages=tuple((m.type, str(m.content)) for m in _events_to_messages(aged_out)),

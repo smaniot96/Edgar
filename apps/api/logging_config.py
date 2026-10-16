@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import sys
 import uuid
 from collections.abc import Mapping
@@ -16,8 +15,8 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from edgar_core.config import ENV
+from edgar_core.log_safety import REDACTED, REQUEST_ID, redact_text
 
-_REDACTED = "[REDACTED]"
 _SECRET_FIELDS = frozenset(
     {
         "authorization",
@@ -34,31 +33,19 @@ _SECRET_FIELDS = frozenset(
         "refresh_token",
     }
 )
-_CREDENTIAL_URL = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", re.IGNORECASE)
-_BEARER = re.compile(r"\bBearer\s+[a-z0-9._~+/-]+=*", re.IGNORECASE)
-_OPENAI_KEY = re.compile(r"\bsk-[a-zA-Z0-9_-]{16,}")
-_POSTGRES_DETAIL = re.compile(r"(?ms)^[ \t|]*DETAIL:.*")
-_REQUEST_ID = re.compile(r"[a-zA-Z0-9._:-]{1,128}\Z")
 _handler: logging.Handler | None = None
 
 
 def _redact(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
-            key: _REDACTED
-            if str(key).lower().replace("-", "_") in _SECRET_FIELDS
-            else _redact(item)
+            key: REDACTED if str(key).lower().replace("-", "_") in _SECRET_FIELDS else _redact(item)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
         return [_redact(item) for item in value]
     if isinstance(value, str):
-        # PostgreSQL includes full row contents / conflicting keys independently of
-        # SQLAlchemy's hide_parameters setting. Rows may themselves contain newlines.
-        value = _POSTGRES_DETAIL.sub("[PostgreSQL detail redacted]\n", value)
-        value = _CREDENTIAL_URL.sub(r"\1[REDACTED]@", value)
-        value = _BEARER.sub("Bearer [REDACTED]", value)
-        return _OPENAI_KEY.sub(_REDACTED, value)
+        return redact_text(value)
     return value
 
 
@@ -90,7 +77,7 @@ format_safe_exception = structlog.processors.ExceptionRenderer(_format_exception
 
 def request_id_from_header(value: str | None) -> str:
     """Accept bounded, printable proxy correlation ids; mint an id for malformed input."""
-    return value if value and _REQUEST_ID.fullmatch(value) else str(uuid.uuid4())
+    return value if value and REQUEST_ID.fullmatch(value) else str(uuid.uuid4())
 
 
 class RequestContextMiddleware:

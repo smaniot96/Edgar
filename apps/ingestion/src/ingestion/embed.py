@@ -48,6 +48,7 @@ from db.vector.versions import (
     read_index_state,
     version_filter,
 )
+from edgar_core.log_safety import error_summary
 from edgar_core.sources import SourceEdition
 from ingestion.chunk import chunk_pages
 from ingestion.extract import (
@@ -397,7 +398,7 @@ def _embed_and_upsert(
                     "Embedding response does not cover every chunk with a usable vector."
                 )
         except Exception as e:
-            logger.error("Embedding failed for batch {}: {}", i, e)
+            logger.error("Embedding failed for batch {}: {}", i, error_summary(e))
             raise
 
         points = [
