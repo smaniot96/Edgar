@@ -410,7 +410,7 @@ def _turn_http_error_response(exc: HTTPException) -> JSONResponse:
     failure = classify_http_failure(exc.status_code, code=code, outcome="not_committed")
     if failure.category == "busy":
         failure = classify_http_failure(exc.status_code, code=code, outcome="unknown")
-    return JSONResponse(status_code=exc.status_code, content=http_failure_payload(failure))
+    return JSONResponse(status_code=exc.status_code, content=http_failure_payload(failure, context=detail))
 
 
 async def _replayed_turn(

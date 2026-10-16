@@ -217,3 +217,12 @@ async def test_safe_http_boundary_preserves_actionable_codes_and_gate_envelopes(
         key: value for key, value in payload.items() if key not in {"support_ref", "outcome"}
     }
     assert SECRET not in turn.body.decode()
+
+
+@pytest.mark.parametrize("source", ["known_adventure", SECRET, "../private/manuscript"])
+def test_review_envelope_keeps_only_a_valid_public_binding_identifier(source):
+    from apps.api.services.safe_errors import classify_error, http_failure_payload
+
+    payload = http_failure_payload(classify_error("adventure_manifest_review_required"), context={"source": source, "sources": [SECRET]})
+    assert payload["detail"].get("source") == (source if source == "known_adventure" else None)
+    assert SECRET not in json.dumps(payload)
