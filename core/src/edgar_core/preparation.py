@@ -361,8 +361,8 @@ class PreparationPublication(PreparationRecord):
             raise ValueError("Publication inventory must exactly match its artifacts.")
         if any(not receipt.passed for receipt in self.validation_receipts):
             raise ValueError("Every publication validation receipt must pass.")
-        if any(finding.status == "open" and finding.severity in ("high", "critical") for finding in self.findings):
-            raise ValueError("High or critical findings must be resolved before publication.")
+        if any(finding.status == "open" and finding.severity in ("medium", "high", "critical") for finding in self.findings):
+            raise ValueError("Material findings must be resolved before publication.")
         identity = {
             "run_id": self.run_id,
             "binding_sha256": self.binding_sha256,
