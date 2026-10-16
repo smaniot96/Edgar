@@ -19,7 +19,8 @@ Design (solo-playable, finishable, engine-decided):
   * Action economy (EDG-044): one action and one bonus action per player turn, classified by
     `agent.action_economy` from a code-owned table. A second action or bonus action in the same
     turn is refused before any roll, and the round does not advance. Dodge (an action) gives the
-    hero `dodging` until its next turn starts; Second Wind and Healing Word are bonus actions.
+    hero `dodging` until its next turn starts; Second Wind and Healing Word are bonus actions, and so
+    is the off-hand attack of two-weapon fighting, rolled as a swing after the Attack action's.
   * HP only changes through engine rolls: enemy attacks, Second Wind (fighter; one use, restored
     by a short or long rest, persisted on the character sheet), or a healing consumable that is
     actually in inventory (and is then removed). Class features (EDG-145) add engine-rolled
@@ -64,6 +65,7 @@ from agent.action_economy import (
     DASH,
     DISENGAGE,
     DODGE,
+    OFF_HAND_ATTACK,
     SECOND_WIND,
     Declared,
     dash_declared,
@@ -71,6 +73,8 @@ from agent.action_economy import (
     dodge_declared,
     economy_record,
     has_attack_words,
+    off_hand_declared,
+    off_hand_refusal,
     refusal_for,
 )
 from agent.captives import CaptiveTurn, captive_turn, is_attack_text
@@ -171,6 +175,7 @@ from agent.resolution import (
     initiative_bonus,
     mentions_item_use,
     normalise_check,
+    off_hand_weapon,
     resolve_attack,
     resolve_from_parsed,
     roll_attack_damage,
@@ -868,6 +873,7 @@ async def combat_round_node(state: AgentState) -> dict:
     dash = not fled and dash_declared(player_input)
     disengage = not fled and disengage_declared(player_input)
     moving = not fled and bool(movement_steps(player_input))
+    off_hand = not fled and off_hand_declared(player_input)
     # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
     wants_second_wind = (
         not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
@@ -926,6 +932,8 @@ async def combat_round_node(state: AgentState) -> dict:
         declared.append(SECOND_WIND)
     if rage_declared:
         declared.append(Declared("rage", BONUS_ACTION, "Rage"))
+    if off_hand:
+        declared.append(OFF_HAND_ATTACK)
     refusal = refusal_for(declared, hero)
     if refusal:
         return _ask_player(state, refusal, combat_state=combat_state)
@@ -976,6 +984,16 @@ async def combat_round_node(state: AgentState) -> dict:
             is_attack or combat_action is not None
         ):
             return _ask_player(state, reach_refusal(hero, target["name"]), combat_state=combat_state)
+    # EDG-044: the off-hand attack needs this turn's melee Attack action and a second light weapon.
+    off_weapon = off_hand_weapon(character, attack_weapon) if off_hand else None
+    if off_hand:
+        refusal = off_hand_refusal(
+            hero,
+            attacked=is_attack and not is_spell and not attack_ranged and target is not None,
+            pair=off_weapon is not None,
+        )
+        if refusal:
+            return _ask_player(state, refusal, combat_state=combat_state)
     # Typed effects this round's engine applied; the boundary and narrator read them.
     round_effects: list[str] = []
     round_modes: list[str] = []  # d20 mode of every attack rolled this round
@@ -1496,12 +1514,18 @@ async def combat_round_node(state: AgentState) -> dict:
         log_lines.append(f"{contest_line}. {extra_outcome}")
     elif is_attack and target is not None:
         ranged = attack_ranged
-        # One swing, or two with Action Surge (EDG-145). Each swing rolls its own engine d20.
+        # One swing, or two with Action Surge (EDG-145), then the off-hand attack's bonus action
+        # (EDG-044). Each swing rolls its own engine d20.
         any_hit = False
-        for swing in range(2 if surge_swing else 1):
+        swings = [False] * (2 if surge_swing else 1) + ([True] if off_weapon else [])
+        for swing, off_hand_swing in enumerate(swings):
+            if off_hand_swing:
+                round_effects.append("bonus_action")
+                bonus_record = {"action": "off_hand_attack", "weapon": off_weapon.name}
             if swing and not is_standing(target):
-                # The first swing finished the foe; the surged swing has nothing to hit.
-                log_lines.append(f"{hero}'s extra attack finds no foe left standing.")
+                # An earlier swing finished the foe; the later one has nothing to hit.
+                kind = "off-hand" if off_hand_swing else "extra"
+                log_lines.append(f"{hero}'s {kind} attack finds no foe left standing.")
                 break
             mode = attack_roll_mode(
                 player,
@@ -1513,7 +1537,7 @@ async def combat_round_node(state: AgentState) -> dict:
                 character,
                 int(target.get("ac", 12)),
                 spell=is_spell,
-                hint=player_input,
+                hint=off_weapon.name if off_hand_swing else player_input,
                 roll_mode=mode,
             )
             round_modes.append(mode)
@@ -1527,11 +1551,12 @@ async def combat_round_node(state: AgentState) -> dict:
             swing_log = dice_log if swing == 0 else later_swing_dice
             if swing:
                 later_swing_dice.extend(attack.dice_log)
+            with_text = f" with the off-hand {off_weapon.name}" if off_hand_swing else ""
             if attack.success:
                 any_hit = True
                 rage_bonus = rage_damage_bonus(character, attack, raging=bool(player.get("raging")))
                 swing_dealt, dmg_roll = roll_attack_damage(
-                    character, attack, hint=player_input, bonus=rage_bonus
+                    character, attack, hint=player_input, bonus=rage_bonus, off_hand=off_hand_swing
                 )
                 swing_log.append(dmg_roll.to_log("player damage"))
                 sneak = sneak_attack_roll(character, attack, mode=mode, used=sneak_used)
@@ -1553,11 +1578,11 @@ async def combat_round_node(state: AgentState) -> dict:
                 status = _strike(target, swing_dealt, parsed, player_input, damage_type=damage_type)
                 crit = "Critical hit! " if attack.critical else ""
                 swing_text = (
-                    f"{crit}{hero} hits {target['name']} for {swing_dealt} damage{resist_note} "
-                    f"{status}{notes}"
+                    f"{crit}{hero} hits {target['name']}{with_text} for {swing_dealt} "
+                    f"damage{resist_note} {status}{notes}"
                 )
             else:
-                swing_text = f"{hero} misses {target['name']}."
+                swing_text = f"{hero} misses {target['name']}{with_text}."
             mode_text = "" if mode == "normal" else f" (at {mode})"
             log_lines.append(f"{attack.describe()}{mode_text}. {swing_text}")
             extra_outcome = " ".join(part for part in (extra_outcome, swing_text) if part)

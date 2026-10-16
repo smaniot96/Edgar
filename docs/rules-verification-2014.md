@@ -13,12 +13,12 @@ No 2024 book is available locally. 2024 numbers are not implemented (see "Unveri
 
 | Verdict | Rows | Meaning |
 |---|---|---|
-| MATCH | 44 | Engine value equals the book value at the cited page |
+| MATCH | 45 | Engine value equals the book value at the cited page |
 | FIXED | 23 | Discrepancy found and corrected (17 in EDG-149, 6 in EDG-152); a regression test pins the book value and fails on the old code |
-| PARTIAL | 9 | Documented subset or known gap; the contract text states it |
+| PARTIAL | 10 | Documented subset or known gap; the contract text states it |
 | NOT-IN-BOOKS | 1 section | The encounter budget (section 6). Artificer data is also NOT-IN-BOOKS and is noted in the class rows |
 
-The rows are the tables below (76 in total). A row may cover several values. EDG-152 turned two
+The rows are the tables below (78 in total). A row may cover several values. EDG-152 turned two
 PARTIAL rows (short-rest Hit Dice, prone) into `FIXED (EDG-152)`, split the Rage PARTIAL row into
 two fixed rows and a smaller PARTIAL row, and added rows for Versatile weapons and armor Stealth
 disadvantage. The PARTIAL rows that remain say in their note why the engine cannot execute them.
@@ -39,6 +39,8 @@ disadvantage. The PARTIAL rows that remain say in their note why the engine cann
 | Weapon table: name, dice, finesse, ranged, simple | `resolution._WEAPONS` | PHB Weapons table, PDF p.150 | FIXED | Greatclub (simple melee, 1d8) was missing, and "club" matched it as a substring, giving 1d4. Blowgun (martial ranged, 1 piercing) was missing. Net (no damage) is not modelled. Other entries MATCH. |
 | Versatile weapons: two-handed damage | `resolution._WEAPONS`, `resolution.roll_attack_damage` | PHB Versatile, PDF p.148; Weapons table, PDF p.150 | FIXED (EDG-152) | The table had no Versatile property, so a two-handed grip never changed the die. Quarterstaff, spear, trident (1d8) and battleaxe, longsword, warhammer (1d10) now deal it when the player declares both hands and the sheet lists no shield. Pinned in `tests/agent/test_rules_book_values.py`. |
 | Finesse and ranged flags | `resolution._WEAPONS` | PHB p.148 (finesse); p.150 | MATCH | |
+| Light property: club, dagger, handaxe, light hammer, sickle, scimitar, shortsword; hand crossbow (ranged) | `resolution._WEAPONS` (`Weapon.light`) | PHB Weapons table, PDF p.150 | MATCH | Pinned in `tests/agent/test_rules_book_values.py`. |
+| Two-weapon fighting: a bonus-action attack with a different light melee weapon, adding the ability modifier to damage only when negative | `resolution.off_hand_weapon`, `resolution.roll_attack_damage`, `graph_combat` | PHB Two-Weapon Fighting, PDF p.196 | PARTIAL | The attack, its bonus-action slot and its damage match, and Rage's flat bonus and Sneak Attack's once per turn still apply. The sheet lists carried weapons, not what each hand holds, so a listed shield blocks the attack and the main hand is the weapon the engine picks for the Attack action. Throwing either weapon and the Two-Weapon Fighting style (modifier added) are not modelled. Pinned in `tests/agent/test_two_weapon_fighting.py`. |
 | Attack ability: STR melee, DEX ranged, finesse higher of the two | `resolution._attack_ability` | PHB p.195 ("Ability Modifier"); p.148 (finesse) | MATCH | Thrown melee weapons (javelin, handaxe) use STR, as the book's thrown exception implies. |
 | Natural 20 hits and is critical; natural 1 misses | `resolution.resolve_check` | PHB p.195 ("Rolling 1 or 20") | MATCH | |
 | Critical hit: roll all damage dice twice, add modifiers once | `resolution._double_dice` | PHB p.197 ("Critical Hits") | MATCH | Rage's flat bonus is not doubled; consistent with the book. |
