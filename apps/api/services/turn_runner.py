@@ -7,13 +7,21 @@ session, so a failure anywhere leaves no partial writes and no connection is hel
 calls.
 
 The SSE runner drives `prepare_app` (the graph minus the linear-path narrator) so the input is
-parsed exactly once, then streams the narrator with `llm.astream`. The combat subgraph narrates
-the round itself, so on that path we synthesise word-level tokens from its narration to keep
-the SSE protocol uniform.
+parsed exactly once, then streams the narrator with `llm.astream`.
+
+Combat is streamed from FINALISED mechanics (EDG-079). The combat round resolves dice, HP,
+dispositions, the adjudication, completion and the round telemetry first, then returns a pending
+narration (`defer_narration`) instead of calling the narrator. The runner streams that single
+narrator call with the same prompt builder and the `play.combat_narrator` profile, then calls
+`finalize_round_narration`, the same finalisation the sync endpoint uses. Streamed combat tokens
+are PROVISIONAL: the boundary, roster fallback and outcome suffix are applied to the complete text
+after the stream, so `done.narration` is authoritative and may differ from the concatenated tokens.
+Engine-only combat rulings (no model narration) carry their final text as word-sized tokens
+without a provider call.
 
 Event types (see apps/api/README.md for the public contract):
   status: {"stage": "parsing" | "retrieving" | "adjudicating" | "narrating" | "saving"}
-  token: {"text": "<chunk>"}                        # concatenated they form the narration
+  token: {"text": "<chunk>"}                        # provisional; done.narration is authoritative
   adjudication: <AdjudicationResult dict>           # emitted once after adjudication
   debug: {...}                                      # only when the request asks AND EDGAR_DEBUG=1
   done: {"narration", "character", "current_scene_id", "combat_state", "campaign_complete"}
@@ -29,6 +37,7 @@ import json
 import re
 import time
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from typing import Any
 
 import structlog
@@ -38,12 +47,14 @@ import db.postgres.session as db_session_module
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
 from agent.combatants import can_act, concentration_of, disposition_of, stable_id, view_fields
 from agent.graph import app, prepare_app, route_after_input_parser
+from agent.graph_combat import PENDING_ROUND_NARRATION_KEY, finalize_round_narration
 from agent.llm import message_text
 from agent.nodes.narrator import (
     build_narrator_prompt,
     deterministic_narration,
     make_narrator_model,
     narrator_context,
+    narrator_request,
 )
 from agent.positioning import band_of
 from agent.supported_rules import (
@@ -51,6 +62,7 @@ from agent.supported_rules import (
     apply_narration_boundary,
     engine_applied_for_state,
 )
+from agent.turn_diagnostics import STAGES, TurnDiagnostics
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.model_profiles import (
     current_model_profiles,
@@ -602,7 +614,10 @@ def _debug_payload(
 
 
 def _yield_narration_tokens(narration: str) -> list[str]:
-    """Split a complete narration into word-sized chunks (combat path's pseudo-stream)."""
+    """Split engine-final text into word-sized tokens. Used only where no model narration exists
+
+    (captive and clarification rulings, deterministic text). Model narration streams its own chunks.
+    """
     if not narration:
         return []
     parts = re.findall(r"\S+\s*", narration)
@@ -628,13 +643,87 @@ async def stream_session_turn(
 ) -> AsyncIterator[str]:
     """Stream a turn under one immutable settings snapshot, including the narrator tail."""
     with model_profile_snapshot():
-        async for frame in _stream_session_turn(
-            session_id=session_id,
-            body_message=body_message,
-            initial_state=initial_state,
-            debug=debug,
-        ):
-            yield frame
+        # aclosing: a client disconnect closes the turn generator here, and it closes the
+        # provider stream below, rather than leaving that to garbage collection.
+        async with aclosing(
+            _stream_session_turn(
+                session_id=session_id,
+                body_message=body_message,
+                initial_state=initial_state,
+                debug=debug,
+            )
+        ) as frames:
+            async for frame in frames:
+                yield frame
+
+
+class _NarrationStream:
+    """What one streamed narrator call produced. The caller reads it after the frames."""
+
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+        self.failed = False
+        self.first_text_ms: int | None = None
+        self.usage: dict[str, Any] | None = None
+
+    @property
+    def text(self) -> str:
+        return "".join(self.parts)
+
+
+async def _stream_narrator(
+    *,
+    llm: Any,
+    prompt: Any,
+    profile: str,
+    run: _NarrationStream,
+    diagnostics: TurnDiagnostics,
+    session_id: int,
+) -> AsyncIterator[str]:
+    """Yield `token` frames from one narrator call and record the call on the turn's collector.
+
+    Tokens are provisional: `run.text` is used only after the caller has finalised the turn, and
+    nothing here commits. The provider stream is closed however this generator exits, including
+    client disconnect (GeneratorExit) and task cancellation, so a stopped turn never leaves a
+    provider call running. A provider failure becomes one redacted `error` frame and `run.failed`.
+    """
+    started = time.monotonic()
+    stream = None
+    completed = False
+    failed_category: str | None = None
+    try:
+        stream = llm.astream(prompt)
+        async for chunk in stream:
+            if usage := getattr(chunk, "usage_metadata", None):
+                run.usage = dict(usage)
+            text = message_text(chunk)
+            if not text:
+                continue
+            if run.first_text_ms is None:
+                run.first_text_ms = int((time.monotonic() - started) * 1000)
+                diagnostics.record_first_text()
+            run.parts.append(text)
+            yield sse_event("token", {"text": text})
+        completed = True
+    except Exception as e:
+        run.failed = True
+        failed_category = "timeout" if isinstance(e, TimeoutError) else "unknown"
+        yield sse_event("error", error_body(e, event="turn_narrator_failed", session_id=session_id))
+    finally:
+        if stream is not None and hasattr(stream, "aclose"):
+            await stream.aclose()
+        if not completed and not run.failed:
+            failed_category = "cancelled"
+        diagnostics.record_provider_call(
+            kind="narrate",
+            profile=profile,
+            requested_model=effective_profile(profile).model,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            streamed=True,
+            first_text_ms=run.first_text_ms,
+            usage=run.usage,
+            error_category=failed_category,
+        )
 
 
 async def _stream_session_turn(
@@ -647,38 +736,51 @@ async def _stream_session_turn(
     t0 = time.monotonic()
     lap_start = t0
     timings: dict[str, int] = {}
+    # One collector per turn, passed explicitly: this generator yields across SSE frames, so it
+    # must not rely on a contextvar binding (see agent.turn_diagnostics).
+    diagnostics = TurnDiagnostics(
+        turn_id=initial_state.get("turn_id"), path="normal", delivery="stream"
+    )
 
     def lap(bucket: str) -> None:
         """Charge the time since the previous lap to `bucket` (real wall-clock stage timings)."""
         nonlocal lap_start
         now = time.monotonic()
-        timings[bucket] = timings.get(bucket, 0) + int((now - lap_start) * 1000)
+        ms = int((now - lap_start) * 1000)
+        timings[bucket] = timings.get(bucket, 0) + ms
+        if bucket in STAGES:
+            diagnostics.record_stage_ms(bucket, ms)
         lap_start = now
 
     yield sse_event("status", {"stage": "parsing"})
 
-    # Parse once, route, and run everything up to (not including) the linear-path narrator.
+    # Parse once, route, and run everything up to (not including) the linear-path narrator. The
+    # combat round defers its single narrator call (EDG-079) so the runner can stream it.
     state: dict[str, Any] = dict(initial_state)
     is_combat = False
     try:
-        async for mode, chunk in prepare_app.astream(
-            dict(initial_state), stream_mode=["updates", "values"]
-        ):
-            if mode == "values":
-                state = dict(chunk)
-                continue
-            for node, update in chunk.items():
-                lap(_TIMING_BUCKET.get(node, f"{node}_ms"))
-                if (update or {}).get("error"):
+        async with aclosing(
+            prepare_app.astream(
+                {**initial_state, "defer_narration": True}, stream_mode=["updates", "values"]
+            )
+        ) as graph_updates:
+            async for mode, chunk in graph_updates:
+                if mode == "values":
+                    state = dict(chunk)
                     continue
-                if node == "input_parser":
-                    route = route_after_input_parser({**state, **(update or {})})
-                    is_combat = route == "combat"
-                    yield sse_event("status", {"stage": "retrieving"})
-                    if is_combat:
+                for node, update in chunk.items():
+                    lap(_TIMING_BUCKET.get(node, f"{node}_ms"))
+                    if (update or {}).get("error"):
+                        continue
+                    if node == "input_parser":
+                        route = route_after_input_parser({**state, **(update or {})})
+                        is_combat = route == "combat"
+                        diagnostics.set_path("combat" if is_combat else "normal")
+                        yield sse_event("status", {"stage": "retrieving"})
+                        if is_combat:
+                            yield sse_event("status", {"stage": "adjudicating"})
+                    elif node == "world_retriever":
                         yield sse_event("status", {"stage": "adjudicating"})
-                elif node == "world_retriever":
-                    yield sse_event("status", {"stage": "adjudicating"})
     except Exception as exc:
         yield sse_event("error", error_body(exc, event="turn_agent_crashed", session_id=session_id))
         return
@@ -695,8 +797,41 @@ async def _stream_session_turn(
         yield sse_event("adjudication", public_adjudication(adjudication))
 
     yield sse_event("status", {"stage": "narrating"})
-    if is_combat:
-        # The combat subgraph already narrated the round; pseudo-stream it word by word.
+    pending = state.pop(PENDING_ROUND_NARRATION_KEY, None)
+    if pending is not None:
+        # Combat: the mechanics are final. Stream the one narrator call, then finalise the round
+        # with the same function the sync node uses. Only `done` after the commit is authoritative.
+        for stage, ms in pending.stage_ms.items():
+            if stage in STAGES and stage != "narrating_ms":
+                diagnostics.record_stage_ms(stage, ms)
+        llm, prompt = narrator_request(pending.narr_state, pending.profile)
+        run = _NarrationStream()
+        narrate_start = time.monotonic()
+        async with aclosing(
+            _stream_narrator(
+                llm=llm,
+                prompt=prompt,
+                profile=pending.profile,
+                run=run,
+                diagnostics=diagnostics,
+                session_id=session_id,
+            )
+        ) as frames:
+            async for frame in frames:
+                yield frame
+        if run.failed:
+            return
+        narrating_ms = int((time.monotonic() - narrate_start) * 1000)
+        diagnostics.record_stage_ms("narrating_ms", narrating_ms)
+        state.update(
+            finalize_round_narration(pending, run.text, bound=True, narrating_ms=narrating_ms)
+        )
+        narration = state["narration"]
+        # Narration time is charged here, not by the lap above: the next lap starts after it.
+        timings["narrating_ms"] = timings.get("narrating_ms", 0) + narrating_ms
+        lap_start = time.monotonic()
+    elif is_combat:
+        # Engine-only combat rulings (captives, clarifications, deterministic text): already final.
         narration = state.get("narration") or ""
         for piece in _yield_narration_tokens(narration):
             yield sse_event("token", {"text": piece})
@@ -724,24 +859,29 @@ async def _stream_session_turn(
     else:
         prompt = build_narrator_prompt(state)
         llm = make_narrator_model()
-        narration_parts: list[str] = []
-        try:
-            async for chunk in llm.astream(prompt):
-                tok = message_text(chunk)
-                if not tok:
-                    continue
-                narration_parts.append(tok)
-                yield sse_event("token", {"text": tok})
-        except Exception as e:
-            yield sse_event(
-                "error", error_body(e, event="turn_narrator_failed", session_id=session_id)
+        run = _NarrationStream()
+        async with aclosing(
+            _stream_narrator(
+                llm=llm,
+                prompt=prompt,
+                profile="play.narrator",
+                run=run,
+                diagnostics=diagnostics,
+                session_id=session_id,
             )
+        ) as frames:
+            async for frame in frames:
+                yield frame
+        if run.failed:
             return
-        narration = "".join(narration_parts)
+        narration = run.text
         lap("narrating_ms")
     state["narration"] = narration
 
     yield sse_event("status", {"stage": "saving"})
+    # The diagnostics row joins the turn's telemetry and commits, or rolls back, with the turn.
+    # Its own saving stage cannot be measured before the commit, so it is reported as unavailable.
+    state["telemetry_events"] = [*(state.get("telemetry_events") or []), diagnostics.to_event()]
     try:
         done_payload = await persist_turn(session_id, body_message, state)
     except TurnError as e:

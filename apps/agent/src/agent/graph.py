@@ -3,7 +3,10 @@
 Linear path: input_parser -> world_retriever -> rules_adjudicator -> world_state_updater
             -> narrator -> END.
 
-Combat path: input_parser -> combat (subgraph, narrates the round itself) -> END.
+Combat path: input_parser -> combat (subgraph: resolves the round's mechanics, then its one narrator
+call) -> END. The sync graph makes that call inside the subgraph; the SSE runner sets
+`defer_narration`, so the subgraph returns the finalised round and the runner streams the call
+(EDG-079).
 
 The conditional edge after `input_parser` chooses between the two based on intent. Any node
 that sets `error` short-circuits to END, so no further LLM calls run and the first error is
