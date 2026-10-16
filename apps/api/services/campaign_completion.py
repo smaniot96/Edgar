@@ -37,12 +37,24 @@ def _completion_flagged(adj: AdjudicationResult | None) -> bool:
     return completion_proposed(adj)
 
 
+async def lock_campaign(db: AsyncSession, campaign: Campaign) -> None:
+    """Lock the campaign row until the caller's transaction ends, then reload its state.
+
+    Lifecycle writers (close, reopen, assign, release) lock the campaign before reading its status
+    or touching assignments. Turn persistence follows the same order (session row, campaign row,
+    then assignments), so competing writers wait on each other instead of deadlocking.
+    """
+    await db.refresh(campaign, with_for_update=True)
+
+
 async def close_campaign(db: AsyncSession, campaign: Campaign) -> bool:
     """End a campaign and its active assignments with one shared timestamp.
 
     Reopening uses that timestamp to distinguish these assignments from manual releases.
+    Concurrent closers queue on the campaign lock, so only the first one closes it.
     The caller commits or flushes the change as part of its own transaction.
     """
+    await lock_campaign(db, campaign)
     if campaign.status == "ended":
         return False
     now = datetime.now(UTC)

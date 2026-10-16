@@ -20,6 +20,7 @@ from agent.resolution import (
     resolve_check,
     resolve_contest,
     resolve_from_parsed,
+    roll_attack_damage,
     roll_mode_for_sources,
     sanitize_inventory_add,
     validate_scene_id,
@@ -151,6 +152,26 @@ def test_damage_requires_failed_check_and_is_engine_rolled() -> None:
         adj = AdjudicationResult(success=True, character_update=CharacterUpdate(hp_delta=-5))
         enforce_side_effects(adj, character=FIGHTER, check_result=check)
         assert adj.character_update.hp_delta is None
+
+
+def test_hazard_damage_with_a_negative_total_deals_nothing() -> None:
+    # The proposed 1d4-10 is capped to 1d4-5, so every face totals below zero: no damage, no heal.
+    adj = AdjudicationResult(success=False, character_update=CharacterUpdate(damage_dice="1d4-10"))
+    enforce_side_effects(adj, character=FIGHTER, check_result=_check(False), rng=random.Random(3))
+    assert adj.character_update.hp_delta is None
+    assert adj.damage is None
+    assert adj.dice_log[-1]["total"] < 0
+
+
+def test_weapon_hit_deals_at_least_one_even_when_the_total_is_negative() -> None:
+    weak = {**FIGHTER, "stats": {**FIGHTER["stats"], "STR": 1}}  # STR -5 on a longsword
+    attack = resolve_attack(weak, 0, rng=random.Random(0))
+    totals = []
+    for seed in range(50):
+        dealt, outcome = roll_attack_damage(weak, attack, rng=random.Random(seed))
+        assert dealt >= 1
+        totals.append(outcome.total)
+    assert min(totals) < 1  # the floor is exercised, not just avoided
 
 
 def test_bare_hp_delta_is_an_upper_bound_on_engine_damage() -> None:
