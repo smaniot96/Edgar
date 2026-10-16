@@ -31,6 +31,7 @@ export function PlayToolBar({
           type="button"
           variant={activeTool === tool.id ? "primary" : "secondary"}
           size="sm"
+          className="min-h-11"
           disabled={disabled}
           aria-pressed={activeTool === tool.id}
           onClick={() => onToggle(tool.id)}
@@ -85,24 +86,31 @@ export function PlayToolPanel({
   const narrow = useNarrowViewport();
   const open = activeTool === "journal" || activeTool === "map";
   const [expandedJournal, setExpandedJournal] = useState(false);
+  const [expandedMap, setExpandedMap] = useState(false);
   const [largeJournalText, setLargeJournalText] = useState(false);
-  useModalFocus(open, narrow, onClose, panelRef);
+  const modal = narrow || (activeTool === "map" && expandedMap);
+  useModalFocus(open, modal, onClose, panelRef);
   if (!open) return null;
 
   const title = activeTool === "journal" ? "Journal" : "Map";
   return (
     <>
-      {narrow ? <button type="button" aria-label="Close adventure tool" className="fixed inset-0 z-30 cursor-default bg-black/55" onClick={onClose} /> : null}
+      {modal ? <button type="button" aria-label="Close adventure tool" className="fixed inset-0 z-30 cursor-default bg-black/55" onClick={onClose} /> : null}
       <aside
         ref={panelRef}
         aria-label={`${title} tool`}
-        role={narrow ? "dialog" : undefined}
-        aria-modal={narrow ? true : undefined}
-        tabIndex={narrow ? -1 : undefined}
-        className={`fixed inset-y-0 right-0 z-40 flex ${activeTool === "map" && narrow ? "w-full" : "w-[min(28rem,92vw)]"} flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "map" ? "lg:w-[min(60vw,60rem)]" : activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}
+        role={modal ? "dialog" : undefined}
+        aria-modal={modal ? true : undefined}
+        tabIndex={modal ? -1 : undefined}
+        className={`fixed inset-y-0 right-0 z-40 flex ${activeTool === "map" && narrow ? "w-full" : "w-[min(28rem,92vw)]"} flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 ${activeTool === "map" && expandedMap ? "lg:inset-4 lg:w-auto" : `lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "map" ? "lg:w-[min(60vw,60rem)]" : activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}`}
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
           <h2 className="min-w-0 flex-1 font-display text-lg font-semibold text-ink">{title}</h2>
+          {activeTool === "map" && !narrow ? (
+            <Button className="min-h-11" variant="secondary" size="sm" aria-expanded={expandedMap} onClick={() => setExpandedMap((value) => !value)}>
+              {expandedMap ? "Side view" : "Full view"}
+            </Button>
+          ) : null}
           {activeTool === "journal" ? (
             <>
               <Button
@@ -128,7 +136,7 @@ export function PlayToolPanel({
             type="button"
             onClick={onClose}
             aria-label={`Close ${title.toLowerCase()}`}
-            className="rounded p-1 text-ink-muted hover:bg-surface-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+            className="min-h-11 min-w-11 rounded p-1 text-ink-muted hover:bg-surface-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
           >
             ✕
           </button>

@@ -279,6 +279,29 @@ def test_parallel_manifest_versions_share_one_atomic_run_image_limit(tmp_path, m
     assert usage["reserved"] == 1 and usage["reserved_cost_microusd"] == 250_000
 
 
+@pytest.mark.asyncio
+async def test_map_svg_rejects_a_projection_changed_since_the_json_read(monkeypatch):
+    import hashlib
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException, Response
+
+    from apps.api.routers import session_assets
+
+    async def context(*_):
+        return {"session": SimpleNamespace(id=12, current_scene_id=None),
+                "campaign": SimpleNamespace(id=9), "manifests": {}, "facts": []}
+
+    monkeypatch.setattr(session_assets, "_session_map_context", context)
+    version = hashlib.sha256(b"edgar-map-v1:12:9").hexdigest()
+    response = await session_assets.get_session_map_svg(12, Response(), db=None, v=version)
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert b"No known places" in response.body
+    with pytest.raises(HTTPException) as error:
+        await session_assets.get_session_map_svg(12, Response(), db=None, v="a" * 64)
+    assert error.value.status_code == 409
+
+
 def test_image_budget_requires_frozen_total_and_per_call_cost_caps():
     with pytest.raises(ValueError, match="per-call image cost cap"):
         assets.AssetImageBudget(max_image_calls=1, max_image_cost_microusd=10)

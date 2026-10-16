@@ -4,7 +4,13 @@ import { apiBase, errorMessage } from "../../api/client";
 import type { SessionMapRead } from "../../api/types";
 import { Button } from "../ui/Button";
 
-type SavedView = { sceneId: string | null; zoom: number };
+type SavedView = { sceneId: string | null; zoom: number; panLeft: number; panTop: number; scrollTop: number };
+
+const emptyView: SavedView = { sceneId: null, zoom: 1, panLeft: 0, panTop: 0, scrollTop: 0 };
+
+function savedOffset(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(value, 1_000_000)) : 0;
+}
 
 function viewKey(sessionId: number, sourceVersion: string) {
   return `edgar_play_map:v1:${sessionId}:${sourceVersion}`;
@@ -16,9 +22,12 @@ function readView(sessionId: number, sourceVersion: string): SavedView {
     return {
       sceneId: typeof raw?.sceneId === "string" ? raw.sceneId : null,
       zoom: raw?.zoom === 1.25 || raw?.zoom === 1.5 ? raw.zoom : 1,
+      panLeft: savedOffset(raw?.panLeft),
+      panTop: savedOffset(raw?.panTop),
+      scrollTop: savedOffset(raw?.scrollTop),
     };
   } catch {
-    return { sceneId: null, zoom: 1 };
+    return emptyView;
   }
 }
 
@@ -51,8 +60,10 @@ function SessionMapPanelContent({
   onPrepareTravel,
 }: SessionMapPanelProps) {
   const mapPaneRef = useRef<HTMLDivElement | null>(null);
+  const mapFigureRef = useRef<HTMLElement | null>(null);
   const selectedRef = useRef<HTMLLIElement | null>(null);
-  const [view, setView] = useState<SavedView>(() => map ? readView(sessionId, map.source_version) : { sceneId: null, zoom: 1 });
+  const [view, setView] = useState<SavedView>(() => map ? readView(sessionId, map.source_version) : emptyView);
+  const [imageFailed, setImageFailed] = useState(false);
   const sourceVersion = map?.source_version ?? "loading";
   const mapSourceVersion = map?.source_version;
 
@@ -72,6 +83,10 @@ function SessionMapPanelContent({
     }));
   const selected = listPlaces.find((place) => place.scene_id === view.sceneId) ?? null;
   const current = places.find((place) => place.scene_id === map?.current_scene_id) ?? null;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(places.length)));
+  const diagramWidth = Math.max(520, columns * 260 + 100);
+  const diagramHeight = Math.max(220, Math.ceil(places.length / columns) * 150 + 100);
+  const placeById = new Map(places.map((place) => [place.scene_id, place]));
   const mapUrl = useMemo(
     () => `${apiBase}/api/sessions/${sessionId}/map.svg?v=${encodeURIComponent(sourceVersion)}`,
     [sessionId, sourceVersion],
@@ -82,8 +97,20 @@ function SessionMapPanelContent({
   }
 
   function fitMap() {
-    updateView({ zoom: 1 });
+    updateView({ zoom: 1, panLeft: 0, panTop: 0, scrollTop: 0 });
+    if (mapFigureRef.current) {
+      mapFigureRef.current.scrollLeft = 0;
+      mapFigureRef.current.scrollTop = 0;
+    }
     if (mapPaneRef.current) mapPaneRef.current.scrollTop = 0;
+  }
+
+  function restoreScroll() {
+    if (mapFigureRef.current) {
+      mapFigureRef.current.scrollLeft = view.panLeft;
+      mapFigureRef.current.scrollTop = view.panTop;
+    }
+    if (mapPaneRef.current) mapPaneRef.current.scrollTop = view.scrollTop;
   }
 
   function showCurrent() {
@@ -107,7 +134,7 @@ function SessionMapPanelContent({
         <Button className="min-h-11 min-w-11" variant="secondary" size="sm" aria-label="Zoom in" disabled={view.zoom >= 1.5} onClick={() => updateView({ zoom: Math.min(1.5, view.zoom + 0.25) })}>+</Button>
         <Button className="min-h-11" variant="secondary" size="sm" onClick={onRefresh}>Refresh map</Button>
       </div>
-      <div ref={mapPaneRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div ref={mapPaneRef} onScroll={(event) => updateView({ scrollTop: event.currentTarget.scrollTop })} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {loading && !map ? <p className="text-sm text-ink-muted" role="status">Loading this session’s map…</p> : null}
         {error && !map ? (
           <section className="rounded-control border border-line bg-surface p-4" role="alert">
@@ -117,16 +144,28 @@ function SessionMapPanelContent({
           </section>
         ) : null}
         {map && places.length > 0 ? (
-          <figure className="overflow-auto rounded-control border border-line bg-[#101827] p-2" aria-label="Schematic map of known places">
-            <img
-              src={mapUrl}
-              alt="Schematic map showing only places and connections known in this session. It does not show distance or scale."
-              className="mx-auto h-auto max-w-none transition-[width] duration-150"
-              style={{ width: `${Math.round(view.zoom * 100)}%`, minWidth: `${Math.round(view.zoom * 100)}%` }}
-            />
+          <figure ref={mapFigureRef} tabIndex={0} onScroll={(event) => updateView({ panLeft: event.currentTarget.scrollLeft, panTop: event.currentTarget.scrollTop })} className="max-h-[50dvh] overflow-auto rounded-control border border-line bg-[#101827] p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400" aria-label="Schematic map of known places">
+            <div className="relative mx-auto transition-[width] duration-150" style={{ width: `${Math.round(view.zoom * 100)}%`, minWidth: `${Math.round(view.zoom * 100)}%` }}>
+              <img
+                src={mapUrl}
+                onLoad={() => { setImageFailed(false); restoreScroll(); }}
+                onError={() => setImageFailed(true)}
+                alt="Schematic map showing only places and connections known in this session. It does not show distance or scale."
+                className="h-auto w-full max-w-none"
+              />
+              {!imageFailed && places.map((place, index) => (
+                <button key={place.scene_id} type="button" aria-label={`Inspect ${place.title}`} aria-pressed={selected?.scene_id === place.scene_id}
+                  onClick={() => updateView({ sceneId: place.scene_id })}
+                  className="absolute min-h-11 min-w-11 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-transparent hover:border-ember-300 focus-visible:border-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+                  style={{ left: `${(120 + (index % columns) * 260) / diagramWidth * 100}%`, top: `${(100 + Math.floor(index / columns) * 150) / diagramHeight * 100}%` }}>
+                  <span className="sr-only">{place.title}</span>
+                </button>
+              ))}
+            </div>
             <figcaption className="px-2 pb-1 text-xs text-slate-300">Schematic connections only. The map does not show distance or scale.</figcaption>
           </figure>
         ) : null}
+        {imageFailed ? <p className="mt-3 text-sm text-ink-muted" role="status">The map image is unavailable or changed. Refresh the map, or use the known places and routes below.</p> : null}
         {map?.note ? <p className="mt-3 text-sm text-ink-muted">{map.note}</p> : null}
         {map?.tracking === "legacy_untracked" ? <p className="mt-3 text-sm text-ink-muted">This older session has no recorded place knowledge yet.</p> : null}
 
@@ -162,6 +201,19 @@ function SessionMapPanelContent({
               })}
             </ul>
           )}
+        </section>
+
+        <section className="mt-5" aria-labelledby="known-routes-heading">
+          <h3 id="known-routes-heading" className="font-serif text-lg font-semibold text-ink">Known routes</h3>
+          {map?.routes.length ? (
+            <ul className="mt-2 space-y-2 text-sm text-ink-muted">
+              {map.routes.map((route) => (
+                <li key={`${route.from_scene_id}:${route.to_scene_id}`}>
+                  {placeById.get(route.from_scene_id)?.title} to {placeById.get(route.to_scene_id)?.title}
+                </li>
+              ))}
+            </ul>
+          ) : <p className="mt-2 text-sm text-ink-muted">No routes have been recorded for this session yet.</p>}
         </section>
 
         {map?.artwork.length ? (

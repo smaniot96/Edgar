@@ -192,6 +192,7 @@ async def get_session_map_svg(
     session_id: int,
     response: Response,
     db: AsyncSession = Depends(get_session),
+    v: str | None = None,
 ) -> BinaryResponse:
     """Render the already-filtered map projection; this endpoint never loads private SVGs."""
     response.headers["Cache-Control"] = "private, no-store"
@@ -224,6 +225,8 @@ async def get_session_map_svg(
             world_flags=flags,
             current_scene_id=context["session"].current_scene_id,
         )
+    if v is not None and v != projection.source_version:
+        raise HTTPException(status_code=409, detail="Map changed. Refresh this session's map.")
     return BinaryResponse(
         content=render_player_map_svg(projection),
         media_type="image/svg+xml",
