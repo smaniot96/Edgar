@@ -5,9 +5,16 @@ import pytest
 from agent.encounter_budget import (
     TIER_ABOVE_DEADLY,
     TIER_FAR_ABOVE_DEADLY,
+    adaptation_sentence,
     apply_solo_budget,
     solo_budget,
 )
+from agent.graph_combat import EncounterSetup, EnemyStat, combat_round_node
+from agent.models.adjudication import AdjudicationResult
+from agent.models.parsed_input import ParsedInput
+from apps.api.services.turn_runner import combat_state_public
+from tests.agent.test_combat import _state
+from tests.agent.test_creature_encounters import verified_record
 
 
 def exact(name, *, xp, cr="1/8", hp=7, boss=False):
@@ -140,3 +147,53 @@ def test_a_generic_only_max_roster_never_warns_at_any_level() -> None:
         assert summary["warning"] is None, level
 
 
+# --- the combat start: what the player reads, and what persists ---------------------------------
+
+
+def test_adaptation_sentence_keeps_the_old_text_when_there_is_no_warning() -> None:
+    roster = [generic("Ogre", hp=120, bonus=10, dice="4d12+5")]
+    _, summary = apply_solo_budget(roster, 1)
+    assert summary["warning"] is None
+    assert adaptation_sentence(summary) == (
+        "Encounter adapted for a solo level 1 hero: " + "; ".join(summary["notes"]) + "."
+    )
+
+
+def test_summary_keeps_the_legacy_keys() -> None:
+    _, summary = apply_solo_budget([generic("Rat")], 1)
+    assert {"level", "adapted", "notes"} <= set(summary)
+    assert summary["level"] == 1 and summary["adapted"] is False and summary["notes"] == []
+
+
+def test_the_policy_is_deterministic() -> None:
+    roster = [exact("Goblin Boss", xp=200, cr="1", boss=True), generic("Goblin")]
+    assert apply_solo_budget(roster, 1) == apply_solo_budget(roster, 1)
+
+
+@pytest.mark.asyncio
+async def test_far_above_warning_reaches_the_combat_start_and_the_saved_state(
+    fake_llm_schema, fake_retrieval, monkeypatch
+):
+    record = verified_record()
+    record["text"] = record["text"].replace(
+        "Armor Class 15", "Challenge 1 (200 XP)\nArmor Class 15"
+    )
+    monkeypatch.setattr("agent.graph_combat.resolve_creature", lambda *a, **k: record)
+    fake_llm_schema.responses[EncounterSetup] = EncounterSetup(
+        enemies=[EnemyStat(name="Goblin", hp_max=7, is_boss=True)]
+    )
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(
+        intent="combat", check="attack", target="Goblin"
+    )
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    state = {
+        **_state(None, "I attack the Goblin"),
+        "parsed_input": ParsedInput(intent="combat", check="attack", target="Goblin"),
+    }
+    out = await combat_round_node(state)
+    summary = out["combat_state"]["solo_budget"]
+    assert summary["warning"]["tier"] == TIER_FAR_ABOVE_DEADLY
+    assert summary["xp_check"]["exact_foes"][0]["xp"] == 200
+    message = out["adjudication_result"].mechanical_summary
+    assert "Warning: this fight is far above a solo level 1 hero's deadly threshold" in message
+    assert combat_state_public(out["combat_state"])["solo_budget"]["warning"] == summary["warning"]
