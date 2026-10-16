@@ -584,10 +584,8 @@ async def _build_enemy_roster(
         raise
     except Exception as e:
         log.warning("encounter_builder_failed", extra={"error": str(e)[:200]})
-        enemies = []
-
-    if not enemies:
-        # Builder unavailable: every resolved foe still fights with its own exact record.
+        # Builder unavailable: every resolved foe still fights with its own exact record. A builder
+        # that answers with no foe present starts no fight (EDG-126).
         enemies = [_exact_enemy(c) for c in monster_ctx]
     # Unique names so targeting and initiative stay unambiguous.
     counts: dict[str, int] = {}

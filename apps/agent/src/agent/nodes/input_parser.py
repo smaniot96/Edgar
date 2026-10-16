@@ -12,20 +12,31 @@ exploration with no check, rather than failing.
 
 import json
 import logging
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.action_economy import has_attack_words
 from agent.combatants import is_standing
 from agent.history import continuity_context, public_earned_facts
 from agent.llm import make_chat_model
 from agent.models.parsed_input import ParsedInput
 from agent.prompts import INPUT_PARSER, wrap_player_action
-from agent.resolution import PENDING_COMPLETION_FLAG
+from agent.resolution import PENDING_COMPLETION_FLAG, normalise_check
 from agent.resolution_policies import parser_earned_clues, parser_policy_choices
 from agent.state import AgentState
 from edgar_core.config import OPENAI_API_KEY
 
 log = logging.getLogger(__name__)
+
+# Avoiding, sneaking past, refusing or talking about a fight (EDG-126). Such a line starts no combat
+# unless it also declares a hostile action.
+_NO_FIGHT = re.compile(
+    r"\b(?:avoid\w*|evad\w*|sneak\w*|sidestep\w*|slip\s+past|negotiat\w*|talk\w*|discuss\w*|parley\w*"
+    r"|(?:won't|will\s+not|don't|do\s+not|rather\s+not|refuse\s+to|without|instead\s+of)\s+(?:\w+\s+){0,2}"
+    r"(?:fight\w*|combat|battle))\b",
+    re.IGNORECASE,
+)
 
 
 def _parser_context(state: AgentState) -> str:
@@ -108,5 +119,12 @@ async def input_parser_node(state: AgentState) -> dict:
         # Degrade, don't fail: no check is rolled and retrieval uses the raw input.
         log.warning("input_parser_fallback", extra={"error": str(e)[:200]})
         parsed = ParsedInput(intent="exploration")
+
+    norm = normalise_check(parsed.check)
+    attacks = norm is not None and norm[1] in ("attack", "spell_attack")
+    if parsed.intent == "combat" and _NO_FIGHT.search(player_input):
+        if not attacks and not has_attack_words(player_input):
+            # Avoiding or talking about a fight declares no hostile action, so it starts no combat.
+            parsed = parsed.model_copy(update={"intent": "exploration"})
 
     return {"parsed_input": parsed}
