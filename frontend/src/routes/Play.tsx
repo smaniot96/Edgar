@@ -400,7 +400,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
 
               <div ref={composerRef} className="shrink-0">
                 {!campaignComplete ? (
-                  <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} className="mx-3 mb-2 sm:mx-4" />
+                  <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mb-2 sm:mx-4" />
                 ) : null}
                 {campaignComplete ? (
                   <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
@@ -453,7 +453,9 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
 
       {/* Single polite live region: announces completed narration / errors, not every token. */}
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {announcement}
+        {announcement || (game.readiness?.play_allowed === false
+          ? game.readiness.blockers.map((blocker) => blocker.message).join(" ")
+          : "")}
       </div>
     </div>
   );

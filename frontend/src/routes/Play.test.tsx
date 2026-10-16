@@ -45,7 +45,8 @@ it("preserves live transcript when readiness changes and disables module actions
   expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("I check the doorway before entering.");
   const readinessNotices = Array.from(container.querySelectorAll("section")).filter((section) => section.textContent?.includes(blocked.blockers[0].message));
   expect(readinessNotices).toHaveLength(2);
-  expect(readinessNotices.filter((section) => section.getAttribute("aria-live") === "polite")).toHaveLength(1);
+  expect(readinessNotices.filter((section) => section.getAttribute("aria-live") === "polite")).toHaveLength(0);
+  expect(Array.from(container.querySelectorAll('[role="status"][aria-live="polite"]')).filter((section) => section.textContent?.includes(blocked.blockers[0].message))).toHaveLength(1);
   expect(harness.dispatch.mock.calls.filter(([action]) => action.type === "reset")).toHaveLength(1);
   harness.game = { ...game, readiness: ready, campaign: { ...campaign, source_mode: "homebrew", retrieval_degraded: true } };
   await act(render);
