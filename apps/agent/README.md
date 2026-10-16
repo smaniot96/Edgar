@@ -28,6 +28,17 @@ Any node that sets `error` short-circuits to `END`, so no further LLM calls run 
 
 The rolling memory summary is not a graph node. After a turn commits, the API folds older turns into a stored `memory_summary` event (`apps/api/services/session_messages.py`) and loads the latest one into `state["memory_summary"]` on the next turn.
 
+## Untrusted input and limits
+
+Player text is wrapped by `wrap_player_action` and retrieved PDF text by `wrap_retrieved_excerpt`. Both neutralise case and whitespace variants of the wrapper tags, so text cannot close its block. `tests/agent/test_untrusted_input.py` lets a fake model obey injections and checks that the engine drops them: HP is engine-owned and the schema has no XP or level field, damage needs an engine-failed check and is rolled and capped, a player confirmation alone never ends a campaign, and reviewed scenes are clamped to the allowed set.
+
+These limits rely on code or on prompt wording, not on a security boundary:
+
+- Narration is free text. Reviewed campaigns never send planner material to the narrator, but prompt wording alone does not stop it from disclosing player-visible text. Unreviewed campaigns send adventure excerpts to the narrator without an audience filter.
+- Model-proposed world flags are accepted if their key is well formed and not reserved. Unreviewed play also accepts well-formed unknown scene ids and up to three mundane item grants per turn.
+- The engine checks that a check failed and caps the hazard roll. It does not check that a hazard exists.
+- Only the adjudicator prompt says that excerpts are data. The narrator prompt does not, so narration may follow an excerpt's instructions, though it cannot write state.
+
 ## State
 
 `AgentState` (TypedDict, all keys optional) is the contract every node honours. The API populates `player_input`, `session_id`, `campaign_id`, `messages` (rebuilt from `event_log`), `memory_summary`, `adventure_collections`, `world_flags`, `current_scene_id`, `character`, `npcs`, and an existing `combat_state` when one is loaded from the DB. Nodes only write the keys they own.

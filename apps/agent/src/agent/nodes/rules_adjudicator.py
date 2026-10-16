@@ -34,7 +34,7 @@ from agent.nodes.story_effects import (
     validate_story_effects,
 )
 from agent.prepared_amendments import accept_runtime_amendment, amendment_prompt_block
-from agent.prompts import RULES_ADJUDICATOR, wrap_player_action
+from agent.prompts import RULES_ADJUDICATOR, wrap_player_action, wrap_retrieved_excerpt
 from agent.resolution import (
     CheckResult,
     decide_completion,
@@ -161,11 +161,13 @@ def build_adjudicator_prompt(
             "Core rules excerpts (Player Handbook, DMG, Monster Manual; optional/variant rules excluded):"
         )
         for c in rules_context:
-            parts.append(cited_excerpt(c, state.get("rules_edition", "2014")))
+            parts.append(
+                wrap_retrieved_excerpt(cited_excerpt(c, state.get("rules_edition", "2014")))
+            )
     if state.get("manifest_status") == "reviewed" and state.get("adventure_context"):
         parts.append("Reviewed player-visible current-scene evidence:")
         parts.extend(
-            cited_excerpt(c, state.get("rules_edition", "2014"))
+            wrap_retrieved_excerpt(cited_excerpt(c, state.get("rules_edition", "2014")))
             for c in eligible_context(
                 state["adventure_context"], state.get("rules_edition", "2014")
             )
@@ -175,7 +177,8 @@ def build_adjudicator_prompt(
             "Private current-scene planner evidence (never disclose secrets in summaries):"
         )
         parts.extend(
-            cited_excerpt(c, state.get("rules_edition", "2014")) for c in state["planner_context"]
+            wrap_retrieved_excerpt(cited_excerpt(c, state.get("rules_edition", "2014")))
+            for c in state["planner_context"]
         )
     if not (state.get("combat_state") or {}).get("ended") and not getattr(
         parsed, "resolution_policy_id", None
