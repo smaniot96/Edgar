@@ -48,6 +48,12 @@ it("fits and returns to the current place, and travel only calls the draft callb
       </form>,
     ));
 
+    for (const label of ["Fit map", "Current place", "Refresh map"]) {
+      const button = [...container.querySelectorAll("button")].find((item) => item.textContent === label);
+      expect(button?.className).toContain("min-h-11");
+    }
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.className).toContain("min-w-11");
+
     await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')!.click());
     expect(container.querySelector("img")?.getAttribute("style")).toContain("125%");
     await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Fit map")!.click());
@@ -56,12 +62,47 @@ it("fits and returns to the current place, and travel only calls the draft callb
     await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("The watchtower"))!.click());
     expect(container.textContent).toContain("A narrow stair climbs above the pier.");
     await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Add travel idea to draft")!.click());
+    expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Add travel idea to draft")?.className).toContain("min-h-11");
     expect(onPrepareTravel).toHaveBeenCalledExactlyOnceWith("The watchtower");
     expect(onSubmit).not.toHaveBeenCalled();
 
     await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Current place"))!.click());
     expect(container.querySelector('button[aria-pressed="true"]')?.textContent).toContain("The harbor");
     expect(localStorage.getItem(`edgar_play_map:v1:12:${map.source_version}`)).toContain('"sceneId":"harbor"');
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  }
+});
+
+it("loads the saved view for a changed map version instead of carrying the previous view", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const nextVersion = "b".repeat(64);
+  localStorage.setItem(
+    `edgar_play_map:v1:12:${nextVersion}`,
+    JSON.stringify({ sceneId: "watchtower", zoom: 1.5 }),
+  );
+  const renderPanel = (version: string) => (
+    <SessionMapPanel
+      sessionId={12}
+      map={{ ...map, source_version: version }}
+      loading={false}
+      error={null}
+      onRefresh={vi.fn()}
+      onOpenJournal={vi.fn()}
+      onPrepareTravel={vi.fn()}
+    />
+  );
+  try {
+    await act(() => root.render(renderPanel(map.source_version)));
+    await act(() => root.render(renderPanel(nextVersion)));
+    expect(container.textContent).toContain("150%");
+    expect(container.querySelector('button[aria-pressed="true"]')?.textContent).toContain("The watchtower");
   } finally {
     await act(() => root.unmount());
     container.remove();

@@ -100,12 +100,12 @@ function SessionMapPanelContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-canvas px-3 py-2" aria-label="Map controls">
-        <Button variant="secondary" size="sm" onClick={fitMap}>Fit map</Button>
-        <Button variant="secondary" size="sm" onClick={showCurrent} disabled={!current && listPlaces.length === 0}>Current place</Button>
+        <Button className="min-h-11" variant="secondary" size="sm" onClick={fitMap}>Fit map</Button>
+        <Button className="min-h-11" variant="secondary" size="sm" onClick={showCurrent} disabled={!current && listPlaces.length === 0}>Current place</Button>
         <span className="ml-auto text-xs text-ink-muted" aria-live="polite">{Math.round(view.zoom * 100)}%</span>
-        <Button variant="secondary" size="sm" aria-label="Zoom out" disabled={view.zoom <= 1} onClick={() => updateView({ zoom: Math.max(1, view.zoom - 0.25) })}>−</Button>
-        <Button variant="secondary" size="sm" aria-label="Zoom in" disabled={view.zoom >= 1.5} onClick={() => updateView({ zoom: Math.min(1.5, view.zoom + 0.25) })}>+</Button>
-        <Button variant="secondary" size="sm" onClick={onRefresh}>Refresh map</Button>
+        <Button className="min-h-11 min-w-11" variant="secondary" size="sm" aria-label="Zoom out" disabled={view.zoom <= 1} onClick={() => updateView({ zoom: Math.max(1, view.zoom - 0.25) })}>−</Button>
+        <Button className="min-h-11 min-w-11" variant="secondary" size="sm" aria-label="Zoom in" disabled={view.zoom >= 1.5} onClick={() => updateView({ zoom: Math.min(1.5, view.zoom + 0.25) })}>+</Button>
+        <Button className="min-h-11" variant="secondary" size="sm" onClick={onRefresh}>Refresh map</Button>
       </div>
       <div ref={mapPaneRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         {loading && !map ? <p className="text-sm text-ink-muted" role="status">Loading this session’s map…</p> : null}
@@ -113,7 +113,7 @@ function SessionMapPanelContent({
           <section className="rounded-control border border-line bg-surface p-4" role="alert">
             <h3 className="font-serif text-lg font-semibold text-ink">Map unavailable</h3>
             <p className="mt-2 text-sm text-ink-muted">{errorMessage(error)}</p>
-            <Button className="mt-3" variant="secondary" size="sm" onClick={onRefresh}>Try again</Button>
+            <Button className="mt-3 min-h-11" variant="secondary" size="sm" onClick={onRefresh}>Try again</Button>
           </section>
         ) : null}
         {map && places.length > 0 ? (
@@ -153,8 +153,8 @@ function SessionMapPanelContent({
                     {active ? (
                       <div className="mt-2 flex flex-wrap gap-2 pl-2">
                         {place.detail ? <p className="w-full text-sm text-ink-muted">{place.detail}</p> : null}
-                        {journalId ? <Button variant="secondary" size="sm" onClick={() => onOpenJournal(journalId)}>Open journal entry</Button> : null}
-                        <Button variant="secondary" size="sm" onClick={() => onPrepareTravel(place.title)}>Add travel idea to draft</Button>
+                        {journalId ? <Button className="min-h-11" variant="secondary" size="sm" onClick={() => onOpenJournal(journalId)}>Open journal entry</Button> : null}
+                        <Button className="min-h-11" variant="secondary" size="sm" onClick={() => onPrepareTravel(place.title)}>Add travel idea to draft</Button>
                       </div>
                     ) : null}
                   </li>

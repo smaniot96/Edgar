@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import math
 from typing import Literal
 
@@ -23,6 +24,62 @@ from edgar_core.story import StoryFact
 
 class AssetRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class IndependentVisualReviewArtifact(AssetRecord):
+    """Signed operator review tied to one exact retained visual and its full scope."""
+
+    version: Literal[1] = 1
+    review_id: Identifier
+    reviewer_id: Identifier
+    candidate_id: Identifier
+    decision: Literal["approved", "rejected"]
+    reasons: list[str] = Field(min_length=1, max_length=20)
+    artifact_sha256: Digest
+    manifest_sha256: Digest
+    prepared_sha256: Digest
+    scene_ids: list[Identifier] = Field(default_factory=list, max_length=100)
+    passage_ids: list[Identifier] = Field(default_factory=list, max_length=100)
+    entity_id: Identifier | None = None
+    signature: str = Field(min_length=40, max_length=256)
+
+    @model_validator(mode="after")
+    def has_review_scope(self):
+        if not (self.scene_ids or self.passage_ids or self.entity_id):
+            raise ValueError("Visual release review must name at least one exact scope.")
+        if len(set(self.scene_ids)) != len(self.scene_ids) or len(set(self.passage_ids)) != len(self.passage_ids):
+            raise ValueError("Visual release review scope IDs must be unique.")
+        return self
+
+
+class IndependentVisualReviewDecision(AssetRecord):
+    """Exact bounded critic output. Scope and reviewer identity are server-derived."""
+
+    candidate_id: Identifier
+    artifact_sha256: Digest
+    decision: Literal["approved", "rejected"]
+    reasons: list[str] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def bounded_reasons(self):
+        if any(not reason.strip() or len(reason) > 500 for reason in self.reasons):
+            raise ValueError("Visual review reasons must be non-empty and at most 500 characters.")
+        return self
+
+
+class PrivateVisualCandidate(AssetRecord):
+    """Private retained bytes and opaque identity supplied to the independent critic."""
+
+    candidate_id: Identifier
+    artifact_sha256: Digest
+    manifest_sha256: Digest
+    prepared_sha256: Digest
+    kind: Literal["source_map", "generated_illustration", "original_creature_art"]
+    media_type: str
+    scene_ids: list[Identifier] = Field(default_factory=list, max_length=100)
+    passage_ids: list[Identifier] = Field(default_factory=list, max_length=100)
+    entity_id: Identifier | None = None
+    data: bytes = Field(repr=False)
 
 
 class CropRect(AssetRecord):
@@ -138,8 +195,20 @@ class AssetCoverage(AssetRecord):
     ]
     required: bool
     status: Literal["ready", "unavailable", "failed", "skipped"]
+    player_review_status: Literal["not_required", "pending", "approved", "rejected"] = "not_required"
     artifact_sha256: Digest | None = None
     explanation: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def review_status_matches_asset(self):
+        reviewable = self.kind in {
+            "source_map", "generated_illustration", "original_creature_art"
+        }
+        if self.status == "ready" and reviewable and self.player_review_status == "not_required":
+            raise ValueError("Prepared player visuals must remain pending until independently reviewed.")
+        if not reviewable and self.player_review_status != "not_required":
+            raise ValueError("Only player visual assets can require independent visual review.")
+        return self
 
 
 class AssetScopeCoverage(AssetRecord):
@@ -172,8 +241,22 @@ class AssetCoverageReceipt(AssetRecord):
 
     @property
     def required_ready(self) -> bool:
-        return not self.findings and all(
-            item.status == "ready" for item in self.coverage if item.required
+        required_items = [item for item in self.coverage if item.required]
+        required_acts = [item for item in self.act_coverage if item.required]
+        required_scenes = [item for item in self.scene_coverage if item.required]
+        return (
+            not self.findings
+            and bool(required_items)
+            and bool(required_acts)
+            and bool(required_scenes)
+            and all(item.status == "ready" for item in required_items)
+            and all(
+                item.kind not in {"source_map", "generated_illustration", "original_creature_art"}
+                or item.player_review_status == "approved"
+                for item in required_items
+            )
+            and all(item.status == "ready" for item in required_acts)
+            and all(item.status == "ready" for item in required_scenes)
         )
 
 
@@ -205,6 +288,26 @@ class PlayerMapProjection(AssetRecord):
 
 def _matches(predicates: dict[str, str], flags: dict[str, str]) -> bool:
     return all(flags.get(key) == value for key, value in predicates.items())
+
+
+def _public_map_version(
+    source_version: str,
+    topology: str,
+    places: list[PlayerMapPlace],
+    routes: list[PlayerMapRoute],
+    current_scene_id: str | None,
+) -> str:
+    """Version only the already-filtered projection so saved views follow map updates."""
+    visible = {
+        "source_version": source_version,
+        "topology": topology,
+        "current_scene_id": current_scene_id,
+        "places": [place.model_dump(mode="json") for place in places],
+        "routes": sorted(
+            (route.from_scene_id, route.to_scene_id) for route in routes
+        ),
+    }
+    return hashlib.sha256(json.dumps(visible, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _safe_fact_scene_ids(
@@ -264,10 +367,11 @@ def project_player_map(
         known.add(current_scene_id)
         visited.add(current_scene_id)
     if not known:
+        topology = "prepared" if canonical.prepared else "unavailable"
         return PlayerMapProjection(
             session_id=session_id,
-            source_version=source_version,
-            topology="prepared" if canonical.prepared else "unavailable",
+            source_version=_public_map_version(source_version, topology, [], [], None),
+            topology=topology,
             places=[],
             routes=[],
             note="No places have been committed to this session yet.",
@@ -287,11 +391,13 @@ def project_player_map(
         )
         for scene_id in sorted(known & scene_by_id.keys())
     ]
-    # Without a full prepared topology, reviewed links remain useful, but only if both
-    # destinations are already known and their runtime traversal predicates currently hold.
+    # Reviewed links may describe topology for unprepared manifests. Once a prepared
+    # campaign exists, its route inventory is authoritative; missing or invalid prepared
+    # topology must never fall back to every canonical link.
     prepared = canonical.prepared
-    prepared_routes = None
-    topology: Literal["prepared", "reviewed_manifest"] = "reviewed_manifest"
+    prepared_routes: dict[tuple[str, str], object] | None = None
+    topology: Literal["prepared", "reviewed_manifest", "unavailable"] = "reviewed_manifest"
+    prepared_valid = prepared is None
     if prepared is not None:
         report = validate_prepared_campaign(canonical, prepared)
         if report.valid:
@@ -299,24 +405,32 @@ def project_player_map(
                 (route.from_scene_id, route.to_scene_id): route for route in prepared.routes
             }
             topology = "prepared"
+            prepared_valid = True
+        else:
+            topology = "unavailable"
 
     routes: list[PlayerMapRoute] = []
     for scene in canonical.scenes:
         for link in scene.links:
-            route = (prepared_routes or {}).get((scene.scene_id, link.scene_id))
+            if not _matches(link.requires, world_flags):
+                continue
             if scene.scene_id not in known or link.scene_id not in known:
                 continue
-            if route is not None:
+            route = prepared_routes.get((scene.scene_id, link.scene_id)) if prepared_routes else None
+            if prepared is not None:
+                if not prepared_valid or route is None:
+                    continue
                 if route.reveal_requires and not _matches(route.reveal_requires, world_flags):
                     continue
                 if route.visibility == "private" and not route.reveal_requires:
                     continue
             routes.append(PlayerMapRoute(from_scene_id=scene.scene_id, to_scene_id=link.scene_id))
+    current = current_scene_id if current_scene_id in known else None
     return PlayerMapProjection(
         session_id=session_id,
-        source_version=source_version,
+        source_version=_public_map_version(source_version, topology, places, routes, current),
         topology=topology,
-        current_scene_id=current_scene_id if current_scene_id in known else None,
+        current_scene_id=current,
         places=places,
         routes=routes,
         note="Schematic map; it shows learned connections and does not establish distance or scale.",
@@ -520,7 +634,8 @@ def plan_assets(
 
 __all__ = [
     "AssetCoverage", "AssetCoverageReceipt", "AssetPlan", "AssetPlanItem", "AssetRequirement",
-    "CreatureArtworkBinding", "CropRect", "SourceCropBinding",
+    "CreatureArtworkBinding", "CropRect", "IndependentVisualReviewArtifact",
+    "IndependentVisualReviewDecision", "PrivateVisualCandidate", "SourceCropBinding",
     "PlayerMapPlace", "PlayerMapProjection", "PlayerMapRoute", "plan_assets",
     "project_player_map", "render_player_map_svg",
 ]
