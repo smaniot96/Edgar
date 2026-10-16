@@ -998,8 +998,28 @@ def detect_rest(text: str | None) -> str | None:
     return None
 
 
+_COUNT_WORDS = {
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}  # fmt: skip
+_DECLARED_HIT_DICE = re.compile(
+    r"\b(?:spend|spends|spending|use|uses|using|roll|rolls|rolling)\s+(\d+|"
+    + "|".join(_COUNT_WORDS)
+    + r")\s+(?:of\s+(?:my|the)\s+)?hit\s+di(?:e|ce)\b",
+    re.IGNORECASE,
+)
+
+
+def declared_hit_dice(text: str | None) -> int:
+    """The number of Hit Dice a short rest declares to spend ("spend three hit dice"); one if none."""
+    match = _DECLARED_HIT_DICE.search(text or "")
+    if not match:
+        return 1
+    word = match.group(1).lower()
+    return max(1, int(word) if word.isdigit() else _COUNT_WORDS[word])
+
+
 def heal_from_rest(
-    character: dict | None, kind: str, rng: random.Random | None = None
+    character: dict | None, kind: str, rng: random.Random | None = None, *, hit_dice: int = 1
 ) -> HealResult | None:
     if not character:
         return None
@@ -1011,9 +1031,10 @@ def heal_from_rest(
         if hit_dice_remaining(character) <= 0:
             # Refused without a roll: no Hit Die is left until a long rest.
             return None
+        count = min(hit_dice, hit_dice_remaining(character))
         die = hit_die_sides(character)
-        con = ability_modifier(character, "CON")
-        expr = f"1d{die}{con:+d}" if con else f"1d{die}"
+        con = ability_modifier(character, "CON") * count
+        expr = f"{count}d{die}{con:+d}" if con else f"{count}d{die}"
         outcome = roll(expr, rng)
         # PHB p.186: the character regains hit points equal to the total; no floor of 1.
         return HealResult(amount=max(0, outcome.total), source="short_rest", dice=outcome)
@@ -1025,10 +1046,11 @@ def heal_from_rest(
 # --------------------------------------------------------------------------------------------
 # Rule (2014 PHB, PDF p.187): a short rest spends one or more Hit Dice; each rolls the class die plus
 # CON and regains that total (no minimum). A long rest regains up to half the character's total Hit
-# Dice, rounded down, so a level-1 character regains none. The engine spends one die per short rest.
+# Dice, rounded down, so a level-1 character regains none. A short rest spends the declared number of
+# dice (see `declared_hit_dice`), one when none is declared, and no more than are left.
 # Total = character level. Spent count lives in CharacterAssignment.stats["hit_dice"] as
 # {"spent": n} (a JSONB key, no migration); a sheet without the key has none spent. 2024 campaigns
-# follow the same rule in this engine. A short rest spends one die: a declared count is not parsed.
+# follow the same rule in this engine.
 
 HIT_DICE_KEY = "hit_dice"
 HIT_DICE_REFUSAL = "{hero} has no Hit Dice left until a long rest. No healing is rolled."
@@ -1461,7 +1483,9 @@ def enforce_side_effects(
         else:
             rest = detect_rest(player_input)
             if rest:
-                heal = heal_from_rest(character, rest, rng)
+                heal = heal_from_rest(
+                    character, rest, rng, hit_dice=declared_hit_dice(player_input)
+                )
                 sw_remaining = second_wind_after_rest(character, rest)
                 # Class feature recovery (EDG-145). Local import: agent.class_features imports this module.
                 from agent.class_features import class_feature_after_rest
@@ -1472,8 +1496,8 @@ def enforce_side_effects(
                     if rest == "long":
                         hit_dice_next = hit_dice_after_long_rest(character)
                     elif heal is not None:
-                        # A short rest spends one Hit Die, and the roll is the engine's record of it.
-                        hit_dice_next = hit_dice_spent(character) + 1
+                        # The roll is the engine's record of the Hit Dice a short rest spent.
+                        hit_dice_next = hit_dice_spent(character) + heal.dice.count
                     else:
                         hit_dice_refusal = HIT_DICE_REFUSAL.format(hero=hero)
                     rest_record = build_rest_record(character, rest, heal, hit_dice_next)

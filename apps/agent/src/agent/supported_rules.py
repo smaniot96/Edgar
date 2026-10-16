@@ -371,14 +371,16 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="short_rest",
-        title="Short rest healing spends one Hit Die",
+        title="Short rest healing spends the declared Hit Dice",
         scope=(
-            "A short rest (rest-for-an-hour wording) spends one Hit Die of the class and rolls it "
+            "A short rest (rest-for-an-hour wording) spends Hit Dice of the class and rolls each "
             "plus the CON modifier; the character regains that total (PHB, 2014, PDF p.187; no "
-            "minimum), capped at the missing HP. With no Hit Dice left it is refused: nothing is "
-            "rolled and nothing is healed until a long rest. The rules allow one or more dice; a "
-            "declared count of Hit Dice is not parsed, so one die is spent. A short rest also "
-            "restores a fighter's Second Wind and Action Surge uses."
+            "minimum), capped at the missing HP. The player's words set the count ('spend 3 hit "
+            "dice', numbers or words up to ten); with no count one die is spent, and never more "
+            "than are left. With no Hit Dice left it is refused: nothing is rolled and nothing is "
+            "healed until a long rest. The book's choice to spend another die after seeing each "
+            "roll is not offered: the count is declared first. A short rest also restores a "
+            "fighter's Second Wind and Action Surge uses."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_short_rest_spends_one_hit_die",

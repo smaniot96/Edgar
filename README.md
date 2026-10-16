@@ -90,11 +90,12 @@ simulate (`GET /api/rules/supported-scope`):
   shield is carried); advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
   table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, a bonus action
   that may accompany the turn's action, restored by a short or long rest; no automatic use at 0 HP);
-  Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends one
-  die, rolls it plus CON and regains that total (capped at the missing HP), and is refused with none
-  left; a long rest restores HP, spell slots and up to half the total Hit Dice, rounded down (PHB
-  p.187; the 2024 campaigns use the same rule); healing potions taken from inventory. The AC table
-  follows PHB p.146 (hide armor included), with barbarian and monk Unarmored Defense (PHB pp.49, 79).
+  Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends the
+  declared number of dice (one when none is declared, never more than are left), rolls them plus CON
+  each and regains that total (capped at the missing HP), and is refused with none left; a long
+  rest restores HP, spell slots and up to half the total Hit Dice, rounded down (PHB p.187; the 2024
+  campaigns use the same rule); healing potions taken from inventory. The AC table follows PHB p.146
+  (hide armor included), with barbarian and monk Unarmored Defense (PHB pp.49, 79).
 - Action economy in combat: each player turn has one action and one bonus action. Attacks, contested
   maneuvers, item use, catalog action spells, Dodge, Dash and Disengage use the action; Second Wind,
   Healing Word and Rage use the bonus action. A second action or bonus action in the same turn is
@@ -162,7 +163,7 @@ simulate (`GET /api/rules/supported-scope`):
   conditions (frightened, stunned, charmed and the rest have no engine effect; a poisoned hero's
   ability checks are not penalised), breath and other save-based recharge abilities, cover, high
   ground, flanking, difficult terrain and exact distances, Help, reactions other than opportunity
-  attacks, other bonus actions, declared counts of Hit Dice, and class features other than Second
+  attacks, other bonus actions, and class features other than Second
   Wind, Action Surge, Sneak Attack and Rage
   (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery and ki
   points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's damage
