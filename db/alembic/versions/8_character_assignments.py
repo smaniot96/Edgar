@@ -4,7 +4,8 @@ Revision ID: 8_character_assignments
 Revises: 7_campaign_status
 Create Date: 2026-05-10
 
-Downgrading past this revision loses assignment history (lossy).
+Downgrade refuses while any character exists: revision 7 cannot hold library ownership, base
+copies or assignment history, so restore from backup instead.
 """
 from collections.abc import Sequence
 from typing import Any
@@ -109,6 +110,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    count = op.get_bind().scalar(sa.text("SELECT count(*) FROM characters"))
+    if count:
+        raise RuntimeError(
+            f"Character library downgrade refused: characters: {count} row(s) hold library "
+            "ownership and assignment history that revision 7 cannot represent. Restore from a "
+            "pre-migration backup instead; no data was changed."
+        )
     op.add_column(
         "characters",
         sa.Column("campaign_id", sa.Integer(), nullable=True),
