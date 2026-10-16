@@ -524,3 +524,265 @@ async def test_session_story_ledger_migration_round_trip_preserves_legacy_rows(p
                 )
             )
         await engine.dispose()
+
+
+async def test_character_library_downgrade_refuses_populated_rows_and_keeps_history(postgres_env):
+    """Revision 7 cannot hold library ownership or assignment history, so 8 refuses while rows exist."""
+    engine = create_async_engine(
+        URL.create(
+            "postgresql+asyncpg",
+            username=postgres_env["POSTGRES_USER"],
+            password=postgres_env["POSTGRES_PASSWORD"],
+            host=postgres_env["DB_HOST"],
+            port=int(postgres_env["DB_PORT"]),
+            database=postgres_env["POSTGRES_DB"],
+        ),
+        poolclass=NullPool,
+    )
+    try:
+        async with engine.begin() as connection:
+            uid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO users(email) VALUES ('library-downgrade@example.test') RETURNING id"
+                    )
+                )
+            ).scalar_one()
+            cid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO campaigns(created_by,title,system) VALUES (:uid,'Library','5e') RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            active = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO characters (owner_user_id, name, class, level, hp_max, base_stats, base_inventory) "
+                        "VALUES (:uid, 'Active Hero', 'Fighter', 1, 12, CAST('{}' AS jsonb), CAST('{}' AS jsonb)) RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            retired = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO characters (owner_user_id, name, class, level, hp_max, base_stats, base_inventory) "
+                        "VALUES (:uid, 'Retired Hero', 'Wizard', 1, 8, CAST('{}' AS jsonb), CAST('{}' AS jsonb)) RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            await connection.execute(
+                text(
+                    "INSERT INTO character_assignments (character_id, campaign_id, hp_current, hp_max, stats, inventory) "
+                    "VALUES (:char, :cid, 12, 12, CAST('{}' AS jsonb), CAST('{}' AS jsonb))"
+                ),
+                {"char": active, "cid": cid},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO character_assignments (character_id, campaign_id, hp_current, hp_max, stats, inventory, ended_at) "
+                    "VALUES (:char, :cid, 8, 8, CAST('{}' AS jsonb), CAST('{}' AS jsonb), now())"
+                ),
+                {"char": retired, "cid": cid},
+            )
+
+        refused = _alembic(postgres_env, "downgrade", "7_campaign_status", check=False)
+        assert refused.returncode != 0
+        assert "characters: 2 row(s) hold library ownership" in refused.stderr
+        assert "no data was changed" in refused.stderr
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda conn: inspect(conn).get_columns("characters")
+            )
+            assert "owner_user_id" in {column["name"] for column in columns}
+            assert (
+                await connection.execute(text("SELECT count(*) FROM character_assignments"))
+            ).scalar_one() == 2
+    finally:
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "TRUNCATE event_log, combat_state, sessions, character_assignments, characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                )
+            )
+        await engine.dispose()
+
+
+async def test_session_link_downgrade_refuses_populated_characters_and_runs_when_empty(
+    postgres_env,
+):
+    """campaign_id replaced session_id, so 1ad2 refuses populated characters and restores empty ones."""
+    engine = create_async_engine(
+        URL.create(
+            "postgresql+asyncpg",
+            username=postgres_env["POSTGRES_USER"],
+            password=postgres_env["POSTGRES_PASSWORD"],
+            host=postgres_env["DB_HOST"],
+            port=int(postgres_env["DB_PORT"]),
+            database=postgres_env["POSTGRES_DB"],
+        ),
+        poolclass=NullPool,
+    )
+    try:
+        _alembic(postgres_env, "downgrade", "1ad2ad6560f5")
+        async with engine.begin() as connection:
+            uid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO users(email) VALUES ('session-link@example.test') RETURNING id"
+                    )
+                )
+            ).scalar_one()
+            cid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO campaigns(created_by,title,system) VALUES (:uid,'Link','5e') RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            await connection.execute(
+                text(
+                    "INSERT INTO characters (name, class, level, hp_max, campaign_id, hp_current, stats, inventory) "
+                    "VALUES ('Linked Hero', 'Rogue', 1, 8, :cid, 8, CAST('{}' AS jsonb), CAST('{}' AS jsonb))"
+                ),
+                {"cid": cid},
+            )
+
+        refused = _alembic(postgres_env, "downgrade", "a2e2bb9f88cc", check=False)
+        assert refused.returncode != 0
+        assert "characters: 1 row(s) cannot recover the session_id" in refused.stderr
+        assert "no data was changed" in refused.stderr
+        async with engine.begin() as connection:
+            columns = await connection.run_sync(
+                lambda conn: inspect(conn).get_columns("characters")
+            )
+            assert "campaign_id" in {column["name"] for column in columns}
+            await connection.execute(text("DELETE FROM characters"))
+
+        _alembic(postgres_env, "downgrade", "a2e2bb9f88cc")
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda conn: inspect(conn).get_columns("characters")
+            )
+            assert "session_id" in {column["name"] for column in columns}
+    finally:
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "TRUNCATE event_log, combat_state, sessions, character_assignments, characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                )
+            )
+        await engine.dispose()
+
+
+async def test_combat_active_character_downgrade_refuses_rows_without_a_character(postgres_env):
+    """Revision 4 requires combat_state.active_character, so 5 refuses while any row holds NULL."""
+    engine = create_async_engine(
+        URL.create(
+            "postgresql+asyncpg",
+            username=postgres_env["POSTGRES_USER"],
+            password=postgres_env["POSTGRES_PASSWORD"],
+            host=postgres_env["DB_HOST"],
+            port=int(postgres_env["DB_PORT"]),
+            database=postgres_env["POSTGRES_DB"],
+        ),
+        poolclass=NullPool,
+    )
+    try:
+        _alembic(postgres_env, "downgrade", "5_combat_state_extensions")
+        async with engine.begin() as connection:
+            uid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO users(email) VALUES ('combat-null@example.test') RETURNING id"
+                    )
+                )
+            ).scalar_one()
+            cid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO campaigns(created_by,title,system) VALUES (:uid,'Encounter','5e') RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            sid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO sessions(campaign_id, started_at) VALUES (:cid, now()) RETURNING id"
+                    ),
+                    {"cid": cid},
+                )
+            ).scalar_one()
+            await connection.execute(
+                text(
+                    "INSERT INTO combat_state (session_id, initiative_order, round) "
+                    "VALUES (:sid, CAST('[]' AS jsonb), 3)"
+                ),
+                {"sid": sid},
+            )
+
+        refused = _alembic(postgres_env, "downgrade", "4_session_active_character", check=False)
+        assert refused.returncode != 0
+        assert "combat_state: 1 row(s) hold no active_character" in refused.stderr
+        assert "no data was changed" in refused.stderr
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda conn: inspect(conn).get_columns("combat_state")
+            )
+            assert "ended" in {column["name"] for column in columns}
+            assert (
+                await connection.execute(text("SELECT round FROM combat_state"))
+            ).scalar_one() == 3
+    finally:
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "TRUNCATE event_log, combat_state, sessions, character_assignments, characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                )
+            )
+        await engine.dispose()
+
+
+async def test_base_downgrade_refuses_populated_users_and_keeps_every_table(postgres_env):
+    """Dropping the initial schema deletes every table, so the base downgrade refuses any user."""
+    engine = create_async_engine(
+        URL.create(
+            "postgresql+asyncpg",
+            username=postgres_env["POSTGRES_USER"],
+            password=postgres_env["POSTGRES_PASSWORD"],
+            host=postgres_env["DB_HOST"],
+            port=int(postgres_env["DB_PORT"]),
+            database=postgres_env["POSTGRES_DB"],
+        ),
+        poolclass=NullPool,
+    )
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("INSERT INTO users(email) VALUES ('base-downgrade@example.test')")
+            )
+
+        refused = _alembic(postgres_env, "downgrade", "base", check=False)
+        assert refused.returncode != 0
+        assert "users: 1 row(s) would be deleted with every table" in refused.stderr
+        async with engine.connect() as connection:
+            tables = await connection.run_sync(lambda conn: inspect(conn).get_table_names())
+            assert "character_assignments" in tables
+            assert (await connection.execute(text("SELECT count(*) FROM users"))).scalar_one() == 1
+    finally:
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "TRUNCATE event_log, combat_state, sessions, character_assignments, characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                )
+            )
+        await engine.dispose()
