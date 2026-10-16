@@ -6,6 +6,7 @@ topology, and persist through `services.turn_runner.persist_turn` (one transacti
 The rolling memory summary is updated as a background task after the response.
 """
 
+from contextlib import aclosing
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -698,14 +699,18 @@ async def session_turn_stream(
             campaign_id=initial_state["campaign_id"],
         )
         try:
-            async for chunk in stream_session_turn(
-                session_id=session_id,
-                body_message=body.message,
-                initial_state=initial_state,
-                debug=body.debug,
-                diagnostics=diagnostics,
-            ):
-                yield chunk
+            # A disconnect closes the turn stream, which closes the provider stream (EDG-079).
+            async with aclosing(
+                stream_session_turn(
+                    session_id=session_id,
+                    body_message=body.message,
+                    initial_state=initial_state,
+                    debug=body.debug,
+                    diagnostics=diagnostics,
+                )
+            ) as frames:
+                async for chunk in frames:
+                    yield chunk
         finally:
             structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
             await lock.release()
