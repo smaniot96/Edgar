@@ -17,6 +17,7 @@ import {
   setCampaignRulesEdition,
 } from "../api/client";
 import { SourceRecovery } from "../components/campaign/SourceRecovery";
+import { ReadinessNotice } from "../components/campaign/ReadinessNotice";
 import { Pill } from "../components/Pill";
 import { Button, ButtonLink } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
@@ -219,12 +220,15 @@ export default function CampaignView() {
         </select>}
       </Field>
       <SourceRecovery campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
+      {c.readiness && !c.readiness.play_allowed ? (
+        <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} className="mt-3" />
+      ) : null}
 
       <div>
         <Tabs idBase="campaign" label="Campaign sections" items={TABS} value={tab} onChange={selectTab} />
         {/* Re-mount on status change so lists refresh after End/Reopen. */}
         <TabPanel idBase="campaign" id={tab} key={`${tab}:${c.status}`} className="pt-5">
-          {tab === "sessions" ? <SessionsTab campaignId={c.id} ended={ended} playAllowed={c.play_allowed !== false} /> : null}
+          {tab === "sessions" ? <SessionsTab campaignId={c.id} ended={ended} readiness={c.readiness} playAllowed={c.readiness?.play_allowed === true} /> : null}
           {tab === "characters" ? <CharactersTab campaignId={c.id} /> : null}
           {tab === "npcs" ? <NpcsTab campaignId={c.id} /> : null}
           {tab === "world" ? <WorldTab campaignId={c.id} /> : null}

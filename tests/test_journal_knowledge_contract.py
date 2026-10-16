@@ -314,7 +314,8 @@ async def test_opening_seed_commit_reload_retry_and_direct_player_api(
 
     from langchain_core.messages import AIMessage
 
-    from apps.api.services import session_intro
+    from apps.api.schemas.campaign import SourceRead
+    from apps.api.services import campaign_readiness, session_intro
     from apps.api.services.story_state import load_story_state
     from db.postgres.models import Campaign, Session, User
 
@@ -324,7 +325,7 @@ async def test_opening_seed_commit_reload_retry_and_direct_player_api(
     db_session.add(user)
     await db_session.flush()
     campaign = Campaign(
-        title="Reviewed opening", system="5e", created_by=user.id, adventure_collections=["fixture"]
+        title="Reviewed opening", system="5e", created_by=user.id, adventure_collections=["fixture"], rules_edition="2014"
     )
     db_session.add(campaign)
     await db_session.flush()
@@ -335,7 +336,8 @@ async def test_opening_seed_commit_reload_retry_and_direct_player_api(
     model = SimpleNamespace(
         ainvoke=AsyncMock(return_value=AIMessage(content="Hall. What do you do?"))
     )
-    monkeypatch.setattr(session_intro, "require_campaign_sources", AsyncMock(return_value=[]))
+    monkeypatch.setattr(campaign_readiness, "source_reads", AsyncMock(return_value=[SourceRead(slug="fixture", title="Fixture", status="ready")]))
+    monkeypatch.setattr(session_intro.adventure_manifests, "campaign_manifests", lambda _: {"fixture": manifest.model_dump() if hasattr(manifest, "model_dump") else manifest})
     monkeypatch.setattr(session_intro, "_reviewed_opening", lambda *_: ("hall", chunks, seeds))
     monkeypatch.setattr(session_intro, "make_chat_model", lambda **_: model)
     result = await api_client.post(f"/api/sessions/{session.id}/intro")

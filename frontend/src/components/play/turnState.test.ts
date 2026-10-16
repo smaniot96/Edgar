@@ -145,3 +145,11 @@ describe("linesFromHistory stored rolls (EDG-030)", () => {
     expect(line).toEqual({ id: "h0", role: "user", content: "I look" });
   });
 });
+
+it("makes a recovered action retryable only after the server confirms no receipt", () => {
+  const recovered = turnReducer(initialTurnState, {type:"recover",turnId:"t",requestId:"r",input:"Look"});
+  const pending = recovered.lines.find(line=>line.role==='error');
+  expect(pending).toMatchObject({uncertain:true});
+  const checked = turnReducer(recovered, {type:"markRetryable",turnId:"t",message:"Not saved"});
+  expect(checked.lines.find(line=>line.role==='error')).toMatchObject({uncertain:false,retryable:true,code:"turn_not_found",retryRequestId:"r"});
+});

@@ -29,8 +29,8 @@ from edgar_core.sources import (
     public_citations,
 )
 
-from . import adventure_manifests
-from .campaign_sources import require_campaign_sources, source_error
+from . import adventure_manifests, campaign_sources
+from .campaign_sources import source_error
 from .character_assignments import character_play_state
 from .opening_journal import opening_journal_effects
 from .roll_record import ROLL_NO_ROLL
@@ -85,7 +85,26 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     campaign = camp_res.scalar_one_or_none()
     if campaign is None:
         return None
-    sources = await require_campaign_sources(campaign)
+    from .campaign_readiness import evaluate_play_readiness, require_play_readiness
+
+    sources = (
+        []
+        if campaign.source_mode == "homebrew"
+        else await campaign_sources.source_reads(list(campaign.adventure_collections or []))
+    )
+    readiness = await evaluate_play_readiness(
+        db,
+        campaign,
+        character_id=session.active_character_id,
+        require_character=True,
+        session_id=session.id,
+        observed_sources=sources,
+    )
+    require_play_readiness(
+        readiness,
+        source_slug=next(iter(campaign.adventure_collections or []), None)
+        if campaign.source_mode != "homebrew" else None,
+    )
     homebrew = campaign.source_mode == "homebrew"
     adventure_collections = [] if homebrew else list(campaign.adventure_collections or [])
 
@@ -94,15 +113,6 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
 
     edition = getattr(campaign, "rules_edition", None) or DEFAULT_RULES_EDITION
-    from .prepared_play import require_prepared_play
-
-    await asyncio.to_thread(
-        require_prepared_play,
-        adventure_collections,
-        edition,
-        character_id=session.active_character_id,
-        require_hero=True,
-    )
     opening_scene_id = None
     passages: list[dict] = []
     seeds = []
@@ -116,7 +126,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
                 status_code=409,
                 detail={
                     "code": "adventure_manifest_review_required",
-                    "message": str(exc),
+                    "message": "Review and publish the adventure before opening this session.",
                     "source": adventure_collections[0],
                 },
             ) from exc

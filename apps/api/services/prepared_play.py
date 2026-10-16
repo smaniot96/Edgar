@@ -5,6 +5,14 @@ from fastapi import HTTPException
 from . import adventures_meta
 
 
+class PreparedPlayError(HTTPException):
+    """A prepared-play rejection with a stable internal readiness category."""
+
+    def __init__(self, status_code: int, readiness_code: str, detail: str):
+        super().__init__(status_code=status_code, detail=detail)
+        self.readiness_code = readiness_code
+
+
 def require_prepared_play(slugs, edition, *, character_id=None, character=None, require_hero=False):
     from edgar_core.grounding import HeroPartySnapshot, HeroSnapshot
 
@@ -16,26 +24,33 @@ def require_prepared_play(slugs, edition, *, character_id=None, character=None, 
         if meta.get("private_preparation") is not True:
             continue
         if not private_preparation_ready(slug, meta):
-            raise HTTPException(status_code=409, detail="This adventure is still being prepared.")
+            raise PreparedPlayError(
+                409, "preparation_in_progress", "This adventure is still being prepared."
+            )
         try:
             binding = PreparationStore().load_run(slug, meta["preparation_run_id"]).binding
             party = HeroPartySnapshot.model_validate(binding.hero_party_snapshot)
         except (ValueError, KeyError) as exc:
-            raise HTTPException(
-                status_code=409, detail="The prepared adventure binding needs attention."
+            raise PreparedPlayError(
+                409,
+                "preparation_failed",
+                "The prepared adventure binding needs attention.",
             ) from exc
         if edition != binding.rules_edition:
-            raise HTTPException(
-                status_code=422,
-                detail="Use the rules edition selected for this prepared adventure.",
+            raise PreparedPlayError(
+                422,
+                "rules_edition_mismatch",
+                "Use the rules edition selected for this prepared adventure.",
             )
         identifier = character.id if character is not None else character_id
         if identifier is None and not require_hero:
             continue
         hero = next((h for h in party.heroes if h.character_id == identifier), None)
         if hero is None:
-            raise HTTPException(
-                status_code=422, detail="Choose the hero selected for this prepared adventure."
+            raise PreparedPlayError(
+                422,
+                "choose_character",
+                "Choose the hero selected for this prepared adventure.",
             )
         if character is not None:
             actual = HeroSnapshot(
@@ -48,9 +63,10 @@ def require_prepared_play(slugs, edition, *, character_id=None, character=None, 
                 inventory=character.base_inventory or {},
             )
             if actual != hero:
-                raise HTTPException(
-                    status_code=409,
-                    detail="The hero changed after preparation. Prepare a new adventure for the updated sheet.",
+                raise PreparedPlayError(
+                    409,
+                    "preparation_failed",
+                    "The hero changed after preparation. Prepare a new adventure for the updated sheet.",
                 )
 
 

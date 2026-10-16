@@ -7,6 +7,7 @@ from edgar_core.sources import DEFAULT_RULES_EDITION, RulesEdition
 
 from ._validators import forbid_null
 from .adventure import AdventureJobRead
+from .readiness import ReadinessRead
 
 SourceStatus = Literal[
     "ready", "missing", "empty", "partial", "unavailable", "processing", "failed"
@@ -56,6 +57,7 @@ class CampaignRead(BaseModel):
     sources: list[SourceRead] = Field(default_factory=list)
     retrieval_degraded: bool = False
     play_allowed: bool = True
+    readiness: ReadinessRead | None = None
     status: Literal["active", "ended"]
     ended_at: datetime | None = None
 

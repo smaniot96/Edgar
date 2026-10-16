@@ -14,18 +14,18 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
-from db.postgres.models import Campaign, EventLog, Session as SessionModel
+from db.postgres.models import Campaign, Character, EventLog, Session as SessionModel
 from edgar_core.sources import public_citations
 
 from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
-from ..services.campaign_sources import require_campaign_sources
+from ..services.campaign_sources import source_reads
 from ..services.character_assignments import character_play_state, load_active_assignment
 from ..services.combat import (
     load_active_combat,
@@ -34,6 +34,7 @@ from ..services.combat import (
 )
 from ..services.npcs import load_npcs, model_context_npcs
 from ..services.roll_record import stored_roll
+from ..services.safe_errors import classify_error, classify_http_failure, log_failure
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
     load_session_context,
@@ -45,7 +46,6 @@ from ..services.turn_runner import (
     TurnError,
     combat_round_from_events,
     combat_state_public,
-    error_body,
     persist_turn,
     public_adjudication,
     run_turn,
@@ -60,6 +60,55 @@ log = structlog.get_logger()
 _BUSY_DETAIL = "A turn is already in progress for this session. Please retry."
 
 router = APIRouter(tags=["sessions"])
+
+
+async def _session_read(session: SessionModel, db: AsyncSession) -> SessionRead:
+    """Project a save with its current campaign and assignment readiness."""
+    value = SessionRead.model_validate(session)
+    last_played_at = await db.scalar(
+        select(func.max(EventLog.created_at)).where(
+            EventLog.session_id == session.id,
+            EventLog.event_type == "narration",
+        )
+    )
+    character = (
+        await db.get(Character, session.active_character_id)
+        if session.active_character_id is not None
+        else None
+    )
+    campaign = await db.get(Campaign, session.campaign_id)
+    if campaign is None:
+        from ..schemas.readiness import ReadinessBlocker, ReadinessRead
+
+        blocker = ReadinessBlocker(
+            code="readiness_unavailable",
+            message="Campaign readiness could not be checked. Retry before starting a turn.",
+            action="retry_readiness",
+        )
+        readiness = ReadinessRead(
+            play_allowed=False,
+            state=blocker.code,
+            primary_action=blocker.action,
+            blockers=[blocker],
+        )
+    else:
+        from ..services.campaign_readiness import evaluate_play_readiness
+
+        readiness = await evaluate_play_readiness(
+            db,
+            campaign,
+            character_id=session.active_character_id,
+            require_character=True,
+            session_id=session.id,
+        )
+    return value.model_copy(
+        update={
+            "readiness": readiness,
+            "has_history": last_played_at is not None,
+            "last_played_at": last_played_at,
+            "character_name": character.name if character is not None else None,
+        }
+    )
 
 
 async def _load_turn_initial_state(
@@ -84,16 +133,22 @@ async def _load_turn_initial_state(
             status_code=409,
             detail="Campaign has ended; reopen it to continue.",
         )
-    sources = await require_campaign_sources(campaign)
-    from ..services.prepared_play import require_prepared_play
+    from ..services.campaign_readiness import evaluate_play_readiness, require_play_readiness
 
-    await run_in_threadpool(
-        require_prepared_play,
-        campaign.adventure_collections,
-        campaign.rules_edition,
-        character_id=session.active_character_id,
-        require_hero=True,
+    sources = (
+        []
+        if campaign.source_mode == "homebrew"
+        else await source_reads(list(campaign.adventure_collections or []))
     )
+    readiness = await evaluate_play_readiness(
+        db,
+        campaign,
+        character_id=session.active_character_id,
+        require_character=True,
+        session_id=session.id,
+        observed_sources=sources,
+    )
+    require_play_readiness(readiness)
     from edgar_core.manifests import ManifestError
 
     from ..services.adventure_manifests import campaign_manifests
@@ -109,7 +164,10 @@ async def _load_turn_initial_state(
     except ManifestError as exc:
         raise HTTPException(
             status_code=409,
-            detail={"code": "adventure_manifest_review_required", "message": str(exc)},
+            detail={
+                "code": "adventure_manifest_review_required",
+                "message": "Review and publish the adventure before starting or continuing play.",
+            },
         ) from exc
     story_state = await load_story_state(db, session_id, session.campaign_id)
     from ..services.prepared_amendments import (
@@ -124,10 +182,10 @@ async def _load_turn_initial_state(
     except PreparedAmendmentConflict as exc:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "This session's saved adventure version is no longer available. "
-                "Recover its bound version before continuing."
-            ),
+            detail={
+                "code": "saved_version_conflict",
+                "message": "This saved session refers to an adventure version that needs review before play can continue.",
+            },
         ) from exc
     world_flags = session_story_flags(
         story_state, manifests, await load_world_flags(db, session.campaign_id)
@@ -189,13 +247,13 @@ async def list_sessions(
         q = q.where(SessionModel.campaign_id == campaign_id)
     result = await db.execute(q)
     sessions = result.scalars().all()
-    return [SessionRead.model_validate(s) for s in sessions]
+    return [await _session_read(s, db) for s in sessions]
 
 
 @router.get("/sessions/{session_id}", response_model=SessionRead)
 async def get_session_by_id(session_id: int, db: AsyncSession = Depends(get_session)):
     session = await get_or_404(db, SessionModel, session_id, "Session")
-    return SessionRead.model_validate(session)
+    return await _session_read(session, db)
 
 
 @router.get("/sessions/{session_id}/combat")
@@ -309,6 +367,14 @@ async def session_intro(
                 status_code=409, detail="Campaign has ended; reopen it to continue."
             )
 
+        existing_intro = await db.execute(
+            select(EventLog.id)
+            .where(EventLog.session_id == session_id, EventLog.event_type == "narration")
+            .limit(1)
+        )
+        if existing_intro.scalar_one_or_none() is not None:
+            return {"started": False}
+
         payload = await generate_session_intro(db, session)
         if payload is not None:
             await db.commit()
@@ -325,23 +391,23 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
     campaign = await db.get(Campaign, body.campaign_id)
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    await require_campaign_sources(campaign)
-    from ..services.prepared_play import require_prepared_play
-
-    await run_in_threadpool(
-        require_prepared_play,
-        campaign.adventure_collections,
-        campaign.rules_edition,
-        character_id=body.active_character_id,
-        require_hero=True,
+    sources = (
+        []
+        if campaign.source_mode == "homebrew"
+        else await source_reads(list(campaign.adventure_collections or []))
     )
-    if body.active_character_id is not None:
-        ass = await load_active_assignment(db, body.active_character_id, body.campaign_id)
-        if ass is None:
-            raise HTTPException(
-                status_code=422,
-                detail="Character has no active assignment in this campaign",
-            )
+    from ..services.campaign_readiness import evaluate_play_readiness, require_play_readiness
+
+    readiness = await evaluate_play_readiness(
+        db,
+        campaign,
+        character_id=body.active_character_id,
+        # Generic campaigns allow a no-character session; prepared campaigns still enforce
+        # their commissioned hero when this is a session-start preflight.
+        require_character=True,
+        observed_sources=sources,
+    )
+    require_play_readiness(readiness)
     started_at = body.started_at if body.started_at is not None else datetime.now(UTC)
     session = SessionModel(
         campaign_id=body.campaign_id,
@@ -352,7 +418,7 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return SessionRead.model_validate(session)
+    return await _session_read(session, db)
 
 
 @router.patch("/sessions/{session_id}", response_model=SessionRead)
@@ -368,7 +434,7 @@ async def update_session(
 
     await run_in_threadpool(
         require_prepared_play,
-        campaign.adventure_collections,
+        [] if campaign.source_mode == "homebrew" else campaign.adventure_collections,
         campaign.rules_edition,
         character_id=update_data.get("active_character_id", session.active_character_id),
         require_hero=True,
@@ -384,7 +450,7 @@ async def update_session(
         setattr(session, key, value)
     await db.commit()
     await db.refresh(session)
-    return SessionRead.model_validate(session)
+    return await _session_read(session, db)
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -395,7 +461,22 @@ async def delete_session(session_id: int, db: AsyncSession = Depends(get_session
 
 
 def _turn_error_response(err: TurnError) -> JSONResponse:
-    return JSONResponse(status_code=err.status_code, content=error_body(err.code))
+    return JSONResponse(status_code=err.status_code, content=err.body())
+
+
+def _turn_http_error_response(exc: HTTPException) -> JSONResponse:
+    from ..services.safe_errors import http_failure_payload
+
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    code = detail.get("code")
+    if exc.detail == _BUSY_DETAIL:
+        code = "session_busy"
+    elif exc.detail == "Campaign has ended; reopen it to continue.":
+        code = "campaign_ended"
+    failure = classify_http_failure(exc.status_code, code=code, outcome="not_committed")
+    if failure.category == "busy":
+        failure = classify_http_failure(exc.status_code, code=code, outcome="unknown")
+    return JSONResponse(status_code=exc.status_code, content=http_failure_payload(failure, context=detail))
 
 
 async def _replayed_turn(
@@ -435,12 +516,15 @@ async def get_turn_receipt(
     response.headers["Cache-Control"] = "private, no-store"
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
-        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+        raise HTTPException(status_code=409, detail=classify_error("session_busy").to_payload())
     try:
         await get_or_404(db, SessionModel, session_id, "Session")
         receipt = await load_turn_receipt(db, session_id, request_id)
         if receipt is None:
-            raise HTTPException(status_code=404, detail="No committed turn with this identity.")
+            raise HTTPException(
+                status_code=404,
+                detail=classify_error("turn_not_found", outcome="not_committed").to_payload(),
+            )
         return {"status": "committed", "result": receipt[1]}
     finally:
         await lock.release()
@@ -463,9 +547,10 @@ async def session_turn(
     """
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
-        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+        return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
 
     structlog.contextvars.bind_contextvars(session_id=session_id)
+    outcome = "not_committed"
     try:
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
@@ -476,7 +561,9 @@ async def session_turn(
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
 
         result = {**initial_state, **await run_turn(initial_state)}
+        outcome = "unknown"
         done = await persist_turn(session_id, body.message, result)
+        outcome = "committed"
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 
         adjudication = result.get("adjudication_result")
@@ -501,13 +588,14 @@ async def session_turn(
             roll_status=done.get("roll_status"),
             roll=done.get("roll"),
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _turn_http_error_response(exc)
     except TurnError as e:
         return _turn_error_response(e)
-    except Exception:
-        log.exception("turn_failed", session_id=session_id)
-        return _turn_error_response(TurnError("turn_failed"))
+    except Exception as exc:
+        failure = TurnError(exc, outcome=outcome)
+        log_failure("turn_failed", failure.failure, session_id=session_id)
+        return _turn_error_response(failure)
     finally:
         structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
         await lock.release()
@@ -529,7 +617,7 @@ async def session_turn_stream(
     """
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
-        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+        return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
     try:
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
@@ -543,6 +631,9 @@ async def session_turn_stream(
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         if body.request_id is not None:
             initial_state["turn_id"] = body.request_id
+    except HTTPException as exc:
+        await lock.release()
+        return _turn_http_error_response(exc)
     except BaseException:
         await lock.release()
         raise

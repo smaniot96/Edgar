@@ -99,9 +99,12 @@ def _parser_context(state: AgentState) -> str:
 async def input_parser_node(state: AgentState) -> dict:
     player_input = state.get("player_input")
     if not player_input:
-        return {"error": "Missing player_input"}
+        return {"error": "The action text is missing.", "error_code": "validation_failed"}
     if not OPENAI_API_KEY:
-        return {"error": "OPENAI_API_KEY not set. Add it to Edgar/.env"}
+        return {
+            "error": "The Dungeon Master service needs configuration before it can continue.",
+            "error_code": "provider_configuration",
+        }
 
     llm = make_chat_model(profile="play.parser", temperature=0)
     structured_llm = llm.with_structured_output(ParsedInput, method="function_calling")
