@@ -27,6 +27,7 @@ from agent.resolution import (
     hit_dice_recovered_by_long_rest,
     proficiency_bonus,
     resolve_attack,
+    resolve_check,
     roll_attack_damage,
     weapon_proficient,
 )
@@ -242,6 +243,38 @@ def test_armor_class_from_the_phb_armor_table(armor: str, dex: int, expected: in
     # dex is the ability SCORE; the modifier is floor((score - 10) / 2).
     # PHB Armor table, PDF p.146. The medium-armor cap is +2 and light armor takes the full DEX.
     assert _player_ac(_armored("fighter", armor, dex=dex)) == expected
+
+
+@pytest.mark.parametrize(
+    ("armor", "disadvantage"),
+    [
+        ("", False), ("padded armor", True), ("leather armor", False), ("studded leather", False),
+        ("hide armor", False), ("chain shirt", False), ("scale mail", True), ("breastplate", False),
+        ("half plate", True), ("ring mail", True), ("chain mail", True), ("splint", True),
+        ("plate", True),
+    ],
+)  # fmt: skip
+def test_stealth_check_in_armor_has_disadvantage_by_the_armor_table(
+    armor: str, disadvantage: bool
+) -> None:
+    # PHB Armor table, "Stealth" column, PDF p.146 (rule text PDF p.145): padded, scale mail, half
+    # plate, ring mail, chain mail, splint and plate give disadvantage on Dexterity (Stealth) checks.
+    sheet = _armored("rogue", armor)
+    for seed in range(5):
+        check = resolve_check(sheet, "stealth", rng=random.Random(seed))
+        assert check.roll_mode == ("disadvantage" if disadvantage else "normal")
+        assert len(check.natural_rolls) == (2 if disadvantage else 1)
+        if disadvantage:
+            assert check.natural == min(check.natural_rolls)
+    # Only Stealth is hindered: other Dexterity checks keep their single d20.
+    assert resolve_check(sheet, "acrobatics", rng=random.Random(0)).roll_mode == "normal"
+
+
+def test_stealth_disadvantage_from_armor_cancels_against_an_engine_advantage() -> None:
+    # PHB PDF p.174: advantage and disadvantage cancel to a single normal roll.
+    plate = _armored("fighter", "plate")
+    check = resolve_check(plate, "stealth", roll_mode="advantage", rng=random.Random(1))
+    assert check.roll_mode == "normal" and len(check.natural_rolls) == 1
 
 
 def test_shield_adds_two_to_the_armor_class() -> None:

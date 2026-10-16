@@ -112,7 +112,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "advantage, and the restrained or prone effects of a supported combat maneuver set "
             "advantage or disadvantage on attacks (see contested_maneuvers), and a hero who takes the "
             "Dodge action gives foes disadvantage on attacks until the hero's next turn (see "
-            "action_economy). A player's or the model's claim of advantage is never a source and is not "
+            "action_economy). A Dexterity (Stealth) check made in armor the PHB Armor table marks with "
+            "Stealth disadvantage (padded, scale mail, half plate and the heavy armors, PDF p.146) has "
+            "disadvantage. A player's or the model's claim of advantage is never a source and is not "
             "applied."
         ),
         implementation="agent.resolution:resolve_check",
@@ -153,8 +155,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "AC from the armor table (PHB, 2014), DEX modifier as capped by the armor type (medium "
             "armor at most +2), plus 2 for a shield. Unarmored characters use 10 plus DEX, except a "
             "barbarian (10 plus DEX plus CON, a shield still counts) and a monk without a shield (10 "
-            "plus DEX plus WIS). Armor is matched by name; heavy-armor Strength requirements and "
-            "stealth are not applied."
+            "plus DEX plus WIS). Armor is matched by name. Armor with Stealth disadvantage in the "
+            "table gives disadvantage on Stealth checks (see advantage_disadvantage). A heavy "
+            "armor's Strength requirement only reduces speed, which is not simulated, so it is not "
+            "applied."
         ),
         implementation="agent.graph_combat:_player_ac",
         test="tests/agent/test_supported_rules.py::test_supported_armor_class_from_table",

@@ -391,10 +391,13 @@ class RollModeSource(StrEnum):
 
     # Attack rolls against an unconscious creature have advantage (PHB, conditions and combat).
     TARGET_UNCONSCIOUS = "target_unconscious"
+    # A Dexterity (Stealth) check made in armor the PHB Armor table marks with Stealth disadvantage.
+    ARMOR_STEALTH = "armor_stealth"
 
 
 ROLL_MODE_BY_SOURCE: dict[RollModeSource, RollMode] = {
     RollModeSource.TARGET_UNCONSCIOUS: "advantage",
+    RollModeSource.ARMOR_STEALTH: "disadvantage",
 }
 
 
@@ -577,6 +580,25 @@ def carries_shield(character: dict | None) -> bool:
     return isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons)
 
 
+# PHB Armor table, PDF p.146. Heavy armor, and the other armor whose Stealth column reads Disadvantage.
+_HEAVY_ARMOR = re.compile(r"\b(?:ring mail|chain mail|splint|(?<!half )plate)\b", re.IGNORECASE)
+_STEALTH_ARMOR = re.compile(r"\b(?:padded|scale(?: mail)?|half plate)\b", re.IGNORECASE)
+
+
+def _worn_armor(character: dict | None) -> str:
+    inv = (character or {}).get("inventory") or {}
+    return str(inv.get("armor") or "") if isinstance(inv, dict) else ""
+
+
+def wears_heavy_armor(character: dict | None) -> bool:
+    return bool(_HEAVY_ARMOR.search(_worn_armor(character)))
+
+
+def armor_hinders_stealth(character: dict | None) -> bool:
+    armor = _worn_armor(character)
+    return bool(_HEAVY_ARMOR.search(armor) or _STEALTH_ARMOR.search(armor))
+
+
 def _attack_ability(character: dict | None, weapon: Weapon) -> str:
     scores = ability_scores(character)
     if weapon.ranged and not weapon.finesse:
@@ -687,6 +709,8 @@ def resolve_check(
     if spec is None:
         return None
     mode = validate_roll_mode(roll_mode)
+    if spec.check == "stealth" and armor_hinders_stealth(character):
+        mode = combine_roll_modes(mode, ROLL_MODE_BY_SOURCE[RollModeSource.ARMOR_STEALTH])
     target = dc if dc is not None else dc_for(difficulty)
     natural, total, expr, log = _d20_roll(spec, mode, rng)
     faces = [natural] if mode == "normal" else list(log["rolls"])
