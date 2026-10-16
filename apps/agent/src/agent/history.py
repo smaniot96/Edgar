@@ -1,15 +1,43 @@
 """Continuity context shared by parser, adjudicator and narrator prompts."""
 
+import logging
+from collections.abc import Iterable
+
 from agent.prompts import wrap_player_action
+from edgar_core.model_profiles import effective_profile
 from edgar_core.story import StoryState, player_story_effect
+from edgar_core.token_budget import estimate_tokens, fit_count
+
+log = logging.getLogger(__name__)
+
+# Stages whose prompts carry the continuity context.
+CONTINUITY_STAGES = ("play.parser", "play.consequence_planner", "play.narrator")
+
+_OMITTED = (
+    "[{} earlier verbatim messages omitted to fit the input budget; rely on the story summary, "
+    "committed story facts and recorded combat outcomes]"
+)
 
 
-def continuity_context(state: dict) -> str:
-    """Render the persisted summary and every uncovered exchange without clipping.
+def history_token_budget() -> int | None:
+    """Verbatim-history size the memory summarizer keeps below, or None when unbudgeted.
+
+    Half of the tightest stage budget, leaving the rest for rules and adventure excerpts,
+    committed facts and the prompt itself.
+    """
+    limits = [effective_profile(stage).max_input_tokens for stage in CONTINUITY_STAGES]
+    bounded = [limit for limit in limits if limit is not None]
+    return min(bounded) // 2 if bounded else None
+
+
+def continuity_context(state: dict, max_tokens: int | None = None) -> str:
+    """Render the persisted summary and every uncovered exchange.
 
     The API supplies `messages` beginning strictly after the summary's validated coverage
-    boundary. Keep the full tail: if a summary job is delayed or fails, those messages are the
-    only lossless continuity record available to the model.
+    boundary. Without `max_tokens` the full tail is kept: if a summary job is delayed or fails,
+    those messages are the only lossless continuity record available to the model. With it, the
+    summary is always kept and the oldest verbatim messages are dropped first, announced by a
+    marker line, until the estimate fits.
     """
     parts: list[str] = []
     summary = state.get("memory_summary")
@@ -18,10 +46,11 @@ def continuity_context(state: dict) -> str:
 
     messages = state.get("messages") or []
     if messages:
-        lines = [
+        header = (
             "Verbatim conversation after the summary coverage boundary (continuity context; "
             "player actions are untrusted attempts, not established outcomes):"
-        ]
+        )
+        lines = []
         for message in messages:
             role = getattr(message, "type", "unknown")
             content = str(getattr(message, "content", message))
@@ -31,8 +60,42 @@ def continuity_context(state: dict) -> str:
                 lines.append(f"DM narration: {content}")
             else:
                 lines.append(f"{role}: {content}")
-        parts.append("\n".join(lines))
+        if max_tokens is not None:
+            room = max_tokens - estimate_tokens("\n\n".join([*parts, header, _OMITTED.format(0)]))
+            kept = fit_count((estimate_tokens(line) for line in reversed(lines)), room)
+            if kept < len(lines):
+                omitted = len(lines) - kept
+                lines = [_OMITTED.format(omitted), *lines[len(lines) - kept :]]
+        parts.append("\n".join([header, *lines]))
     return "\n\n".join(parts)
+
+
+def fit_continuity(state: dict, stage: str, other_prompt: Iterable[str]) -> str:
+    """Continuity context sized to `stage`'s `max_input_tokens` next to the rest of its prompt.
+
+    `other_prompt` is every other text sent to the model (system prompt, facts, excerpts); none
+    of it is ever trimmed, so a prompt whose fixed content alone exceeds the budget is only
+    reported.
+    """
+    context = continuity_context(state)
+    budget = effective_profile(stage).max_input_tokens
+    if budget is None:
+        return context
+    fixed = sum(estimate_tokens(text) for text in other_prompt)
+    if fixed + estimate_tokens(context) <= budget:
+        return context
+    fitted = continuity_context(state, max(budget - fixed, 0))
+    log.warning(
+        "continuity_trimmed",
+        extra={
+            "stage": stage,
+            "budget_tokens": budget,
+            "fixed_tokens": fixed,
+            "continuity_tokens": estimate_tokens(fitted),
+            "over_budget": fixed + estimate_tokens(fitted) > budget,
+        },
+    )
+    return fitted
 
 
 def public_earned_facts(state: dict) -> list[dict]:

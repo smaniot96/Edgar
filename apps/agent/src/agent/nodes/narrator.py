@@ -9,7 +9,8 @@
   - the adjudication outcome (mechanical_summary, dice_result)
   - rules context (for mechanical fidelity) and adventure context (for story flavour)
   - the story-so-far summary (`memory_summary`) and NPC names/dispositions
-  - every exchange after the summary boundary so the prose stays continuous
+  - every exchange after the summary boundary so the prose stays continuous, oldest dropped
+    first (never the summary or committed facts) when the profile's `max_input_tokens` is exceeded
 
 The player's text is wrapped in <player_action> tags (untrusted input). Output length is bounded
 by `NARRATOR_MAX_TOKENS`; the prompt forbids HP/status blocks since the UI renders state.
@@ -19,7 +20,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from agent.action_economy import economy_text
 from agent.combatants import narrator_roster
-from agent.history import continuity_context, public_earned_facts
+from agent.history import fit_continuity, public_earned_facts
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action
 from agent.state import AgentState
@@ -81,7 +82,9 @@ def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
     )
 
 
-def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
+def build_narrator_prompt(
+    state: AgentState, profile: str = "play.narrator"
+) -> list[BaseMessage]:
     player_input = state.get("player_input", "")
     adjudication = state.get("adjudication_result")
     edition = state.get("rules_edition", "2014")
@@ -97,9 +100,7 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
         context_parts.append(
             "The player explicitly chose homebrew play. Continue creatively from saved story state; do not claim to follow an unavailable adventure module."
         )
-    continuity = continuity_context(state)
-    if continuity:
-        context_parts.append(continuity)
+    continuity_slot = len(context_parts)
     character = state.get("character")
     if character:
         context_parts.append(
@@ -174,6 +175,8 @@ def build_narrator_prompt(state: AgentState) -> list[BaseMessage]:
         block = "\n".join(cited_excerpt(c, edition) for c in adventure_context)
         context_parts.append(f"Adventure module context (story/locations/NPCs):\n{block}")
 
+    if continuity := fit_continuity(state, profile, [NARRATOR, *context_parts]):
+        context_parts.insert(continuity_slot, continuity)
     user_msg = HumanMessage(content="\n\n".join(context_parts))
     return [SystemMessage(content=NARRATOR), user_msg]
 
@@ -188,10 +191,9 @@ async def narrator_node(state: AgentState) -> dict:
 
     narration = deterministic_narration(state)
     if narration is None:
-        llm = make_narrator_model(
-            "play.combat_narrator" if state.get("combat_state") else "play.narrator"
-        )
-        prompt = build_narrator_prompt(state)
+        profile = "play.combat_narrator" if state.get("combat_state") else "play.narrator"
+        llm = make_narrator_model(profile)
+        prompt = build_narrator_prompt(state, profile)
         try:
             response = await llm.ainvoke(prompt)
         except Exception as e:

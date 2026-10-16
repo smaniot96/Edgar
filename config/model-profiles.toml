@@ -4,26 +4,33 @@
 schema_version = 1
 profile_version = "1"
 
+# max_input_tokens is the estimated prompt budget (see docs/runtime-model-profiles.md); play
+# prompts drop the oldest verbatim history to fit it. Omit it to leave a stage unbounded.
 # Play profiles inherit model and reasoning effort from legacy LLM_MODEL and
 # LLM_REASONING_EFFORT unless a particular profile sets its own model/effort.
 [profiles.play.default]
 
 [profiles.play.parser]
+max_input_tokens = 32000
 max_output_tokens = 800
 
 [profiles.play.consequence_planner]
+max_input_tokens = 32000
 max_output_tokens = 1800
 
 [profiles.play.narrator]
+max_input_tokens = 32000
 max_output_tokens = 600
 
 [profiles.play.combat_builder]
 max_output_tokens = 1200
 
 [profiles.play.combat_narrator]
+max_input_tokens = 32000
 max_output_tokens = 600
 
 [profiles.play.memory_summarizer]
+max_input_tokens = 32000
 max_output_tokens = 800
 
 [profiles.play.session_intro]
