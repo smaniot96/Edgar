@@ -393,8 +393,10 @@ async def test_diagnostics_row_records_first_text_and_the_narrating_stage(narrat
     assert payload["turn_id"] == "turn-1"
     assert isinstance(payload["time_to_first_text_ms"], int)
     assert "narrating_ms" in payload["stages_ms"]
-    (call,) = payload["provider_calls"]
-    assert call["kind"] == "narrate" and call["streamed"] is True
+    # Combat setup also makes a traced builder call when a new encounter starts; the narrator
+    # call is the one streamed narrate call.
+    (call,) = [c for c in payload["provider_calls"] if c["kind"] == "narrate"]
+    assert call["streamed"] is True
     assert call["profile"] == "play.combat_narrator"
     assert isinstance(call["first_text_ms"], int)
     # Fake usage is absent, so token counts are unknown, never zero.

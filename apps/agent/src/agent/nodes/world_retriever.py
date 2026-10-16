@@ -7,8 +7,10 @@ module play with an explicit review error; homebrew requires no module context.
 
 import asyncio
 import logging
+import time
 
 from agent.state import AgentState
+from agent.turn_diagnostics import current_collector
 from db.vector import search_rules_context
 from db.vector.collections import effective_adventure_collection_names
 from db.vector.references import normalize_reference
@@ -140,6 +142,21 @@ def _search_rule_queries(queries: list[dict], *, client, rules_edition: str) -> 
 
 
 async def world_retriever_node(state: AgentState) -> dict:
+    """Retrieve rules and adventure context; record latency, chunk counts and degradation (EDG-053)."""
+    started = time.monotonic()
+    out = await _retrieve(state)
+    collector = current_collector()
+    if collector is not None and state.get("player_input"):
+        collector.record_retrieval(
+            latency_ms=int((time.monotonic() - started) * 1000),
+            rules_chunks=len(out.get("rules_context") or []),
+            adventure_chunks=len(out.get("adventure_context") or []),
+            degraded=bool(out.get("retrieval_degraded")),
+        )
+    return out
+
+
+async def _retrieve(state: AgentState) -> dict:
     player_input = state.get("player_input")
     adventure_collections = (
         [] if state.get("source_mode") == "homebrew" else state.get("adventure_collections")

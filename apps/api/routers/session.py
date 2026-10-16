@@ -12,7 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import func, select
@@ -20,6 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
+from agent.turn_diagnostics import (
+    TURN_DIAGNOSTICS_EVENT,
+    turn_diagnostics_public,
+    turn_diagnostics_summary,
+)
 from db.postgres.models import Campaign, Character, EventLog, Session as SessionModel
 from edgar_core.sources import public_citations
 
@@ -47,6 +52,7 @@ from ..services.turn_runner import (
     TurnError,
     combat_round_from_events,
     combat_state_public,
+    new_turn_diagnostics,
     persist_turn,
     public_adjudication,
     run_turn,
@@ -341,6 +347,47 @@ async def list_combat_diagnostics(session_id: int, db: AsyncSession = Depends(ge
     ]
 
 
+@router.get("/sessions/{session_id}/diagnostics/turns")
+async def list_turn_diagnostics(
+    session_id: int,
+    limit: int = Query(200, ge=1, le=500),
+    db: AsyncSession = Depends(get_session),
+):
+    """Stored DM-turn latency, provider usage and cost rows for reload (developer only, EDG-053).
+
+    Scope is DM turns only: infrastructure readiness probes are never written here. The newest
+    `limit` turns are returned oldest first with a summary over exactly those rows. A missing
+    field is `null` (not measured), never zero; `totals.complete` is false when any call lacked
+    usage or cost.
+    """
+    if not debug_turns_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+    await get_or_404(db, SessionModel, session_id, "Session")
+    rows = (
+        (
+            await db.execute(
+                select(EventLog)
+                .where(EventLog.session_id == session_id, EventLog.event_type == TURN_DIAGNOSTICS_EVENT)
+                .order_by(EventLog.id.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows = list(reversed(rows))
+    turns = [
+        {"created_at": row.created_at, **(turn_diagnostics_public(row.payload) or {})}
+        for row in rows
+    ]
+    return {
+        "scope": "dm_turns",
+        "truncated": len(rows) == limit,
+        "turns": turns,
+        "summary": turn_diagnostics_summary([row.payload for row in rows]),
+    }
+
+
 @router.post("/sessions/{session_id}/intro")
 async def session_intro(
     session_id: int,
@@ -561,7 +608,10 @@ async def session_turn(
             initial_state["turn_id"] = body.request_id
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
 
-        result = {**initial_state, **await run_turn(initial_state)}
+        diagnostics = new_turn_diagnostics(
+            turn_id=initial_state.get("turn_id"), delivery="sync", lock_wait_ms=lock.acquire_ms
+        )
+        result = {**initial_state, **await run_turn(initial_state, diagnostics=diagnostics)}
         outcome = "unknown"
         done = await persist_turn(session_id, body.message, result)
         outcome = "committed"
@@ -639,6 +689,10 @@ async def session_turn_stream(
         await lock.release()
         raise
 
+    diagnostics = new_turn_diagnostics(
+        turn_id=initial_state.get("turn_id"), delivery="stream", lock_wait_ms=lock.acquire_ms
+    )
+
     async def event_gen():
         structlog.contextvars.bind_contextvars(
             session_id=session_id,
@@ -652,6 +706,7 @@ async def session_turn_stream(
                     body_message=body.message,
                     initial_state=initial_state,
                     debug=body.debug,
+                    diagnostics=diagnostics,
                 )
             ) as frames:
                 async for chunk in frames:

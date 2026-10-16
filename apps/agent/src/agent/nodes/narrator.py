@@ -28,6 +28,7 @@ from agent.combatants import narrator_roster
 from agent.history import fit_continuity, public_earned_facts
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action, wrap_retrieved_excerpt
+from agent.provider_trace import traced_call
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
@@ -214,7 +215,9 @@ async def narrator_node(state: AgentState) -> dict:
         profile = narration_profile(state)
         llm, prompt = narrator_request(state, profile)
         try:
-            response = await llm.ainvoke(prompt)
+            response = await traced_call(
+                lambda: llm.ainvoke(prompt), kind="narrate", profile=profile
+            )
         except Exception as e:
             return {
                 "narration": "",

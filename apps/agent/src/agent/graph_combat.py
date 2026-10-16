@@ -184,6 +184,7 @@ from agent.positioning import (
     start_turn,
 )
 from agent.prompts import UNTRUSTED_INPUT_NOTICE, wrap_player_action
+from agent.provider_trace import traced_call
 from agent.resolution import (
     SECOND_WIND_REFUSAL,
     CheckResult,
@@ -627,11 +628,15 @@ async def _build_enemy_roster(
     try:
         llm = make_chat_model(profile="play.combat_builder", temperature=0)
         structured = llm.with_structured_output(EncounterSetup, method="function_calling")
-        setup = await structured.ainvoke(
-            [
-                SystemMessage(content=ENCOUNTER_BUILDER),
-                HumanMessage(content="\n".join(ctx_lines)),
-            ]
+        setup = await traced_call(
+            lambda: structured.ainvoke(
+                [
+                    SystemMessage(content=ENCOUNTER_BUILDER),
+                    HumanMessage(content="\n".join(ctx_lines)),
+                ]
+            ),
+            kind="combat_setup",
+            profile="play.combat_builder",
         )
         for e in setup.enemies[:6]:
             if any(_name_matches(e.name, a) for a in allies):
@@ -2521,7 +2526,9 @@ async def combat_round_node(state: AgentState) -> dict:
     if text is None:
         llm, prompt = narrator_request(narr_state, pending.profile)
         try:
-            text = message_text(await llm.ainvoke(prompt))
+            text = message_text(
+                await traced_call(lambda: llm.ainvoke(prompt), kind="narrate", profile=pending.profile)
+            )
         except Exception as e:
             return {
                 **retr,

@@ -35,6 +35,7 @@ from agent.nodes.story_effects import (
 )
 from agent.prepared_amendments import accept_runtime_amendment, amendment_prompt_block
 from agent.prompts import RULES_ADJUDICATOR, wrap_player_action, wrap_retrieved_excerpt
+from agent.provider_trace import traced_call
 from agent.resolution import (
     CheckResult,
     decide_completion,
@@ -234,7 +235,12 @@ async def _invoke_with_retry(messages: list[dict]) -> AdjudicationResult | None:
     structured_llm = llm.with_structured_output(AdjudicationResult, method="function_calling")
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            result = await structured_llm.ainvoke(messages)
+            result = await traced_call(
+                lambda: structured_llm.ainvoke(messages),
+                kind="adjudicate",
+                profile="play.consequence_planner",
+                attempts=attempt,
+            )
             if not isinstance(result, AdjudicationResult):
                 result = AdjudicationResult.model_validate(result)
             return result
