@@ -8,15 +8,14 @@ Campaign progress remains in Session.current_scene_id and WorldFlag rows.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from edgar_core.artifacts import text_digest
+from edgar_core.identifiers import Digest, Identifier
+from edgar_core.prepared import PreparedCampaign
 from edgar_core.sources import SourceEdition
-
-Identifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
-Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class ManifestError(ValueError):
@@ -348,6 +347,8 @@ class AdventureManifest(Record):
     clocks: list[StoryDefinition] = Field(default_factory=list)
     opening_journal: list[OpeningJournalSeed] = Field(default_factory=list, max_length=20)
     resolution_policies: list[ResolutionPolicy] = Field(default_factory=list)
+    # The optional private preparation extension preserves old receipts when absent.
+    prepared: PreparedCampaign | None = None
     reviewed_sha256: Digest | None = None
     reviewed_by: str | None = Field(default=None, min_length=1, max_length=200)
 
@@ -679,6 +680,8 @@ def manifest_digest(manifest: AdventureManifest) -> str:
             body.pop(key)
     if not body["resolution_policies"]:
         body.pop("resolution_policies")
+    if body["prepared"] is None:
+        body.pop("prepared")
     encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return text_digest(encoded)
 
@@ -698,6 +701,14 @@ def require_published(
         or any(p.audience == "unreviewed" or not p.text_sha256 for p in manifest.passages)
     ):
         raise ManifestError("Adventure manifest is unreviewed or changed after review.")
+    if manifest.prepared is not None:
+        from edgar_core.prepared import validate_prepared_campaign
+
+        report = validate_prepared_campaign(manifest, manifest.prepared)
+        if not report.valid:
+            raise ManifestError(
+                "Prepared campaign failed deterministic validation. Inspect the private preparation and retry."
+            )
     if not manifest.opening_scene_id or not any(
         p.audience == "player" and manifest.opening_scene_id in p.scene_ids and not p.requires
         for p in manifest.passages
