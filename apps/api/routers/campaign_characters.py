@@ -15,6 +15,7 @@ from ..schemas.character import (
     CampaignCharacterPatch,
     CampaignCharacterRead,
 )
+from ..services.campaign_completion import lock_campaign
 from ..services.character_assignments import (
     load_active_assignment,
     load_active_assignment_any_campaign,
@@ -68,6 +69,7 @@ async def assign_character_to_campaign(
     owner_id: int = Depends(current_user_id),
 ):
     campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await lock_campaign(db, campaign)
     if campaign.status == "ended":
         raise HTTPException(
             status_code=409,
@@ -167,6 +169,8 @@ async def release_character_from_campaign(
     if character.owner_user_id != owner_id:
         raise HTTPException(status_code=403, detail="Character does not belong to the current user")
 
+    # Lock the campaign before reading the assignment so a concurrent end cannot be overwritten.
+    await db.execute(select(Campaign.id).where(Campaign.id == campaign_id).with_for_update())
     assignment = await load_active_assignment(db, character_id, campaign_id)
     if assignment is None:
         raise HTTPException(status_code=404, detail="No active assignment for this character in this campaign")
