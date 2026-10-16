@@ -70,7 +70,7 @@ EFFECT_KINDS: tuple[str, ...] = (
     "poisoned",
 )
 # Kinds that give the bearer's own attack rolls disadvantage, and kinds that give attacks against
-# the bearer advantage (a prone bearer is the exception: its melee/ranged split is in attack_roll_mode).
+# the bearer advantage (a prone bearer is the exception: its within/beyond 5 feet split is in attack_roll_mode).
 _OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded", "poisoned"})
 _AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked", "paralyzed"})
 _EFFECT_TEXT = {
@@ -79,8 +79,8 @@ _EFFECT_TEXT = {
         "advantage"
     ),
     "prone": (
-        "knocked prone: its attacks have disadvantage, melee attacks against it have advantage "
-        "and ranged attacks against it have disadvantage"
+        "knocked prone: its attacks have disadvantage, attacks against it from within 5 feet have "
+        "advantage and from farther away have disadvantage"
     ),
     "blinded": (
         "blinded by {source}: its attacks have disadvantage and attacks against it have advantage"
@@ -307,11 +307,12 @@ def attack_roll_mode(
     """The 5e attack-roll mode from combatant effects: "advantage", "disadvantage" or "normal".
 
     A restrained, prone or blinded attacker rolls at disadvantage. A restrained, blinded or marked
-    target is attacked with advantage; a prone target with advantage in melee and disadvantage at
-    range; a dodging target with disadvantage. `within_five_feet` (EDG-044, the melee band) is the
-    typed source of the PHB rule that a ranged attack made within 5 feet of a hostile creature has
-    disadvantage: it applies only to a ranged attack. Opposing sources cancel to normal, as the
-    rules do. Pure: it never rolls and never sets a number.
+    target is attacked with advantage; a prone target with advantage from within 5 feet and
+    disadvantage from farther away (PHB Appendix A, PDF p.293); a dodging target with disadvantage.
+    `within_five_feet` (EDG-044, the melee band) is the typed source of both the PHB rule that a
+    ranged attack made within 5 feet of a hostile creature has disadvantage (it applies only to a
+    ranged attack) and the prone rule above. Opposing sources cancel to normal, as the rules do.
+    Pure: it never rolls and never sets a number.
     """
     advantage = disadvantage = False
     if any(e["kind"] in _OWN_ATTACK_DISADVANTAGE for e in effects_of(attacker)):
@@ -324,7 +325,7 @@ def attack_roll_mode(
         elif e["kind"] == "dodging":
             disadvantage = True
         elif e["kind"] == "prone":
-            if ranged:
+            if ranged and not within_five_feet:
                 disadvantage = True
             else:
                 advantage = True

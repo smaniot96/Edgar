@@ -147,10 +147,10 @@ simulate (`GET /api/rules/supported-scope`):
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or
-  knocks it prone (its attacks have
-  disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
-  release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
-  are shown in the combat roster and given to the narrator.
+  knocks it prone (its attacks have disadvantage; attacks against it have advantage from within 5
+  feet and disadvantage from farther away). A declared release ends a restraint; a restraint ends
+  with the foe's defeat or the encounter. These effects are shown in the combat roster and given to
+  the narrator.
 - Captives: a foe knocked out in a nonlethal victory stays alive as a captive. The player can release
   it (it is no longer a captive and is never an enemy again) or kill it, but only with an explicit
   lethal declaration in their own words; no dice are rolled. An attack on a captive without that
