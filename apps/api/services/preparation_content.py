@@ -1,4 +1,5 @@
 """Bounded authoring schemas and deterministic canonical compilation for the DM workflow."""
+
 from __future__ import annotations
 
 import json
@@ -62,6 +63,7 @@ class CampaignDesign(ContentRecord):
 
 class CanonicalAct(ContentRecord):
     """An act fragment; cross-act references are validated after exact global assembly."""
+
     act_id: Identifier
     scenes: list[Scene] = Field(min_length=1, max_length=12)
     entities: list[Entity] = Field(default_factory=list, max_length=40)
@@ -106,9 +108,14 @@ def design_from(artifacts) -> CampaignDesign:
 def extraction_for_design(binding, design: CampaignDesign) -> Extraction:
     if binding.source_mode == "pdf":
         from .preparation_sources import load_source
+
         return load_source(binding)
-    pages = [ExtractedPage(page=i, text=act.seed_text, method="generated", quality=check_text(act.seed_text))
-             for i, act in enumerate(design.acts, 1)]
+    pages = [
+        ExtractedPage(
+            page=i, text=act.seed_text, method="generated", quality=check_text(act.seed_text)
+        )
+        for i, act in enumerate(design.acts, 1)
+    ]
     extraction = Extraction(binding.source_slug, "0" * 64, len(pages), pages, binding.rules_edition)
     extraction.source_sha256 = extraction.text_sha256()
     return extraction
@@ -117,9 +124,16 @@ def extraction_for_design(binding, design: CampaignDesign) -> Extraction:
 def validate_design(binding, design: CampaignDesign, extraction: Extraction | None = None) -> None:
     acts = [act.act_id for act in design.acts]
     scenes = [scene for act in design.acts for scene in act.scene_ids]
-    if len(acts) != len(set(acts)) or len(scenes) != len(set(scenes)) or design.opening_scene_id not in design.acts[0].scene_ids:
+    if (
+        len(acts) != len(set(acts))
+        or len(scenes) != len(set(scenes))
+        or design.opening_scene_id not in design.acts[0].scene_ids
+    ):
         raise ValueError("Canonical design identities or opening are invalid.")
     count = binding.commission.get("act_count")
+    if count is None and binding.source_mode == "ai":
+        size = binding.commission.get("generation", {}).get("size")
+        count = {"small": 3, "medium": 6, "large": 12, "gigantic": 24}.get(size)
     if count is not None and len(acts) != count:
         raise ValueError("Every commissioned act must be designed.")
     if binding.source_mode == "pdf":
@@ -138,7 +152,9 @@ def validate_fragment(binding, design: CampaignDesign, fragment: CanonicalAct) -
     if {scene.scene_id for scene in fragment.scenes} != set(act.scene_ids):
         raise ValueError("Every planned scene must be compiled.")
     extraction = extraction_for_design(binding, design)
-    allowed_pages = set(act.source_pages) if binding.source_mode == "pdf" else {design.acts.index(act) + 1}
+    allowed_pages = (
+        set(act.source_pages) if binding.source_mode == "pdf" else {design.acts.index(act) + 1}
+    )
     pages = dict(extraction.text_pages())
     spans = sorted(fragment.passages, key=lambda p: (p.page, p.start))
     if any(p.page not in allowed_pages for p in spans):
@@ -146,19 +162,32 @@ def validate_fragment(binding, design: CampaignDesign, fragment: CanonicalAct) -
     for page in allowed_pages:
         cursor = 0
         for passage in (p for p in spans if p.page == page):
-            if passage.start < cursor or passage.end > len(pages[page]) or pages[page][cursor:passage.start].strip():
+            if (
+                passage.start < cursor
+                or passage.end > len(pages[page])
+                or pages[page][cursor : passage.start].strip()
+            ):
                 raise ValueError("Every exact source character must be classified once.")
-            if not pages[page][passage.start:passage.end].strip() or passage.audience == "unreviewed":
+            if (
+                not pages[page][passage.start : passage.end].strip()
+                or passage.audience == "unreviewed"
+            ):
                 raise ValueError("Every passage requires an explicit private DM classification.")
-            passage.text_sha256 = text_digest(pages[page][passage.start:passage.end])
+            passage.text_sha256 = text_digest(pages[page][passage.start : passage.end])
             cursor = passage.end
         if pages[page][cursor:].strip():
             raise ValueError("An act left source text unclassified.")
 
 
-def assemble_manifest(binding, artifacts, *, final: bool = False) -> tuple[AdventureManifest, Extraction]:
+def assemble_manifest(
+    binding, artifacts, *, final: bool = False
+) -> tuple[AdventureManifest, Extraction]:
     design = design_from(artifacts)
-    fragments = [CanonicalAct.model_validate(a.payload["fragment"]) for a in artifacts if a.artifact_kind == "canonical_act"]
+    fragments = [
+        CanonicalAct.model_validate(a.payload["fragment"])
+        for a in artifacts
+        if a.artifact_kind == "canonical_act"
+    ]
     by_act = {fragment.act_id: fragment for fragment in fragments}
     if len(by_act) != len(fragments) or set(by_act) != {act.act_id for act in design.acts}:
         raise ValueError("Every act requires exactly one canonical fragment.")
@@ -166,20 +195,45 @@ def assemble_manifest(binding, artifacts, *, final: bool = False) -> tuple[Adven
     extraction = extraction_for_design(binding, design)
     for fragment in fragments:
         validate_fragment(binding, design, fragment)
-    fields = {name: [item for fragment in fragments for item in getattr(fragment, name)] for name in (
-        "scenes", "entities", "passages", "objectives", "milestones", "objects", "promises", "clocks", "opening_journal", "resolution_policies")}
-    prepared = PreparedCampaign(source_mode=binding.source_mode,
+    fields = {
+        name: [item for fragment in fragments for item in getattr(fragment, name)]
+        for name in (
+            "scenes",
+            "entities",
+            "passages",
+            "objectives",
+            "milestones",
+            "objects",
+            "promises",
+            "clocks",
+            "opening_journal",
+            "resolution_policies",
+        )
+    }
+    prepared = PreparedCampaign(
+        source_mode=binding.source_mode,
         acts=[fragment.act for fragment in fragments],
-        **{name: [item for fragment in fragments for item in getattr(fragment, name)] for name in (
-            "quests", "scene_packets", "routes", "branches", "outcomes", "extensions")})
-    scene_work = [ScenePreparation.model_validate(a.payload["scenes"]) for a in artifacts if a.artifact_kind == "runnable_scenes"]
+        **{
+            name: [item for fragment in fragments for item in getattr(fragment, name)]
+            for name in ("quests", "scene_packets", "routes", "branches", "outcomes", "extensions")
+        },
+    )
+    scene_work = [
+        ScenePreparation.model_validate(a.payload["scenes"])
+        for a in artifacts
+        if a.artifact_kind == "runnable_scenes"
+    ]
     if scene_work:
         if {a.act_id for a in scene_work} != set(by_act) or len(scene_work) != len(by_act):
             raise ValueError("Every act requires runnable scenes.")
         prepared.scene_packets = [packet for work in scene_work for packet in work.packets]
         prepared.extensions += [extension for work in scene_work for extension in work.extensions]
     if final and binding.source_mode == "ai":
-        chapters = {a.payload["chapter"]["act_id"]: CompleteChapter.model_validate(a.payload["chapter"]) for a in artifacts if a.artifact_kind == "complete_chapter"}
+        chapters = {
+            a.payload["chapter"]["act_id"]: CompleteChapter.model_validate(a.payload["chapter"])
+            for a in artifacts
+            if a.artifact_kind == "complete_chapter"
+        }
         if set(chapters) != set(by_act):
             raise ValueError("Every act needs a complete retained chapter.")
         final_pages = []
@@ -190,18 +244,37 @@ def assemble_manifest(binding, artifacts, *, final: bool = False) -> tuple[Adven
             seed = extraction.pages[number - 1].text
             text = seed + "\n\n" + chapter.text
             final_pages.append(ExtractedPage(number, text, "generated", check_text(text)))
-            fields["passages"].append(Passage(passage_id=f"dm_chapter_{act.act_id}", page=number,
-                start=len(seed) + 2, end=len(text), text_sha256=text_digest(chapter.text),
-                scene_ids=act.scene_ids, audience="planner"))
-        extraction = Extraction(binding.source_slug, "0" * 64, len(final_pages), final_pages, binding.rules_edition)
+            fields["passages"].append(
+                Passage(
+                    passage_id=f"dm_chapter_{act.act_id}",
+                    page=number,
+                    start=len(seed) + 2,
+                    end=len(text),
+                    text_sha256=text_digest(chapter.text),
+                    scene_ids=act.scene_ids,
+                    audience="planner",
+                )
+            )
+        extraction = Extraction(
+            binding.source_slug, "0" * 64, len(final_pages), final_pages, binding.rules_edition
+        )
         extraction.source_sha256 = extraction.text_sha256()
-    manifest = AdventureManifest(source=binding.source_slug, source_sha256=extraction.source_sha256,
-        extraction_sha256=extraction.text_sha256(), rules_edition=binding.rules_edition,
-        opening_scene_id=design.opening_scene_id, prepared=prepared, **fields)
+    manifest = AdventureManifest(
+        source=binding.source_slug,
+        source_sha256=extraction.source_sha256,
+        extraction_sha256=extraction.text_sha256(),
+        rules_edition=binding.rules_edition,
+        opening_scene_id=design.opening_scene_id,
+        prepared=prepared,
+        **fields,
+    )
     validate_spans(extraction, manifest)
     report = validate_prepared_campaign(manifest)
     if not report.valid:
-        raise ValueError("Canonical prepared campaign failed deterministic validation: " + json.dumps([f.code for f in report.findings]))
+        raise ValueError(
+            "Canonical prepared campaign failed deterministic validation: "
+            + json.dumps([f.code for f in report.findings])
+        )
     manifest.reviewed_by = "edgar-private-dm-code-validation-v1"
     manifest.reviewed_sha256 = manifest_digest(manifest)
     return require_published(manifest), extraction

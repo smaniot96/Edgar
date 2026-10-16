@@ -131,7 +131,7 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
 
       {preparation.fields}
       <ErrorNotice error={error} />
-      <Button type="submit" disabled={!preparation.setup} loading={busy} loadingText="Starting…">
+      <Button type="submit" className="min-h-11" disabled={!preparation.setup} loading={busy} loadingText="Starting…">
         Generate campaign
       </Button>
     </form>
@@ -200,7 +200,7 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
       </div>
       {preparation.fields}
       <ErrorNotice error={error} />
-      <Button type="submit" disabled={!file || !preparation.setup} loading={busy} loadingText="Uploading…">
+      <Button type="submit" className="min-h-11" disabled={!file || !preparation.setup} loading={busy} loadingText="Uploading…">
         Upload
       </Button>
     </form>

@@ -31,6 +31,6 @@ export function PreparationRecovery({ slug, edition, onStarted }: {
     </select>}</Field>
     {preparation.fields}
     <ErrorNotice error={error} />
-    <Button type="submit" disabled={!preparation.setup} loading={busy}>Start private preparation</Button>
+    <Button type="submit" className="min-h-11" disabled={!preparation.setup} loading={busy}>Start private preparation</Button>
   </form>;
 }

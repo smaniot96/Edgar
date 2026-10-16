@@ -48,6 +48,9 @@ async def lifespan(app: FastAPI):
         stale = await run_in_threadpool(fail_stale_processing)
         if stale:
             log.warning("adventures_marked_failed_after_restart", slugs=stale)
+        from .services.preparation_runtime import recover_private_preparations
+
+        await recover_private_preparations()
     except OSError:
         log.exception("adventures_stale_scan_failed")
     try:

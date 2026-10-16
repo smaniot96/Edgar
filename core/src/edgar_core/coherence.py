@@ -1083,7 +1083,7 @@ def explore_prepared_paths(
                                 unavailable = True
                                 break
                         if effect.kind in {"objective", "milestone", "relationship", "encounter"}:
-                            for prior_kind, prior_target, prior_status, _ in durable_facts:
+                            for prior_kind, prior_target, prior_status, _ in next_durable_facts:
                                 conflicts = {
                                     frozenset({"completed", "failed"}),
                                     frozenset({"friendly", "hostile"}),

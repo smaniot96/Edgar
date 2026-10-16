@@ -94,6 +94,15 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
 
     edition = getattr(campaign, "rules_edition", None) or DEFAULT_RULES_EDITION
+    from .prepared_play import require_prepared_play
+
+    await asyncio.to_thread(
+        require_prepared_play,
+        adventure_collections,
+        edition,
+        character_id=session.active_character_id,
+        require_hero=True,
+    )
     opening_scene_id = None
     passages: list[dict] = []
     seeds = []

@@ -553,6 +553,14 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
         manifest_sha256=manifest.reviewed_sha256,
         prepared_sha256=prepared_digest(manifest.prepared),
     )
+    from .preparation_stages import _validate_assets
+
+    _validate_assets(
+        binding,
+        publication.artifacts,
+        manifest,
+        next(a for a in publication.artifacts if a.artifact_kind == "asset_coverage"),
+    )
     source_dir = _run_source_dir(slug, binding.run_id)
     # Save the canonical extraction and exact rendered retained manuscript under this
     # immutable run. The source-mode-specific helper retains the original PDF separately.
@@ -839,6 +847,14 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
             manifest_sha256=final_manifest.reviewed_sha256,
             prepared_sha256=prepared_digest(accepted_manifest.prepared),
         )
+        from .preparation_stages import _validate_assets
+
+        _validate_assets(
+            binding,
+            tuple(state.artifacts.values()),
+            final_manifest,
+            next(a for a in state.artifacts.values() if a.artifact_kind == "asset_coverage"),
+        )
         manuscript_value = manuscript_payload.get("manuscript")
         manuscript_guide, manuscript_json = _render_private_manuscript(manuscript_value)
         from edgar_core.coherence import RetainedManuscript
@@ -1072,6 +1088,7 @@ async def recover_private_preparations() -> list[str]:
         PreparationJobStatus.REVIEWING,
         PreparationJobStatus.REPAIRING,
         PreparationJobStatus.PUBLISHING,
+        PreparationJobStatus.READY,
     }
     for slug in sorted(meta_store.metadata_slugs()):
         meta = meta_store.load_meta(slug)
@@ -1110,7 +1127,7 @@ async def recover_private_preparations() -> list[str]:
             current_job = current.get("job") or {}
             if (
                 current.get("private_preparation") is not True
-                or current.get("preparation_run_id") != run_id
+                or current.get("preparation_run_id") not in (None, run_id)
                 or current_job.get("state") != "interrupted"
                 or (current.get("attempt") or {}).get("id")
             ):

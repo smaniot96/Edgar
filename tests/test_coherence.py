@@ -1426,3 +1426,63 @@ def test_deterministic_review_reports_coverage_repeated_climax_and_contradictory
         source_artifacts=(dependencies[0],),
     )
     assert "chapter_scene_coverage" in {finding.code for finding in missing_report.findings}
+
+
+def test_one_outcome_cannot_commit_opposing_durable_effects():
+    binding, _, _, manifest_artifact, prepared_artifact, manuscript_artifact = (
+        _bound_review_inventory()
+    )
+    manifest = AdventureManifest.model_validate(manifest_artifact.payload["manifest"])
+    prepared = PreparedCampaign.model_validate(prepared_artifact.payload["prepared"])
+    policy = manifest.resolution_policies[0]
+    opposing = PolicyEffect(
+        kind="objective", target_id="rescue_keeper", status="failed", passage_ids=["source_intro"]
+    )
+    other_policy = policy.model_copy(
+        update={"policy_id": "opposing_policy", "on_success": [opposing]}
+    )
+    candidate = manifest.model_copy(update={"resolution_policies": [policy, other_policy]})
+    prepared = prepared.model_copy(
+        update={
+            "scene_packets": [
+                packet.model_copy(update={"policy_ids": [*packet.policy_ids, "opposing_policy"]})
+                for packet in prepared.scene_packets
+            ],
+            "branches": [
+                branch.model_copy(update={"policy_ids": [*branch.policy_ids, "opposing_policy"]})
+                for branch in prepared.branches
+            ],
+            "outcomes": [
+                outcome.model_copy(
+                    update={
+                        "policy_selections": [
+                            *outcome.policy_selections,
+                            PreparedPolicySelection(policy_id="opposing_policy", result="success"),
+                        ]
+                    }
+                )
+                for outcome in prepared.outcomes
+            ],
+        }
+    )
+    prepared_artifact = _replace_artifact_payload(
+        binding, prepared_artifact, {"prepared": prepared.model_dump(mode="json")}
+    )
+    candidate = _approved(candidate, prepared)
+    revised = _replace_artifact_payload(
+        binding, manifest_artifact, {"manifest": candidate.model_dump(mode="json")}
+    )
+    paths = explore_prepared_paths(
+        binding,
+        revised,
+        prepared_artifact,
+        manuscript_artifact,
+        initial_world_flags={"gate_open": "yes"},
+    )
+    success_ids = {
+        o.outcome_id
+        for o in prepared.outcomes
+        if any(s.policy_id == "rescue_check" and s.result == "success" for s in o.policy_selections)
+    }
+    assert success_ids
+    assert success_ids <= set(paths.unreachable_outcome_ids)

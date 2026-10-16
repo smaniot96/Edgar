@@ -239,7 +239,21 @@ def test_asset_coverage_uses_the_real_receipt_contract():
     value = {
         "manifest_sha256": "a" * 64,
         "prepared_sha256": "c" * 64,
-        "coverage": [],
+        "coverage": [
+            {
+                "asset_id": "act_map",
+                "kind": "schematic_map",
+                "required": True,
+                "status": "ready",
+                "artifact_sha256": "d" * 64,
+            }
+        ],
+        "act_coverage": [
+            {"scope": "act", "scope_id": "act_one", "required": True, "status": "ready"}
+        ],
+        "scene_coverage": [
+            {"scope": "scene", "scope_id": "dock", "required": True, "status": "ready"}
+        ],
     }
     receipt = runtime._validated_asset_coverage(
         value, manifest_sha256="a" * 64, prepared_sha256="c" * 64
@@ -339,10 +353,8 @@ def test_duplicate_publication_invocation_is_serialized_and_idempotent(
     assert publish_calls == 1
 
 
-def test_recovered_publisher_activates_a_real_accepted_bundle_and_readiness_receipt(
-    private_meta_dir, monkeypatch
-):
-    """A restarted publisher validates accepted domain artifacts before activating them."""
+def test_recovered_publisher_rejects_an_incomplete_asset_bundle(private_meta_dir, monkeypatch):
+    """A superficially accepted inventory cannot bypass missing required asset bytes."""
     from datetime import UTC, datetime
 
     from test_prepared_campaign import _fixture
@@ -547,27 +559,10 @@ def test_recovered_publisher_activates_a_real_accepted_bundle_and_readiness_rece
 
     monkeypatch.setattr(embed, "_embed_and_upsert", lambda chunks, *_args, **_kwargs: len(chunks))
 
-    assert runtime._publish_candidate(slug, token, publication) == publication.bundle_sha256
-    candidate = adventures_meta.load_meta(slug)["preparation_publication_candidate"]
-    assert candidate["publication_complete"] is True
-    assert candidate["chunk_count"] == 1
-
-    ready = store.mutate_run(
-        slug,
-        run_id,
-        update=lambda data: data.update(
-            status="ready",
-            published_bundle_sha256=publication.bundle_sha256,
-            publication_inventory=publication.artifact_digests,
-        ),
-    )
-    runtime._finalize_ready(slug, token, ready)
-    from db.vector import versions
-
-    published_meta = adventures_meta.load_meta(slug)
-    index_version = published_meta["preparation_publication_receipt"]["index_version"]
-    monkeypatch.setattr(versions, "active_index_version", lambda _: index_version)
-    assert runtime.private_preparation_ready(slug, published_meta)
+    with pytest.raises(runtime.PreparationError, match="Required assets"):
+        runtime._publish_candidate(slug, token, publication)
+    assert not adventures_meta.load_meta(slug).get("preparation_publication_candidate")
+    assert store.load_run(slug, run_id).status == PreparationJobStatus.PUBLISHING
 
 
 def test_lease_wait_does_not_spin_while_a_worker_lease_is_live():
@@ -586,20 +581,22 @@ def test_lease_wait_does_not_spin_while_a_worker_lease_is_live():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["preparing", "ready"])
+@pytest.mark.parametrize("mirrored_run_id", [True, False])
 async def test_startup_recovery_claims_interrupted_private_checkpoint(
-    private_meta_dir, monkeypatch
+    private_meta_dir, monkeypatch, status, mirrored_run_id
 ):
     run_id = "prep-" + "6" * 32
     binding = _binding(slug="restart", run_id=run_id)
     store = runtime.PreparationStore()
     state = store.create_run(binding)
-    store.mutate_run("restart", run_id, update=lambda payload: payload.update(status="preparing"))
+    store.mutate_run("restart", run_id, update=lambda payload: payload.update(status=status))
     adventures_meta.save_meta(
         "restart",
         {
             "private_preparation": True,
             "status": "failed",
-            "preparation_run_id": run_id,
+            "preparation_run_id": run_id if mirrored_run_id else None,
             "job": {
                 "job_id": run_id.removeprefix("prep-"),
                 "kind": "generation",
@@ -621,6 +618,8 @@ async def test_startup_recovery_claims_interrupted_private_checkpoint(
     assert meta["job"]["state"] == "queued"
     assert meta["attempt"]["id"] == started[0][1]
     assert started[0][0] == "restart"
+    assert meta["preparation_run_id"] == run_id
+    assert await runtime.recover_private_preparations() == []
 
 
 @pytest.mark.parametrize(

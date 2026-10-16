@@ -145,7 +145,7 @@ function SessionMapPanelContent({
                       type="button"
                       aria-pressed={active}
                       onClick={() => updateView({ sceneId: place.scene_id })}
-                      className={`w-full rounded-control border px-3 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400 ${active ? "border-ember-500 bg-ember-50 text-ink" : "border-line bg-surface text-ink hover:bg-surface-raised"}`}
+                      className={`w-full rounded-control border px-3 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400 ${active ? "border-ember-500 bg-surface-raised text-ink" : "border-line bg-surface text-ink hover:bg-surface-raised"}`}
                     >
                       <span className="block font-medium">{place.title}</span>
                       <span className="block text-xs text-ink-muted">{placeStatus(place.status)}</span>
