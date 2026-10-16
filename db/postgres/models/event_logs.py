@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -11,6 +11,18 @@ from db.postgres.base import Base
 
 if TYPE_CHECKING:
     from db.postgres.models.sessions import Session
+
+RetentionClass = Literal["durable", "diagnostic"]
+
+# Retention class of every event_type the code writes. Durable rows are replay, player history,
+# rulings and memory: no expiry may remove them. Diagnostic rows may expire once no consumer needs
+# them. tests/db/test_event_retention.py fails for any written type missing here (see db/README.md).
+EVENT_RETENTION: dict[str, RetentionClass] = {
+    "narration": "durable",
+    "adjudication": "durable",
+    "memory_summary": "durable",
+    "combat_round": "diagnostic",
+}
 
 
 class EventLog(Base):
