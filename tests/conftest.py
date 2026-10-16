@@ -304,7 +304,7 @@ def fake_llm_turn(monkeypatch: pytest.MonkeyPatch) -> None:
 
     fake = _FakeChat()
 
-    def _factory(temperature: float = 0) -> _FakeChat:  # noqa: ARG001
+    def _factory(temperature: float = 0, **_kwargs: Any) -> _FakeChat:  # noqa: ARG001
         return fake
 
     monkeypatch.setattr("agent.llm.make_chat_model", _factory)
