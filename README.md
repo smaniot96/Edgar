@@ -249,9 +249,12 @@ simulate (`GET /api/rules/supported-scope`):
   docs/rules-verification-2014.md).
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
-  with level. Foes without an exact record are clamped or left out. An exact creature is never
-  rescaled: the budget limits only how many foes take part, and an out-of-band record is noted as
-  unscaled. The combat start notes any adaptation.
+  with level. Its limits are checked against the 2014 DMG XP thresholds (`apps/agent/src/agent/dmg_thresholds.py`):
+  the worst generic roster at every level 1-20 stays at or below that hero's deadly threshold.
+  Foes without an exact record are clamped or left out. An exact creature is never rescaled: the budget
+  limits only how many foes take part, and an out-of-band record is noted as unscaled. An exact foe above a
+  solo hero's deadly threshold gets an engine-written warning (above deadly, or at least twice deadly) in the
+  combat start and the combat state; the fight is not refused. The combat start notes any adaptation.
 
 ## Repo layout
 

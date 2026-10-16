@@ -33,20 +33,21 @@ def test_level_one_budget_keeps_the_prompt_promised_bands() -> None:
     assert b.boss_hp == (18, 30)
     assert b.foe_hp == (5, 11)
     assert b.total_hp == 30 + 11
-    assert b.attack_bonus_max == 5
-    assert b.damage_avg_max == 5
+    # DMG-calibrated ceilings (EDG-153): +4 to hit and 3 average damage at level 1.
+    assert b.attack_bonus_max == 4
+    assert b.damage_avg_max == 3
 
 
 @pytest.mark.parametrize(
     ("level", "max_foes", "boss_hp", "foe_hp", "attack_max", "damage_max"),
     [
-        (2, 2, (23, 38), (6, 14), 5, 6),
-        (4, 2, (32, 53), (9, 19), 5, 9),
-        (5, 3, (36, 60), (10, 22), 6, 10),
-        (8, 3, (50, 83), (14, 30), 6, 14),
-        (9, 4, (54, 90), (15, 33), 7, 15),
-        (12, 4, (68, 113), (19, 41), 7, 19),
-        (13, 4, (72, 120), (20, 44), 8, 20),
+        (2, 2, (23, 38), (6, 14), 4, 5),
+        (4, 2, (32, 53), (9, 19), 4, 8),
+        (5, 3, (36, 60), (10, 22), 6, 8),
+        (8, 3, (50, 83), (14, 30), 6, 8),
+        (9, 4, (54, 90), (15, 33), 6, 8),
+        (12, 4, (68, 113), (19, 41), 6, 14),
+        (13, 4, (72, 120), (20, 44), 6, 14),
         (20, 4, (104, 173), (29, 63), 9, 29),
     ],
 )
@@ -63,6 +64,7 @@ def test_every_level_from_one_to_twenty_is_monotonic_and_well_formed() -> None:
         assert hi.max_foes >= lo.max_foes and hi.total_hp >= lo.total_hp
         assert hi.boss_hp[1] >= lo.boss_hp[1] and hi.foe_hp[1] >= lo.foe_hp[1]
         assert hi.attack_bonus_max >= lo.attack_bonus_max
+        assert hi.damage_avg_max >= lo.damage_avg_max
     assert all(b.foe_hp[0] < b.foe_hp[1] < b.boss_hp[0] < b.boss_hp[1] for b in budgets)
 
 
@@ -95,10 +97,11 @@ def foe(name, *, hp=9, bonus=3, dice="1d6+1", boss=False, **extra):
 
 
 def test_in_budget_roster_is_returned_unchanged_with_no_adaptation() -> None:
-    roster = [foe("Goblin", hp=7), foe("Goblin 2", hp=6)]
+    roster = [foe("Goblin", hp=7, dice="1d4"), foe("Goblin 2", hp=6, dice="1d4")]
     out, summary = apply_solo_budget(roster, 1)
     assert out == roster
-    assert summary == {"level": 1, "adapted": False, "notes": []}
+    assert (summary["level"], summary["adapted"], summary["notes"]) == (1, False, [])
+    assert summary["warning"] is None
     assert adaptation_sentence(summary) == ""
 
 
@@ -106,8 +109,8 @@ def test_out_of_scale_numbers_are_clamped_into_the_level_one_budget() -> None:
     out, summary = apply_solo_budget([foe("Ogre", hp=120, bonus=10, dice="4d12+5", boss=True)], 1)
     (ogre,) = out
     assert ogre["hp_max"] == ogre["hp_current"] == 30
-    assert ogre["attack_bonus"] == 5
-    assert ogre["damage_dice"] == "1d4+2"
+    assert ogre["attack_bonus"] == 4
+    assert ogre["damage_dice"] == "1d4"
     assert summary["adapted"] and len(summary["notes"]) == 3
 
 
@@ -124,22 +127,27 @@ def test_extra_foes_are_left_out_and_bosses_are_kept_first() -> None:
     assert any("Goblin 3 left out" in n for n in summary["notes"])
 
 
-def test_total_hp_over_budget_leaves_out_the_later_foe_not_the_boss() -> None:
-    # Two bosses at level 1 would total 60 HP against a budget of 41.
+def test_only_the_first_generic_boss_takes_the_boss_band() -> None:
+    # Two generic bosses: the second is a foe for the HP band (30 -> 11), so the roster stays
+    # within the total of 41 and the worst case is one boss plus foes.
     out, summary = apply_solo_budget(
         [foe("First Boss", hp=30, boss=True), foe("Second Boss", hp=30, boss=True)], 1
     )
-    assert [e["name"] for e in out] == ["First Boss"]
-    assert any("total enemy HP limit of 41" in n for n in summary["notes"])
+    assert [e["name"] for e in out] == ["First Boss", "Second Boss"]
+    assert out[0]["hp_max"] == 30 and out[1]["hp_max"] == 11
+    assert "Second Boss HP 30 -> 11" in summary["notes"]
 
 
 def test_a_single_foe_is_never_removed_even_when_it_must_be_clamped() -> None:
     out, _ = apply_solo_budget([foe("Dragon", hp=120, bonus=10, dice="4d12+5")], 1)
-    assert len(out) == 1 and out[0]["hp_max"] == 11 and out[0]["attack_bonus"] == 5
+    assert len(out) == 1 and out[0]["hp_max"] == 11 and out[0]["attack_bonus"] == 4
 
 
 def test_an_empty_roster_stays_empty() -> None:
-    assert apply_solo_budget([], 1) == ([], {"level": 1, "adapted": False, "notes": []})
+    out, summary = apply_solo_budget([], 1)
+    assert out == []
+    assert (summary["level"], summary["adapted"], summary["notes"]) == (1, False, [])
+    assert summary["xp_check"] is None and summary["warning"] is None
 
 
 def test_budget_is_pure_and_deterministic() -> None:
@@ -261,7 +269,7 @@ async def test_builder_failure_uses_the_exact_record_not_defaults(fake_llm_schem
     roster = await _build_enemy_roster(_built_state(1), ["Goblin"], budget_summary=budget_summary)
     assert roster[0]["stat_adaptation"] == "exact_record"
     assert roster[0]["hp_max"] == 7 and roster[0]["hp_current"] == 7
-    assert budget_summary == {"level": 1, "adapted": False, "notes": []}
+    assert budget_summary["adapted"] is False and budget_summary["notes"] == []
 
 
 @pytest.mark.asyncio
