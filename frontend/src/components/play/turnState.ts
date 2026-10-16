@@ -144,7 +144,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
     case "reset":
       return { ...initialTurnState, lines: action.lines, historyReady: true };
     case "append":
-      return { ...state, lines: [...state.lines, action.line] };
+      return { ...state, lines: [...state.lines, action.line], announcement: action.line.content };
     case "recover":
       return {
         ...state,

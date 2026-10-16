@@ -15,7 +15,7 @@ function focusableWithin(container: HTMLElement): HTMLElement[] {
   });
 }
 
-/** Escape closes a tool; narrow-screen dialogs also contain focus and return it to the opener. */
+/** Escape closes a tool and focus returns to its opener; narrow-screen dialogs also contain focus. */
 export function useModalFocus(
   open: boolean,
   modal: boolean,
@@ -41,6 +41,8 @@ export function useModalFocus(
     }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // Escape cancels an IME composition, and the composer beside a nonmodal sidebar keeps its own Escape.
+        if (event.isComposing || (!modal && !container?.contains(event.target as Node))) return;
         event.preventDefault();
         onClose();
         return;
@@ -68,7 +70,7 @@ export function useModalFocus(
       if (focusFrame !== null) cancelAnimationFrame(focusFrame);
       // A narration link may have deliberately moved focus outside the closing tool.
       const current = document.activeElement;
-      if (modal && previous?.isConnected && (!current || current === document.body || container?.contains(current))) previous.focus();
+      if (previous?.isConnected && (!current || current === document.body || container?.contains(current))) previous.focus();
     };
   }, [open, modal, onClose, containerRef]);
 }

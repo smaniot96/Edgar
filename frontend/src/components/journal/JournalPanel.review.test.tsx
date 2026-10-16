@@ -132,3 +132,58 @@ it("shows ownership and can follow consequence links across active category filt
     await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
   }
 });
+
+it("gives repeated entry controls distinct names and keeps keyboard focus on the entry it navigates to", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  const frame = () => act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const data: JournalRead = {
+    session_id: 4,
+    tracking: "available",
+    current_place: null,
+    active_goal: null,
+    entries: Array.from({ length: 30 }, (_, index) => ({
+      id: `note-${index}`,
+      category: "clue" as const,
+      title: `Clue ${index}`,
+      text: `Earned clue ${index}`,
+      status: "discovered" as const,
+      quantity: null,
+      origin: { turn_number: index + 1, history_event_id: index + 1, place: null, actor: null, citation: null },
+      history: index === 0 ? [{ status: "discovered" as const, turn_number: 1, history_event_id: 1 }] : [],
+      related_entry_id: null,
+      related_entry_ids: index === 0 ? ["note-5"] : undefined,
+    })),
+  };
+  const render = (selectedEntryId: string | null = null) => root.render(
+    <JournalPanel data={data} loading={false} error={null} stale={false} onRefresh={() => {}} onOpenHistory={() => {}}
+      selectedEntryId={selectedEntryId} onSelectedEntryChange={() => {}} category="all" onCategoryChange={() => {}}
+      query="" onQueryChange={() => {}} />,
+  );
+  const button = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+  try {
+    await act(() => render());
+    expect(button("Select Clue 0")?.textContent).toBe("Select");
+    expect(button("Select Clue 1")).not.toBeNull();
+    await act(() => render("note-0"));
+    expect(button("Selected Clue 0")?.getAttribute("aria-pressed")).toBe("true");
+    expect(button("View narration: Clue 0, discovered")?.textContent).toBe("View narration");
+
+    await act(() => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Clue: Clue 5")?.click());
+    await frame();
+    expect(document.activeElement?.id).toBe("journal-entry-note-5");
+
+    const more = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Show more entries")!;
+    more.focus();
+    await act(() => more.click());
+    await frame();
+    expect(container.querySelectorAll("article")).toHaveLength(30);
+    expect(document.activeElement?.id).toBe("journal-entry-note-24");
+
+    await act(() => render("removed-entry"));
+    expect(container.querySelector('[aria-current="true"]')).toBeNull();
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});

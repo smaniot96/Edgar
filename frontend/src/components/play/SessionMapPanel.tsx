@@ -129,17 +129,17 @@ function SessionMapPanelContent({
     updateView({ sceneId: place.scene_id });
     requestAnimationFrame(() => {
       if (selectedRef.current && "scrollIntoView" in selectedRef.current) {
-        selectedRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        selectedRef.current.scrollIntoView({ block: "nearest" });
       }
     });
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-canvas px-3 py-2" aria-label="Map controls">
+      <div role="group" className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-canvas px-3 py-2" aria-label="Map controls">
         <Button className="min-h-11" variant="secondary" size="sm" onClick={fitMap}>Fit map</Button>
         <Button className="min-h-11" variant="secondary" size="sm" onClick={showCurrent} disabled={!current && listPlaces.length === 0}>Current place</Button>
-        <span className="ml-auto text-xs text-ink-muted" aria-live="polite">{Math.round(view.zoom * 100)}%</span>
+        <span className="ml-auto text-xs text-ink-muted" aria-live="polite">Zoom {Math.round(view.zoom * 100)}%</span>
         <Button className="min-h-11 min-w-11" variant="secondary" size="sm" aria-label="Zoom out" disabled={view.zoom <= 1} onClick={() => updateView({ zoom: Math.max(1, view.zoom - 0.25) })}>−</Button>
         <Button className="min-h-11 min-w-11" variant="secondary" size="sm" aria-label="Zoom in" disabled={view.zoom >= 1.5} onClick={() => updateView({ zoom: Math.min(1.5, view.zoom + 0.25) })}>+</Button>
         <Button className="min-h-11" variant="secondary" size="sm" onClick={onRefresh}>Refresh map</Button>
@@ -155,7 +155,7 @@ function SessionMapPanelContent({
         ) : null}
         {map && places.length > 0 ? (
           <figure ref={mapFigureRef} tabIndex={0} onScroll={(event) => updateView({ panLeft: event.currentTarget.scrollLeft, panTop: event.currentTarget.scrollTop })} className="max-h-[50dvh] overflow-auto rounded-control border border-line bg-[#101827] p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400" aria-label="Schematic map of known places">
-            <div className="relative mx-auto transition-[width] duration-150" style={{ width: `${Math.round(view.zoom * 100)}%`, minWidth: `${Math.round(view.zoom * 100)}%` }}>
+            <div className="relative mx-auto transition-[width] duration-150 motion-reduce:transition-none" style={{ width: `${Math.round(view.zoom * 100)}%`, minWidth: `${Math.round(view.zoom * 100)}%` }}>
               <img
                 src={mapUrl}
                 onLoad={() => { setImageFailed(false); restoreScroll(); }}
@@ -257,7 +257,7 @@ function SessionMapPanelContent({
                   {asset.media_type.startsWith("image/") ? (
                     <img src={`${apiBase}${asset.url}`} alt="Artwork connected to a known place or encountered creature" className="max-h-56 w-full object-contain" loading="lazy" />
                   ) : (
-                    <a className="block p-3 text-sm text-ember-700 underline" href={`${apiBase}${asset.url}`}>Open player handout</a>
+                    <a className="block p-3 text-sm text-ember-300 underline" href={`${apiBase}${asset.url}`}>Open player handout</a>
                   )}
                   <p className="px-3 pt-2 text-sm text-ink">{artworkLabel(asset.kind)}</p>
                   <p className="px-3 pb-3 text-xs text-ink-muted">Version {asset.sha256.slice(0, 12)}</p>

@@ -185,3 +185,33 @@ it("opens only the supplied player-safe people from the selected session", async
     localStorage.clear();
   }
 });
+
+it("names the map controls and zoom, and keeps keyboard and reduced-motion users in control of movement", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const scroll = vi.fn();
+  const previous = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = scroll;
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(() => root.render(
+      <SessionMapPanel sessionId={12} map={map} loading={false} error={null} onRefresh={vi.fn()} onOpenJournal={vi.fn()} onPrepareTravel={vi.fn()} />,
+    ));
+    expect(container.querySelector('[role="group"][aria-label="Map controls"]')).not.toBeNull();
+    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe("Zoom 100%");
+    expect(container.querySelector("figure > div")?.className).toContain("motion-reduce:transition-none");
+    expect(container.querySelector("figure")?.getAttribute("tabindex")).toBe("0");
+    expect(container.querySelector('button[aria-label="Inspect The harbor"]')).not.toBeNull();
+
+    await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Current place")!.click());
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: "nearest" });
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    HTMLElement.prototype.scrollIntoView = previous;
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  }
+});

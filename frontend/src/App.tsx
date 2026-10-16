@@ -1,4 +1,5 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 
 import EdgarLogo from "./components/EdgarLogo";
 import { GearIcon } from "./components/ui/icons";
@@ -22,6 +23,19 @@ function navClass({ isActive }: { isActive: boolean }) {
  */
 export default function App() {
   const { isDev } = useMode();
+  const { pathname } = useLocation();
+  const pageRef = useRef<HTMLDivElement>(null);
+  const lastPathname = useRef(pathname);
+  // A route change unmounts the focused link, so move focus to the new page's heading
+  // (or the page region) instead of dropping it on <body>; same-page updates never move it.
+  useEffect(() => {
+    if (lastPathname.current === pathname) return;
+    lastPathname.current = pathname;
+    const target = pageRef.current?.querySelector<HTMLElement>("h1") ?? pageRef.current;
+    if (!target) return;
+    target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+  }, [pathname]);
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-canvas font-sans text-ink">
       <header
@@ -57,7 +71,7 @@ export default function App() {
         </nav>
       </header>
       {/* Not <main>: routed pages (e.g. Play) render their own landmark. */}
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div ref={pageRef} className="flex min-h-0 flex-1 flex-col outline-none">
         <Outlet />
       </div>
     </div>
