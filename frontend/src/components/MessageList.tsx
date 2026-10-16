@@ -88,7 +88,7 @@ const DmRow = memo(function DmRow({
       ) : (
         <RollCard adj={line.adjudication} />
       )}
-      <div className="w-full max-w-[65ch]">
+      <div className="w-full max-w-[65ch] [overflow-wrap:anywhere]">
         <DmLabel />
         <div
           className={cn(
@@ -214,7 +214,7 @@ function Row({
         <div className="flex flex-col items-end gap-0.5">
           <div
             className={cn(
-              "max-w-[min(80%,52ch)] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-surface-raised/70 px-3 py-1.5 text-sm text-ink",
+              "max-w-[min(80%,52ch)] whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-2xl rounded-br-sm bg-surface-raised/70 px-3 py-1.5 text-sm text-ink",
               line.failed && "border border-dashed border-line-strong bg-transparent text-ink-muted",
             )}
           >
@@ -276,7 +276,7 @@ function PendingRow({ pending }: { pending: PendingTurn }) {
     <div className="flex flex-col items-start gap-2">
       <RollCard adj={pending.adjudication} />
       {hasText ? (
-        <div className="w-full max-w-[65ch]">
+        <div className="w-full max-w-[65ch] [overflow-wrap:anywhere]">
           <DmLabel />
           <div className="break-words font-serif text-[1.05rem] leading-relaxed text-ink">
             <Narration text={pending.text} />
@@ -513,7 +513,7 @@ export function MessageList({
         <button
           type="button"
           onClick={() => scrollToBottom(!(typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches))}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-ember-700/70 bg-surface/95 px-3 py-1 text-xs font-semibold text-ember-200 shadow-lg shadow-black/40 hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+          className="absolute bottom-3 left-1/2 min-h-11 -translate-x-1/2 rounded-full border border-ember-700/70 bg-surface/95 px-3 py-2 text-xs font-semibold text-ember-200 shadow-lg shadow-black/40 hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
         >
           ↓ Jump to latest
         </button>

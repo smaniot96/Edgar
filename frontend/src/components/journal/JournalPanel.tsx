@@ -101,6 +101,7 @@ function EntryCard({
             size="sm"
             aria-pressed={selected}
             aria-label={`${selected ? "Selected" : "Select"} ${entry.title}`}
+            className="min-h-11"
             onClick={onSelect}
           >
             {selected ? "Selected" : "Select"}
@@ -164,7 +165,7 @@ function EntryCard({
         <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-subtle">
           <span className="font-medium">Related:</span>
           {relatedEntries.map((related) => (
-            <button key={related.id} type="button" className="text-ember-300 underline decoration-ember-400 underline-offset-2" onClick={() => onSelectRelated(related.id)}>
+            <button key={related.id} type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => onSelectRelated(related.id)}>
               {related.category === "place" ? "Place: " : related.category === "clue" ? "Clue: " : "Entry: "}{related.title}
             </button>
           ))}
@@ -172,7 +173,7 @@ function EntryCard({
       ) : null}
       {entry.history.length > 0 ? (
         <details className="mt-3 border-t border-line pt-2 text-sm">
-          <summary className="cursor-pointer text-xs font-medium text-ink-muted">
+          <summary className="min-h-11 cursor-pointer py-3 text-xs font-medium text-ink-muted">
             History ({entry.history.length} recorded changes)
           </summary>
           <ol className="mt-2 space-y-1 text-xs text-ink-subtle">
@@ -186,7 +187,7 @@ function EntryCard({
                   <button
                     type="button"
                     aria-label={`View narration: ${entry.title}, ${statusLabel(change.status)}`}
-                    className="font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
+                    className="min-h-11 px-2 font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
                     onClick={() => onOpenHistory(change.history_event_id!)}
                   >
                     View narration
@@ -206,8 +207,8 @@ function ContextCard({ label, entry }: { label: string; entry: JournalEntry | nu
   return (
     <div className="rounded-control bg-surface-raised px-3 py-2">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">{label}</p>
-      <p className="mt-0.5 truncate text-sm font-medium text-ink" title={entry.title}>{entry.title}</p>
-      {entry.text ? <p className="mt-0.5 line-clamp-2 text-xs text-ink-muted">{entry.text}</p> : null}
+      <p className="mt-0.5 whitespace-normal break-words text-sm font-medium text-ink [overflow-wrap:anywhere]">{entry.title}</p>
+      {entry.text ? <p className="mt-0.5 line-clamp-2 break-words text-xs text-ink-muted [overflow-wrap:anywhere]">{entry.text}</p> : null}
     </div>
   );
 }
@@ -266,7 +267,7 @@ export function JournalPanel({
   }, [selectedEntryId, entries]);
 
   return (
-    <section aria-labelledby="journal-heading" className="space-y-4">
+    <section aria-labelledby="journal-heading" className="space-y-4 [overflow-wrap:anywhere] [&_button]:min-h-11">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="journal-heading" className="font-serif text-xl font-semibold text-ink">Journal</h2>
@@ -292,6 +293,7 @@ export function JournalPanel({
         <label className="block">
           <span className="sr-only">Search journal</span>
           <Input
+            className="min-h-11"
             type="search"
             placeholder="Search this journal"
             value={query}
@@ -302,13 +304,13 @@ export function JournalPanel({
           <label htmlFor="journal-category" className="sr-only">Filter by category</label>
           <select
             id="journal-category"
-            className="min-w-0 flex-1 rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink"
+            className="min-h-11 min-w-0 flex-1 rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink"
             value={category}
             onChange={(event) => onCategoryChange(event.target.value as JournalCategory | "all")}
           >
             {CATEGORIES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
-          <Button variant="secondary" size="sm" loading={loading} onClick={onRefresh}>Refresh</Button>
+          <Button variant="secondary" size="sm" className="min-h-11" loading={loading} onClick={onRefresh}>Refresh</Button>
         </div>
       </div>
 
@@ -320,7 +322,7 @@ export function JournalPanel({
       {error ? (
         <div role="alert" className="rounded-control border border-danger-strong/60 bg-danger-soft/60 px-3 py-2 text-sm text-danger">
           <p>{data ? "The journal could not be refreshed. The last saved version is still shown." : "This session journal could not be loaded."}</p>
-          {!data ? <Button className="mt-2" variant="secondary" size="sm" onClick={onRefresh}>Retry</Button> : null}
+          {!data ? <Button className="mt-2 min-h-11" variant="secondary" size="sm" onClick={onRefresh}>Retry</Button> : null}
         </div>
       ) : null}
       {loading && !data ? <LoadingText /> : null}

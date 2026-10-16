@@ -17,13 +17,13 @@ export function PlayIdeas({ data, hasDraft, onAppend }: {
 
   return (
     <details className="shrink-0 border-t border-line bg-canvas/80 px-3 py-2 sm:px-4">
-      <summary className="mx-auto max-w-3xl cursor-pointer text-sm font-medium text-ink-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400">Ideas</summary>
+      <summary className="mx-auto min-h-11 max-w-3xl cursor-pointer py-2 text-sm font-medium text-ink-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400">Ideas</summary>
       <div className="mx-auto mt-2 max-h-44 max-w-3xl space-y-2 overflow-y-auto text-sm">
         <p className="text-xs text-ink-subtle">Optional examples from what you know. You can write any action you want.</p>
         {ideas.length ? ideas.map((idea) => (
           <div key={idea} className="flex items-start justify-between gap-3">
             <p className="min-w-0 break-words text-ink-muted">{idea}</p>
-            <Button type="button" variant="secondary" size="sm" className="shrink-0" onClick={() => onAppend(idea)}>
+            <Button type="button" variant="secondary" size="sm" className="min-h-11 shrink-0" onClick={() => onAppend(idea)}>
               {hasDraft ? "Append to draft" : "Add to draft"}
             </Button>
           </div>

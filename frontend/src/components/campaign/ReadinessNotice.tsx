@@ -65,7 +65,7 @@ export function ReadinessNotice({
       {nextStep ? <p className="mt-1 text-xs text-ink-muted">{nextStep}</p> : null}
       {!value.history_allowed ? <p className="mt-1 text-xs text-ink-muted">Saved history is unavailable.</p> : null}
       {value.primary_action === "retry_readiness" && onRetry ? (
-        <Button variant="secondary" size="sm" className="mt-2" onClick={onRetry}>Check again</Button>
+        <Button variant="secondary" size="sm" className="mt-2 min-h-11" onClick={onRetry}>Check again</Button>
       ) : null}
     </section>
   );

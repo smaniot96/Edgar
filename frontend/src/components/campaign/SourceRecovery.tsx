@@ -48,7 +48,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
 
   if (healthyHomebrew) {
     return (
-      <section aria-label="Homebrew source status" className="mx-3 my-2 shrink-0 rounded-control border border-line bg-surface/60 px-3 py-2 text-sm sm:mx-4">
+      <section aria-label="Homebrew source status" className="mx-3 my-2 shrink-0 rounded-control border border-line bg-surface/60 px-3 py-2 text-sm [overflow-wrap:anywhere] [&_button]:min-h-11 sm:mx-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="font-medium text-ink">Homebrew play selected</p>
           <p className="text-ink-muted">The DM is improvising from your saved story.</p>
@@ -89,7 +89,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
   }
 
   return (
-    <section aria-label="Campaign source recovery" className="m-3 space-y-3 rounded-card border border-warning bg-surface-sunken p-4 text-sm">
+    <section aria-label="Campaign source recovery" className="m-3 space-y-3 rounded-card border border-warning bg-surface-sunken p-4 text-sm [overflow-wrap:anywhere] [&_button]:min-h-11">
       <h2 className="font-semibold">{campaign.source_mode === "homebrew" ? "Homebrew play selected" : processing ? "Source preparation in progress" : campaign.retrieval_degraded ? "Adventure sources need recovery" : "Adventure source update needs attention"}</h2>
       <p className="text-ink-muted">
         {campaign.source_mode === "homebrew"

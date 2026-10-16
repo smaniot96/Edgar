@@ -1,4 +1,4 @@
-import { useId, type Ref } from "react";
+import { useId, useImperativeHandle, useLayoutEffect, useRef, type Ref } from "react";
 
 import { Button } from "./ui/Button";
 
@@ -31,7 +31,19 @@ export function ComposerBar({
 }) {
   const id = useId();
   const hintId = `${id}-hint`;
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const canSend = allowSend && !busy && !disabled && value.trim().length > 0;
+  useImperativeHandle(inputRef, () => textareaRef.current!);
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const minimum = 44;
+    const maximum = 160;
+    textarea.style.height = "auto";
+    const height = Math.max(minimum, Math.min(textarea.scrollHeight, maximum));
+    textarea.style.height = `${height}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maximum ? "auto" : "hidden";
+  }, [value]);
   return (
     <footer className="shrink-0 border-t border-line bg-canvas/80 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:px-4">
       <form
@@ -46,9 +58,9 @@ export function ComposerBar({
         </label>
         <textarea
           id={id}
-          ref={inputRef}
-          className="max-h-40 min-h-[44px] flex-1 resize-none rounded-control border border-line-strong bg-surface-sunken px-3 py-2.5 text-[0.95rem] text-ink placeholder:text-ink-subtle focus:border-ember-600 focus:outline-none focus:ring-1 focus:ring-ember-500/70 disabled:cursor-not-allowed disabled:opacity-60"
-          rows={2}
+          className="max-h-40 min-h-[44px] flex-1 resize-none overflow-y-hidden rounded-control border border-line-strong bg-surface-sunken px-3 py-2.5 text-[0.95rem] leading-6 text-ink placeholder:text-ink-subtle focus:border-ember-600 focus:outline-none focus:ring-1 focus:ring-ember-500/70 disabled:cursor-not-allowed disabled:opacity-60"
+          ref={textareaRef}
+          rows={1}
           value={value}
           placeholder="What do you do? e.g. “I look around” or “I head to the tavern”"
           aria-describedby={hintId}
@@ -88,7 +100,7 @@ export function ComposerBar({
             type="button"
             disabled={busy}
             onClick={() => onChange("")}
-            className="text-[0.7rem] font-medium text-ink-muted underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 shrink-0 px-2 text-[0.7rem] font-medium text-ink-muted underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             Clear draft
           </button>

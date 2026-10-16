@@ -26,3 +26,27 @@ it("keeps Enter explicit and guards multiline, composition, uncertain and busy s
     expect(textarea.value).toBe('Keep the note dry.\nAsk Mara.');
   } finally { await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
 });
+
+it("grows for multiline drafts, caps its height and returns to one-line height when cleared", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+  const render = (value: string) => root.render(<ComposerBar value={value} onChange={vi.fn()} onSend={vi.fn()} busy={false} />);
+  try {
+    await act(() => render("One line"));
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 120 });
+    await act(() => render("A multiline note\nWith another line"));
+    expect(textarea.style.height).toBe("120px");
+    expect(textarea.style.overflowY).toBe("hidden");
+
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 300 });
+    await act(() => render("A long note\n".repeat(20)));
+    expect(textarea.style.height).toBe("160px");
+    expect(textarea.style.overflowY).toBe("auto");
+
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 24 });
+    await act(() => render(""));
+    expect(textarea.style.height).toBe("44px");
+    expect(textarea.style.overflowY).toBe("hidden");
+  } finally { await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
+});

@@ -335,7 +335,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             sessionId={sessionId}
             sceneId={game.sceneId}
           />
-          <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mt-2 sm:mx-4" />
+          <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mt-2 [overflow-wrap:anywhere] sm:mx-4" />
           {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={(updated) => {
             game.updateCampaign(updated);
             void game.refreshReadiness();
@@ -348,9 +348,9 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             onOpenEntry={openJournalEntry}
             onResume={resumeAdventure}
           />
-          <div role="group" aria-label="Current adventure context" className="mx-3 mb-2 flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-control bg-surface/60 px-3 py-2 text-xs sm:mx-4">
-            <p><span className="font-semibold text-ink-subtle">Place: </span>{journal.data?.current_place ? <button type="button" className="text-left text-ember-300 underline decoration-ember-400 underline-offset-2" onClick={() => openJournalEntry(journal.data!.current_place!.id)}>{journal.data.current_place.title}</button> : <span className="text-ink-muted">Unknown</span>}</p>
-            <p><span className="font-semibold text-ink-subtle">Goal: </span>{journal.data?.active_goal ? <button type="button" className="text-left text-ember-300 underline decoration-ember-400 underline-offset-2" onClick={() => openJournalEntry(journal.data!.active_goal!.id)}>{journal.data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}</p>
+          <div role="group" aria-label="Current adventure context" className="mx-3 mb-2 flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-control bg-surface/60 px-3 py-2 text-xs [overflow-wrap:anywhere] sm:mx-4">
+            <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">Place: </span>{journal.data?.current_place ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(journal.data!.current_place!.id)}>{journal.data.current_place.title}</button> : <span className="text-ink-muted">Unknown</span>}</p>
+            <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">Goal: </span>{journal.data?.active_goal ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(journal.data!.active_goal!.id)}>{journal.data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}</p>
           </div>
           <PlayIdeas
             data={journal.data}
@@ -400,7 +400,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
 
               <div ref={composerRef} className="shrink-0">
                 {!campaignComplete ? (
-                  <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mb-2 sm:mx-4" />
+                  <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mb-2 [overflow-wrap:anywhere] sm:mx-4" />
                 ) : null}
                 {campaignComplete ? (
                   <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
