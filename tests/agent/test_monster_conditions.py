@@ -48,7 +48,7 @@ from agent.supported_rules import (
 from tests.agent.test_concentration import _entries, _exact_foe, _next_round, _state, _summary
 from tests.agent.test_monster_riders import SPITTER_TEXT
 from tests.agent.test_monster_save_actions import DRAKE_TEXT
-from tests.agent.test_spells import CLERIC, ScriptedDice
+from tests.agent.test_spells import CLERIC, ScriptedDice, _foe as _make_foe
 from tools.dice import use_rng
 
 CLERIC_3 = {**CLERIC, "level": 3}  # WIS save +5 (proficient), INT save +0, DEX save +1
@@ -107,10 +107,20 @@ Challenge 1 (200 XP)
 Actions
 Claw. Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (2d4 + 1) slashing damage. If the target is a creature, it must succeed on a DC 11 Wisdom saving throw or be frightened until the end of the stalker's next turn.
 """
+RANGED_STALKER_TEXT = STALKER_TEXT.replace(
+    "Melee Weapon Attack: +4 to hit, reach 5 ft., one target.",
+    "Ranged Weapon Attack: +4 to hit, range 30/120 ft., one target.",
+)
+STUN_RIDER_STALKER_TEXT = STALKER_TEXT.replace("be frightened", "be stunned")
+RANGED_STUN_RIDER_STALKER_TEXT = RANGED_STALKER_TEXT.replace("be frightened", "be stunned")
 
 
 def _hero_row(out_or_state: dict) -> dict:
     return next(c for c in out_or_state["combat_state"]["combatants"] if c["is_player"])
+
+
+def _foe_after(out: dict, name: str) -> dict:
+    return next(c for c in out["combat_state"]["combatants"] if c["name"] == name)
 
 
 def _afflicted(state: dict, kind: str, source: str, **save: object) -> dict:
@@ -490,6 +500,209 @@ async def test_a_frightened_hero_cannot_close_in_on_the_source(
     assert out["combat_state"]["combatants"][1]["band"] == "ranged"
 
 
+@pytest.mark.asyncio
+async def test_fear_applied_by_an_ahead_foe_blocks_close_in_after_its_turn_without_reverting_it(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    stalker = {
+        **_exact_foe(RANGED_STALKER_TEXT, "Straw Stalker", hp=36),
+        "band": RANGED,
+        "init": 20,
+    }
+    state = _state(
+        "I close in on Straw Stalker and attack",
+        [stalker],
+        ParsedInput(intent="combat", check="attack", target="straw stalker"),
+    )
+    with use_rng(ScriptedDice([15, 1, 1, 3])):
+        out = await combat_round_node(state)
+
+    summary = _summary(out)
+    assert "Dara is frightened of Straw Stalker and cannot willingly move closer" in summary
+    assert "Straw Stalker remains beyond 5 feet" in summary
+    assert "cannot reach Straw Stalker with a melee attack" in summary
+    assert out["combat_state"]["round"] == 2
+    assert _entries(out, "attack check") == []
+    assert out["telemetry_events"][0]["payload"]["player_action"]["result"] == "out_of_reach"
+    assert _foe_after(out, "Straw Stalker")["band"] == RANGED
+    assert [effect["kind"] for effect in effects_of(_hero_row(out))] == ["frightened"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_same_source_short_rider_refreshes_through_the_sources_next_turn(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    stalker = {
+        **_exact_foe(RANGED_STALKER_TEXT, "Straw Stalker", hp=36),
+        "band": RANGED,
+        "init": 20,
+    }
+    state = _state("I wait and watch", [stalker], WAIT)
+    with use_rng(ScriptedDice([15, 1, 1, 1])):
+        first = await combat_round_node(state)
+    assert effects_of(_hero_row(first))[0]["applied_round"] == 1
+
+    follow = _next_round(first, "I wait and watch", WAIT, round_num=2)
+    follow["character"] = {**follow["character"], "hp_current": _hero_row(first)["hp_current"]}
+    with use_rng(ScriptedDice([15, 2, 2, 1])):
+        second = await combat_round_node(follow)
+
+    effects = effects_of(_hero_row(second))
+    assert len(effects) == 1
+    assert effects[0]["kind"] == "frightened"
+    assert effects[0]["source_id"] == "Straw Stalker"
+    assert effects[0]["applied_round"] == 2
+    assert effects[0]["expires_after_round"] == 3
+    assert effects[0]["ends_with_turn_of"] == "Straw Stalker"
+    assert "Dara is no longer frightened" not in _summary(second)
+
+
+@pytest.mark.asyncio
+async def test_a_hero_can_close_in_after_an_ahead_sources_short_fear_expires(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    """Preflight defers its fear refusal because the ahead source's turn expires fear first."""
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    stalker = {
+        **_exact_foe(RANGED_STALKER_TEXT, "Straw Stalker", hp=36),
+        "band": RANGED,
+        "init": 20,
+    }
+    first_state = _state("I wait and watch", [stalker], WAIT)
+    with use_rng(ScriptedDice([15, 1, 1, 3])):
+        first = await combat_round_node(first_state)
+    assert [effect["kind"] for effect in effects_of(_hero_row(first))] == ["frightened"]
+
+    follow = _next_round(
+        first,
+        "I close in on Straw Stalker and attack",
+        ParsedInput(intent="combat", check="attack", target="straw stalker"),
+        round_num=2,
+    )
+    follow["character"] = {**follow["character"], "hp_current": _hero_row(first)["hp_current"]}
+    with use_rng(ScriptedDice([1, 10, 3])):
+        second = await combat_round_node(follow)
+
+    assert "Dara is no longer frightened." in _summary(second)
+    assert _entries(second, "attack check")
+    assert _foe_after(second, "Straw Stalker")["band"] == MELEE
+    assert effects_of(_hero_row(second)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_persisted_stun_ending_with_an_ahead_foe_does_not_discard_the_heros_declaration(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    spitter = {**_exact_foe(SPITTER_TEXT, "Spitter"), "band": RANGED, "init": 20}
+    target = ParsedInput(intent="combat", check="attack", target="spitter")
+    state = _state("I close in on Spitter and attack", [spitter], target)
+    state["combat_state"]["round"] = 2
+    add_effect(
+        _hero_row(state),
+        "stunned",
+        source="Spitter",
+        round_applied=1,
+        expires_after_round=2,
+        ends_with_turn_of="Spitter",
+    )
+
+    with use_rng(ScriptedDice([1, 1, 1])):
+        out = await combat_round_node(state)
+
+    assert "Dara is no longer stunned." in _summary(out)
+    assert _entries(out, "attack check")
+    assert _foe_after(out, "Spitter")["band"] == MELEE
+    assert effects_of(_hero_row(out)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_flee_declaration_waits_for_a_persisted_stuns_source_turn_to_end(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    spitter = {**_exact_foe(SPITTER_TEXT, "Spitter"), "band": RANGED, "init": 20}
+    state = _state("I flee", [spitter], WAIT)
+    state["combat_state"]["round"] = 2
+    add_effect(
+        _hero_row(state),
+        "stunned",
+        source="Spitter",
+        round_applied=1,
+        expires_after_round=2,
+        ends_with_turn_of="Spitter",
+    )
+
+    with use_rng(ScriptedDice([1, 1])):
+        out = await combat_round_node(state)
+
+    assert _entries(out, "Spitter Hand Crossbow attack")
+    assert "Dara is no longer stunned." in _summary(out)
+    assert "Dara disengages and flees the fight." in _summary(out)
+    assert out["combat_state"]["ended"] is True
+    assert out["combat_state"]["outcome"] == "fled"
+    assert effects_of(_hero_row(out)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_flee_does_not_escape_if_the_ahead_source_reapplies_stun(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    stalker = {
+        **_exact_foe(RANGED_STUN_RIDER_STALKER_TEXT, "Straw Stalker", hp=36),
+        "band": RANGED,
+        "init": 20,
+    }
+    state = _state("I flee", [stalker], WAIT)
+    state["combat_state"]["round"] = 2
+    add_effect(
+        _hero_row(state),
+        "stunned",
+        source="Straw Stalker",
+        round_applied=1,
+        expires_after_round=2,
+        ends_with_turn_of="Straw Stalker",
+    )
+
+    with use_rng(ScriptedDice([15, 18, 1, 1, 1])):
+        out = await combat_round_node(state)
+
+    assert "is stunned." in _summary(out)
+    assert "Dara flees the fight." not in _summary(out)
+    assert out["combat_state"]["ended"] is False
+    assert out["combat_state"]["outcome"] is None
+    assert effects_of(_hero_row(out))[0]["kind"] == "stunned"
+    assert effects_of(_hero_row(out))[0]["applied_round"] == 2
+
+
+@pytest.mark.asyncio
+async def test_dodge_does_not_cancel_advantage_after_a_later_foe_stuns_the_hero(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    stalker = {
+        **_exact_foe(RANGED_STUN_RIDER_STALKER_TEXT, "Straw Stalker", hp=36),
+        "init": 10,
+    }
+    goblin = {**_make_foe("Goblin", hp=20), "band": MELEE, "init": 5}
+    state = _state("I take the dodge action", [stalker, goblin], WAIT)
+
+    with use_rng(ScriptedDice([15, 18, 1, 1, 1, 3, 12, 1])):
+        out = await combat_round_node(state)
+
+    first = _entries(out, "Straw Stalker Claw attack")[0]
+    second = _entries(out, "Goblin attack")[0]
+    assert first["roll_mode"] == "disadvantage" and first["rolls"] == [15, 18]
+    assert second["roll_mode"] == "advantage" and second["rolls"] == [3, 12]
+    assert [effect["kind"] for effect in effects_of(_hero_row(out))] == [
+        "dodging",
+        "stunned",
+    ]
+
+
 # --- stunned in the round --------------------------------------------------------------------------
 
 
@@ -514,6 +727,7 @@ async def test_mind_blast_stuns_the_hero_and_the_foe_attacks_with_advantage(
             "applied_round": 1,
             "expires_after_round": 10,
             "save": {"ability": "INT", "dc": 13},
+            "source_id": "Mind-Eater",
         }
     ]
     assert (

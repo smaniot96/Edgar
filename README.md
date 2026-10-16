@@ -103,7 +103,8 @@ simulate (`GET /api/rules/supported-scope`):
   maneuvers, item use, catalog action spells, Dodge, Dash and Disengage use the action; Second Wind,
   Healing Word, Rage and the off-hand attack use the bonus action. A second action or bonus action in
   the same turn is refused with no roll and no round. Dodge gives attacks against the hero
-  disadvantage, and the hero's Dexterity saving throws advantage, until the hero's next turn (the
+  disadvantage, and the hero's Dexterity saving throws advantage, until the hero's next turn while
+  the hero can act. Stunned, paralyzed or unconscious heroes receive neither Dodge benefit (the
   book's visibility condition is not applied); the HUD and narration show what the turn spent.
 - Two-weapon fighting (PHB p.195): a hero who takes the Attack action with a light melee weapon and
   has a different light melee weapon on the sheet (two copies of one weapon count) and no shield may
@@ -184,7 +185,11 @@ simulate (`GET /api/rules/supported-scope`):
   source is down, the condition and repeat save persist but those restrictions stop. Stunned
   incapacitates the hero (its turn passes with no action, move or flight), makes it fail Strength and
   Dexterity saves without a roll, gives attacks against it advantage, and ends concentration even
-  when a damage concentration save succeeded. Any other wording stays declared.
+  when a damage concentration save succeeded. Conditions do not stack: a failed same-condition save
+  from the same source refreshes that effect's timing; another source neither stacks nor replaces it.
+  Stored source identity uses the stable combatant ID when available, otherwise the source name. A
+  short fear or stun due to expire at an ahead source's turn is checked after that turn, so a
+  reapplication still blocks closing in or acting. Any other wording stays declared.
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or

@@ -289,11 +289,26 @@ def add_effect(
     save: Mapping[str, Any] | None = None,
     ends_with_turn_of: str | None = None,
     source_id: str | None = None,
+    refresh: bool = False,
 ) -> bool:
-    """Apply a typed effect. False when the combatant already has that effect (no stacking)."""
+    """Apply a typed effect. False when the combatant already has that effect (no stacking).
+
+    `refresh` replaces an existing same-kind effect's timing in place only when the source matches.
+    It is reserved for explicit reapplications whose duration starts over, such as a repeated monster
+    rider or save action. Different sources still do not stack or replace one another.
+    """
     if kind not in EFFECT_KINDS:
         raise ValueError(f"unknown combat effect: {kind!r}")
-    if has_effect(c, kind):
+    existing = effects_of(c)
+    same_kind = [e for e in existing if e["kind"] == kind]
+    source_key = str(ends_with_turn_of or source_id or source)
+    same_source = [
+        e
+        for e in same_kind
+        if str(e.get("ends_with_turn_of") or e.get("source_id") or e.get("source") or "")
+        == source_key
+    ]
+    if same_kind and (not refresh or not same_source):
         return False
     entry: dict[str, Any] = {"kind": kind, "source": source, "applied_round": int(round_applied)}
     if expires_after_round is not None:
@@ -304,7 +319,9 @@ def add_effect(
         entry["ends_with_turn_of"] = ends_with_turn_of
     if source_id is not None:
         entry["source_id"] = source_id
-    c["effects"] = [*effects_of(c), entry]
+    c["effects"] = [entry if e in same_source else e for e in existing]
+    if not same_kind:
+        c["effects"].append(entry)
     return True
 
 
@@ -354,7 +371,7 @@ def attack_roll_mode(
     for e in effects_of(target):
         if e["kind"] in _AGAINST_ADVANTAGE:
             advantage = True
-        elif e["kind"] == "dodging":
+        elif e["kind"] == "dodging" and not _incapacitated(target):
             disadvantage = True
         elif e["kind"] == "prone":
             if ranged and not within_five_feet:
@@ -368,8 +385,21 @@ def attack_roll_mode(
 
 def save_roll_mode(combatant: Mapping[str, Any], ability: str) -> str:
     """The 5e saving-throw mode from the bearer's effects: a dodging combatant has advantage on its
-    Dexterity saves (PHB, PDF p.193, Dodge). Pure: it never rolls."""
-    return "advantage" if ability == "DEX" and has_effect(combatant, "dodging") else "normal"
+    Dexterity saves unless incapacitated (PHB, PDF p.193, Dodge). Pure: it never rolls."""
+    return (
+        "advantage"
+        if ability == "DEX" and has_effect(combatant, "dodging") and not _incapacitated(combatant)
+        else "normal"
+    )
+
+
+def _incapacitated(combatant: Mapping[str, Any]) -> bool:
+    """Whether a condition or disposition removes Dodge's benefits (PHB, PDF p.193)."""
+    return (
+        has_effect(combatant, "stunned")
+        or has_effect(combatant, "paralyzed")
+        or disposition_of(combatant) == "unconscious"
+    )
 
 
 def impaired_checks(c: Mapping[str, Any]) -> bool:

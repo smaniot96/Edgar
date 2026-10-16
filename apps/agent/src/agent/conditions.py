@@ -266,7 +266,8 @@ def afflict(
         round_applied=round_applied,
         expires_after_round=round_applied + max(1, duration_rounds) - 1,
         save={"ability": ability, "dc": dc},
-        source_id=source_id if kind == "frightened" else None,
+        source_id=source_id,
+        refresh=True,
     )
 
 
@@ -301,6 +302,30 @@ def end_of_source_turn(player: dict, source: dict, round_num: int) -> list[str]:
     for kind in ended:
         release_effect(player, kind)
     return ended
+
+
+def condition_ends_before_turn(
+    player: Mapping[str, Any], kind: str, foes_before: Sequence[dict], round_num: int
+) -> bool:
+    """Whether a persisted, source-turn-timed condition ends before the hero acts this round.
+
+    This prediction lets combat preflight preserve declarations that may become legal after a living
+    foe ahead in initiative finishes its turn. The round resolver still checks the actual condition
+    after that foe's turn, since it may have been reapplied.
+    """
+    return any(
+        effect["kind"] == kind
+        and effect.get("ends_with_turn_of") == stable_id(foe)
+        and int(effect.get("applied_round", round_num)) < round_num
+        and is_standing(foe)
+        for effect in effects_of(player)
+        for foe in foes_before
+    )
+
+
+def stun_ends_before_turn(player: Mapping[str, Any], foes_before: Sequence[dict], round_num: int) -> bool:
+    """Whether a persisted stun ends before the hero acts this round."""
+    return condition_ends_before_turn(player, "stunned", foes_before, round_num)
 
 
 def fear_refusal(
@@ -345,6 +370,7 @@ def rider_save(
             expires_after_round=round_applied + 1,
             ends_with_turn_of=source_id or source,
             source_id=source_id if rider.kind == "frightened" else None,
+            refresh=True,
         )
     elif failed:
         afflict(

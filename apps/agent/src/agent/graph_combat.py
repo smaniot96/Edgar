@@ -117,6 +117,7 @@ from agent.conditions import (
     afflict,
     apply_spell_condition,
     concentration_save,
+    condition_ends_before_turn,
     consume_mark,
     drop_concentration,
     drop_concentration_if_incapacitated,
@@ -135,6 +136,7 @@ from agent.conditions import (
     settle_concentration,
     spell_condition_sentence,
     start_concentration,
+    stun_ends_before_turn,
 )
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model
@@ -870,6 +872,10 @@ async def combat_round_node(state: AgentState) -> dict:
     if player is None:
         player = {"name": "player", "display_name": hero, "is_player": True, "init": 0, "init_bonus": 0}
         combatants.append(player)
+    player_index = combatants.index(player)
+    before = [c for c in combatants[:player_index] if not c.get("is_player")]
+    after = [c for c in combatants[player_index + 1 :] if not c.get("is_player")]
+    round_num = int(combat_state.get("round", 1) or 1)
     # Re-sync player HP from the authoritative character row each turn.
     player["hp_current"] = player_hp
     player["hp_max"] = player_hp_max
@@ -877,7 +883,11 @@ async def combat_round_node(state: AgentState) -> dict:
     player["ac"] = player_ac
     if ended_spell := drop_concentration_if_incapacitated(player, enemies):
         log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
-    if has_effect(player, "stunned"):
+    stun_will_end_before_turn = has_effect(player, "stunned") and stun_ends_before_turn(
+        player, before, round_num
+    )
+    flee_after_stun_source = bool(stun_will_end_before_turn and fled)
+    if has_effect(player, "stunned") and not stun_will_end_before_turn:
         # EDG-043: a stunned hero is incapacitated (PHB, PDF p.291): nothing declared is acted on.
         player_input, parsed, named, fled = "", ParsedInput(), [], False
     # Second Wind uses come from the sheet, never from the encounter: they persist across fights.
@@ -1021,8 +1031,11 @@ async def combat_round_node(state: AgentState) -> dict:
     )
     if moves.question:
         return _ask_player(state, moves.question, combat_state=combat_state)
-    refused_move = move_refusal(hero, len(moves.steps), dash=dash) or fear_refusal(
-        hero, player, moves.steps
+    fear_will_end_before_turn = condition_ends_before_turn(
+        player, "frightened", before, round_num
+    )
+    refused_move = move_refusal(hero, len(moves.steps), dash=dash) or (
+        None if fear_will_end_before_turn else fear_refusal(hero, player, moves.steps)
     )
     if refused_move:
         return _ask_player(state, refused_move, combat_state=combat_state)
@@ -1254,7 +1267,7 @@ async def combat_round_node(state: AgentState) -> dict:
                 round_applied=int(combat_state.get("round", 1) or 1),
                 ability=save.ability,
                 dc=save.dc,
-                source_id=stable_id(e) if save.condition == "frightened" else None,
+                source_id=stable_id(e),
             )
             round_effects.append(save.condition)
             if ended_spell := drop_concentration_if_incapacitated(player, enemies):
@@ -1391,14 +1404,18 @@ async def combat_round_node(state: AgentState) -> dict:
         for kind in end_of_source_turn(player, e, int(combat_state.get("round", 1) or 1)):
             log_lines.append(f"{hero} is no longer {kind}.")
 
-    player_index = combatants.index(player)
-    before = [c for c in combatants[:player_index] if not c.get("is_player")]
-    after = [c for c in combatants[player_index + 1 :] if not c.get("is_player")]
+    # A predicted source-turn expiry lets a stunned hero keep a flee declaration. Resolve foes ahead
+    # first; restore the flee state before the player slot so it succeeds only if the stun ends.
+    if flee_after_stun_source:
+        fled = False
 
     # --- Enemies ahead of the player in initiative ---
     for e in before:
         enemy_turn(e)
         another_creature_turn_ended(e)
+
+    if flee_after_stun_source:
+        fled = hp > 0 and not has_effect(player, "stunned")
 
     # --- Player's action ---
     check_result: CheckResult | None = None
@@ -1406,6 +1423,7 @@ async def combat_round_node(state: AgentState) -> dict:
     inventory_used: list[str] = []
     # An enemy ahead in initiative may have stunned the hero just now (EDG-043).
     player_acted = hp > 0 and not has_effect(player, "stunned")
+    runtime_fear_blocked = False
     extra_outcome = ""
     player_action: dict = {"action": "none", "result": "down"}
     spell_expended: dict[str, int] | None = None
@@ -1477,8 +1495,21 @@ async def combat_round_node(state: AgentState) -> dict:
     # EDG-044: declared moves happen before the action. Leaving a foe's melee band provokes one
     # opportunity attack from it, unless the hero took Disengage this turn (PHB p.192, p.195).
     if player_acted and not fled:
+        actual_steps: list[tuple[str, list[dict]]] = []
         for band, foes in moves.steps:
+            allowed: list[dict] = []
             for foe in foes:
+                refusal_after_enemy_turn = (
+                    fear_refusal(hero, player, [(band, [foe])])
+                    if band == MELEE and band_of(foe) == RANGED
+                    else None
+                )
+                if refusal_after_enemy_turn:
+                    runtime_fear_blocked = True
+                    moves.bands[id(foe)] = band_of(foe)
+                    log_lines.append(f"{refusal_after_enemy_turn.split('. ')[0]}; {foe['name']} remains beyond 5 feet.")
+                    continue
+                allowed.append(foe)
                 provoked = (
                     band == RANGED
                     and band_of(foe) == MELEE
@@ -1490,6 +1521,10 @@ async def combat_round_node(state: AgentState) -> dict:
                 if provoked:
                     opportunity_attack(foe)
                 foe["band"] = band
+                moves.bands[id(foe)] = band
+            if allowed:
+                actual_steps.append((band, allowed))
+        moves.steps = actual_steps
         if dash:
             round_effects.append("dash")
         if disengage:
@@ -1653,6 +1688,26 @@ async def combat_round_node(state: AgentState) -> dict:
                 "result": "released",
             }
             extra_outcome = f"{hero} releases {release_target['name']}; it is no longer restrained."
+        log_lines.append(extra_outcome)
+    elif (
+        runtime_fear_blocked
+        and target is not None
+        and not is_spell
+        and not attack_ranged
+        and (is_attack or combat_action is not None)
+        and band_of(target) == RANGED
+    ):
+        action_name = (
+            f"maneuver_{combat_action.kind}" if combat_action is not None else "attack"
+        )
+        player_action = {
+            "action": action_name,
+            "target": stable_id(target),
+            "result": "out_of_reach",
+        }
+        extra_outcome = (
+            f"{hero} cannot reach {target['name']} with a melee attack from beyond 5 feet."
+        )
         log_lines.append(extra_outcome)
     elif combat_action is not None and target is not None:
         # Contested Athletics against the foe's Dexterity (EDG-021). Engine dice decide it.
