@@ -225,7 +225,8 @@ def test_rage_resists_only_physical_damage_while_raging(damage_type, raging, res
 def test_rage_gives_nothing_in_heavy_armor() -> None:
     # PHB Barbarian, Rage, PDF p.49: the benefits apply "if you aren't wearing heavy armor".
     hit = _hit(BARBARIAN_1)
-    for armor, benefits in (("", True), ("chain mail", False), ("plate", False), ("half plate", True)):
+    armors = {"": True, "chain mail": False, "plate": False, "half plate": True}
+    for armor, benefits in armors.items():
         sheet = {**BARBARIAN_1, "inventory": {"weapons": ["greataxe"], "armor": armor}}
         assert rage_resists(sheet, "slashing", raging=True) is benefits
         assert rage_damage_bonus(sheet, hit, raging=True) == (2 if benefits else 0)

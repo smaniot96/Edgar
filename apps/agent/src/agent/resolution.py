@@ -580,7 +580,7 @@ def carries_shield(character: dict | None) -> bool:
     return isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons)
 
 
-# PHB Armor table, PDF p.146. Heavy armor, and the other armor whose Stealth column reads Disadvantage.
+# PHB Armor table, PDF p.146: the heavy armors, and the other armor with Stealth "Disadvantage".
 _HEAVY_ARMOR = re.compile(r"\b(?:ring mail|chain mail|splint|(?<!half )plate)\b", re.IGNORECASE)
 _STEALTH_ARMOR = re.compile(r"\b(?:padded|scale(?: mail)?|half plate)\b", re.IGNORECASE)
 
@@ -1023,7 +1023,8 @@ def detect_rest(text: str | None) -> str | None:
 
 
 _COUNT_WORDS = {
-    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10,
 }  # fmt: skip
 _DECLARED_HIT_DICE = re.compile(
     r"\b(?:spend|spends|spending|use|uses|using|roll|rolls|rolling)\s+(\d+|"
@@ -1034,7 +1035,7 @@ _DECLARED_HIT_DICE = re.compile(
 
 
 def declared_hit_dice(text: str | None) -> int:
-    """The number of Hit Dice a short rest declares to spend ("spend three hit dice"); one if none."""
+    """The Hit Dice a short rest declares to spend ("spend three hit dice"); one when none."""
     match = _DECLARED_HIT_DICE.search(text or "")
     if not match:
         return 1
@@ -1070,8 +1071,8 @@ def heal_from_rest(
 # --------------------------------------------------------------------------------------------
 # Rule (2014 PHB, PDF p.187): a short rest spends one or more Hit Dice; each rolls the class die plus
 # CON and regains that total (no minimum). A long rest regains up to half the character's total Hit
-# Dice, rounded down, so a level-1 character regains none. A short rest spends the declared number of
-# dice (see `declared_hit_dice`), one when none is declared, and no more than are left.
+# Dice, rounded down, so a level-1 character regains none. A short rest spends the declared number
+# of dice (see `declared_hit_dice`), one when none is declared, and no more than are left.
 # Total = character level. Spent count lives in CharacterAssignment.stats["hit_dice"] as
 # {"spent": n} (a JSONB key, no migration); a sheet without the key has none spent. 2024 campaigns
 # follow the same rule in this engine.

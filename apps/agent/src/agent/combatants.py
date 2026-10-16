@@ -70,7 +70,7 @@ EFFECT_KINDS: tuple[str, ...] = (
     "poisoned",
 )
 # Kinds that give the bearer's own attack rolls disadvantage, and kinds that give attacks against
-# the bearer advantage (a prone bearer is the exception: its within/beyond 5 feet split is in attack_roll_mode).
+# the bearer advantage (a prone bearer is the exception: its 5-foot split is in attack_roll_mode).
 _OWN_ATTACK_DISADVANTAGE = frozenset({"restrained", "prone", "blinded", "poisoned"})
 _AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked", "paralyzed"})
 _EFFECT_TEXT = {

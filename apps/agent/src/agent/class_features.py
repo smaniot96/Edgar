@@ -160,12 +160,12 @@ def class_feature_after_rest(character: dict | None, kind: str | None) -> dict[s
 
 
 def _rage_in_effect(character: dict | None, raging: bool) -> bool:
-    """Rage's benefits apply only to a raging barbarian who is not wearing heavy armor (PHB p.49)."""
+    """Rage's benefits need a raging barbarian who is not wearing heavy armor (PHB, PDF p.49)."""
     return raging and holds_feature(character, RAGE) and not wears_heavy_armor(character)
 
 
 def rage_resists(character: dict | None, damage_type: str | None, *, raging: bool) -> bool:
-    """Whether Rage halves this damage: bludgeoning, piercing or slashing. An untyped attack is not."""
+    """Whether Rage halves this damage: bludgeoning, piercing or slashing; an untyped one is not."""
     return damage_type in _RAGE_RESISTED and _rage_in_effect(character, raging)
 
 
@@ -232,6 +232,6 @@ def ruling(feature: str, character: dict | None) -> str:
     else:
         reason = (
             "Rage is activated in combat. It adds damage to melee weapon attacks that use Strength "
-            "and halves bludgeoning, piercing and slashing damage, outside heavy armor, for 1 minute."
+            "and halves bludgeoning, piercing and slashing damage (not in heavy armor) for 1 minute."
         )
     return f"Narrative ruling: {reason} No rage is applied."

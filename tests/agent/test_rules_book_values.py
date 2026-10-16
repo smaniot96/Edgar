@@ -258,7 +258,7 @@ def test_stealth_check_in_armor_has_disadvantage_by_the_armor_table(
     armor: str, disadvantage: bool
 ) -> None:
     # PHB Armor table, "Stealth" column, PDF p.146 (rule text PDF p.145): padded, scale mail, half
-    # plate, ring mail, chain mail, splint and plate give disadvantage on Dexterity (Stealth) checks.
+    # plate, ring mail, chain mail, splint and plate give disadvantage on Dexterity (Stealth).
     sheet = _armored("rogue", armor)
     for seed in range(5):
         check = resolve_check(sheet, "stealth", rng=random.Random(seed))

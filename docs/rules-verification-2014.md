@@ -14,11 +14,14 @@ No 2024 book is available locally. 2024 numbers are not implemented (see "Unveri
 | Verdict | Rows | Meaning |
 |---|---|---|
 | MATCH | 44 | Engine value equals the book value at the cited page |
-| FIXED | 17 | Discrepancy found and corrected; a regression test pins the book value and fails on the old code |
-| PARTIAL | 11 | Documented subset or known gap; the contract text states it |
+| FIXED | 23 | Discrepancy found and corrected (17 in EDG-149, 6 in EDG-152); a regression test pins the book value and fails on the old code |
+| PARTIAL | 9 | Documented subset or known gap; the contract text states it |
 | NOT-IN-BOOKS | 1 section | The encounter budget (section 6). Artificer data is also NOT-IN-BOOKS and is noted in the class rows |
 
-The rows are the tables below (72 in total). A row may cover several values.
+The rows are the tables below (76 in total). A row may cover several values. EDG-152 turned two
+PARTIAL rows (short-rest Hit Dice, prone) into `FIXED (EDG-152)`, split the Rage PARTIAL row into
+two fixed rows and a smaller PARTIAL row, and added rows for Versatile weapons and armor Stealth
+disadvantage. The PARTIAL rows that remain say in their note why the engine cannot execute them.
 
 ## 1. Resolution and character sheet (`apps/agent/src/agent/resolution.py`, `graph_combat.py`)
 
@@ -67,9 +70,9 @@ The rows are the tables below (72 in total). A row may cover several values.
 | Rage lasts 1 minute | `class_features.RAGE_ROUNDS`, `graph_combat` | PHB PDF p.49 | FIXED (EDG-152) | A rage lasted until the encounter ended. It now ends at the start of the hero's turn 10 rounds after it began. |
 | Rage ends early when unconscious or a turn passes with no attack or damage; Strength advantage; no spells | not modelled | PHB PDF p.49 | PARTIAL | Unconsciousness ends the encounter in the engine. The no-attack-or-damage rule needs per-turn attack and damage tracking, and Strength advantage would touch only the maneuver contest. Both are stated in the contract. |
 | Action Surge: one use from level 2, two from 17 | `class_features.max_uses` | PHB Fighter table, PDF p.72 | MATCH | |
-| Action Surge effect: one additional action | `class_features.spend_use` | PHB PDF pp.72-73 | PARTIAL | Engine adds one extra weapon attack only. Stated in the contract. |
+| Action Surge effect: one additional action | `class_features.spend_use` | PHB PDF pp.72-73 | PARTIAL | Engine adds one extra weapon attack only. Stated in the contract. Left in EDG-152: another action (Dash, a spell, an item) would run the combat round's single action chain twice, which is a restructuring of the round rather than a rule slice. |
 | Sneak Attack dice: 1d6 per two levels, rounded up | `class_features.sneak_attack_roll` | PHB Rogue table, PDF p.96; text PDF p.97 | MATCH | Pinned at ten levels from 1 to 20 in `test_rules_book_values.py`. |
-| Sneak Attack trigger: advantage, or an ally within 5 ft of the target | `class_features.sneak_attack_roll` | PHB PDF p.97 | PARTIAL | Only engine advantage triggers it; the ally clause is not tracked. Stated in the contract. |
+| Sneak Attack trigger: advantage, or an ally within 5 ft of the target | `class_features.sneak_attack_roll` | PHB PDF p.97 | PARTIAL | Only engine advantage triggers it; the ally clause is not tracked. Stated in the contract. Left in EDG-152: the hero fights alone, so no ally combatant exists whose position could satisfy the clause. |
 | Sneak Attack: finesse or ranged weapon, once per turn, criticals double | `class_features.sneak_attack_roll` | PHB PDF p.97 | MATCH | |
 
 ## 3. Spells (`apps/agent/src/agent/spells.py`)
@@ -79,8 +82,8 @@ The rows are the tables below (72 in total). A row may cover several values.
 | Fire Bolt: cantrip, 120 ft, spell attack, 1d10 fire, +1d10 at 5/11/17 | `spells.CATALOG` | PHB PDF p.243 | MATCH | Classes sorcerer, wizard (PDF pp.210-211). |
 | Magic Missile: 1st, 120 ft, three automatic darts of 1d4+1 force, +1 dart per slot | `spells.CATALOG` | PHB PDF p.258 | MATCH | Classes sorcerer, wizard (PDF pp.210-211). |
 | Sacred Flame: cantrip, 60 ft, DEX save, 1d8 radiant, scales 5/11/17 | `spells.CATALOG` | PHB PDF p.273 | MATCH | Class cleric (PDF p.208). |
-| Cure Wounds: 1st, touch, 1d8 + mod, +1d8 per slot | `spells.CATALOG` | PHB PDF p.231 | PARTIAL | Dice and upcast MATCH. The engine heals only the caster; a touched ally is not modelled. |
-| Healing Word: 1st, bonus action, 60 ft, 1d4 + mod, +1d4 per slot | `spells.CATALOG` | PHB PDF p.251 | PARTIAL | Dice, action and upcast MATCH. Caster-only target, as above. |
+| Cure Wounds: 1st, touch, 1d8 + mod, +1d8 per slot | `spells.CATALOG` | PHB PDF p.231 | PARTIAL | Dice and upcast MATCH. The engine heals only the caster; a touched ally is not modelled. Left in EDG-152: an ally has no engine hit points to heal (an NPC row carries only a free-form stat block). |
+| Healing Word: 1st, bonus action, 60 ft, 1d4 + mod, +1d4 per slot | `spells.CATALOG` | PHB PDF p.251 | PARTIAL | Dice, action and upcast MATCH. Caster-only target, as above (left in EDG-152 for the same reason). |
 | Guiding Bolt: 1st, 120 ft, spell attack, 4d6 radiant; next attack against target has advantage until end of your next turn; +1d6 per slot | `spells.CATALOG`, `conditions` | PHB PDF p.249 | MATCH | Mark kept for two rounds, which is "until the end of your next turn". Not concentration. Class cleric (PDF p.208). |
 | Blindness/Deafness: 2nd, 30 ft, CON save, one minute, repeat save at end of each turn, not concentration | `spells.CATALOG`, `conditions` | PHB PDF p.220 | MATCH | Duration 1 minute = 10 rounds. Blindness only, one target: PARTIAL (documented). |
 | Full caster slot table (wizard, sorcerer, bard, cleric, druid) | `spells.FULL_CASTER_SLOTS` | PHB Wizard table, PDF p.114 | MATCH | All 20 rows read; rows 1, 5, 9, 17, 20 pinned in tests. |
@@ -96,7 +99,7 @@ The rows are the tables below (72 in total). A row may cover several values.
 |---|---|---|---|---|
 | Weapon damage types per weapon | `monster_stats.WEAPON_DAMAGE_TYPE` | PHB Weapons table, PDF p.150 | FIXED | Greatclub (bludgeoning) and blowgun (piercing) added. All other types MATCH. |
 | Troll Regeneration: 10 HP at start of turn; suppressed by acid or fire taken since its last turn | `monster_stats._regeneration`, `regenerate` | MM Troll, PDF p.292 | MATCH | Parsed amount 10 and suppressors acid and fire. |
-| Troll: dies only if it starts a turn at 0 HP and does not regenerate | `monster_stats.parse_monster_stats` | MM PDF p.292 | PARTIAL | Engine defeats a creature at 0 HP at once. The clause is declared in the combat start message, not executed. Changing defeat timing touches the round loop, so it is left open. |
+| Troll: dies only if it starts a turn at 0 HP and does not regenerate | `monster_stats.parse_monster_stats` | MM PDF p.292 | PARTIAL | Engine defeats a creature at 0 HP at once. The clause is declared in the combat start message, not executed. Changing defeat timing touches the round loop, so it is left open. Left in EDG-152: a creature at 0 HP that is not yet dead needs a new "down but not dead" state read by targeting, the victory check, nonlethal knockout and captive dispositions, the narrator roster and the HUD, and a hero must still be able to target it (fire or acid is the book's counter). That is a state-model change, not a rule slice. |
 | Multiattack "makes two attacks with its X" | `monster_stats._multiattack` | MM Goblin Boss, PDF p.167 | FIXED | Counts were unreadable, so one attack was used. |
 | Attack "Melee or Ranged Weapon Attack" | `monster_stats._ATTACK` | MM Goblin Boss javelin, PDF p.167 | FIXED | Was declared as a trait, never rolled. |
 | Recharge names with an en dash, "(Recharge 5–6)" | `monster_stats._ENTRY` | MM Giant Spider, PDF p.329; Young Red Dragon, PDF p.99 | FIXED | The entry failed the name pattern, so its text was appended to the previous attack and the recharge was never declared. |
@@ -141,7 +144,7 @@ check in `db/vector` rejects such mixes, and the parser declares what it cannot 
 | Restrained: DEX saves at disadvantage | `graph_combat`, `spells` | PHB PDF p.293 | FIXED | See the spells table. |
 | Prone: its attacks at disadvantage; attacks against it at advantage from within 5 ft, otherwise disadvantage | `combatants.attack_roll_mode` | PHB PDF p.293 | FIXED (EDG-152) | Ranged attacks always got disadvantage. The melee band (EDG-044) is the within-5-ft source, so a ranged attack from within 5 ft now has advantage, which the ranged-within-5-ft disadvantage (PHB p.195) cancels. Pinned in `tests/agent/test_combat_effects.py`. |
 | Poisoned, frightened, paralyzed, stunned and the rest | not implemented | PHB Appendix A, PDF pp.291-293 | PARTIAL | Declared unsupported in the contract (unchanged). |
-| Dodge: attacks against the hero have disadvantage until the next turn | `combatants.attack_roll_mode`, `graph_combat` | PHB p.193 ("Dodge"), PDF p.193 | PARTIAL | Engine applies the disadvantage. It does not check visibility, and does not give Dexterity saves advantage. Contract text corrected to say so. |
+| Dodge: attacks against the hero have disadvantage until the next turn | `combatants.attack_roll_mode`, `graph_combat` | PHB p.193 ("Dodge"), PDF p.193 | PARTIAL | Engine applies the disadvantage. It does not check visibility, and does not give Dexterity saves advantage. Contract text corrected to say so. Left in EDG-152: no engine effect rolls a Dexterity save for the hero, and the only foe that cannot see the hero is a blinded one, whose own attack disadvantage already gives the same roll, so neither part changes an outcome today. |
 | One action and one bonus action per turn | `action_economy.refusal_for` | PHB "Bonus Actions", PDF p.190 | MATCH | |
 | Advantage and disadvantage cancel | `resolution.combine_roll_modes` | PHB PDF p.174 | MATCH | |
 
@@ -185,3 +188,18 @@ No 2024 book is on this machine, so these 2024 claims are not implemented or ver
   `graph_combat.py`, which was already unformatted at HEAD and was left as it was.
 - Frontend (one tooltip string changed): `npm ci`, `npx vitest run` (14 files, 87 tests), `npm run lint`
   and `npm run build` all pass.
+
+## EDG-152: partial rows closed
+
+- Fixed rows: prone attackers within 5 ft, Versatile two-handed damage, short-rest Hit Dice count,
+  armor Stealth disadvantage, Rage resistance and heavy-armor limit, Rage 1-minute limit. Each has a
+  page-cited regression test in `tests/agent/test_combat_effects.py`,
+  `tests/agent/test_rules_book_values.py`, `tests/agent/test_hit_dice.py` or
+  `tests/agent/test_class_features.py` (46 test cases added). Run against the pre-EDG-152 source,
+  the new cases that can run there fail, and the two files that import new names fail to import.
+- Rows left PARTIAL (each note says why): Action Surge as a full extra action, the Sneak Attack
+  ally clause, Cure Wounds and Healing Word on an ally, Troll regeneration from 0 HP, Dodge
+  visibility and Dexterity-save advantage, Rage's early end and Strength advantage, and the
+  heavy-armor Strength requirement (speed is not simulated).
+- Full suite: 1288 passed, 192 skipped (DB-backed), 2 failed (the same Docker-only Qdrant tests as
+  above). `uv run ruff check .` passes.

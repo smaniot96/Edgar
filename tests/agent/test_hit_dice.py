@@ -159,7 +159,7 @@ def test_short_rest_spends_the_declared_number_of_dice_and_regains_their_total()
 
 
 def test_short_rest_cannot_spend_more_dice_than_are_left() -> None:
-    # PHB PDF p.187: "up to the character's maximum number of Hit Dice" (the level, less those spent).
+    # PHB PDF p.187: "up to the character's maximum number of Hit Dice" (the level, less spent).
     character = _char(level=2, hp=3, hp_max=40, spent=1)
 
     adj = _rest(character, "I take a short rest and spend 5 hit dice")
