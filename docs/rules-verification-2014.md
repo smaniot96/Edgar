@@ -229,12 +229,14 @@ No 2024 book is on this machine, so these 2024 claims are not implemented or ver
 ## EDG-043: legendary actions
 
 - Added rows (section 4): the legendary budget and timing, an option naming the creature's own attack,
-  the Wing Attack, the other options and lair actions. Selection order: the most expensive option the
-  budget left can pay for, then the next (ties in the record's order). Cost is the book's own measure of
-  an option's strength, and a budget of 3 with a Tail Attack (1) and a Wing Attack (2) is spent in full.
-- Left open: legendary actions after another foe's turn, the Wing Attack's prone effect and flight,
-  lair actions (they need an authored "in its lair" field), the options listed as declared.
-- Tests: `tests/agent/test_monster_legendary.py` (19 cases, scripted dice).
+  the Wing Attack, the other options and lair actions. At each other creature's represented turn end,
+  the engine chooses at most one affordable option, most expensive first (ties in record order).
+  A budget of 3 permits Wing Attack (2) at one boundary and Tail Attack (1) at a distinct later
+  creature's turn end; it never permits both at the same boundary. Budget resets at its own turn.
+- Left open: the surprise clause, the Wing Attack's prone effect and flight, lair actions (they need
+  an authored "in its lair" field), and the options listed as declared.
+- Tests: `tests/agent/test_monster_legendary.py` (23 cases, scripted dice). Root's independent focused
+  run including save actions, riders and the supported-scope contract passed 112 tests without skips.
 
 ## EDG-043: spell cases
 
