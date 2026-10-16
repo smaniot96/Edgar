@@ -167,3 +167,51 @@ def test_secret_directories_exclude_innocently_named_descendants(tmp_path, direc
     with pytest.raises(ValueError, match="unsafe path"):
         recovery._extract_sources(archive_path, destination)
     assert not list(destination.iterdir())
+
+
+@pytest.mark.parametrize("upload_succeeds", [True, False])
+def test_restore_upload_uses_pinned_client_http_api_and_redacts_failures(
+    tmp_path, monkeypatch, upload_succeeds
+):
+    import httpx
+    from qdrant_client import QdrantClient
+
+    artifact = tmp_path / "vectors" / "collection.snapshot"
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"synthetic snapshot archive")
+    requests = []
+
+    def transport(request):
+        requests.append(request)
+        if request.method == "GET" and request.url.path == "/collections":
+            return httpx.Response(200, json={"result": {"collections": []}, "status": "ok", "time": 0})
+        assert request.method == "POST"
+        assert request.url.path == "/collections/recovery_fixture/snapshots/upload"
+        assert request.url.params["wait"] == "true"
+        assert request.url.params["priority"] == "snapshot"
+        assert request.url.params["checksum"] == recovery._sha256(artifact)
+        assert request.headers["api-key"] == "synthetic-only-key"
+        assert b"synthetic snapshot archive" in request.content
+        if not upload_succeeds:
+            return httpx.Response(500, json={"error": "SENSITIVE_PROVIDER_BODY_SENTINEL"})
+        return httpx.Response(200, json={"result": True, "status": "ok", "time": 0})
+
+    # Use the actual locked SDK with every request intercepted; no server or provider calls.
+    def client(**kwargs):
+        return QdrantClient(
+            **kwargs, transport=httpx.MockTransport(transport), check_compatibility=False
+        )
+
+    monkeypatch.setattr(recovery, "QdrantClient", client)
+    manifest = {"qdrant_collections": [{
+        "collection": "recovery_fixture",
+        "artifact": "vectors/collection.snapshot",
+        "sha256": recovery._sha256(artifact),
+    }]}
+    if upload_succeeds:
+        recovery._restore_vectors(tmp_path, manifest, "http://127.0.0.1:6333", "synthetic-only-key")
+    else:
+        with pytest.raises(RuntimeError, match="Could not restore") as error:
+            recovery._restore_vectors(tmp_path, manifest, "http://127.0.0.1:6333", "synthetic-only-key")
+        assert "SENSITIVE_PROVIDER_BODY_SENTINEL" not in str(error.value)
+    assert len(requests) == 2

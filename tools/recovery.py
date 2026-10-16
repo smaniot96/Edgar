@@ -485,9 +485,18 @@ def _restore_vectors(bundle: Path, manifest: dict, qdrant_url: str, api_key: str
             raise ValueError("Qdrant restore target must contain no collections.")
         for record in manifest["qdrant_collections"]:
             with (bundle / record["artifact"]).open("rb") as snapshot:
-                client.recover_from_uploaded_snapshot(
-                    collection_name=record["collection"], snapshot=snapshot, wait=True
-                )
+                try:
+                    result = client.http.snapshots_api.recover_from_uploaded_snapshot(
+                        collection_name=record["collection"],
+                        snapshot=snapshot,
+                        wait=True,
+                        priority="snapshot",
+                        checksum=record["sha256"],
+                    )
+                except Exception as exc:
+                    raise RuntimeError("Could not restore a Qdrant collection snapshot.") from exc
+                if result.result is not True:
+                    raise RuntimeError("Qdrant did not confirm collection snapshot recovery.")
     finally:
         client.close()
 
