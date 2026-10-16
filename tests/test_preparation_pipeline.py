@@ -240,7 +240,7 @@ class OfflineAuthor:
 async def test_joined_ai_all_twelve_stages_real_books_maps_and_repair(
     tmp_path,
     monkeypatch,
-    source_index,
+    source_index,  # noqa: F811
     criticize_once,  # noqa: F811
 ):
     client, _ = source_index
@@ -397,7 +397,7 @@ def _campaign_content(count, *, pdf_text=None):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode,count,level", [("ai", 24, 1), ("ai", 1, 12), ("pdf", 1, 1)])
 async def test_joined_long_high_level_and_pdf_are_independent_scopes(
-    tmp_path, monkeypatch, source_index, mode, count, level
+    tmp_path, monkeypatch, source_index, mode, count, level  # noqa: F811
 ):  # noqa: F811
     from apps.api.services import adventure_assets
     from apps.api.services.preparation_sources import retain_pdf
@@ -484,7 +484,7 @@ async def test_joined_long_high_level_and_pdf_are_independent_scopes(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("approved", [True, False])
 async def test_joined_pdf_visual_critic_receives_pixels_and_required_rejection_blocks(
-    tmp_path, monkeypatch, source_index, approved
+    tmp_path, monkeypatch, source_index, approved  # noqa: F811
 ):  # noqa: F811
     import base64
 
