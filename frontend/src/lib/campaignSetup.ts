@@ -40,6 +40,7 @@ export const emptyCharacterDraft: CharacterDraft = {
 // Keep the player's progress alive across in-app navigation when browser storage is blocked
 // (for example, in a private session with storage disabled). A reload still needs localStorage.
 const inMemoryProgress = new Map<number, CampaignSetupProgress>();
+const failedStorageWrites = new Map<number, string | null | undefined>();
 
 export function newCampaignSetupProgress(campaignId: number): CampaignSetupProgress {
   return {
@@ -72,7 +73,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isRequestId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 function isCharacterDraft(value: unknown): value is CharacterDraft {
@@ -115,9 +116,13 @@ function isProgress(value: unknown, campaignId: number): value is CampaignSetupP
 export function readCampaignSetupProgress(campaignId: number): CampaignSetupProgress {
   try {
     const raw = window.localStorage.getItem(campaignSetupStorageKey(campaignId));
+    if (failedStorageWrites.has(campaignId) && failedStorageWrites.get(campaignId) === raw) {
+      return inMemoryProgress.get(campaignId) ?? newCampaignSetupProgress(campaignId);
+    }
     if (!raw) return inMemoryProgress.get(campaignId) ?? newCampaignSetupProgress(campaignId);
     const value: unknown = JSON.parse(raw);
     if (isProgress(value, campaignId)) {
+      failedStorageWrites.delete(campaignId);
       inMemoryProgress.set(campaignId, value);
       return value;
     }
@@ -127,17 +132,23 @@ export function readCampaignSetupProgress(campaignId: number): CampaignSetupProg
   }
 }
 
-export function writeCampaignSetupProgress(progress: CampaignSetupProgress): void {
+export function writeCampaignSetupProgress(progress: CampaignSetupProgress): boolean {
   inMemoryProgress.set(progress.campaignId, progress);
   try {
     window.localStorage.setItem(campaignSetupStorageKey(progress.campaignId), JSON.stringify(progress));
+    failedStorageWrites.delete(progress.campaignId);
+    return true;
   } catch {
-    // Private browsing or a full storage quota should not prevent a player from continuing.
+    let previous: string | null | undefined;
+    try { previous = window.localStorage.getItem(campaignSetupStorageKey(progress.campaignId)); } catch { /* Read access may also be blocked. */ }
+    failedStorageWrites.set(progress.campaignId, previous);
+    return false;
   }
 }
 
 export function clearCampaignSetupProgress(campaignId: number): void {
   inMemoryProgress.delete(campaignId);
+  failedStorageWrites.delete(campaignId);
   try {
     window.localStorage.removeItem(campaignSetupStorageKey(campaignId));
   } catch {

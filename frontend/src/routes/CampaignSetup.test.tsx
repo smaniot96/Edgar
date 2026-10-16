@@ -162,38 +162,24 @@ it("reuses a playthrough request ID written by another tab after this tab loaded
   expect(api.createSession).toHaveBeenCalledWith(campaign.id, existingCharacter.id, "22222222-2222-4222-8222-222222222222");
 });
 
-it("keeps an ambiguous save retry key in memory when browser storage is unavailable", async () => {
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
-  api.createSession.mockRejectedValueOnce(new ApiError(0, "offline"));
+it("retains progress but blocks creation until browser storage can retain the retry key", async () => {
+  // A valid older snapshot must not replace newer same-tab progress after a quota failure.
+  writeCampaignSetupProgress(newCampaignSetupProgress(campaign.id));
+  const storage = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota exceeded"); });
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Mara Venn"))!.click(); });
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Assign hero and continue"))!.click(); });
+  await settle();
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click(); });
+  await settle();
+  expect(api.createSession).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("No saved playthrough was created");
+  storage.mockRestore();
   api.createSession.mockResolvedValueOnce(createdSession);
-  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click(); });
   await settle();
-  await act(async () => {
-    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Mara Venn"))!.click();
-  });
-  await act(async () => {
-    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Assign hero and continue"))!.click();
-  });
-  await settle();
-  await act(async () => {
-    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click();
-    await Promise.resolve();
-  });
-  await settle();
-
-  const firstRequestId = api.createSession.mock.calls[0]?.[2];
-  await act(async () => { await root.unmount(); });
-  root = createRoot(container);
-  await act(async () => { renderSetup(); await Promise.resolve(); });
-  await settle();
-  await act(async () => {
-    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click();
-    await Promise.resolve();
-  });
-  await settle();
-
-  expect(api.createSession).toHaveBeenCalledTimes(2);
-  expect(api.createSession.mock.calls[1]?.[2]).toBe(firstRequestId);
+  expect(api.createSession).toHaveBeenCalledTimes(1);
   expect(container.textContent).toContain("Play route");
 });
 
@@ -309,4 +295,22 @@ it("explains an assignment conflict and leaves the hero in its current campaign"
   expect(api.assignCharacterToCampaign).toHaveBeenCalledTimes(1);
   expect(api.createSession).not.toHaveBeenCalled();
   expect(JSON.parse(window.localStorage.getItem(`edgar:campaign-setup:v1:${campaign.id}`)!).characterId).toBe(existingCharacter.id);
+});
+
+it("does not create a hero when the exact request cannot be persisted", async () => {
+  api.listCharacters.mockResolvedValue([]);
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Create a hero"))!.click(); });
+  await settle();
+  const name = [...container.querySelectorAll<HTMLInputElement>("input")].find((input) => input.placeholder === "e.g. Brannoc the Bold")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "Brannoc");
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota exceeded"); });
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Save hero and continue"))!.click(); });
+  await settle();
+  expect(api.createCharacter).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("No hero was created");
 });

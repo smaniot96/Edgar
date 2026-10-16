@@ -64,8 +64,9 @@ export default function CampaignSetup() {
   const readiness = campaign.data?.readiness ?? null;
 
   function save(next: CampaignSetupProgress) {
-    writeCampaignSetupProgress(next);
+    const persisted = writeCampaignSetupProgress(next);
     setProgress(next);
+    return persisted;
   }
 
   function chooseCharacter(character: CharacterListItem | null) {
@@ -153,7 +154,10 @@ export default function CampaignSetup() {
       ? latest.pendingSession
       : { requestId: createRequestId(), characterId };
     // Persist the exact intent before the POST. Retries use the same idempotency key and hero.
-    save({ ...latest, stage: "playthrough", pendingSession: pending });
+    if (!save({ ...latest, stage: "playthrough", pendingSession: pending })) {
+      setSetupMessage("Browser storage could not retain the retry details. Allow storage and try again. No saved playthrough was created.");
+      return;
+    }
     setStarting(true);
     setActionError(null);
     setSetupMessage(null);

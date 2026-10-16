@@ -26,6 +26,7 @@ import { controlClasses } from "../components/ui/styles";
 import { EmptyState, LoadingText } from "../components/ui/EmptyState";
 import { ErrorNotice, OfflineState } from "../components/ui/ErrorNotice";
 import { ArrowLeftIcon } from "../components/ui/icons";
+import { SavedPlaythroughContext } from "../components/campaign/SavedPlaythroughContext";
 import { Page } from "../components/ui/Page";
 import { TabPanel, Tabs } from "../components/ui/Tabs";
 import { useMode } from "../dev/ModeContext";
@@ -170,7 +171,7 @@ export default function CampaignView() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-display text-display-md">{name}</h1>
+              <h1 className="break-words [overflow-wrap:anywhere] font-display text-display-md">{name}</h1>
               {ended ? <Pill>Ended</Pill> : <Pill tone="success">Active</Pill>}
             </div>
             <p className="mt-0.5 text-sm text-ink-muted">
@@ -221,6 +222,7 @@ export default function CampaignView() {
             {!savedSession && !ended && !canStartSession ? <ButtonLink variant="secondary" to={`/campaigns/${c.id}/setup`}>View recovery steps</ButtonLink> : null}
           </div>
         </div>
+        <SavedPlaythroughContext session={savedSession} />
         {c.readiness && !c.readiness.play_allowed ? <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} className="mt-3" /> : null}
       </section>
 

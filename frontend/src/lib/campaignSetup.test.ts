@@ -34,6 +34,7 @@ it("uses fresh safe defaults when persisted setup data is missing required field
 
 it.each([
   { label: "pending hero request", field: "pendingCharacter", value: { requestId: "bad id", body: {} } },
+  { label: "non-UUID retry key", field: "pendingSession", value: { requestId: "arbitrary-key", characterId: null } },
   { label: "pending playthrough request", field: "pendingSession", value: { requestId: 3, characterId: null } },
   { label: "hero draft", field: "characterDraft", value: { name: "Mara", presetKey: 7, characterClass: null, hpText: null } },
 ])("uses safe defaults when persisted $label is malformed", ({ field, value }) => {

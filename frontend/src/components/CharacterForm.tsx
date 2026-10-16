@@ -39,7 +39,7 @@ export function CharacterForm({
   pendingCreate?: PendingCharacterCreate | null;
   onDraftChange?: (draft: CharacterDraft) => void;
   /** Called synchronously before the API request so setup can durably retain its retry key. */
-  onCreateRequested?: (request: PendingCharacterCreate) => void;
+  onCreateRequested?: (request: PendingCharacterCreate) => boolean | void;
   onEditPendingCreate?: () => void;
 }) {
   const presets = useQuery("character-presets", (signal) => listCharacterPresets(signal));
@@ -50,6 +50,7 @@ export function CharacterForm({
   const [hpText, setHpText] = useState<string | null>(initialDraft?.hpText ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [hpError, setHpError] = useState<string | null>(null);
 
   const list = presets.data ?? [];
@@ -87,6 +88,7 @@ export function CharacterForm({
     }
     setBusy(true);
     setError(null);
+    setStorageError(null);
     setHpError(null);
     try {
       const body: CharacterCreateBody = pendingCreate?.body ?? {
@@ -98,7 +100,10 @@ export function CharacterForm({
         base_inventory: selected?.inventory ?? {},
       };
       const requestId = pendingCreate?.requestId ?? crypto.randomUUID();
-      onCreateRequested?.({ requestId, body });
+      if (onCreateRequested?.({ requestId, body }) === false) {
+        setStorageError("Browser storage could not retain the retry details. Allow storage and try again. No hero was created.");
+        return;
+      }
       const created = await createCharacter(body, requestId);
       setName("");
       onCreated(created);
@@ -209,6 +214,7 @@ export function CharacterForm({
         />
       </div>
       <ErrorNotice error={error} />
+      {storageError ? <p role="alert" className="text-sm text-warning">{storageError}</p> : null}
       {locked ? (
         <p className="text-xs text-ink-muted">
           This hero request is saved. Retry uses the same details, so a completed creation is reused.

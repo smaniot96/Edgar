@@ -4,6 +4,7 @@ import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { ReadinessRead } from "../../api/types";
 import { safeTurnError } from "../../api/turnStream";
 import { AdventureCover } from "./AdventureCover";
+import { SavedPlaythroughContext } from "./SavedPlaythroughContext";
 import { ReadinessNotice } from "./ReadinessNotice";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
@@ -114,13 +115,13 @@ export function CampaignCard({
           <StatusBadge state={state} readiness={card.readiness} />
         </div>
         {showAdventureTitle ? (
-          <p className="mb-1 text-xs text-ink-muted">{adventure.title}</p>
+          <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventure.title}</p>
         ) : null}
         <p className="mb-2 text-xs text-ink-subtle">
           {lastPlayed ? `Last played ${relativeTime(lastPlayed)}` : "Not played yet"}
         </p>
         {primarySession ? (
-          <p className="mb-2 break-words text-sm text-ink-muted">
+          <p className="mb-2 break-words text-sm text-ink-muted [overflow-wrap:anywhere]">
             {primarySession.character_name || "No hero"}
             {primarySession.has_history && primarySession.last_played_at
               ? ` · saved ${relativeTime(primarySession.last_played_at)}`
@@ -129,6 +130,7 @@ export function CampaignCard({
         ) : card.campaign ? (
           <p className="mb-2 text-sm text-ink-muted">No saved playthrough yet</p>
         ) : null}
+        <SavedPlaythroughContext session={primarySession} />
         {adventure.description ? (
           <p className="mb-2 line-clamp-2 text-sm text-ink-muted">{adventure.description}</p>
         ) : null}
@@ -186,7 +188,7 @@ export function CampaignCard({
         ) : null}
         <div className="mt-auto flex flex-wrap gap-2">
           <Button
-            className="min-w-0 flex-1 whitespace-normal break-words"
+            className="min-h-11 min-w-0 flex-1 whitespace-normal break-words"
             size="sm"
             variant={state === "ended" ? "secondary" : "primary"}
             disabled={!playable}
@@ -219,7 +221,7 @@ export function CampaignCard({
             )}
           </Button>
           <details className="relative">
-            <summary className="inline-flex min-h-9 cursor-pointer list-none items-center rounded-control border border-line px-3 text-sm text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">More</summary>
+            <summary className="inline-flex min-h-11 cursor-pointer list-none items-center rounded-control border border-line px-3 text-sm text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">More</summary>
             <div className="absolute right-0 z-10 mt-1 rounded-control border border-line bg-surface-raised p-2 shadow-lg">
               <Button
                 variant="danger"
