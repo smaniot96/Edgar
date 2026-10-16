@@ -3,6 +3,7 @@ import { useState } from "react";
 import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { AdventureRead, ReadinessRead } from "../../api/types";
 import { safeTurnError } from "../../api/turnStream";
+import { AdventureCover } from "./AdventureCover";
 import { ReadinessNotice } from "./ReadinessNotice";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
@@ -38,34 +39,6 @@ function StatusBadge({ state, readiness }: { state: CardModel["state"]; readines
         </Pill>
       );
   }
-}
-
-function Cover({ adventure, name }: { adventure: AdventureRead; name: string }) {
-  if (adventure.cover_image) {
-    return (
-      <img
-        src={`/${adventure.cover_image}`}
-        alt=""
-        className="h-32 w-full rounded-t-card object-cover"
-      />
-    );
-  }
-  const initial = name.replace(/^(the|a|an)\s+/i, "").trim().charAt(0).toUpperCase() || "E";
-  return (
-    <div
-      aria-hidden
-      className="relative flex h-32 w-full items-center justify-center overflow-hidden rounded-t-card bg-gradient-to-br from-ember-950/70 via-surface-sunken to-canvas"
-    >
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(60% 70% at 50% 110%, rgba(255,107,43,0.28), transparent 70%)",
-        }}
-      />
-      <span className="relative font-display text-6xl font-bold text-ember-300/80">{initial}</span>
-    </div>
-  );
 }
 
 export function CampaignCard({
@@ -132,7 +105,7 @@ export function CampaignCard({
 
   return (
     <article className={cn(cardClasses, "flex flex-col")}>
-      <Cover adventure={adventure} name={name} />
+      <AdventureCover coverImage={adventure.cover_image} name={name} />
       <div className="flex flex-1 flex-col p-4">
         <div className="mb-1 flex items-start justify-between gap-2">
           <h3 className="font-display text-display-sm leading-tight">{name}</h3>
