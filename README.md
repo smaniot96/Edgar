@@ -102,9 +102,9 @@ simulate (`GET /api/rules/supported-scope`):
 - Action economy in combat: each player turn has one action and one bonus action. Attacks, contested
   maneuvers, item use, catalog action spells, Dodge, Dash and Disengage use the action; Second Wind,
   Healing Word and Rage use the bonus action. A second action or bonus action in the same turn is
-  refused with no roll and no round. Dodge gives attacks against the hero disadvantage until the
-  hero's next turn (the book's visibility condition and Dexterity-save advantage are not applied);
-  the HUD and narration show what the turn spent.
+  refused with no roll and no round. Dodge gives attacks against the hero disadvantage, and the
+  hero's Dexterity saving throws advantage, until the hero's next turn (the book's visibility
+  condition is not applied); the HUD and narration show what the turn spent.
 - Positioning in combat: each foe stands in the melee band (within 5 feet of the hero) or the ranged
   band (beyond it), set from its exact record (a foe whose listed attacks are all ranged starts at
   range). Movement is free and declared in the hero's words ("I close in on the archer", "I back
@@ -150,6 +150,15 @@ simulate (`GET /api/rules/supported-scope`):
   save. The hero's attacks then have disadvantage, and it repeats the save at the end of its own turn.
   An attack-style "Recharge X-6" attack is used once, then waits for a d6 at the start of the
   creature's turns. Any other rider wording stays declared.
+- Monster breath weapons (EDG-043): an exact record's action that reads exactly as "exhales ... in a
+  N-foot cone (or line). Each creature in that area must make a DC N ... saving throw, taking ... on
+  a failed save, or half as much damage on a successful one" (or "must succeed on ... or take ...",
+  no damage on a success) makes no attack roll. The hero rolls the saving throw with the sheet's
+  modifier (plus proficiency when the class has that save), with advantage on a Dexterity save while
+  dodging, and takes the engine-rolled damage on a failure and half of it, rounded down, on a
+  success. A ready breath weapon replaces the Multiattack and uses the Recharge X-6 rule above. The
+  hero is the only target, so the cone's shape and range are not modelled; other wording stays
+  declared.
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or
@@ -165,13 +174,13 @@ simulate (`GET /api/rules/supported-scope`):
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, other concentration spells, other
   conditions (frightened, stunned, charmed and the rest have no engine effect; a poisoned hero's
-  ability checks are not penalised), breath and other save-based recharge abilities, cover, high
-  ground, flanking, difficult terrain and exact distances, Help, reactions other than opportunity
-  attacks, other bonus actions, and class features other than Second Wind, Action Surge, Sneak
-  Attack and Rage (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape,
-  sorcery and ki points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's
-  Strength advantage and early end). A declared action of this kind gets a narrative ruling and no
-  mechanical effect.
+  ability checks are not penalised), area effects on more than the hero and save actions whose
+  wording is not read exactly, cover, high ground, flanking, difficult terrain and exact distances,
+  Help, reactions other than opportunity attacks, other bonus actions, and class features other than
+  Second Wind, Action Surge, Sneak Attack and Rage (Divine Smite, Lay on Hands, Bardic Inspiration,
+  Channel Divinity, Wild Shape, sorcery and ki points, Flurry of Blows, Stunning Strike,
+  Superiority Dice, Martial Arts; Rage's Strength advantage and early end). A declared action of
+  this kind gets a narrative ruling and no mechanical effect.
 - Declared-action reading (EDG-147, measured against real model outputs; see
   `tests/fixtures/real_model/README.md`): Declared actions are read in English. Italian and Spanish are read only for a few casting, advantage, cover, lethality and action words. A catalog spell resolves only when its English name is in the declaration; a spell the parser names from another language is ruled as not resolved. Other languages are not classified by these words and rely on the parser's own entities. The unsupported-action
   classifier, the lethality reading and the narration checks were re-measured on 120 labelled
@@ -186,10 +195,10 @@ simulate (`GET /api/rules/supported-scope`):
   listed attack. Regeneration heals at the start of the monster's turn, unless the damage types the
   record names have been taken since its last turn. Resistances, immunities and vulnerabilities apply
   to player damage by weapon or spell damage type. Speed and movement, legendary, lair and reaction
-  actions, spellcasting, breath and other save-based recharge abilities, a Multiattack's later-attack
-  disadvantage, other rider wording and unlisted traits are declared in the combat start message and
-  have no effect. Regeneration's 0 HP clause is declared too: an exact creature at 0 HP is defeated
-  at once. Stat blocks were checked against real Monster Manual layouts (see
+  actions, spellcasting, save actions and recharge abilities not read exactly, a Multiattack's
+  later-attack disadvantage, other rider wording and unlisted traits are declared in the combat
+  start message and have no effect. Regeneration's 0 HP clause is declared too: an exact creature
+  at 0 HP is defeated at once. Stat blocks were checked against real Monster Manual layouts (see
   docs/rules-verification-2014.md).
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales

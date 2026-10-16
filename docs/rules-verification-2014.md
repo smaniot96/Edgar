@@ -13,12 +13,12 @@ No 2024 book is available locally. 2024 numbers are not implemented (see "Unveri
 
 | Verdict | Rows | Meaning |
 |---|---|---|
-| MATCH | 44 | Engine value equals the book value at the cited page |
+| MATCH | 46 | Engine value equals the book value at the cited page |
 | FIXED | 23 | Discrepancy found and corrected (17 in EDG-149, 6 in EDG-152); a regression test pins the book value and fails on the old code |
 | PARTIAL | 9 | Documented subset or known gap; the contract text states it |
 | NOT-IN-BOOKS | 1 section | The encounter budget (section 6). Artificer data is also NOT-IN-BOOKS and is noted in the class rows |
 
-The rows are the tables below (76 in total). A row may cover several values. EDG-152 turned two
+The rows are the tables below (78 in total). A row may cover several values. EDG-152 turned two
 PARTIAL rows (short-rest Hit Dice, prone) into `FIXED (EDG-152)`, split the Rage PARTIAL row into
 two fixed rows and a smaller PARTIAL row, and added rows for Versatile weapons and armor Stealth
 disadvantage. The PARTIAL rows that remain say in their note why the engine cannot execute them.
@@ -109,6 +109,7 @@ disadvantage. The PARTIAL rows that remain say in their note why the engine cann
 | Multiattack "second attack has disadvantage" | `monster_stats.parse_monster_stats` | MM Goblin Boss, PDF p.167 | FIXED | Was silently ignored; now declared. |
 | Resistances, immunities, vulnerabilities by type | `monster_stats._damage_rules` | MM Young Red Dragon (fire immunity), PDF p.99 | MATCH | |
 | Speed, senses, saves, skills | `monster_stats.MonsterStats` | MM PDF pp.99, 167, 292, 329, 342, 344 | MATCH | Speed is declared, movement not simulated. |
+| Breath weapon: Recharge 5-6, DC, saving-throw ability, damage dice and type, half damage on a success | `monster_stats._save_action`, `graph_combat` (`enemy_save_action`) | MM Young Red Dragon Fire Breath, PDF p.99 (30-foot cone, DC 17 Dexterity, 56 (16d6) fire); Red Dragon Wyrmling, PDF p.99 | MATCH | Added in EDG-043. The hero's save is d20 + ability modifier + proficiency when the class is proficient (`resolution.CLASS_SAVES`, PHB p.46); a success takes half, rounded down. The wording is read exactly, so a clause such as "provided that it has no creature grappled" (Ankheg Acid Spray) or a rider after the damage stays declared. The cone or line shape and range are not modelled: the hero is the only creature in the area. Pinned in `tests/agent/test_monster_save_actions.py`. |
 
 ### Parser results on real Monster Manual stat blocks
 
@@ -124,7 +125,7 @@ layer interleaves the two columns, so each block was transcribed by hand to a sc
 | Wolf | Bite read, prone rider declared. | Unchanged. |
 | Giant Spider | Bite read. The recharge web attack was glued onto the bite text and not declared. | Web (Recharge 5–6) declared. |
 | Bandit | Scimitar and light crossbow read. | Unchanged. |
-| Young Red Dragon | Multiattack, bite, claw, fire immunity, saves read. Fire Breath not declared. | Fire Breath (Recharge 5–6) declared. |
+| Young Red Dragon | Multiattack, bite, claw, fire immunity, saves read. Fire Breath not declared. | Fire Breath (Recharge 5–6) declared (executed since EDG-043: DC 17 Dexterity, 56 (16d6) fire, half on a success). |
 
 Synthetic, format-faithful fixtures (own numbers and wording, not copied) live in
 `tests/agent/test_monster_stats.py` (Gutter Captain, Stone Sentinel) and cover each quirk above.
@@ -144,7 +145,8 @@ check in `db/vector` rejects such mixes, and the parser declares what it cannot 
 | Restrained: DEX saves at disadvantage | `graph_combat`, `spells` | PHB PDF p.293 | FIXED | See the spells table. |
 | Prone: its attacks at disadvantage; attacks against it at advantage from within 5 ft, otherwise disadvantage | `combatants.attack_roll_mode` | PHB PDF p.293 | FIXED (EDG-152) | Ranged attacks always got disadvantage. The melee band (EDG-044) is the within-5-ft source, so a ranged attack from within 5 ft now has advantage, which the ranged-within-5-ft disadvantage (PHB p.195) cancels. Pinned in `tests/agent/test_combat_effects.py`. |
 | Poisoned, frightened, paralyzed, stunned and the rest | not implemented | PHB Appendix A, PDF pp.291-293 | PARTIAL | Declared unsupported in the contract (unchanged). |
-| Dodge: attacks against the hero have disadvantage until the next turn | `combatants.attack_roll_mode`, `graph_combat` | PHB p.193 ("Dodge"), PDF p.193 | PARTIAL | Engine applies the disadvantage. It does not check visibility, and does not give Dexterity saves advantage. Contract text corrected to say so. Left in EDG-152: no engine effect rolls a Dexterity save for the hero, and the only foe that cannot see the hero is a blinded one, whose own attack disadvantage already gives the same roll, so neither part changes an outcome today. |
+| Dodge: attacks against the hero have disadvantage until the next turn | `combatants.attack_roll_mode`, `graph_combat` | PHB p.193 ("Dodge"), PDF p.193 | PARTIAL | Engine applies the disadvantage. It does not check visibility or the loss of the benefit at speed 0 (speed is not simulated). Left in EDG-152: the only foe that cannot see the hero is a blinded one, whose own attack disadvantage already gives the same roll, so it does not change an outcome today. |
+| Dodge: Dexterity saving throws with advantage | `combatants.save_roll_mode`, `graph_combat` (`enemy_save_action`) | PHB p.193 ("Dodge"), PDF p.193 | MATCH | Added in EDG-043. The hero's Dexterity save against a monster's save action rolls two d20s and keeps the higher while dodging; other saves are unchanged. Pinned in `tests/agent/test_monster_save_actions.py`. The benefit lost when incapacitated is not reachable (the fight ends), and speed 0 is not simulated. |
 | One action and one bonus action per turn | `action_economy.refusal_for` | PHB "Bonus Actions", PDF p.190 | MATCH | |
 | Advantage and disadvantage cancel | `resolution.combine_roll_modes` | PHB PDF p.174 | MATCH | |
 
@@ -202,4 +204,15 @@ No 2024 book is on this machine, so these 2024 claims are not implemented or ver
   visibility and Dexterity-save advantage, Rage's early end and Strength advantage, and the
   heavy-armor Strength requirement (speed is not simulated).
 - Full suite: 1288 passed, 192 skipped (DB-backed), 2 failed (the same Docker-only Qdrant tests as
+  above). `uv run ruff check .` passes.
+
+## EDG-043: hero saving throws against save-based monster actions
+
+- Added rows: the breath weapon of an exact record (section 4) and Dodge's advantage on Dexterity
+  saving throws (section 5). The Dodge row for attacks stays PARTIAL for visibility and speed 0.
+- Left open: area effects on more than the hero, legendary and lair actions, monster spellcasting,
+  other conditions, and save actions whose wording is not the exact breath-weapon sentence.
+- Tests: `tests/agent/test_monster_save_actions.py` (16 cases, scripted dice). The Gutter Captain
+  fixture in `tests/agent/test_monster_stats.py` now reads its Spit Breath as an executed action.
+- Full suite: 1431 passed, 200 skipped (DB-backed), 2 failed (the same Docker-only Qdrant tests as
   above). `uv run ruff check .` passes.
