@@ -210,7 +210,7 @@ def _stamp_spell_outcome(
 
 
 async def _invoke_with_retry(messages: list[dict]) -> AdjudicationResult | None:
-    llm = make_chat_model(temperature=0)
+    llm = make_chat_model(profile="play.consequence_planner", temperature=0)
     structured_llm = llm.with_structured_output(AdjudicationResult, method="function_calling")
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:

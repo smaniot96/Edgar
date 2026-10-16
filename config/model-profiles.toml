@@ -1,0 +1,164 @@
+# Secret-free runtime profiles. Credentials stay in OPENAI_API_KEY / the image provider's
+# environment credential. Editing this file is picked up on the next request; each request
+# and durable preparation run freezes a complete snapshot at entry.
+schema_version = 1
+profile_version = "1"
+
+# Play profiles inherit model and reasoning effort from legacy LLM_MODEL and
+# LLM_REASONING_EFFORT unless a particular profile sets its own model/effort.
+[profiles.play.default]
+
+[profiles.play.parser]
+max_output_tokens = 800
+
+[profiles.play.consequence_planner]
+max_output_tokens = 1800
+
+[profiles.play.narrator]
+max_output_tokens = 600
+
+[profiles.play.combat_builder]
+max_output_tokens = 1200
+
+[profiles.play.combat_narrator]
+max_output_tokens = 600
+
+[profiles.play.memory_summarizer]
+max_output_tokens = 800
+
+[profiles.play.session_intro]
+max_output_tokens = 600
+
+# Campaign preparation semantic work is deliberately policy-bound. The loader rejects a
+# file that attempts to change these settings; no account access is claimed by this config.
+[profiles.authoring.outline]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 4000
+timeout_seconds = 180
+retries = 2
+
+[profiles.authoring.chapter]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 7000
+timeout_seconds = 240
+retries = 2
+
+[profiles.authoring.coherence]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 5000
+timeout_seconds = 180
+retries = 2
+
+[profiles.authoring.manifest]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 5000
+timeout_seconds = 180
+retries = 2
+
+# P01..P12 are the durable EDG-155 preparation stage roles. Stages with deterministic work
+# may not call a model; when a stage does call one, use its mapped profile and frozen snapshot.
+[profiles.preparation.p01]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 3000
+
+[profiles.preparation.p02]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 7000
+
+[profiles.preparation.p03]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 7000
+
+[profiles.preparation.p04]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 7000
+
+[profiles.preparation.p05]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 7000
+
+[profiles.preparation.p06]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 7000
+
+[profiles.preparation.p07]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 4000
+
+[profiles.preparation.p08]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 7000
+
+[profiles.preparation.p09]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 5000
+
+[profiles.preparation.p10]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 5000
+
+[profiles.preparation.p11]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 5000
+
+[profiles.preparation.p12]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+api = "responses"
+max_output_tokens = 3000
+
+# Images have their own model/options. These names are configuration targets only; offline
+# validation does not imply that the deployed provider account can access a given image model.
+[images.image.adventure_map]
+model = "gpt-image-1"
+size = "1536x1024"
+quality = "medium"
+output_format = "png"
+timeout_seconds = 180
+retries = 2
+
+[images.image.illustration]
+model = "gpt-image-1"
+size = "1024x1024"
+quality = "medium"
+output_format = "png"
+timeout_seconds = 180
+retries = 2
+
+[images.image.creature_art]
+model = "gpt-image-1"
+size = "1024x1024"
+quality = "medium"
+output_format = "png"
+timeout_seconds = 180
+retries = 2

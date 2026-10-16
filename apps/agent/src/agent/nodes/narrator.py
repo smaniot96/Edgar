@@ -48,15 +48,13 @@ def deterministic_narration(state: AgentState) -> str | None:
     return state.get("policy_narration")
 
 
-def make_narrator_model():
-    """Narrator chat model with a bounded `max_tokens`.
-
-    Falls back to the plain factory signature for test fakes that only accept `temperature`.
-    """
-    try:
-        return make_chat_model(temperature=_NARRATOR_TEMPERATURE, max_tokens=NARRATOR_MAX_TOKENS)
-    except TypeError:
-        return make_chat_model(temperature=_NARRATOR_TEMPERATURE)
+def make_narrator_model(profile: str = "play.narrator"):
+    """Narrator chat model with the selected stage profile and bounded output."""
+    return make_chat_model(
+        profile=profile,
+        temperature=_NARRATOR_TEMPERATURE,
+        max_tokens=NARRATOR_MAX_TOKENS,
+    )
 
 
 def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
@@ -189,7 +187,9 @@ async def narrator_node(state: AgentState) -> dict:
 
     narration = deterministic_narration(state)
     if narration is None:
-        llm = make_narrator_model()
+        llm = make_narrator_model(
+            "play.combat_narrator" if state.get("combat_state") else "play.narrator"
+        )
         prompt = build_narrator_prompt(state)
         try:
             response = await llm.ainvoke(prompt)
