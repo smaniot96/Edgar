@@ -248,7 +248,7 @@ Revision `11_character_bounds` enforces the public character bounds in PostgreSQ
 * **edgar-tests**: the pytest suite with `CI=true` (missing Docker fails the job).
 * **edgar-migrations**: against a Postgres service container, `alembic upgrade head`, `alembic check` (models vs migrations drift), and a downgrade/upgrade of the latest revision.
 * **docker-build**: builds the `api` and `migrate` Docker targets.
-* **stack-smoke**: validates the base and dev Compose configs, then starts a disposable project (unique `COMPOSE_PROJECT_NAME`) with placeholder keys: migrations, `/ready` (Postgres, Redis, Qdrant), the bundled `/ui/`, `/health` with `X-Request-ID` echo, and a seed-then-read flow. Logs are dumped on failure and `down -v` always runs.
+* **stack-smoke**: validates the base and dev Compose configs, then starts a disposable project (unique `COMPOSE_PROJECT_NAME`) with a dummy provider key: migrations, `/ready` (Postgres, Redis, Qdrant), the bundled `/ui/`, `/health` with `X-Request-ID` echo, and a seed-then-read flow. Logs are dumped on failure and `down -v` always runs.
 * **frontend**: `npm ci`, `npm run lint`, `npm test --if-present`, `npm run build`.
 
 CI pins uv to the version that writes `uv.lock`; regenerate the lock with that version (`uv lock`).

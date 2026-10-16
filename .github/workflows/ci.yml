@@ -128,9 +128,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Compose needs .env for env_file; the example holds placeholders only, never real keys.
-      - name: Create placeholder env file
-        run: cp .env.example .env
+      # Compose needs .env for env_file. The API refuses the example's placeholder key at startup,
+      # so use a syntactically valid dummy: it is never sent anywhere because the smoke makes no model call.
+      - name: Create env file with a dummy provider key
+        run: |
+          cp .env.example .env
+          sed -i 's/^OPENAI_API_KEY=.*/OPENAI_API_KEY=sk-ci-smoke-not-a-real-key/' .env
 
       - name: Validate base and dev Compose configs
         run: |
