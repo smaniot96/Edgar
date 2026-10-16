@@ -93,7 +93,8 @@ function describeTurnFailure(error: TurnError): string {
               : error.recoveryAction === "restart_preparation" ? " Review the setup and restart preparation."
                 : error.recoveryAction === "read_history" ? " Your saved history remains available."
                   : error.recoveryAction === "retry" ? " The server confirms this action was not saved; you can retry it."
-                    : " Check the saved result before trying again.";
+                    : error.recoveryAction === "contact_support" ? " Share the reference with support if the problem continues."
+                      : " Check the saved result before trying again.";
   const reference = error.supportRef ? ` Reference: ${error.supportRef}.` : "";
   return `${error.message}${next}${reference}`;
 }
