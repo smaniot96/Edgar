@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,6 +17,7 @@ class CurrentAssignmentSummary(BaseModel):
 class CharacterCreate(BaseModel):
     """Create a character in the library (no campaign binding)."""
 
+    request_id: UUID | None = None
     name: str = Field(..., min_length=1, max_length=255)
     character_class: str = Field(..., min_length=1, max_length=255)
     level: int = Field(..., ge=1, le=20)

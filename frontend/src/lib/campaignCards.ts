@@ -8,6 +8,8 @@ export interface CardModel {
   campaign: CampaignRead | null;
   state: "processing" | "failed" | "ready" | "ended" | "recovery";
   lastPlayed: string | null;
+  /** Most useful saved playthrough for the card's primary action, when one exists. */
+  primarySession: SessionRead | null;
   readiness: ReadinessRead | null;
 }
 
@@ -21,6 +23,20 @@ export function selectResumeSession(sessions: SessionRead[] | undefined): Sessio
   );
   return newest(history.filter((session) => session.readiness?.play_allowed === true))
     ?? newest(history);
+}
+
+/** Select a campaign's best save: a playable session first, then readable saved history. */
+export function selectCampaignSession(
+  sessions: SessionRead[] | undefined,
+  campaignId: number,
+): SessionRead | null {
+  const matching = (sessions ?? []).filter((session) => session.campaign_id === campaignId);
+  const newest = (items: SessionRead[]) => [...items].sort((a, b) =>
+    (b.last_played_at ?? b.started_at).localeCompare(a.last_played_at ?? a.started_at),
+  )[0] ?? null;
+  return newest(matching.filter((session) => session.has_history && session.readiness?.play_allowed === true))
+    ?? newest(matching.filter((session) => session.readiness?.play_allowed === true))
+    ?? newest(matching.filter((session) => session.has_history && session.readiness?.history_allowed === true));
 }
 
 export function buildCards(
@@ -62,6 +78,7 @@ export function buildCards(
         .filter((x): x is string => !!x)
         .sort()
         .at(-1) ?? null;
+    const primarySession = campaign ? selectCampaignSession(sessions, campaign.id) : null;
     const state =
       campaign?.source_mode === "homebrew" ? (campaign.status === "ended" ? "ended" : "ready")
       : campaign?.play_allowed === false ? "recovery"
@@ -76,7 +93,7 @@ export function buildCards(
     const name = campaign
       ? campaignDisplayName(campaign, adventure)
       : adventure.title;
-    return { adventure, name, campaign, state, lastPlayed, readiness: campaign?.readiness ?? adventure.readiness ?? null };
+    return { adventure, name, campaign, state, lastPlayed, primarySession, readiness: campaign?.readiness ?? adventure.readiness ?? null };
   });
   // Most recently played first; never-played keep API order after them.
   return cards

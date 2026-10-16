@@ -41,10 +41,10 @@ export function PageHeader({
     <header className="flex flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
         {eyebrow ? <div className="mb-1 text-xs">{eyebrow}</div> : null}
-        <h1 className="font-display text-display-md text-ink">{title}</h1>
+        <h1 className="break-words [overflow-wrap:anywhere] font-display text-display-md text-ink">{title}</h1>
         {description ? <div className="mt-1 text-sm text-ink-muted">{description}</div> : null}
       </div>
-      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
   );
 }

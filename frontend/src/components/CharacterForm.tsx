@@ -6,8 +6,9 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 
-import { createCharacter, listCharacterPresets } from "../api/client";
+import { ApiError, createCharacter, listCharacterPresets, type CharacterCreateBody } from "../api/client";
 import type { CharacterPreset, CharacterRead } from "../api/types";
+import type { CharacterDraft, PendingCharacterCreate } from "../lib/campaignSetup";
 import { cn } from "../lib/cn";
 import { useQuery } from "../lib/useQuery";
 import { Button } from "./ui/Button";
@@ -22,21 +23,35 @@ export function CharacterForm({
   title = "Create character",
   submitLabel = "Create character",
   className,
+  initialDraft,
+  pendingCreate,
+  onDraftChange,
+  onCreateRequested,
+  onEditPendingCreate,
 }: {
   onCreated: (character: CharacterRead) => void;
   onCancel?: () => void;
   title?: string;
   submitLabel?: string;
   className?: string;
+  initialDraft?: CharacterDraft;
+  /** An unresolved request is replayed with its original key and exact body. */
+  pendingCreate?: PendingCharacterCreate | null;
+  onDraftChange?: (draft: CharacterDraft) => void;
+  /** Called synchronously before the API request so setup can durably retain its retry key. */
+  onCreateRequested?: (request: PendingCharacterCreate) => boolean | void;
+  onEditPendingCreate?: () => void;
 }) {
   const presets = useQuery("character-presets", (signal) => listCharacterPresets(signal));
   // `null` = follow the first preset until the player picks one.
-  const [pickedKey, setPickedKey] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [charClass, setCharClass] = useState<string | null>(null);
-  const [hpText, setHpText] = useState<string | null>(null);
+  const [pickedKey, setPickedKey] = useState<string | null>(initialDraft?.presetKey ?? null);
+  const [name, setName] = useState(initialDraft?.name ?? "");
+  const [charClass, setCharClass] = useState<string | null>(initialDraft?.characterClass ?? null);
+  const [hpText, setHpText] = useState<string | null>(initialDraft?.hpText ?? null);
   const [busy, setBusy] = useState(false);
+  const [localPending, setLocalPending] = useState<PendingCharacterCreate | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [hpError, setHpError] = useState<string | null>(null);
 
   const list = presets.data ?? [];
@@ -45,12 +60,25 @@ export function CharacterForm({
   // Class/HP default to the selected preset until the player edits them.
   const classValue = charClass ?? selected?.character_class ?? "";
   const hpValue = hpText ?? String(selected?.hp_max ?? 10);
+  const retainedCreate = pendingCreate ?? (onCreateRequested ? null : localPending);
+  const locked = retainedCreate != null;
+  const safeToEditAfterRejection = error instanceof ApiError && [400, 422].includes(error.status);
+
+  function saveDraft(next: Partial<CharacterDraft>) {
+    onDraftChange?.({
+      name: next.name ?? name,
+      presetKey: next.presetKey === undefined ? pickedKey : next.presetKey,
+      characterClass: next.characterClass === undefined ? charClass : next.characterClass,
+      hpText: next.hpText === undefined ? hpText : next.hpText,
+    });
+  }
 
   function pick(p: CharacterPreset) {
     setPickedKey(p.key);
     setCharClass(null);
     setHpText(null);
     setHpError(null);
+    saveDraft({ presetKey: p.key, characterClass: null, hpText: null });
   }
 
   async function submit(e: FormEvent) {
@@ -62,16 +90,25 @@ export function CharacterForm({
     }
     setBusy(true);
     setError(null);
+    setStorageError(null);
     setHpError(null);
     try {
-      const created = await createCharacter({
+      const body: CharacterCreateBody = retainedCreate?.body ?? {
         name: name.trim(),
         character_class: classValue.trim(),
         level: selected?.level ?? 1,
         hp_max: hp,
         base_stats: selected?.stats ?? {},
         base_inventory: selected?.inventory ?? {},
-      });
+      };
+      const requestId = retainedCreate?.requestId ?? crypto.randomUUID();
+      if (!onCreateRequested) setLocalPending({ requestId, body });
+      if (onCreateRequested?.({ requestId, body }) === false) {
+        setStorageError("Browser storage could not retain the retry details. Allow storage and try again. No hero was created.");
+        return;
+      }
+      const created = await createCharacter(body, requestId);
+      setLocalPending(null);
       setName("");
       onCreated(created);
     } catch (err) {
@@ -107,6 +144,7 @@ export function CharacterForm({
                   key={p.key}
                   type="button"
                   aria-pressed={active}
+                  disabled={locked}
                   onClick={() => pick(p)}
                   className={cn(
                     "rounded-card border p-3 text-left text-sm transition-colors",
@@ -143,7 +181,11 @@ export function CharacterForm({
         maxLength={255}
         placeholder="e.g. Brannoc the Bold"
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        disabled={locked}
+        onChange={(e) => {
+          setName(e.target.value);
+          saveDraft({ name: e.target.value });
+        }}
       />
       <div className="flex gap-3">
         <TextField
@@ -152,7 +194,11 @@ export function CharacterForm({
           required
           maxLength={255}
           value={classValue}
-          onChange={(e) => setCharClass(e.target.value)}
+          disabled={locked}
+          onChange={(e) => {
+            setCharClass(e.target.value);
+            saveDraft({ characterClass: e.target.value });
+          }}
         />
         <TextField
           fieldClassName="w-28"
@@ -162,16 +208,29 @@ export function CharacterForm({
           min={1}
           required
           value={hpValue}
+          disabled={locked}
           error={hpError}
           onChange={(e) => {
             setHpText(e.target.value);
             setHpError(null);
+            saveDraft({ hpText: e.target.value });
           }}
         />
       </div>
       <ErrorNotice error={error} />
+      {storageError ? <p role="alert" className="text-sm text-warning">{storageError}</p> : null}
+      {locked ? (
+        <p className="text-xs text-ink-muted">
+          This hero request is retained. Retry uses the same details, so a completed creation is reused.
+        </p>
+      ) : null}
+      {locked && safeToEditAfterRejection ? (
+        <Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setLocalPending(null); onEditPendingCreate?.(); }}>
+          Edit details after validation error
+        </Button>
+      ) : null}
       <Button type="submit" loading={busy} loadingText="Creating…">
-        {submitLabel}
+        {locked ? "Retry saved hero creation" : submitLabel}
       </Button>
     </form>
   );

@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,6 +11,7 @@ from .readiness import ReadinessRead
 class SessionCreate(BaseModel):
     """Request body for POST /sessions."""
 
+    request_id: UUID | None = None
     campaign_id: int = Field(..., ge=1)
     started_at: datetime | None = None  # DB has server_default if omitted
     ended_at: datetime | None = None

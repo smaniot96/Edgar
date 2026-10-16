@@ -4,6 +4,7 @@ import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { ReadinessRead } from "../../api/types";
 import { safeTurnError } from "../../api/turnStream";
 import { AdventureCover } from "./AdventureCover";
+import { SavedPlaythroughContext } from "./SavedPlaythroughContext";
 import { ReadinessNotice } from "./ReadinessNotice";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
@@ -60,7 +61,7 @@ export function CampaignCard({
   const [retrying, setRetrying] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [retryError, setRetryError] = useState<unknown>(null);
-  const { adventure, name, state, lastPlayed } = card;
+  const { adventure, name, state, lastPlayed, primarySession } = card;
   const job = adventure.job;
   const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
   const playable = !!card.campaign || (state === "ready" && card.readiness?.play_allowed === true) || state === "ended";
@@ -104,19 +105,38 @@ export function CampaignCard({
   const failureMessage = failure ? safeTurnError(failure).message : null;
 
   return (
-    <article className={cn(cardClasses, "flex flex-col")}>
-      <AdventureCover coverImage={adventure.cover_image} name={name} />
+    <article className={cn(cardClasses, "flex min-w-0 flex-col")}>
+      <div className="[&>div]:h-20 [&>img]:h-20 sm:[&>div]:h-24 sm:[&>img]:h-24 [&>div>span]:text-5xl">
+        <AdventureCover coverImage={adventure.cover_image} name={name} />
+      </div>
       <div className="flex flex-1 flex-col p-4">
-        <div className="mb-1 flex items-start justify-between gap-2">
-          <h3 className="font-display text-display-sm leading-tight">{name}</h3>
+        <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
+          <h3 className="min-w-0 line-clamp-3 break-words [overflow-wrap:anywhere] font-display text-xl leading-tight">{name}</h3>
           <StatusBadge state={state} readiness={card.readiness} />
         </div>
+        {name.length > 80 ? (
+          <details className="mb-1 text-sm">
+            <summary className="inline-flex min-h-11 cursor-pointer items-center text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">Full campaign title</summary>
+            <p className="break-words [overflow-wrap:anywhere] text-ink">{name}</p>
+          </details>
+        ) : null}
         {showAdventureTitle ? (
-          <p className="mb-1 text-xs text-ink-muted">{adventure.title}</p>
+          <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventure.title}</p>
         ) : null}
         <p className="mb-2 text-xs text-ink-subtle">
           {lastPlayed ? `Last played ${relativeTime(lastPlayed)}` : "Not played yet"}
         </p>
+        {primarySession ? (
+          <p className="mb-2 break-words text-sm text-ink-muted [overflow-wrap:anywhere]">
+            {primarySession.character_name || "No hero"}
+            {primarySession.has_history && primarySession.last_played_at
+              ? ` · saved ${relativeTime(primarySession.last_played_at)}`
+              : " · no story history yet"}
+          </p>
+        ) : card.campaign ? (
+          <p className="mb-2 text-sm text-ink-muted">No saved playthrough yet</p>
+        ) : null}
+        <SavedPlaythroughContext session={primarySession} />
         {adventure.description ? (
           <p className="mb-2 line-clamp-2 text-sm text-ink-muted">{adventure.description}</p>
         ) : null}
@@ -172,9 +192,9 @@ export function CampaignCard({
             This campaign has ended. Open it to review or reopen it.
           </p>
         ) : null}
-        <div className="mt-auto flex gap-2">
+        <div className="mt-auto flex flex-wrap gap-2">
           <Button
-            className="flex-1"
+            className="min-h-11 min-w-0 flex-1 whitespace-normal break-words"
             size="sm"
             variant={state === "ended" ? "secondary" : "primary"}
             disabled={!playable}
@@ -182,13 +202,19 @@ export function CampaignCard({
             loadingText="Opening…"
             onClick={() => onPlay(card)}
           >
-            {card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
+            {primarySession?.readiness?.play_allowed === true ? (
+              <><PlayIcon className="h-3.5 w-3.5" /> Continue</>
+            ) : primarySession?.has_history && primarySession.readiness?.history_allowed === true ? (
+              "Read story"
+            ) : card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
               "View campaign"
             ) : !card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
               card.readiness ? "Needs attention" : "Readiness unknown"
+            ) : state === "ready" && card.campaign ? (
+              "Set up first session"
             ) : state === "ready" ? (
               <>
-                <PlayIcon className="h-3.5 w-3.5" /> Play
+                <PlayIcon className="h-3.5 w-3.5" /> Start adventure
               </>
             ) : state === "ended" ? (
               "Open"
@@ -200,16 +226,21 @@ export function CampaignCard({
               "Preparing…"
             )}
           </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            loading={deleting}
-            loadingText="Deleting…"
-            onClick={() => onDelete(card)}
-            aria-label={`Delete ${name}`}
-          >
-            Delete
-          </Button>
+          <details className="relative">
+            <summary className="inline-flex min-h-11 cursor-pointer list-none items-center rounded-control border border-line px-3 text-sm text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">More</summary>
+            <div className="absolute right-0 z-10 mt-1 rounded-control border border-line bg-surface-raised p-2 shadow-lg">
+              <Button
+                variant="danger"
+                size="sm"
+                loading={deleting}
+                loadingText="Deleting…"
+                onClick={() => onDelete(card)}
+                aria-label={`Delete ${name}`}
+              >
+                Delete campaign
+              </Button>
+            </div>
+          </details>
         </div>
       </div>
     </article>

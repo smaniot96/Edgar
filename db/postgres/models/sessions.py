@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.postgres.base import Base
@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "creation_request_id", name="uq_session_creation_request"),
+    )
+    creation_request_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    creation_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     campaign_id: Mapped[int] = mapped_column(
         ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True

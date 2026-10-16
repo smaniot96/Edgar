@@ -14,6 +14,7 @@ from ..schemas.character import (
     CurrentAssignmentSummary,
 )
 from ..services.character_assignments import resource_view
+from ..services.setup_requests import creation_identity, creation_replay
 from ._common import Page
 
 router = APIRouter(tags=["characters"])
@@ -109,7 +110,12 @@ async def create_character(
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
+    existing = await creation_replay(db, Character, owner_id, body)
+    if existing is not None:
+        summary = await _current_assignment_summary(db, existing.id)
+        return _read_with_assignment(existing, summary)
     character = Character(
+        **creation_identity(body),
         owner_user_id=owner_id,
         name=body.name,
         character_class=body.character_class,

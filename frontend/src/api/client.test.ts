@@ -111,6 +111,19 @@ describe("shared request helpers", () => {
     expect(fetchMock.mock.calls[1][1].signal).toBe(ctrl.signal);
   });
 
+  it("retains the exact setup request identity when retrying save creation", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => new Response('{"id":7}'));
+    vi.stubGlobal("fetch", fetchMock);
+    const key = "44921936-b513-4af4-9aa5-e1a3593f6b23";
+    await createSession(3, 5, key);
+    await createSession(3, 5, key);
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body as string));
+    expect(bodies).toEqual([
+      { campaign_id: 3, active_character_id: 5, request_id: key },
+      { campaign_id: 3, active_character_id: 5, request_id: key },
+    ]);
+  });
+
   it("does not attempt to parse empty mutation responses", async () => {
     const fetchMock = vi.fn().mockImplementation(() => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);

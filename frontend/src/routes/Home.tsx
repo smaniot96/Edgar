@@ -93,14 +93,29 @@ export default function Home() {
 
   async function handlePlay(card: CardModel) {
     setActionError(null);
-    if (card.campaign) {
+    if (card.campaign?.status === "ended") {
       navigate(`/campaigns/${card.campaign.id}`);
+      return;
+    }
+    if (card.primarySession) {
+      const session = card.primarySession;
+      if (session.readiness?.play_allowed === true ||
+        (session.has_history && session.readiness?.history_allowed !== false)) {
+        rememberLastSession(session.id);
+        navigate(`/play/${session.id}`);
+      } else if (card.campaign) {
+        navigate(`/campaigns/${card.campaign.id}`);
+      }
+      return;
+    }
+    if (card.campaign) {
+      navigate(`/campaigns/${card.campaign.id}/setup`);
       return;
     }
     setOpeningSlug(card.adventure.slug);
     try {
       const campaign = await getOrCreateCampaign(card.adventure.slug);
-      navigate(`/campaigns/${campaign.id}`);
+      navigate(`/campaigns/${campaign.id}/setup`);
     } catch (err) {
       setActionError(err);
       setOpeningSlug(null);
@@ -170,8 +185,9 @@ export default function Home() {
         actions={
           <>
             {resumeSession ? (
-              <div className="flex min-w-0 flex-col items-start gap-1">
+              <div className="flex min-w-0 max-w-full flex-col items-start gap-1">
               <Button
+                className="max-w-full"
                 aria-describedby="resume-save-identity"
                 onClick={() => {
                   rememberLastSession(resumeSession.id);

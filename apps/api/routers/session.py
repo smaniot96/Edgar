@@ -46,6 +46,7 @@ from ..services.session_messages import (
     load_session_context,
     maybe_update_memory_summary,
 )
+from ..services.setup_requests import creation_identity, creation_replay
 from ..services.story_state import load_story_state, session_story_flags
 from ..services.turn_receipts import load_turn_receipt
 from ..services.turn_runner import (
@@ -436,6 +437,9 @@ async def session_intro(
 
 @router.post("/sessions", response_model=SessionRead)
 async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_session)):
+    existing = await creation_replay(db, SessionModel, body.campaign_id, body)
+    if existing is not None:
+        return await _session_read(existing, db)
     campaign = await db.get(Campaign, body.campaign_id)
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -458,6 +462,7 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
     require_play_readiness(readiness)
     started_at = body.started_at if body.started_at is not None else datetime.now(UTC)
     session = SessionModel(
+        **creation_identity(body),
         campaign_id=body.campaign_id,
         started_at=started_at,
         ended_at=body.ended_at,
