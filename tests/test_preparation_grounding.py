@@ -276,3 +276,17 @@ def test_xp_parser_rejects_mismatched_challenge_value():
     assert challenge_xp_from_stat_block(GOBLIN) == ("1/4", 50)
     with pytest.raises(ValueError, match="conflicts"):
         challenge_xp_from_stat_block(GOBLIN.replace("50 XP", "100 XP"))
+
+
+def test_unimplemented_monster_trait_blocks_grounding_even_if_not_authored(source_index):
+    client, bindings = source_index
+    mm = bindings[2]
+    _index(client, mm, GOBLIN.replace("Actions\n", "Legendary Resistance (3/Day). If the goblin fails a saving throw, it can choose to succeed instead.\nActions\n"), section="Goblin")
+    books = read_verified_book_snapshot(bindings, rules_edition="2014", client=client)
+    plan = EncounterPlan(encounter_id="guard", scene_id="hall", target_level=1,
+                         creatures=[EncounterCreatureRequest(creature_name="Goblin", quantity=1)],
+                         maximum_difficulty="deadly")
+    receipt = ground_encounter_plan(plan, _party(), books, client=client)
+    assert receipt.creatures[0].creature.monster_stats["declared"]
+    assert "unsupported_creature_mechanics" in receipt.findings
+    assert not receipt.valid

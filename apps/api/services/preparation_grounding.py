@@ -416,6 +416,8 @@ def ground_encounter_plan(
     thresholds = encounter_thresholds(party)
     difficulty = encounter_difficulty(adjusted_xp, thresholds)
     findings = []
+    if any(member.creature.monster_stats.get("declared") for member in members):
+        findings.append("unsupported_creature_mechanics")
     if difficulty_exceeds(difficulty, plan.maximum_difficulty):
         findings.append("encounter_exceeds_authored_maximum_difficulty")
     if any(hero.level != plan.target_level for hero in party.heroes):
