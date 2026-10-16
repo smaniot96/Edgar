@@ -89,7 +89,7 @@ export function PlayRecap({
                   <ul className="mt-1 space-y-1">
                     {promises.slice(0, 3).map((entry) => <li key={entry.id}>
                       <button type="button" className="text-left text-ink hover:text-ember-700" onClick={() => onOpenEntry(entry.id)}>
-                        <span className="font-medium">{entry.origin.actor ? `${entry.origin.actor}: ` : ""}{entry.title}</span>
+                        <span className="font-medium">{entry.origin.actor ? `NPC · ${entry.origin.actor}: ` : ""}{entry.title}</span>
                         {entry.text ? <span className="mt-0.5 block line-clamp-2 text-xs text-ink-muted">{entry.text}</span> : null}
                       </button>
                     </li>)}

@@ -43,11 +43,16 @@ export interface JournalOrigin {
   history_event_id: number | null;
   place: string | null;
   actor: string | null;
+  actor_id?: string | null;
   citation: string | null;
 }
 
 export interface JournalEntry {
   id: string;
+  actor_id?: string | null;
+  actor_aliases?: string[];
+  actor_reference_event_ids?: number[];
+  related_actor_id?: string | null;
   category: JournalCategory;
   title: string;
   text: string | null;

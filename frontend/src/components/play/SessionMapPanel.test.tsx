@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 
 import type { SessionMapRead } from "../../api/types";
+import type { JournalEntry } from "../journal/types";
 import { SessionMapPanel } from "./SessionMapPanel";
 
 const map: SessionMapRead = {
@@ -141,6 +142,42 @@ it("loads the saved view for a changed map version instead of carrying the previ
     await act(() => root.render(renderPanel(nextVersion)));
     expect(container.textContent).toContain("150%");
     expect(container.querySelector('button[aria-pressed="true"]')?.textContent).toContain("The watchtower");
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  }
+});
+
+it("opens only the supplied player-safe people from the selected session", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const onOpenJournal = vi.fn();
+  const actor: JournalEntry = {
+    id: "actor_session_12", actor_id: "actor_session_12", actor_aliases: ["Mara"],
+    actor_reference_event_ids: [31], category: "person", title: "Mara · person encountered on turn 1",
+    text: "A guard named Mara asks you to wait.", status: "encountered", quantity: null,
+    origin: { turn_number: 1, history_event_id: 31, place: null, actor: null, citation: null },
+    history: [], related_entry_id: null,
+  };
+  try {
+    await act(() => root.render(
+      <SessionMapPanel
+        sessionId={12} map={map} loading={false} error={null}
+        onRefresh={vi.fn()} onOpenJournal={onOpenJournal} onPrepareTravel={vi.fn()}
+        actors={[actor]}
+      />,
+    ));
+    expect(container.textContent).toContain("Known people");
+    const link = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes(actor.title));
+    expect(link?.textContent).toContain("NPC ·");
+    expect(link?.textContent).toContain("Also known as Mara");
+    await act(() => link!.click());
+    expect(onOpenJournal).toHaveBeenCalledExactlyOnceWith(actor.id);
   } finally {
     await act(() => root.unmount());
     container.remove();

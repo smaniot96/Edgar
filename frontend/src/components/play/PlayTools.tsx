@@ -158,6 +158,7 @@ export function PlayToolPanel({
           ) : (
             <SessionMapPanel
               sessionId={sessionId}
+              actors={journal.data?.entries.filter((entry) => entry.category === "person")}
               map={map}
               loading={mapLoading}
               error={mapError}

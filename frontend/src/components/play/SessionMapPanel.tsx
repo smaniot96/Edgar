@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { apiBase, errorMessage } from "../../api/client";
 import type { SessionMapRead } from "../../api/types";
+import type { JournalEntry } from "../journal/types";
 import { Button } from "../ui/Button";
 
 type SavedView = { sceneId: string | null; zoom: number; panLeft: number; panTop: number; scrollTop: number };
@@ -50,6 +51,7 @@ type SessionMapPanelProps = {
   onRefresh: () => void;
   onOpenJournal: (entryId: string) => void;
   onPrepareTravel: (place: string) => void;
+  actors?: JournalEntry[];
 };
 
 export function SessionMapPanel(props: SessionMapPanelProps) {
@@ -65,6 +67,7 @@ function SessionMapPanelContent({
   onRefresh,
   onOpenJournal,
   onPrepareTravel,
+  actors = [],
 }: SessionMapPanelProps) {
   const mapPaneRef = useRef<HTMLDivElement | null>(null);
   const mapFigureRef = useRef<HTMLElement | null>(null);
@@ -222,6 +225,28 @@ function SessionMapPanelContent({
             </ul>
           ) : <p className="mt-2 text-sm text-ink-muted">No routes have been recorded for this session yet.</p>}
         </section>
+
+        {actors.length ? (
+          <section className="mt-5" aria-labelledby="known-people-heading">
+            <h3 id="known-people-heading" className="font-serif text-lg font-semibold text-ink">Known people</h3>
+            <ul className="mt-2 space-y-2">
+              {actors.map((actor) => (
+                <li key={actor.actor_id ?? actor.id}>
+                  <button
+                    type="button"
+                    className="min-h-11 w-full rounded-control border border-line bg-surface px-3 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+                    onClick={() => onOpenJournal(actor.id)}
+                  >
+                    <span className="block break-words font-medium">NPC · {actor.title}</span>
+                    {actor.actor_aliases?.length ? (
+                      <span className="block text-xs text-ink-muted">Also known as {actor.actor_aliases.join(", ")}</span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         {map?.artwork.length ? (
           <section className="mt-6" aria-labelledby="session-artwork-heading">

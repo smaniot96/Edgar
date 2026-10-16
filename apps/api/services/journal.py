@@ -15,7 +15,12 @@ from db.postgres.models import EventLog
 from edgar_core.story import StoryFact, player_story_effect, story_target_id
 
 from ..schemas.journal import JournalEntry, JournalOrigin, JournalRead, JournalStatusChange
-from .journal_identity import journal_entry_id
+from .journal_identity import (
+    actor_entry_id,
+    actor_identity_id,
+    earned_actor_label,
+    journal_entry_id,
+)
 
 _CATEGORY = {
     "discover": "clue",
@@ -91,11 +96,24 @@ def _safe_status(fact: StoryFact) -> str | None:
     return fact.status if fact.status in _ALLOWED_STATUS else None
 
 
-def _group_key(fact: StoryFact, category: str) -> tuple[str, str]:
+def _group_key(fact: StoryFact, category: str, session_id: int) -> tuple[str, str]:
+    # Actor references retain one session identity across source/manifest revisions. Their
+    # individual facts still pass source validation above before they enter this projection.
+    if category == "person" and fact.target.kind == "entity":
+        return category, actor_identity_id(session_id, fact.target)
     # Each committed environment change is its own earned event. Other mutable records share
     # one canonical player-facing entry whose history retains its status transitions.
     identity = fact.effect_id if fact.kind == "environment" else fact.fact_id
     return category, identity
+
+
+def stable_title_context(
+    records: list[tuple[StoryFact, dict[str, Any], int | None]],
+    event_order: dict[int, int],
+) -> str:
+    first_event = next((record[2] for record in records if record[2] is not None), None)
+    turn = event_order.get(first_event) if first_event is not None else None
+    return f"Person encountered on turn {turn}" if turn is not None else "Encountered person"
 
 
 def project_player_journal(
@@ -164,7 +182,11 @@ def project_player_journal(
             (
                 fact,
                 {
-                    "name": public_fact["name"],
+                    "name": (
+                        earned_actor_label(fact.display_name, public_fact["text"])
+                        if fact.kind in {"encounter", "relationship"}
+                        else public_fact["name"]
+                    ),
                     "text": public_fact["text"],
                     "origins": public_fact["origins"],
                     "quantity": public_fact.get("quantity"),
@@ -193,10 +215,12 @@ def project_player_journal(
     # For example, an initial visit followed by a move must orient to the destination.
     fact_order = {fact.effect_id: index for index, (fact, _, _, _) in enumerate(safe_records)}
     for fact, public_fact, category, event_id in safe_records:
-        grouped[_group_key(fact, category)].append((fact, public_fact, event_id))
+        grouped[_group_key(fact, category, session_id)].append((fact, public_fact, event_id))
 
     # Resolve promise actors only to a person already present in this same earned projection.
-    known_people: dict[str, tuple[str, str]] = {}
+    # These event links power adjacent, immutable narration references in the player UI.
+    known_people: dict[str, tuple[str, str, str]] = {}
+    actor_reference_events: dict[str, set[int]] = defaultdict(set)
     known_object_clues: dict[str, str] = {}
     for (category, stable_id), records in grouped.items():
         first_fact = records[0][0]
@@ -208,9 +232,49 @@ def project_player_journal(
                 )
         if category != "person":
             continue
-        names = [record[1]["name"] for record in records if record[1]["name"]]
-        if names:
-            known_people[stable_id] = (journal_entry_id(session_id, category, stable_id), names[-1])
+        identity = actor_entry_id(session_id, first_fact.target)
+        context = stable_title_context(records, event_order)
+        latest_named = next(
+            ((record[0], record[1]["name"]) for record in reversed(records) if record[1]["name"]),
+            None,
+        )
+        if latest_named is None:
+            safe_title = context
+        else:
+            named_fact, earned_name = latest_named
+            safe_title = earned_name
+            if earned_name.casefold() != named_fact.display_name.casefold():
+                safe_title = f"{earned_name} · {context.casefold()}"
+        known_people[stable_id] = (identity, safe_title, context)
+        actor_reference_events[stable_id].update(
+            event_id for _, _, event_id in records if event_id is not None
+        )
+
+    for (category, _), records in grouped.items():
+        if category != "promise":
+            continue
+        promise_actor = records[0][0].promise_actor
+        if promise_actor is None:
+            continue
+        actor_key = actor_identity_id(session_id, promise_actor)
+        actor_reference_events[actor_key].update(
+            event_id for _, _, event_id in records if event_id is not None
+        )
+
+    duplicate_labels: dict[str, list[str]] = defaultdict(list)
+    for actor_key, (_, label, _) in known_people.items():
+        duplicate_labels[label.casefold()].append(actor_key)
+    for actor_keys in duplicate_labels.values():
+        if len(actor_keys) < 2:
+            continue
+        contexts = [known_people[actor_key][2].casefold() for actor_key in actor_keys]
+        repeated_context = len(set(contexts)) != len(contexts)
+        for index, actor_key in enumerate(actor_keys, start=1):
+            identity, label, context = known_people[actor_key]
+            suffix = context.casefold()
+            if repeated_context:
+                suffix = f"{suffix} · person {index}"
+            known_people[actor_key] = (identity, f"{label} · {suffix}", context)
 
     built: list[tuple[int, JournalEntry]] = []
     for (category, stable_id), records in grouped.items():
@@ -218,7 +282,11 @@ def project_player_journal(
         first_fact, first_public, first_event_id = records[0]
         latest_fact, _, _ = records[-1]
         safe_names = [record[1]["name"] for record in records if record[1]["name"]]
-        title = safe_names[-1] if safe_names else _TITLE[category]
+        title = (
+            known_people[stable_id][1]
+            if category == "person"
+            else safe_names[-1] if safe_names else _TITLE[category]
+        )
         origin_event_id = first_event_id
         if first_fact.origin_turn_id:
             origin_event_id = turn_events.get(first_fact.origin_turn_id, origin_event_id)
@@ -227,11 +295,16 @@ def project_player_journal(
         origin_place = origin_context[0] if origin_context else None
         origin_place_entry_id = origin_context[1] if origin_context else None
         actor: str | None = None
+        actor_ref_id: str | None = None
         related_entry_id: str | None = None
+        related_actor_id: str | None = None
         if category == "promise" and first_fact.promise_actor is not None:
-            actor_record = known_people.get(story_target_id(first_fact.promise_actor))
+            actor_key = actor_identity_id(session_id, first_fact.promise_actor)
+            actor_record = known_people.get(actor_key)
             if actor_record is not None:
-                related_entry_id, actor = actor_record
+                related_entry_id, actor, _ = actor_record
+                related_actor_id = related_entry_id
+                actor_ref_id = related_entry_id
 
         related_entry_ids: list[str] = []
         if category == "consequence" and first_fact.target.kind == "object":
@@ -295,8 +368,24 @@ def project_player_journal(
         clock_maximum = clock_disclosure.maximum if category == "clock" and clock_disclosure else None
         quantity = latest_fact.quantity if clock_is_current else None
         citation = _citation(first_public)
+        identity_id = (
+            actor_entry_id(session_id, first_fact.target)
+            if category == "person" and first_fact.target.kind == "entity"
+            else journal_entry_id(session_id, category, stable_id)
+        )
+        actor_aliases = []
+        if category == "person":
+            actor_aliases = list({name.casefold(): name for name in safe_names}.values())
         entry = JournalEntry(
-            id=journal_entry_id(session_id, category, stable_id),
+            id=identity_id,
+            actor_id=identity_id if category == "person" else None,
+            actor_aliases=actor_aliases,
+            actor_reference_event_ids=(
+                sorted(actor_reference_events.get(stable_id, set()))
+                if category == "person"
+                else []
+            ),
+            related_actor_id=related_actor_id,
             category=category,  # type: ignore[arg-type]
             title=title,
             # Preserve the first exact earned text as the immutable original. Status changes
@@ -312,6 +401,7 @@ def project_player_journal(
                 history_event_id=origin_event_id,
                 place=origin_place,
                 actor=actor,
+                actor_id=actor_ref_id,
                 citation=citation,
             ),
             history=history,
@@ -372,6 +462,7 @@ def filter_player_journal(
                         entry.origin.place,
                         entry.origin.actor,
                         entry.origin.citation,
+                        *entry.actor_aliases,
                     ),
                 )
             ).casefold()

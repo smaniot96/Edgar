@@ -138,6 +138,62 @@ describe("orderCombatants", () => {
       ["Rat", 4, 10, false, false],
     ]);
   });
+
+  it("matches duplicate labels by stable actor id and makes every combatant distinguishable", () => {
+    const rows = orderCombatants({
+      round: 1,
+      ended: false,
+      outcome: null,
+      current_turn: "Mara",
+      current_turn_id: "actor-b",
+      initiative: [
+        { id: "actor-a", name: "Mara", init: 17 },
+        { id: "actor-b", name: "Mara", init: 12 },
+        { id: "missing-actor", name: "Mara", init: 8 },
+      ],
+      combatants: [
+        { id: "actor-b", name: "Mara", display_name: "Mara", is_player: false, hp_current: 7, hp_max: 7, alive: true },
+        { id: "actor-a", name: "Mara", display_name: "Mara", is_player: false, hp_current: 5, hp_max: 5, alive: true },
+      ],
+    });
+    expect(rows.map((row) => [row.key, row.hp, row.actorContext, row.isCurrent])).toEqual([
+      ["actor-a", 5, "combatant 1", false],
+      ["actor-b", 7, "combatant 2", true],
+      ["missing-actor", null, "combatant 3", false],
+    ]);
+
+    const staleTurn = orderCombatants({
+      round: 1, ended: false, outcome: null, current_turn: "Mara", current_turn_id: "missing-turn",
+      initiative: [{ id: "actor-a", name: "Mara" }, { id: "actor-b", name: "Mara" }],
+      combatants: [
+        { id: "actor-a", name: "Mara", is_player: false, hp_current: 5, hp_max: 5, alive: true },
+        { id: "actor-b", name: "Mara", is_player: false, hp_current: 7, hp_max: 7, alive: true },
+      ],
+    });
+    expect(staleTurn.some((row) => row.isCurrent)).toBe(false);
+  });
+
+  it("uses the player flag when legacy initiative has duplicate player and NPC names", () => {
+    const rows = orderCombatants({
+      round: 1,
+      ended: false,
+      outcome: null,
+      current_turn_index: 0,
+      initiative: [
+        { name: "Mara", is_player: true, init: 17, hp: 9 },
+        { name: "Mara", is_player: false, init: 12, hp: 4 },
+      ],
+      combatants: [
+        { name: "Mara", is_player: false, hp_current: 4, hp_max: 4, alive: true },
+        { name: "Mara", is_player: true, hp_current: 9, hp_max: 9, alive: true },
+      ],
+    });
+    expect(rows.map((row) => [row.isPlayer, row.hp, row.isCurrent])).toEqual([
+      [true, 9, true],
+      [false, 4, false],
+    ]);
+    expect(rows.map((row) => row.actorContext)).toEqual([null, "NPC"]);
+  });
 });
 
 describe("combat disposition in the HUD", () => {

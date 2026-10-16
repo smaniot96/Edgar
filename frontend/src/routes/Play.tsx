@@ -369,6 +369,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                 </div>
               ) : (
                 <MessageList
+                  actorEntries={journal.data?.entries.filter((entry) => entry.category === "person")}
+                  onOpenActorEntry={openJournalEntry}
                   messages={lines}
                   pending={
                     pending ??
