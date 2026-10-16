@@ -29,8 +29,7 @@ from edgar_core.sources import (
     public_citations,
 )
 
-from . import adventure_manifests
-from . import campaign_sources
+from . import adventure_manifests, campaign_sources
 from .campaign_sources import source_error
 from .character_assignments import character_play_state
 from .opening_journal import opening_journal_effects
@@ -98,6 +97,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         campaign,
         character_id=session.active_character_id,
         require_character=True,
+        session_id=session.id,
         observed_sources=sources,
     )
     require_play_readiness(readiness)

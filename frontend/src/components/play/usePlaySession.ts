@@ -115,21 +115,23 @@ export function usePlaySession(sessionId: number) {
           listSessionMessages(sessionId, ctrl.signal),
         ]);
         const title = await loadTitle(campaign, ctrl.signal);
-        if (ctrl.signal.aborted || revision !== readinessRevision.current) return;
+        if (ctrl.signal.aborted) return;
         rememberLastSession(sessionId);
-        setState({
+        setState((current) => ({
           loading: false,
           error: null,
           title,
           campaignId: session.campaign_id,
           campaign,
-          readiness: session.readiness ?? campaign?.readiness ?? READINESS_UNKNOWN,
+          readiness: revision === readinessRevision.current
+            ? session.readiness ?? campaign?.readiness ?? READINESS_UNKNOWN
+            : current.readiness ?? READINESS_UNKNOWN,
           campaignComplete: campaign?.status === "ended",
           character,
           sceneId: session.current_scene_id,
           combat,
           boot: { history, campaignEnded: campaign?.status === "ended" },
-        });
+        }));
       } catch (e) {
         if (ctrl.signal.aborted) return;
         setState({ ...initial, loading: false, error: e });

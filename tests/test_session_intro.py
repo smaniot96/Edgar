@@ -154,6 +154,7 @@ def _intro(
     monkeypatch, *, homebrew=False, statuses=("ready", "ready"), stored=False, edition="2014"
 ):
     campaign = SimpleNamespace(
+        id=2,
         status="active",
         source_mode="homebrew" if homebrew else "module",
         adventure_collections=[PRIMARY, SECONDARY],
@@ -169,6 +170,8 @@ def _intro(
         ),
         add=Mock(),
         commit=AsyncMock(),
+        scalar=AsyncMock(return_value=2),
+        scalars=AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
         campaign_sources,
@@ -226,6 +229,7 @@ async def test_primary_binding_explicitly_selects_the_opening(reviewed_sources, 
         SimpleNamespace(scalar_one_or_none=lambda: None),
         SimpleNamespace(
             scalar_one_or_none=lambda: SimpleNamespace(
+                    id=2,
                     status="active",
                 source_mode="module",
                 adventure_collections=[SECONDARY, PRIMARY],
@@ -408,3 +412,17 @@ async def test_endpoint_persists_reviewed_scene_with_narration_and_keeps_saved_i
     assert (await api_client.get(f"/api/sessions/{sid}")).json()[
         "current_scene_id"
     ] == "ferry_steps"
+
+
+async def test_saved_version_conflict_blocks_intro_before_model_or_writes(
+    reviewed_sources, monkeypatch
+):
+    db, session, model = _intro(monkeypatch)
+    db.scalars.return_value = [SimpleNamespace(payload={"collection": "unavailable-version"})]
+    with pytest.raises(HTTPException) as rejected:
+        await session_intro.generate_session_intro(db, session)
+    assert rejected.value.detail["code"] == "saved_version_conflict"
+    model.ainvoke.assert_not_awaited()
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+    assert session.current_scene_id is None
