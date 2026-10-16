@@ -21,6 +21,7 @@ export function useModalFocus(
   modal: boolean,
   onClose: () => void,
   containerRef: RefObject<HTMLElement | null>,
+  findOpener?: () => HTMLElement | null,
 ) {
   const openerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -29,7 +30,9 @@ export function useModalFocus(
       return;
     }
     // Expanding a side panel into a modal must preserve its original toolbar opener.
-    if (!openerRef.current) openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!openerRef.current?.isConnected) {
+      openerRef.current = findOpener?.() ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    }
     const previous = openerRef.current;
     const container = containerRef.current;
     let focusFrame: number | null = null;
@@ -70,7 +73,8 @@ export function useModalFocus(
       if (focusFrame !== null) cancelAnimationFrame(focusFrame);
       // A narration link may have deliberately moved focus outside the closing tool.
       const current = document.activeElement;
-      if (previous?.isConnected && (!current || current === document.body || container?.contains(current))) previous.focus();
+      const target = previous?.isConnected ? previous : findOpener?.();
+      if (target?.isConnected && (!current || current === document.body || container?.contains(current))) target.focus();
     };
-  }, [open, modal, onClose, containerRef]);
+  }, [open, modal, onClose, containerRef, findOpener]);
 }
