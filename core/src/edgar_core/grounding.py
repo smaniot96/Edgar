@@ -120,13 +120,20 @@ class BookReferenceRequest(GroundingRecord):
     references: list[str] = Field(min_length=1, max_length=100)
 
 
+class BookStudyEvidence(BookTextEvidence):
+    """An excerpt carries its own exact book identity even across equal page numbers."""
+
+    book_binding: BookBinding
+    index_version: Digest
+
+
 class BookStudyReceipt(GroundingRecord):
     """Versioned, exact excerpts supplied to the private P02 study stage."""
 
     book_snapshot_sha256: Digest
     rules_edition: RulesEdition
     requested_references: list[BookReferenceRequest]
-    evidence: list[BookTextEvidence] = Field(min_length=1, max_length=3000)
+    evidence: list[BookStudyEvidence] = Field(min_length=1, max_length=3000)
     missing_references: list[str] = Field(default_factory=list, max_length=300)
 
     @property
@@ -409,7 +416,7 @@ def select_book_evidence(
     def norm(value: str) -> str:
         return " ".join(re.sub(r"[^a-z0-9]+", " ", value.casefold()).split())
 
-    selected: dict[str, BookTextEvidence] = {}
+    selected: dict[tuple[str, str], BookStudyEvidence] = {}
     missing: list[str] = []
     for request in requests:
         book = snapshot.for_role(request.role)
@@ -422,10 +429,13 @@ def select_book_evidence(
             key = norm(reference)
             matches = by_section.get(key, [])
             label = f"{request.role}:{reference}"
-            if len(matches) != 1:
+            if not matches:
                 missing.append(label)
                 continue
-            selected[matches[0].text_sha256] = matches[0]
+            for match in matches:
+                selected[(book.binding.role, match.text_sha256)] = BookStudyEvidence(
+                    **match.model_dump(), book_binding=book.binding, index_version=book.index_version
+                )
     return BookStudyReceipt(
         book_snapshot_sha256=snapshot.snapshot_sha256,
         rules_edition=snapshot.rules_edition,
