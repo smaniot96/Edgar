@@ -61,6 +61,7 @@ from agent.supported_rules import (
     engine_applied_for_state,
 )
 from db.vector.retrieval import rule_policy
+from edgar_core.log_safety import error_summary
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
 
 log = logging.getLogger(__name__)
@@ -233,7 +234,7 @@ async def _invoke_with_retry(messages: list[dict]) -> AdjudicationResult | None:
         except Exception as e:
             log.warning(
                 "adjudicator_structured_output_failed",
-                extra={"attempt": attempt, "error": str(e)[:200]},
+                extra={"attempt": attempt, "error": error_summary(e)},
             )
     return None
 

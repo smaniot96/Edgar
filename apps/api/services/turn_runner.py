@@ -52,6 +52,7 @@ from agent.supported_rules import (
     engine_applied_for_state,
 )
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
+from edgar_core.log_safety import error_summary
 from edgar_core.model_profiles import (
     current_model_profiles,
     effective_profile,
@@ -686,8 +687,8 @@ async def _stream_session_turn(
         llm = make_narrator_model()
         try:
             response = await llm.ainvoke(prompt)
-        except Exception:
-            log.exception("turn_narrator_failed", session_id=session_id)
+        except Exception as e:
+            log.error("turn_narrator_failed", session_id=session_id, error=error_summary(e))
             yield sse_event("error", error_body("llm_unavailable"))
             return
         narration = apply_narration_boundary(
@@ -707,8 +708,8 @@ async def _stream_session_turn(
                     continue
                 narration_parts.append(tok)
                 yield sse_event("token", {"text": tok})
-        except Exception:
-            log.exception("turn_narrator_failed", session_id=session_id)
+        except Exception as e:
+            log.error("turn_narrator_failed", session_id=session_id, error=error_summary(e))
             yield sse_event("error", error_body("llm_unavailable"))
             return
         narration = "".join(narration_parts)
