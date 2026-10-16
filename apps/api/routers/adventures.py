@@ -155,6 +155,9 @@ def _extraction_path(
     from ..services.campaign_sources import validate_binding
 
     validate_binding(slug)
+    from ..services.preparation_privacy import require_public_source
+
+    require_public_source(slug)
     from ..services.adventures_meta import attempt_dir
     from ..services.campaign_sources import active_metadata
 
@@ -761,6 +764,9 @@ def update_adventure(slug: str, body: AdventureUpdate):
             raise HTTPException(
                 status_code=409, detail="Wait for source processing before editing its metadata."
             )
+        from ..services.preparation_privacy import require_mutable_source
+
+        require_mutable_source(meta)
         meta.update(body.model_dump(exclude_unset=True))
         _save_adventure_metadata(slug, meta)
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
@@ -782,6 +788,9 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
     if slug not in collection_slugs and not _metadata_path(slug).is_file():
         raise HTTPException(status_code=404, detail="Adventure not found")
 
+    from ..services.preparation_privacy import require_mutable_source
+
+    require_mutable_source(load_adventure_metadata(slug))
     if slug in collection_slugs:
         client = get_qdrant_client()
         try:
