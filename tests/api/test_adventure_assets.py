@@ -557,6 +557,167 @@ def test_signed_visual_release_is_digest_and_full_scope_bound(tmp_path, monkeypa
         )
 
 
+def test_asset_coverage_revalidates_inventory_requiredness_signatures_and_bytes(tmp_path, monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from PIL import Image
+
+    from edgar_core.assets import (
+        AssetCoverageReceipt,
+        AssetPlanItem,
+        IndependentVisualReviewDecision,
+    )
+    from tests.test_prepared_campaign import _approved, _fixture as prepared_fixture
+
+    monkeypatch.setattr(assets, "ASSET_ROOT", tmp_path)
+    raw_manifest, prepared = prepared_fixture()
+    manifest = _approved(raw_manifest, prepared)
+    base_plan = assets.plan_assets(manifest, [], [])
+    visual_item = AssetPlanItem(
+        asset_id="source_map_one",
+        kind="source_map",
+        required=True,
+        scene_ids=["dock"],
+    )
+    plan = base_plan.model_copy(update={"items": [*base_plan.items, visual_item]})
+
+    schematic = assets._record_artifact(
+        collection="synthetic",
+        manifest=manifest,
+        prepared=prepared,
+        item_id=base_plan.items[0].asset_id,
+        kind="schematic_map",
+        content=assets._render_act_map(manifest, "act_one"),
+        media_type="image/svg+xml",
+        scene_ids=["dock"],
+        passage_ids=[],
+        entity_id=None,
+    )
+    image_buffer = io.BytesIO()
+    Image.new("RGB", (3, 2), color=(21, 43, 65)).save(image_buffer, format="PNG")
+    visual = assets._record_artifact(
+        collection="synthetic",
+        manifest=manifest,
+        prepared=prepared,
+        item_id=visual_item.asset_id,
+        kind="source_map",
+        content=image_buffer.getvalue(),
+        media_type="image/png",
+        scene_ids=visual_item.scene_ids,
+        passage_ids=[],
+        entity_id=None,
+    )
+    coverage = [
+        AssetCoverage(
+            asset_id=schematic.plan_asset_id,
+            kind="schematic_map",
+            required=True,
+            status="ready",
+            artifact_sha256=schematic.sha256,
+        ),
+        AssetCoverage(
+            asset_id=visual_item.asset_id,
+            kind="source_map",
+            required=True,
+            status="ready",
+            artifact_sha256=visual.sha256,
+            player_review_status="pending",
+        ),
+    ]
+    acts, scenes = assets._scope_coverage(plan, coverage)
+    receipt = AssetCoverageReceipt(
+        manifest_sha256=manifest.reviewed_sha256,
+        prepared_sha256=plan.prepared_sha256,
+        coverage=coverage,
+        act_coverage=acts,
+        scene_coverage=scenes,
+    )
+    assert assets.validate_asset_coverage("synthetic", manifest, plan, receipt) is False
+
+    forged_approval = receipt.model_copy(
+        update={
+            "coverage": [
+                coverage[0],
+                coverage[1].model_copy(update={"player_review_status": "approved"}),
+            ]
+        }
+    )
+    assert forged_approval.required_ready is True
+    assert assets.validate_asset_coverage("synthetic", manifest, plan, forged_approval) is False
+
+    missing_item = receipt.model_copy(update={"coverage": coverage[:1]})
+    assert assets.validate_asset_coverage("synthetic", manifest, plan, missing_item) is False
+
+    changed_required = receipt.model_copy(
+        update={
+            "coverage": [
+                coverage[0],
+                coverage[1].model_copy(update={"required": False}),
+            ]
+        }
+    )
+    assert assets.validate_asset_coverage("synthetic", manifest, plan, changed_required) is False
+
+    private_key = Ed25519PrivateKey.generate()
+    private_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    monkeypatch.setenv("EDGAR_VISUAL_REVIEW_PRIVATE_KEY", base64.b64encode(private_bytes).decode())
+    monkeypatch.setenv("EDGAR_VISUAL_REVIEW_PUBLIC_KEY", base64.b64encode(public_bytes).decode())
+    candidate = assets.enumerate_private_visual_candidates(
+        collection="synthetic",
+        source_sha256=manifest.source_sha256,
+        manifest_sha256=manifest.reviewed_sha256,
+    )[0]
+    signed_review = assets.sign_and_persist_visual_review(
+        collection="synthetic",
+        source_sha256=manifest.source_sha256,
+        manifest_sha256=manifest.reviewed_sha256,
+        decision=IndependentVisualReviewDecision(
+            candidate_id=candidate.candidate_id,
+            artifact_sha256=candidate.artifact_sha256,
+            decision="approved",
+            reasons=["The exact retained visual was reviewed."],
+        ),
+    )
+    assert signed_review is not None
+    accepted = assets.apply_visual_review_to_coverage(
+        receipt=receipt,
+        collection="synthetic",
+        source_sha256=manifest.source_sha256,
+        review_artifact=signed_review,
+    )
+    assert assets.validate_asset_coverage("synthetic", manifest, plan, accepted) is True
+
+    catalog_path = assets._catalog_path(
+        "synthetic", manifest.source_sha256, manifest.reviewed_sha256
+    )
+    original_catalog = catalog_path.read_bytes()
+    catalog = assets._read_catalog(catalog_path)
+    bad_signature = signed_review.model_copy(
+        update={"signature": "A" * len(signed_review.signature)}
+    )
+    catalog.entries[visual.artifact_id] = visual.model_copy(
+        update={"visual_review": bad_signature}
+    )
+    assets._atomic_write(catalog_path, catalog.model_dump_json().encode())
+    assert assets.validate_asset_coverage("synthetic", manifest, plan, accepted) is False
+
+    assets._atomic_write(catalog_path, original_catalog)
+    image_buffer = io.BytesIO()
+    Image.new("RGB", (3, 2), color=(65, 43, 21)).save(image_buffer, format="PNG")
+    (assets._version_dir("synthetic", manifest.source_sha256, manifest.reviewed_sha256) / visual.relative_file).write_bytes(
+        image_buffer.getvalue()
+    )
+    assert assets.validate_asset_coverage("synthetic", manifest, plan, accepted) is False
+
+
 def test_raster_sanitization_removes_exif_and_rejects_invalid_bytes():
     from PIL import Image
 

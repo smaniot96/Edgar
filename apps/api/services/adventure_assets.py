@@ -1447,6 +1447,120 @@ async def prepare_assets(
             _ASSET_ROOT_OVERRIDE.reset(root_token)
 
 
+def validate_asset_coverage(
+    collection: str,
+    manifest: AdventureManifest | dict,
+    plan: AssetPlan | dict,
+    receipt: AssetCoverageReceipt | dict,
+) -> bool:
+    """Revalidate a claimed-ready receipt against today's plan, topology and retained bytes.
+
+    This is the trust boundary for any caller that consumes ``required_ready``. Receipt flags
+    alone are not evidence: every ready item must resolve to exactly one matching retained
+    record, whose bytes are rehashed and whose visual review signature is rechecked.
+    """
+    try:
+        canonical = require_published(manifest)
+        candidate = AssetPlan.model_validate(plan)
+        coverage_receipt = AssetCoverageReceipt.model_validate(receipt)
+        if (
+            not canonical.reviewed_sha256
+            or canonical.prepared is None
+            or not candidate.valid
+            or candidate.source_mode != canonical.prepared.source_mode
+            or candidate.manifest_sha256 != canonical.reviewed_sha256
+            or candidate.prepared_sha256 != prepared_digest(canonical.prepared)
+            or coverage_receipt.manifest_sha256 != canonical.reviewed_sha256
+            or coverage_receipt.prepared_sha256 != candidate.prepared_sha256
+            or coverage_receipt.findings
+            or not _plan_scope_inventory_matches(canonical, candidate)
+        ):
+            return False
+
+        plan_ids = [item.asset_id for item in candidate.items]
+        coverage_ids = [item.asset_id for item in coverage_receipt.coverage]
+        if (
+            len(set(plan_ids)) != len(plan_ids)
+            or len(coverage_ids) != len(set(coverage_ids))
+            or set(plan_ids) != set(coverage_ids)
+        ):
+            return False
+        plan_by_id = {item.asset_id: item for item in candidate.items}
+        catalog = _read_catalog(
+            _catalog_path(collection, canonical.source_sha256, canonical.reviewed_sha256)
+        )
+        for item_coverage in coverage_receipt.coverage:
+            item = plan_by_id[item_coverage.asset_id]
+            if (
+                item_coverage.kind != item.kind
+                or item_coverage.required != item.required
+                or len(set(item.scene_ids)) != len(item.scene_ids)
+                or len(set(item.passage_ids)) != len(item.passage_ids)
+            ):
+                return False
+            is_visual = item.kind in {
+                "source_map", "generated_illustration", "original_creature_art"
+            }
+            if not is_visual and item_coverage.player_review_status != "not_required":
+                return False
+            if item_coverage.status != "ready":
+                if item.required:
+                    return False
+                if item_coverage.artifact_sha256 is not None:
+                    return False
+                continue
+            if item_coverage.artifact_sha256 is None:
+                return False
+
+            matches = [
+                record
+                for record in catalog.entries.values()
+                if record.plan_asset_id == item.asset_id
+                and record.kind == item.kind
+                and record.sha256 == item_coverage.artifact_sha256
+                and record.collection == collection
+                and record.source_sha256 == canonical.source_sha256
+                and record.extraction_sha256 == canonical.extraction_sha256
+                and record.manifest_sha256 == canonical.reviewed_sha256
+                and record.prepared_sha256 == candidate.prepared_sha256
+                and record.scene_ids == item.scene_ids
+                and record.passage_ids == item.passage_ids
+                and record.entity_id == item.entity_id
+            ]
+            if len(matches) != 1:
+                return False
+            record = matches[0]
+            expected_media_type = (
+                "image/svg+xml"
+                if item.kind == "schematic_map"
+                else "text/plain; charset=utf-8"
+                if item.kind == "handout"
+                else "image/png"
+            )
+            if record.media_type != expected_media_type:
+                return False
+            _read_artifact(record)
+            if is_visual:
+                if item_coverage.player_review_status == "approved":
+                    if not _valid_visual_review(record):
+                        return False
+                elif item.required or item_coverage.player_review_status == "not_required":
+                    return False
+
+        expected_acts, expected_scenes = _scope_coverage(candidate, coverage_receipt.coverage)
+        if (
+            [entry.model_dump(mode="json") for entry in coverage_receipt.act_coverage]
+            != [entry.model_dump(mode="json") for entry in expected_acts]
+            or [entry.model_dump(mode="json") for entry in coverage_receipt.scene_coverage]
+            != [entry.model_dump(mode="json") for entry in expected_scenes]
+            or not coverage_receipt.required_ready
+        ):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def get_asset_bytes(
     *, collection: str, source_sha256: str, manifest_sha256: str, asset_id: str
 ) -> tuple[AssetArtifactRecord, bytes] | None:
@@ -1626,6 +1740,7 @@ __all__ = [
     "apply_rejected_visual_review_to_coverage", "apply_visual_review_to_coverage",
     "enumerate_private_visual_candidates",
     "get_asset_bytes", "plan_assets", "prepare_assets", "release_player_visual",
-    "sign_and_persist_visual_review", "get_authorized_player_asset_bytes",
+    "sign_and_persist_visual_review", "validate_asset_coverage",
+    "get_authorized_player_asset_bytes",
     "image_usage",
 ]
