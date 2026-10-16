@@ -584,6 +584,18 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
     regeneration: Regeneration | None = None
     for entry_section, entry_name, body in entries:
         lowered = entry_name.lower()
+        # Section ownership comes before interpreting the wording. A save or Recharge clause in a
+        # legendary, lair, reaction, bonus or other action is not an ordinary monster action.
+        if entry_section == "legendary":
+            legendary_entries.append((entry_name, body))
+            continue
+        if entry_section in ("lair", "reactions", "bonus"):
+            declared.append(f"{entry_name}: {entry_section} action not executed")
+            continue
+        if entry_section == "other":
+            declared.append(f"{entry_name}: action not executed")
+            continue
+
         recharge = _RECHARGE_NAME.search(entry_name)
         action_name = entry_name[: recharge.start()].strip() if recharge else entry_name
         recharge_on = int(recharge.group(1) or recharge.group(2)) if recharge else None
@@ -610,10 +622,6 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
             attacks.append(save_action)
         elif "recharge" in lowered:
             declared.append(f"{entry_name}: recharge ability not executed")
-        elif entry_section == "legendary":
-            legendary_entries.append((entry_name, body))
-        elif entry_section in ("lair", "reactions", "bonus"):
-            declared.append(f"{entry_name}: {entry_section} action not executed")
         elif lowered == "multiattack" and multiattack_body is None:
             multiattack_body = body
         elif lowered == "regeneration" and entry_section == "traits":
@@ -891,8 +899,8 @@ def narrator_note(combatant: Mapping[str, Any]) -> str:
     if stats.legendary:
         options = ", ".join(f"{o.name} (costs {o.cost})" for o in stats.legendary)
         parts.append(
-            f"{stats.legendary_actions} legendary actions after the hero's turn, regained at the "
-            f"start of its own: {options}"
+            f"{stats.legendary_actions} legendary actions, at most one option at the end of each "
+            f"other creature's turn, regained at the start of its own: {options}"
         )
     spent = set(combatant.get("recharge_spent") or ())
     for attack in stats.attacks:

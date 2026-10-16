@@ -391,24 +391,25 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="monster_legendary_actions",
-        title="Legendary actions of exact records, spent after the hero's turn",
+        title="Legendary actions of exact records, one at each other creature's turn end",
         scope=(
-            "An exact record that states 'can take N legendary actions' spends them at the end of the "
-            "hero's turn (MM, PDF p.12): one option at a time, each the most expensive option the budget "
-            "left can pay for (ties in the record's order), while the foe can make it from its band, can "
-            "act and the hero stands. The spent actions are saved on the foe and regained at the start "
-            "of its own turn; a row without them has its full budget. Two shapes are executed: an option "
+            "An exact record that states 'can take N legendary actions' spends at most one option at the "
+            "end of each other creature's turn (MM, PDF p.12), among the turns represented in the "
+            "encounter order: the most expensive option the budget left can pay for (ties in the record's "
+            "order), while the foe can make it from its band, can act and the hero stands. The spent "
+            "actions are saved on the foe and regained at the start of its own turn; a row without them "
+            "has its full budget. Two shapes are executed: an option "
             "that only names one of the creature's own plain attacks ('makes a tail attack'), rolled as "
             "that attack, and the dragon Wing Attack (Costs 2 Actions), a Dexterity save for bludgeoning "
             "damage and none on a success, made from the melee band (its 10 or 15 foot radius is not "
             "modelled). The Wing Attack's prone effect and its flight are not executed. Every other "
             "option (Detect, spells, movement, a condition, an attack named with 'or') stays declared, "
-            "never guessed. Legendary actions are not spent after another foe's turn."
+            "never guessed. The book's surprise clause is not modelled."
         ),
         implementation="agent.monster_stats:legendary_plan",
         test=(
             "tests/agent/test_monster_legendary.py::"
-            "test_after_the_hero_the_costliest_affordable_options_are_used_in_order"
+            "test_at_a_turn_boundary_only_one_costliest_affordable_option_is_used"
         ),
     ),
     Mechanic(

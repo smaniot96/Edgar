@@ -1,4 +1,4 @@
-"""EDG-043 (fourth slice): legendary actions of exact records, spent after the hero's turn.
+"""EDG-043 (fourth slice): exact-record legendary actions at another creature's turn boundary.
 
 Monster Manual, PDF p.12 ("Legendary Actions"): a legendary creature takes its legendary actions
 outside its turn, one option at a time and only at the end of another creature's turn, regains the
@@ -142,6 +142,21 @@ def test_lair_actions_stay_declared_with_the_reason() -> None:
     )
 
 
+@pytest.mark.parametrize("section", ["Legendary Actions", "Lair Actions", "Reactions"])
+def test_save_and_recharge_wording_outside_actions_does_not_become_a_monster_attack(
+    section: str,
+) -> None:
+    base = DRAKE_TEXT.split("Legendary Actions\n", 1)[0]
+    breath = (
+        "Breath (Recharge 5-6). The drake exhales fire in a 15-foot cone. Each creature in that "
+        "area must make a DC 15 Dexterity saving throw, taking 18 (4d8) fire damage on a failed "
+        "save, or half as much damage on a successful one."
+    )
+    stats = _stats(f"{base}{section}\n{breath}\n")
+    assert [attack.name for attack in stats.attacks] == ["Claw", "Tail"]
+    assert all(attack.name != "Breath" for attack in stats.attacks)
+
+
 def test_a_record_without_legendary_data_reads_as_none() -> None:
     raw = {k: v for k, v in _stats().to_dict().items() if not k.startswith("legendary")}
     stats = MonsterStats.from_dict(raw)
@@ -158,7 +173,7 @@ def test_the_costliest_affordable_option_comes_first() -> None:
 
 def test_the_narrator_is_told_the_legendary_options() -> None:
     note = narrator_note(_drake())
-    assert "3 legendary actions after the hero's turn" in note
+    assert "at most one option at the end of each other creature's turn" in note
     assert "Tail Attack (costs 1), Wing Attack (costs 2)" in note
 
 
@@ -166,26 +181,24 @@ def test_the_narrator_is_told_the_legendary_options() -> None:
 
 
 @pytest.mark.asyncio
-async def test_after_the_hero_the_costliest_affordable_options_are_used_in_order(
+async def test_at_a_turn_boundary_only_one_costliest_affordable_option_is_used(
     fake_llm_schema, fake_retrieval
 ) -> None:
-    """Dara's DEX save is +1: 8 + 1 = 9 fails DC 15, so the Wing Attack (2 actions) takes 3 + 4 = 7
-    bludgeoning damage. One action is left for the Tail Attack: 10 + 4 = 14 meets AC 14 and 1 + 1 = 2
-    damage, so 12 - 7 - 2 = 3 HP. The drake acts after the hero, so its own turn (a Claw, natural 1)
-    follows, and the spent actions are already regained.
+    """One option only: the Wing Attack costs two of three actions and deals 7 damage; the Tail
+    Attack waits for a distinct later creature's turn. The drake's own turn follows, regaining its
+    spent actions before a Claw (natural 1).
     """
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
-    out, dice = await _round(_drake(), [8, 3, 4, 10, 1, 1, 1])
+    out, dice = await _round(_drake(), [8, 3, 4, 1])
     summary = _summary(out)
     assert dice.faces == []
-    assert out["combat_state"]["combatants"][0]["hp_current"] == 3
+    assert out["combat_state"]["combatants"][0]["hp_current"] == 5
     assert (
         summary.index("Ember Drake uses a legendary action: Wing Attack (costs 2).")
         < summary.index("Dara fails the DEX save against Ember Drake's Wing Attack")
-        < summary.index("Ember Drake uses a legendary action: Tail Attack (costs 1).")
-        < summary.index("Ember Drake's Tail hits Dara for 2 bludgeoning damage")
         < summary.index("Ember Drake's Claw misses Dara")
     )
+    assert "Ember Drake uses a legendary action: Tail Attack" not in summary
     assert _entries(out, "Dara DEX save (Wing Attack)")[0]["rolls"] == [8]
     assert _entries(out, "Ember Drake Wing Attack damage")[0]["rolls"] == [3, 4]
     assert "legendary_spent" not in out["combat_state"]["combatants"][1]
@@ -195,22 +208,51 @@ async def test_after_the_hero_the_costliest_affordable_options_are_used_in_order
 async def test_spent_actions_are_saved_and_regained_at_the_start_of_the_foes_turn(
     fake_llm_schema, fake_retrieval
 ) -> None:
-    """The drake acts before the hero (init 20), so it holds its three spent actions between turns
-    (saved on the row) and regains them at the start of its next turn: round 2 spends them again."""
+    """The drake acts before the hero (init 20), so its one Wing action costs two and persists on
+    the row until it regains its budget at the start of its next turn."""
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     foe = _drake(init=20)
-    first, dice = await _round(foe, [1, 14, 3, 4, 1])
+    first, dice = await _round(foe, [1, 14, 3, 4])
     assert dice.faces == []
     saved = first["combat_state"]["combatants"][0]
-    assert (saved["name"], saved["legendary_spent"]) == ("Ember Drake", 3)
+    assert (saved["name"], saved["legendary_spent"]) == ("Ember Drake", 2)
     assert "succeeds on the DEX save against Ember Drake's Wing Attack" in _summary(first)
 
     follow = _next_round(first, "I wait and watch", WAIT, round_num=2)
-    dice = ScriptedDice([1, 14, 3, 4, 1])
+    dice = ScriptedDice([1, 14, 3, 4])
     with use_rng(dice):
         second = await combat_round_node(follow)
     assert dice.faces == []
-    assert second["combat_state"]["combatants"][0]["legendary_spent"] == 3
+    assert second["combat_state"]["combatants"][0]["legendary_spent"] == 2
+
+
+@pytest.mark.asyncio
+async def test_remaining_budget_is_used_at_a_distinct_creature_turn_boundary(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    guard_text = """Goblin Guard
+Medium humanoid, neutral
+Armor Class 12
+Hit Points 5 (1d8 + 1)
+Actions
+Shout. The goblin shouts a warning.
+"""
+    guard = _exact(guard_text, "Goblin Guard", hp=5)
+    drake = _drake()
+    # The guard has a turn between the hero and the drake. The Wing spends two actions at the
+    # hero's boundary; the remaining Tail action is available at the guard's later turn boundary.
+    dice = ScriptedDice([8, 3, 4, 10, 1, 1, 1])
+    with use_rng(dice):
+        out = await combat_round_node(_state("I wait and watch", [guard, drake], WAIT))
+    summary = _summary(out)
+    assert dice.faces == []
+    assert out["combat_state"]["combatants"][0]["hp_current"] == 3
+    assert (
+        summary.index("Ember Drake uses a legendary action: Wing Attack (costs 2).")
+        < summary.index("Goblin Guard has no supported attack and takes no action.")
+        < summary.index("Ember Drake uses a legendary action: Tail Attack (costs 1).")
+    )
 
 
 @pytest.mark.asyncio

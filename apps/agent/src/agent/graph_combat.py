@@ -1294,29 +1294,31 @@ async def combat_round_node(state: AgentState) -> dict:
             round_effects.append("opportunity_attack")
         return True
 
-    def legendary_actions(e: dict) -> None:
-        """The end of the hero's turn (MM, PDF p.12): the foe spends its legendary actions, one at a time.
-
-        Each pick is the most expensive option the budget left can pay for (`legendary_plan`) that its
-        band can make, until none can be paid, none can be made or the hero is down. A creature that
-        cannot act uses none.
-        """
+    def legendary_action(e: dict) -> None:
+        """Use at most one option at the end of this other creature's turn (MM, PDF p.12)."""
         stats = stats_of(e)
-        if stats is None or not stats.legendary or not can_act(e):
+        if hp <= 0 or stats is None or not stats.legendary or not can_act(e):
             return
         band = band_of(e)
-        while hp > 0:
-            left = stats.legendary_actions - int(e.get("legendary_spent") or 0)
-            option = next(
-                (o for o in legendary_plan(stats, left) if attacks_from_band([o.attack], band)), None
-            )
-            if option is None:
-                return
-            e["legendary_spent"] = int(e.get("legendary_spent") or 0) + option.cost
-            log_lines.append(
-                f"{e['name']} uses a legendary action: {option.name} (costs {option.cost})."
-            )
-            exact_attack(e, option.attack, band)
+        left = stats.legendary_actions - int(e.get("legendary_spent") or 0)
+        option = next(
+            (o for o in legendary_plan(stats, left) if attacks_from_band([o.attack], band)), None
+        )
+        if option is None:
+            return
+        e["legendary_spent"] = int(e.get("legendary_spent") or 0) + option.cost
+        log_lines.append(
+            f"{e['name']} uses a legendary action: {option.name} (costs {option.cost})."
+        )
+        exact_attack(e, option.attack, band)
+
+    def another_creature_turn_ended(actor: dict) -> None:
+        """Give every other able foe one legendary-action opportunity at this turn boundary."""
+        if fled or hp <= 0 or not is_standing(actor):
+            return
+        for e in enemies:
+            if e is not actor:
+                legendary_action(e)
 
     def enemy_turn(e: dict) -> None:
         start_turn(e)  # its reaction comes back at the start of its turn (PHB p.190)
@@ -1343,6 +1345,7 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Enemies ahead of the player in initiative ---
     for e in before:
         enemy_turn(e)
+        another_creature_turn_ended(e)
 
     # --- Player's action ---
     check_result: CheckResult | None = None
@@ -1755,14 +1758,14 @@ async def combat_round_node(state: AgentState) -> dict:
             dice_log.append(save.outcome.to_log(f"{hero} {save.ability} save ({save.kind})"))
             log_lines.append(save_line(save))
 
-    # --- Legendary actions: the end of the hero's turn, before the foes that act after it ---
+    # --- Legendary actions: one option per other creature's turn, including the hero's ---
     if not fled:
-        for e in enemies:
-            legendary_actions(e)
+        another_creature_turn_ended(player)
 
     # --- Enemies after the player ---
     for e in after:
         enemy_turn(e)
+        another_creature_turn_ended(e)
     # EDG-043: a timed spell condition ends after its last round (a mark, the caster's next turn).
     for foe_name, expired in expire_effects(combatants, int(combat_state.get("round", 1) or 1)):
         log_lines.append(f"{foe_name} is no longer {expired}.")
