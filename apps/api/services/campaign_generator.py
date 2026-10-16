@@ -22,6 +22,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from agent.llm import make_chat_model, message_text
+from edgar_core.model_profiles import ModelProfileSnapshot, model_profile_snapshot
 
 log = structlog.get_logger()
 
@@ -90,7 +91,7 @@ def _chapter_system(rules_edition: str = "2014") -> str:
 async def _generate_outline(
     title_hint: str, theme: str, size: str, n_chapters: int, rules_edition: str = "2014"
 ) -> CampaignOutline:
-    llm = make_chat_model(temperature=0.8)
+    llm = make_chat_model(profile="authoring.outline", temperature=0.8)
     structured = llm.with_structured_output(CampaignOutline, method="function_calling")
     asks = []
     if title_hint:
@@ -137,7 +138,7 @@ async def _expand_chapter(
         f"Chapter summary: {chapter.summary}\n{role}"
     )
     async with sem:
-        llm = make_chat_model(temperature=0.8)
+        llm = make_chat_model(profile="authoring.chapter", temperature=0.8)
         resp = await llm.ainvoke(
             [SystemMessage(content=_chapter_system(rules_edition)), HumanMessage(content=context)]
         )
@@ -150,6 +151,28 @@ async def _expand_chapter(
 
 
 async def generate_campaign(
+    title_hint: str,
+    theme: str,
+    size: str,
+    rules_edition: str = "2014",
+    *,
+    checkpoint: dict[str, Any] | None = None,
+    on_checkpoint: Callable[[dict[str, Any], str], None] | None = None,
+    profiles: ModelProfileSnapshot | None = None,
+) -> tuple[str, str, list[tuple[int, str]]]:
+    """Generate using one immutable profile snapshot across outline and chapter fanout."""
+    with model_profile_snapshot(profiles):
+        return await _generate_campaign(
+            title_hint,
+            theme,
+            size,
+            rules_edition,
+            checkpoint=checkpoint,
+            on_checkpoint=on_checkpoint,
+        )
+
+
+async def _generate_campaign(
     title_hint: str,
     theme: str,
     size: str,

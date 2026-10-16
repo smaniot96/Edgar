@@ -142,7 +142,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         )
     context_parts.append("Write the opening narration now.")
 
-    llm = make_chat_model(temperature=_INTRO_TEMPERATURE)
+    llm = make_chat_model(profile="play.session_intro", temperature=_INTRO_TEMPERATURE)
     try:
         response = await llm.ainvoke(
             [SystemMessage(content=INTRO_SYSTEM), HumanMessage(content="\n\n".join(context_parts))]

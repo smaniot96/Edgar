@@ -26,7 +26,7 @@ def _render_turns(messages: list) -> str:
 
 async def summarize_story(previous_summary: str | None, messages: list) -> str:
     """Fold `messages` into `previous_summary`. Raises on LLM failure; callers decide policy."""
-    llm = make_chat_model(temperature=0)
+    llm = make_chat_model(profile="play.memory_summarizer", temperature=0)
     summary = await llm.ainvoke(
         [
             SystemMessage(content=MEMORY_SUMMARY_PROMPT),

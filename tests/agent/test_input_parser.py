@@ -23,7 +23,7 @@ async def test_input_parser_returns_parsed(monkeypatch) -> None:
         async def ainvoke(self, *_a, **_kw) -> AIMessage:
             return AIMessage(content="x")
 
-    def _factory(temperature: float = 0) -> _F:  # noqa: ARG001
+    def _factory(temperature: float = 0, **_kwargs) -> _F:  # noqa: ARG001
         return _F()
 
     monkeypatch.setattr(ip, "make_chat_model", _factory)
