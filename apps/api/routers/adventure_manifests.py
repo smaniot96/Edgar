@@ -16,8 +16,10 @@ class ManifestReview(BaseModel):
 
 
 def _call(action, *args, **kwargs):
+    from ..services.campaign_sources import validate_binding
     from ..services.preparation_privacy import require_public_source
 
+    validate_binding(args[0])
     require_public_source(args[0])
     try:
         return action(*args, **kwargs)

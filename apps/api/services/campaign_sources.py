@@ -16,12 +16,18 @@ from edgar_core.safe_errors import OutcomeState, classify_failure
 
 from ..schemas.adventure import AdventureJobRead
 from ..schemas.campaign import CampaignRead, SourceRead
-from .adventures_meta import PDF_DIR as PDF_DIR, load_meta, source_pdf_path
+from .adventures_meta import (
+    PDF_DIR as PDF_DIR,
+    adventure_path,
+    load_meta,
+    source_pdf_path,
+    valid_adventure_slug,
+)
 
 
 def validate_binding(slug: str) -> None:
     if (
-        not re.fullmatch(r"[a-z0-9][a-z0-9_\-]{0,254}", slug)
+        not valid_adventure_slug(slug)
         or is_rules_collection(slug)
         or is_campaign_lore_collection(slug)
     ):
@@ -332,7 +338,7 @@ def source_read(slug: str) -> SourceRead:
         "processing": "The adventure source is being prepared.",
         "failed": "The adventure source could not be prepared. Provide its source PDF again.",
     }
-    from .adventures_meta import ADVENTURES_DIR, attempt_dir, candidate_pdf_path
+    from .adventures_meta import attempt_dir, candidate_pdf_path
 
     job = raw_meta.get("job") or {}
     candidate_id = job.get("retained_source_attempt_id")
@@ -345,7 +351,7 @@ def source_read(slug: str) -> SourceRead:
         if candidate_preview is not None
         and (candidate_preview / f"{slug}.extraction.json").is_file()
         and (candidate_preview / f"{slug}.md").is_file()
-        else attempt_dir(slug, token) if token else ADVENTURES_DIR / slug
+        else attempt_dir(slug, token) if token else adventure_path(slug)
     )
     preview_path = preview_dir / f"{slug}.extraction.json"
     is_private_preparation = raw_meta.get("private_preparation") is True
