@@ -147,8 +147,8 @@ async def delete_character(
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
-    # The database clears sessions.active_character_id / combat_state.active_character
-    # (ON DELETE SET NULL) and removes the character's assignments (ON DELETE CASCADE).
+    # The database clears sessions.active_character_id (ON DELETE SET NULL) and removes
+    # the character's assignments (ON DELETE CASCADE).
     character = await _character_owned_or_404(db, character_id, owner_id)
     await db.delete(character)
     await db.commit()

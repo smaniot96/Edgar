@@ -10,7 +10,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from db.postgres.base import Base
 
 if TYPE_CHECKING:
-    from db.postgres.models.characters import Character
     from db.postgres.models.sessions import Session
 
 
@@ -24,9 +23,6 @@ class CombatState(Base):
     round: Mapped[int] = mapped_column(Integer, nullable=False)
     current_turn_index: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
-    )
-    active_character: Mapped[int | None] = mapped_column(
-        ForeignKey("characters.id", ondelete="SET NULL"), nullable=True, index=True
     )
     ended: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # Full combatant roster with per-entity HP/stats (player + enemies). One round of combat
@@ -42,4 +38,3 @@ class CombatState(Base):
 
     # Relationships
     session: Mapped[Session] = relationship(back_populates="combat_states")
-    active_char: Mapped[Character | None] = relationship()

@@ -419,6 +419,15 @@ async def test_cure_wounds_heals_the_caster_by_one_die_plus_wisdom(
     assert not any(d.get("purpose") == "Goblin damage" for d in adj.dice_log)
 
 
+def test_cure_wounds_with_a_negative_total_heals_nothing_and_keeps_its_roll() -> None:
+    # WIS 6 (-2): a 1 on the d8 totals -1. The caster heals 0; the logged roll keeps its arithmetic.
+    weak = {**CLERIC, "stats": {**CLERIC["stats"], "WIS": 6}}
+    plan, _ = plan_cast(weak, CURE_WOUNDS)
+    result = resolve_spell(weak, plan, rng=ScriptedDice([1]))
+    assert result.healing == 0
+    assert result.dice_log[-1]["total"] == -1
+
+
 @pytest.mark.asyncio
 async def test_no_slot_left_refuses_the_leveled_spell_without_a_round(
     fake_llm_schema, fake_retrieval

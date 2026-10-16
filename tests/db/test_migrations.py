@@ -293,6 +293,134 @@ async def test_source_mode_migration_preserves_bindings_and_requires_explicit_ch
         await engine.dispose()
 
 
+async def test_combat_pointer_retirement_refuses_populated_history_and_keeps_roster(postgres_env):
+    """A populated legacy pointer blocks removal; once cleared, the combat roster survives."""
+    engine = create_async_engine(
+        URL.create(
+            "postgresql+asyncpg",
+            username=postgres_env["POSTGRES_USER"],
+            password=postgres_env["POSTGRES_PASSWORD"],
+            host=postgres_env["DB_HOST"],
+            port=int(postgres_env["DB_PORT"]),
+            database=postgres_env["POSTGRES_DB"],
+        ),
+        poolclass=NullPool,
+    )
+    roster = [
+        {"name": "player", "is_player": True, "hp_current": 7},
+        {"name": "Goblin", "is_player": False, "hp_current": 0},
+    ]
+    try:
+        _alembic(postgres_env, "downgrade", "14_session_story_ledger")
+        async with engine.begin() as connection:
+            uid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO users(email) VALUES ('combat-pointer@example.test') RETURNING id"
+                    )
+                )
+            ).scalar_one()
+            cid = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO campaigns(created_by,title,system) VALUES (:uid,'Fight','5e') RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            char = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO characters (owner_user_id, name, class, level, hp_max, base_stats, base_inventory) "
+                        "VALUES (:uid, 'Pointer Hero', 'Fighter', 1, 12, CAST('{}' AS jsonb), CAST('{}' AS jsonb)) RETURNING id"
+                    ),
+                    {"uid": uid},
+                )
+            ).scalar_one()
+            sid = (
+                await connection.execute(
+                    text("INSERT INTO sessions(campaign_id) VALUES (:cid) RETURNING id"),
+                    {"cid": cid},
+                )
+            ).scalar_one()
+            await connection.execute(
+                text(
+                    "INSERT INTO combat_state (session_id, active_character, initiative_order, round, combatants, outcome) "
+                    "VALUES (:sid, :char, CAST('[]' AS jsonb), 2, CAST(:roster AS jsonb), 'victory')"
+                ),
+                {"sid": sid, "char": char, "roster": json.dumps(roster)},
+            )
+
+        refused = _alembic(postgres_env, "upgrade", "head", check=False)
+        assert refused.returncode != 0
+        assert "combat_state: 1 row(s) hold a legacy active_character value" in refused.stderr
+        assert "no data was changed" in refused.stderr
+        async with engine.begin() as connection:
+            assert (
+                await connection.execute(
+                    text("SELECT active_character FROM combat_state WHERE session_id=:sid"),
+                    {"sid": sid},
+                )
+            ).scalar_one() == char
+            await connection.execute(text("UPDATE combat_state SET active_character = NULL"))
+
+        _alembic(postgres_env, "upgrade", "head")
+        assert "No new upgrade operations detected" in _alembic(postgres_env, "check").stdout
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda conn: inspect(conn).get_columns("combat_state")
+            )
+            assert "active_character" not in {column["name"] for column in columns}
+            assert (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT round, outcome, combatants FROM combat_state WHERE session_id=:sid"
+                        ),
+                        {"sid": sid},
+                    )
+                )
+                .mappings()
+                .one()
+            ) == {"round": 2, "outcome": "victory", "combatants": roster}
+
+        _alembic(postgres_env, "downgrade", "14_session_story_ledger")
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda conn: inspect(conn).get_columns("combat_state")
+            )
+            column = next(c for c in columns if c["name"] == "active_character")
+            assert column["nullable"] is True
+            foreign_keys = await connection.run_sync(
+                lambda conn: inspect(conn).get_foreign_keys("combat_state")
+            )
+            assert any(
+                fk["constrained_columns"] == ["active_character"]
+                and fk["referred_table"] == "characters"
+                and fk.get("options", {}).get("ondelete") == "SET NULL"
+                for fk in foreign_keys
+            )
+            indexes = await connection.run_sync(
+                lambda conn: inspect(conn).get_indexes("combat_state")
+            )
+            assert any(index["name"] == "ix_combat_state_active_character" for index in indexes)
+            assert (
+                await connection.execute(
+                    text("SELECT active_character FROM combat_state WHERE session_id=:sid"),
+                    {"sid": sid},
+                )
+            ).scalar_one() is None
+    finally:
+        _alembic(postgres_env, "upgrade", "head")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "TRUNCATE event_log, combat_state, sessions, character_assignments, characters, npcs, world_flags, campaigns, users RESTART IDENTITY CASCADE"
+                )
+            )
+        await engine.dispose()
+
+
 async def test_session_story_ledger_migration_round_trip_preserves_legacy_rows(postgres_env):
     """Only additive schema on upgrade; existing NPC/history/inventory rows survive."""
     engine = create_async_engine(

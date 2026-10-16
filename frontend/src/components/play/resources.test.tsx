@@ -188,6 +188,19 @@ describe("healing rolls", () => {
     expect(html).not.toContain("Success");
   });
 
+  it("keeps a negative healing roll's total but says it heals nothing", () => {
+    const weak: AdjudicationResult = {
+      ...second,
+      dice_log: [{ expression: "1d8-2", rolls: [1], modifier: -2, total: -1, purpose: "Cure Wounds healing" }],
+    };
+    expect(healingRolls(weak)).toEqual([
+      { label: "Cure Wounds healing", expression: "1d8-2", rolls: [1], total: -1 },
+    ]);
+    expect(renderToStaticMarkup(<RollCard adj={weak} />)).toContain(
+      "Cure Wounds healing · 1d8-2 [1] = -1, heals 0",
+    );
+  });
+
   it("renders nothing for a turn with no dice", () => {
     expect(renderToStaticMarkup(<RollCard adj={null} />)).toBe("");
   });
