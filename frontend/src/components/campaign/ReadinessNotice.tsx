@@ -38,10 +38,13 @@ export function ReadinessNotice({
   readiness,
   onRetry,
   className = "",
+  announce = true,
 }: {
   readiness: ReadinessRead | null | undefined;
   onRetry?: () => void;
   className?: string;
+  /** Turn off live announcement when a second, dedicated notice carries the update. */
+  announce?: boolean;
 }) {
   const value = readiness ?? UNKNOWN;
   if (value.play_allowed) return null;
@@ -49,8 +52,8 @@ export function ReadinessNotice({
   const nextStep = hostAction(value.primary_action);
   return (
     <section
-      role="status"
-      aria-live="polite"
+      role={announce ? "status" : undefined}
+      aria-live={announce ? "polite" : undefined}
       className={`rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-ink ${className}`}
     >
       <p className="font-medium">{blockers[0].message}</p>

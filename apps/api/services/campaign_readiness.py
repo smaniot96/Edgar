@@ -8,15 +8,14 @@ persist_turn still checks source/version/assignment state at commit time.
 from __future__ import annotations
 
 from fastapi import HTTPException
-from starlette.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from db.postgres.models import Campaign
 from edgar_core.manifests import ManifestError
 
 from ..schemas.readiness import ReadinessBlocker, ReadinessRead
 from .campaign_sources import is_private_preparation_source, source_reads
-
 
 _COPY = {
     "source_missing": (
@@ -33,6 +32,10 @@ _COPY = {
     ),
     "adventure_review_needed": (
         "Review and publish the adventure before starting or continuing play.",
+        "review_adventure",
+    ),
+    "saved_version_conflict": (
+        "This saved session refers to an adventure version that needs review before play can continue.",
         "review_adventure",
     ),
     "preparation_in_progress": (
@@ -103,13 +106,16 @@ async def evaluate_play_readiness(
     *,
     character_id: int | None = None,
     require_character: bool = False,
+    session_id: int | None = None,
     observed_sources=None,
 ) -> ReadinessRead:
     """Read all current turn gates and return only safe categories and player copy.
 
     Campaign surfaces call this without a character to expose campaign blockers. Session,
     intro and turn surfaces set ``require_character`` so a missing or conflicting assignment
-    is visible before any provider work or session write.
+    is visible before any provider work or session write. Session surfaces also provide
+    ``session_id`` to validate accepted, session-owned amendments against current reviewed
+    manifests without writing or invoking a provider.
     """
     try:
         if campaign.status == "ended":
@@ -140,7 +146,9 @@ async def evaluate_play_readiness(
                     continue
                 if private_preparation and status == "processing":
                     code = "preparation_in_progress"
-                elif private_preparation or (job is not None and getattr(job, "state", None) == "failed"):
+                elif private_preparation or (
+                    job is not None and getattr(job, "state", None) == "failed"
+                ):
                     code = "preparation_failed"
                 elif status in ("missing", "empty"):
                     code = "source_missing"
@@ -154,8 +162,10 @@ async def evaluate_play_readiness(
 
         # This is the existing prepared-play predicate used by create/session/turn paths.
         # It validates a private run's immutable edition and selected hero binding.
-        sources_ready = campaign.source_mode == "homebrew" or bool(sources) and all(
-            getattr(source, "status", None) == "ready" for source in sources
+        sources_ready = (
+            campaign.source_mode == "homebrew"
+            or bool(sources)
+            and all(getattr(source, "status", None) == "ready" for source in sources)
         )
         if sources_ready:
             from .prepared_play import require_prepared_play
@@ -175,9 +185,8 @@ async def evaluate_play_readiness(
                     character=character,
                     # Ordinary sessions may be started without a character. Prepared runs
                     # still require their commissioned hero even when this session has none.
-                    require_hero=require_character and (
-                        character_id is not None or bool(private_preparation_slugs)
-                    ),
+                    require_hero=require_character
+                    and (character_id is not None or bool(private_preparation_slugs)),
                 )
             except HTTPException as exc:
                 code = getattr(exc, "readiness_code", None)
@@ -204,6 +213,24 @@ async def evaluate_play_readiness(
                     if edition not in ("2014", "2024") or edition != campaign.rules_edition:
                         blockers.append(_blocker("rules_edition_mismatch"))
                         break
+
+        if session_id is not None:
+            if db is None:
+                blockers.append(_blocker("readiness_unavailable"))
+            else:
+                from .prepared_amendments import (
+                    PreparedAmendmentConflict,
+                    load_session_prepared_amendments,
+                )
+
+                try:
+                    await load_session_prepared_amendments(db, session_id, campaign.id, manifests)
+                except PreparedAmendmentConflict:
+                    blockers.append(_blocker("saved_version_conflict"))
+                except Exception:
+                    # Corrupt replay data is never treated as a playable save. Do not expose
+                    # private payload details or try to repair it during a read.
+                    blockers.append(_blocker("readiness_unavailable"))
 
         if require_character and character_id is not None:
             if db is None:
@@ -250,6 +277,11 @@ def require_play_readiness(readiness: ReadinessRead) -> None:
         raise HTTPException(
             status_code=409,
             detail={"code": "adventure_manifest_review_required", "message": blocker.message},
+        )
+    if blocker.code == "saved_version_conflict":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": blocker.code, "message": blocker.message},
         )
     if blocker.code == "choose_character":
         raise HTTPException(

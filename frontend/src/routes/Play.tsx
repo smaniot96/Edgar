@@ -335,7 +335,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             sessionId={sessionId}
             sceneId={game.sceneId}
           />
-          <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} className="mx-3 mt-2 sm:mx-4" />
+          <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mt-2 sm:mx-4" />
           {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={(updated) => {
             game.updateCampaign(updated);
             void game.refreshReadiness();

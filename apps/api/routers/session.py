@@ -99,6 +99,7 @@ async def _session_read(session: SessionModel, db: AsyncSession) -> SessionRead:
             campaign,
             character_id=session.active_character_id,
             require_character=True,
+            session_id=session.id,
         )
     return value.model_copy(
         update={
@@ -144,6 +145,7 @@ async def _load_turn_initial_state(
         campaign,
         character_id=session.active_character_id,
         require_character=True,
+        session_id=session.id,
         observed_sources=sources,
     )
     require_play_readiness(readiness)
@@ -180,10 +182,10 @@ async def _load_turn_initial_state(
     except PreparedAmendmentConflict as exc:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "This session's saved adventure version is no longer available. "
-                "Recover its bound version before continuing."
-            ),
+            detail={
+                "code": "saved_version_conflict",
+                "message": "This saved session refers to an adventure version that needs review before play can continue.",
+            },
         ) from exc
     world_flags = session_story_flags(
         story_state, manifests, await load_world_flags(db, session.campaign_id)

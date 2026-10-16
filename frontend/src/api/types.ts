@@ -309,6 +309,7 @@ export type ReadinessCode =
   | "source_unavailable"
   | "source_review_needed"
   | "adventure_review_needed"
+  | "saved_version_conflict"
   | "preparation_in_progress"
   | "preparation_failed"
   | "rules_edition_mismatch"
