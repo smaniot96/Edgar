@@ -155,11 +155,22 @@ its own EDG-140 implementation and acceptance.
 
 The accompanying implementation establishes announcements, hint identity, place knowledge,
 clock disclosure and explicit reviewed opening seeds in the shared manifest/story contract.
-It integrates that contract into the journal and existing opening path. It leaves maps/art
-(EDG-142) and broad accessibility verification (EDG-137) for the next batch, as requested.
+It integrates that contract into the journal and existing opening path. This batch also
+adds the version-bound private `PreparedCampaign` data contract, deterministic validation,
+gated DM-extension projection and bounded additive amendment validation described in
+[`prepared-campaign-contract.md`](prepared-campaign-contract.md). The contract attaches to
+the exact reviewed source manifest; it does not generate or semantically review either
+source mode. It leaves maps/art (EDG-142) and broad accessibility verification (EDG-137)
+for the next batch, as requested.
 
-Completing full EDG-140 still requires actual PDF and AI proposal producers, whole-backbone
-validation, grounded encounters/rewards, amendment/version workflow and the full B-T01/B-T02
-acceptance from its preserved brief. Demonstrating the consumer interface does not close
-those requirements. Each producer must use the same contract, source identity and review
-gates rather than adding a separate narrative database.
+Full EDG-140 remains open. It still requires PDF and AI proposal producers, whole-backbone
+semantic review, source-grounded encounters/rewards, amendment persistence/version
+publication and the full B-T01/B-T02 acceptance from its preserved brief. In particular,
+the PDF producer must first supply a semantically classified, span-preserving manifest;
+the current extraction compiler's one-scene, unreviewed draft cannot pass prepared
+validation. The AI producer should establish stable design identities before writing,
+retain generated prose with section anchors, compile exact passages from the retained
+manuscript, and then validate the prepared candidate against that source manifest. Each
+producer uses the same contract, source identity and review gates rather than adding a
+separate narrative database. The helper data and projection boundary do not yet integrate
+with root-owned extension retrieval/index lifecycle.
