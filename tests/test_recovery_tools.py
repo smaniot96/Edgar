@@ -1,0 +1,140 @@
+"""Recovery bundle safety checks; this file never contacts a database or Qdrant service."""
+
+from __future__ import annotations
+
+import io
+import json
+import tarfile
+
+import pytest
+
+from tools import recovery
+
+
+def test_restore_refuses_non_disposable_or_nonempty_targets(tmp_path):
+    with pytest.raises(ValueError, match="explicit --disposable-target"):
+        recovery.restore_bundle(
+            tmp_path,
+            "postgresql://operator@127.0.0.1/edgar_restore_target",
+            "http://127.0.0.1:6333",
+            tmp_path / "sources",
+            disposable_target=False,
+        )
+    with pytest.raises(ValueError, match="loopback"):
+        recovery._require_local_disposable_database(
+            "postgresql://operator@db.example/edgar_restore_target"
+        )
+    with pytest.raises(ValueError, match="edgar_restore_"):
+        recovery._require_local_disposable_database(
+            "postgresql://operator@127.0.0.1/production"
+        )
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "keep.txt").write_text("existing", encoding="utf-8")
+    with pytest.raises(ValueError, match="new or empty"):
+        recovery._empty_destination(occupied)
+
+
+def test_bundle_checksum_detects_changed_database_artifact(tmp_path):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "postgres.dump").write_bytes(b"database")
+    with tarfile.open(bundle / "sources.tar.gz", "w:gz"):
+        pass
+    (bundle / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": recovery.SCHEMA_VERSION,
+                "artifacts": {
+                    name: {"sha256": recovery._sha256(bundle / name), "bytes": (bundle / name).stat().st_size}
+                    for name in ("postgres.dump", "sources.tar.gz")
+                },
+                "qdrant_collections": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert recovery.verify_bundle(bundle)["schema_version"] == 1
+    (bundle / "postgres.dump").write_bytes(b"modified")
+    with pytest.raises(ValueError, match="checksum"):
+        recovery.verify_bundle(bundle)
+
+
+def test_source_archive_selects_campaign_files_and_excludes_secret_names(tmp_path):
+    data = tmp_path / "data"
+    attempt = data / "adventures" / "village" / "attempts" / ("a" * 32)
+    attempt.mkdir(parents=True)
+    (attempt / "village.manuscript.md").write_text("synthetic story", encoding="utf-8")
+    (attempt / ".env").write_text("API_KEY=never archive", encoding="utf-8")
+    (data / "pdfs").mkdir()
+    (data / "pdfs" / "module.pdf").write_bytes(b"synthetic pdf")
+    (data / ".env").write_text("POSTGRES_PASSWORD=never archive", encoding="utf-8")
+    archive_path = tmp_path / "sources.tar.gz"
+    counts = recovery._write_source_archive(data, archive_path)
+    assert counts["adventures"] == 1
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = set(archive.getnames())
+    assert "adventures/village/attempts/" + "a" * 32 + "/village.manuscript.md" in names
+    assert "pdfs/module.pdf" in names
+    assert all(".env" not in name for name in names)
+
+
+def test_source_version_and_retained_manuscript_receipts_must_match(tmp_path):
+    slug = "village"
+    data = tmp_path / "data"
+    attempt_id = "a" * 32
+    manuscript = data / "adventures" / slug / ".attempts" / attempt_id / f"{slug}.manuscript.md"
+    manuscript.parent.mkdir(parents=True)
+    manuscript.write_bytes(b"exact retained text")
+    digest = recovery._sha256(manuscript)
+    (data / "adventures" / f"{slug}.json").write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "ingestion": {
+                    "index_version": "index-2",
+                    "source_sha256": "b" * 64,
+                    "extraction_sha256": "c" * 64,
+                },
+                "manuscript": {
+                    "attempt_id": attempt_id,
+                    "filename": f"{slug}.manuscript.md",
+                    "version": digest,
+                    "sha256": digest,
+                    "source_sha256": "b" * 64,
+                    "extraction_sha256": "c" * 64,
+                    "index_version": "index-2",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="active vector index version"):
+        recovery._validate_source_bindings(
+            data,
+            [{"collection": slug, "active_versions": {slug: "index-1"}}],
+        )
+    recovery._validate_source_bindings(
+        data,
+        [{"collection": slug, "active_versions": {slug: "index-2"}}],
+    )
+    manuscript.write_bytes(b"changed text")
+    with pytest.raises(ValueError, match="manuscript checksum"):
+        recovery._validate_source_bindings(
+            data,
+            [{"collection": slug, "active_versions": {slug: "index-2"}}],
+        )
+
+
+def test_source_extraction_refuses_parent_traversal(tmp_path):
+    archive_path = tmp_path / "bad.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        member = tarfile.TarInfo("../outside.txt")
+        payload = b"unsafe"
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+    destination = tmp_path / "restored"
+    destination.mkdir()
+    with pytest.raises(ValueError, match="unsafe path"):
+        recovery._extract_sources(archive_path, destination)
+    assert not (tmp_path / "outside.txt").exists()
