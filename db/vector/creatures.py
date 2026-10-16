@@ -119,6 +119,7 @@ def resolve_creature(
     if len(actors) > 1:
         unresolved("multiple reviewed actors have this name")
     actor_identity = {}
+    lair_context = {}
     lookup = {}
     creature_name = name
     if actors:
@@ -135,7 +136,37 @@ def resolve_creature(
             "actor_name": actor.title,
             "actor_collection": collection,
             "actor_manifest_sha256": manifest.reviewed_sha256,
+            "actor_rules_edition": manifest.rules_edition,
+            "actor_source_sha256": manifest.source_sha256,
+            "actor_surprise": actor.surprise,
         }
+        if actor.lair_reference is not None:
+            if actor.lair_reference.passage_id not in selection["planner_passage_ids"]:
+                unresolved("the reviewed lair passage is locked or outside the active scene")
+            scene = retrieve_active_scene(
+                {collection: manifest.model_dump()},
+                current_scene_id,
+                world_flags,
+                client=client,
+                rules_edition=rules_edition,
+            )
+            chunks = scene["adventure_context"] + scene["planner_context"]
+            chunk = next(
+                (c for c in chunks if c.get("passage_id") == actor.lair_reference.passage_id),
+                None,
+            )
+            if not chunk or not isinstance(chunk.get("text"), str) or not chunk["text"].strip():
+                unresolved("the reviewed lair passage is unavailable in the active scene")
+            lair_context = {
+                "lair_text": chunk["text"],
+                "lair_reference": {
+                    "passage_id": actor.lair_reference.passage_id,
+                    "creature_name": actor.lair_reference.creature_name,
+                    "manifest_sha256": manifest.reviewed_sha256,
+                    "source_sha256": manifest.source_sha256,
+                    "rules_edition": manifest.rules_edition,
+                },
+            }
         if reference.kind == "module":
             selected = selection["player_passage_ids"] + selection["planner_passage_ids"]
             if reference.passage_id not in selected:
@@ -158,7 +189,7 @@ def resolve_creature(
             )
             if not record:
                 unresolved("the reviewed module passage is not one complete named stat record")
-            return {**record, **actor_identity}
+            return {**record, **actor_identity, **lair_context}
         lookup = {
             "collections": [reference.collection],
             "source_sha256": reference.source_sha256,
@@ -178,4 +209,4 @@ def resolve_creature(
         for field in ("source_sha256", "extraction_sha256")
     ):
         unresolved("the source has no verified extraction provenance; review and reingest it")
-    return {**records[0], **actor_identity}
+    return {**records[0], **actor_identity, **lair_context}

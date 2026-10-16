@@ -214,6 +214,11 @@ _SLOT_LEVEL_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def catalog_spell(name: str) -> SpellSpec | None:
+    """Return a supported spell by its exact normalized catalog name or alias."""
+    return _BY_NAME.get(" ".join(str(name or "").casefold().split()))
+
 # Total slots per spell level by character level (index = level - 1), PHB full and half casters.
 FULL_CASTER_SLOTS: tuple[tuple[int, ...], ...] = (
     (2,), (3,), (4, 2), (4, 3), (4, 3, 2), (4, 3, 3), (4, 3, 3, 1), (4, 3, 3, 2), (4, 3, 3, 3, 1),
@@ -502,6 +507,99 @@ def resolve_spell(
         outcome = roll(_expr(_dice_count(spec, level, slot), spec.die, mod), rng)
         result.healing = max(0, outcome.total)
         result.dice_log.append(outcome.to_log(f"{spec.name} healing"))
+    return result
+
+
+def resolve_monster_spell(
+    spec: SpellSpec,
+    *,
+    attack_bonus: int,
+    save_dc: int,
+    caster_level: int,
+    target_ac: int,
+    target_save_bonus: int = 0,
+    healing_modifier: int = 0,
+    save_mode: RollMode = "normal",
+    roll_mode: RollMode = "normal",
+    automatic_save_failure: bool = False,
+    critical_on_hit: bool = False,
+) -> SpellResult:
+    """Resolve a catalog spell using the exact attack/DC and caster level in a monster record."""
+    result = SpellResult(spec, spec.level or None, None)
+    if spec.kind == "attack":
+        if roll_mode == "normal":
+            outcome = roll(f"1d20{attack_bonus:+d}")
+            draws = [outcome.rolls[0]]
+        else:
+            first = roll(f"1d20{attack_bonus:+d}")
+            second = roll(f"1d20{attack_bonus:+d}")
+            chooser = max if roll_mode == "advantage" else min
+            outcome = chooser((first, second), key=lambda d: d.rolls[0])
+            draws = [first.rolls[0], second.rolls[0]]
+        natural = outcome.rolls[0]
+        success = natural == 20 or (natural != 1 and outcome.total >= target_ac)
+        critical = success and (natural == 20 or critical_on_hit)
+        log = outcome.to_log(f"{spec.name} spell attack")
+        if roll_mode != "normal":
+            log = {
+                **log,
+                "rolls": draws,
+                "kept": natural,
+                "roll_mode": roll_mode,
+            }
+        check = CheckResult(
+            check="spell_attack",
+            kind="spell_attack",
+            ability=None,
+            modifier=attack_bonus,
+            dc=target_ac,
+            against="AC",
+            roll_expression=f"1d20{attack_bonus:+d}",
+            natural=natural,
+            total=outcome.total,
+            success=success,
+            critical=critical,
+            fumble=natural == 1,
+            dice_log=[log],
+            roll_mode=roll_mode,
+            natural_rolls=draws,
+        )
+        result.attack = check
+        result.dice_log.extend(check.dice_log)
+        if success:
+            count = _dice_count(spec, caster_level, spec.level) * (2 if critical else 1)
+            damage = roll(_expr(count, spec.die, 0))
+            result.damage = max(1, damage.total)
+            result.dice_log.append(damage.to_log(f"{spec.name} damage"))
+            if spec.condition:
+                result.condition = spec.condition
+    elif spec.kind == "auto":
+        darts = _dice_count(spec, caster_level, spec.level)
+        damage = roll(_expr(darts, spec.die, darts * spec.per_die_bonus))
+        result.darts = darts
+        result.damage = max(1, damage.total)
+        result.dice_log.append(damage.to_log(f"{spec.name} darts"))
+    elif spec.kind in ("save", "condition"):
+        result.save_dc = int(save_dc)
+        if automatic_save_failure:
+            result.save_success = False
+        else:
+            total, save_log = _save_roll(
+                int(target_save_bonus), save_mode, None, f"{spec.save_ability} save ({spec.name})"
+            )
+            result.dice_log.append(save_log)
+            result.save_success = total >= result.save_dc
+        if spec.kind == "save" and not result.save_success:
+            damage = roll(_expr(_dice_count(spec, caster_level, spec.level), spec.die, 0))
+            result.damage = max(1, damage.total)
+            result.dice_log.append(damage.to_log(f"{spec.name} damage"))
+        if spec.kind == "condition" and not result.save_success and spec.condition:
+            result.condition = spec.condition
+    elif spec.kind == "heal":
+        bonus = int(healing_modifier) if spec.ability_bonus else 0
+        damage = roll(_expr(_dice_count(spec, caster_level, spec.level), spec.die, bonus))
+        result.healing = max(0, damage.total)
+        result.dice_log.append(damage.to_log(f"{spec.name} healing"))
     return result
 
 

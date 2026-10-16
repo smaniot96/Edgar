@@ -91,17 +91,17 @@ def test_exact_options_are_read_with_their_cost_and_the_budget() -> None:
         "2d6",
         "bludgeoning",
     )
-    assert wing.attack.save == AttackSave("DEX", 15, half_on_success=False)
+    assert wing.attack.save == AttackSave("DEX", 15, half_on_success=False, condition="prone")
+    assert wing.flight_after is True
     assert not wing.attack.ranged  # "within 10 feet" is read as the foe's melee band
     assert [a.name for a in stats.attacks] == ["Claw", "Tail"]  # no normal action is added
     assert MonsterStats.from_dict(json.loads(json.dumps(stats.to_dict()))) == stats
 
 
-def test_the_other_options_and_what_the_wing_attack_leaves_out_stay_declared() -> None:
+def test_unsupported_options_stay_declared_and_complete_wing_attack_is_executed() -> None:
     declared = _stats().declared
     assert "Detect: legendary action not executed" in declared
-    assert "Wing Attack: knocked prone and flight not executed" in declared
-    assert not any(d.startswith(("Tail Attack", "The drake")) for d in declared)
+    assert not any(d.startswith(("Wing Attack", "Tail Attack", "The drake")) for d in declared)
 
 
 @pytest.mark.parametrize(
@@ -186,10 +186,11 @@ async def test_at_a_turn_boundary_only_one_costliest_affordable_option_is_used(
 ) -> None:
     """One option only: the Wing Attack costs two of three actions and deals 7 damage; the Tail
     Attack waits for a distinct later creature's turn. The drake's own turn follows, regaining its
-    spent actions before a Claw (natural 1).
+    spent actions before closing back to melee and a Claw at advantage against the prone hero
+    (two natural 1s still miss).
     """
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
-    out, dice = await _round(_drake(), [8, 3, 4, 1])
+    out, dice = await _round(_drake(), [8, 3, 4, 1, 1])
     summary = _summary(out)
     assert dice.faces == []
     assert out["combat_state"]["combatants"][0]["hp_current"] == 5
@@ -201,6 +202,9 @@ async def test_at_a_turn_boundary_only_one_costliest_affordable_option_is_used(
     assert "Ember Drake uses a legendary action: Tail Attack" not in summary
     assert _entries(out, "Dara DEX save (Wing Attack)")[0]["rolls"] == [8]
     assert _entries(out, "Ember Drake Wing Attack damage")[0]["rolls"] == [3, 4]
+    assert _entries(out, "Ember Drake Claw attack")[0]["roll_mode"] == "advantage"
+    assert any(e["kind"] == "prone" for e in out["combat_state"]["combatants"][0]["effects"])
+    assert summary.index("flies away after its Wing Attack") < summary.index("closes to melee range")
     assert "legendary_spent" not in out["combat_state"]["combatants"][1]
 
 
@@ -239,20 +243,43 @@ Actions
 Shout. The goblin shouts a warning.
 """
     guard = _exact(guard_text, "Goblin Guard", hp=5)
-    drake = _drake()
-    # The guard has a turn between the hero and the drake. The Wing spends two actions at the
-    # hero's boundary; the remaining Tail action is available at the guard's later turn boundary.
-    dice = ScriptedDice([8, 3, 4, 10, 1, 1, 1])
+    drake = _drake(DRAKE_TEXT.replace(WING, ""))
+    # Without Wing's flight the drake remains in reach: each distinct other-creature turn permits
+    # one Tail, leaving a third budget point until the drake's own turn resets the budget.
+    dice = ScriptedDice([1, 1, 1])
     with use_rng(dice):
         out = await combat_round_node(_state("I wait and watch", [guard, drake], WAIT))
     summary = _summary(out)
     assert dice.faces == []
-    assert out["combat_state"]["combatants"][0]["hp_current"] == 3
+    assert out["combat_state"]["combatants"][0]["hp_current"] == 12
+    tails = [i for i in range(len(summary)) if summary.startswith(
+        "Ember Drake uses a legendary action: Tail Attack (costs 1).", i
+    )]
+    assert len(tails) == 2
     assert (
-        summary.index("Ember Drake uses a legendary action: Wing Attack (costs 2).")
+        tails[0]
         < summary.index("Goblin Guard has no supported attack and takes no action.")
-        < summary.index("Ember Drake uses a legendary action: Tail Attack (costs 1).")
+        < tails[1]
     )
+
+
+@pytest.mark.asyncio
+async def test_wing_flight_prevents_a_melee_tail_at_the_next_other_creature_boundary(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    guard = _exact(
+        "Guard\nMedium humanoid, neutral\nArmor Class 12\nHit Points 5\nActions\n"
+        "Watch. The guard watches.\n", "Guard", hp=5,
+    )
+    dice = ScriptedDice([8, 3, 4, 1, 1])
+    with use_rng(dice):
+        out = await combat_round_node(_state("I wait and watch", [guard, _drake()], WAIT))
+    assert dice.faces == []
+    summary = _summary(out)
+    assert "flies away after its Wing Attack" in summary
+    assert "Guard has no supported attack" in summary
+    assert "uses a legendary action: Tail Attack" not in summary
 
 
 @pytest.mark.asyncio
@@ -287,6 +314,29 @@ async def test_a_foe_that_cannot_act_uses_no_legendary_action(
     add_effect(foe, "paralyzed", source="Hold Person", round_applied=1)
     out, _ = await _round(foe, [])
     assert "legendary action" not in _summary(out)
+
+
+@pytest.mark.asyncio
+async def test_surprise_blocks_reactions_first_turn_and_legendary_actions_until_turn_ends(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    foe = _drake(surprised=True)
+    dice = ScriptedDice([])
+    with use_rng(dice):
+        first = await combat_round_node(_state("I step back and watch", [foe], WAIT))
+    saved = next(c for c in first["combat_state"]["combatants"] if not c.get("is_player"))
+    assert saved["surprised"] is False
+    assert saved["band"] == "ranged"
+    assert not saved.get("reaction_used")
+    assert "legendary action" not in _summary(first)
+    assert "opportunity attack" not in _summary(first)
+    follow = _next_round(first, "I wait and watch", WAIT, round_num=2)
+    dice = ScriptedDice([1])
+    with use_rng(dice):
+        second = await combat_round_node(follow)
+    assert dice.faces == []
+    assert "Ember Drake's Claw misses" in _summary(second)
 
 
 @pytest.mark.asyncio

@@ -618,3 +618,30 @@ def test_silvered_exception_on_a_nonmagical_resistance_is_declared_not_guessed()
 def combat_fields_for(stats) -> dict:
     """A roster-shaped dict carrying the parsed stats, for the damage-rule helper."""
     return {"name": stats.name, "monster_stats": stats.to_dict()}
+
+
+def test_spellcasting_reads_only_catalog_spells_and_persists_the_slot_profile() -> None:
+    text = """Mage
+Medium humanoid, neutral
+Armor Class 12
+Hit Points 40
+INT 18 (+4)
+Spellcasting. The mage is a 4th-level spellcaster. Its spellcasting ability is Intelligence
+(spell save DC 14; +6 to hit with spell attacks). The mage has the following wizard spells prepared:
+Cantrips (at will): Fire Bolt, mage hand
+1st level (4 slots): Magic Missile, shield.
+"""
+    stats = parse_monster_stats(text, name="Mage")
+    assert stats.spellcasting is not None
+    assert (
+        stats.spellcasting.ability,
+        stats.spellcasting.caster_level,
+        stats.spellcasting.save_dc,
+        stats.spellcasting.attack_bonus,
+        stats.spellcasting.spells,
+        stats.spellcasting.slots,
+    ) == ("INT", 4, 14, 6, ((0, "Fire Bolt"), (1, "Magic Missile")), {"1": 4})
+    assert "2 unsupported spell list entries not executed" in " ".join(stats.declared)
+    assert "mage hand" not in " ".join(stats.declared).lower()
+    assert "shield" not in " ".join(stats.declared).lower()
+    assert MonsterStats.from_dict(json.loads(json.dumps(stats.to_dict()))) == stats

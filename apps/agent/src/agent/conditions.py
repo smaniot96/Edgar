@@ -16,7 +16,8 @@ the target's typed `effects` (`agent.combatants`):
     its turns; success ends the effect. Only humanoids are targets (`humanoid_refusal`).
 
 Concentration (PHB, Concentration, p. 203). The caster holds at most one concentration spell, stored
-as `concentration` on the player combatant. Casting another concentration spell ends the first, and
+as `concentration` on the caster combatant. Monster sources carry encounter-unique source IDs.
+Casting another concentration spell ends the first, and
 the first spell's effects on foes end with it. The spell also ends when its minute passes, when no foe
 still carries its effect, and when the caster falls to 0 HP. Taking damage requires a Constitution
 save (`concentration_save`): DC 10 or half the damage, whichever is higher (rounded down), and it ends
@@ -38,6 +39,11 @@ Conditions on the hero from monster text (PHB Appendix A, PDF pp.291-293):
   * `stunned`: incapacitated (the hero's turn passes with no action, move or flight), fails Strength
     and Dexterity saves automatically (`combatants.save_auto_fails`), and attacks against the hero
     have advantage.
+
+Listed monster catalog spells can also blind, mark or paralyze the hero. Hero paralysis suppresses
+actions and movement, automatically fails Strength/Dexterity saves and makes successful attacks
+from the melee band critical, including ranged attacks. Supported Wing/lair effects can knock the
+hero prone; an explicit stand-up declaration clears it without an action in the band abstraction.
 
 Deliberately absent: other conditions (charmed, grappled, incapacitated and the rest), any condition
 applied from model prose, and poisoned foes. The engine rolls every save and sets every number; a
@@ -115,6 +121,7 @@ def apply_spell_condition(
     round_applied: int,
     duration_rounds: int,
     repeat_save: Mapping[str, Any] | None = None,
+    source_id: str | None = None,
 ) -> bool:
     """Record a spell condition on a foe. False when the foe already has it (no stacking)."""
     if kind not in SPELL_CONDITIONS:
@@ -127,6 +134,7 @@ def apply_spell_condition(
         round_applied=round_applied,
         expires_after_round=last_round,
         save=repeat_save,
+        source_id=source_id,
     )
 
 
@@ -405,11 +413,17 @@ def rider_save_line(name: str, rider: RiderRoll, *, attack: str) -> str:
 
 
 def start_concentration(
-    player: dict, spell: str, *, round_applied: int, duration_rounds: int
+    player: dict,
+    spell: str,
+    *,
+    round_applied: int,
+    duration_rounds: int,
+    source_id: str | None = None,
 ) -> None:
     """The caster concentrates on a spell whose effect has taken hold on a foe."""
     player["concentration"] = {
         "spell": spell,
+        **({"source_id": source_id} if source_id else {}),
         "round_applied": int(round_applied),
         "expires_after_round": int(round_applied) + max(1, int(duration_rounds)) - 1,
     }
@@ -417,13 +431,24 @@ def start_concentration(
 
 def drop_concentration(player: dict, foes: list[dict]) -> str | None:
     """End the caster's concentration: its spell's effects end on every foe. Returns the spell name."""
-    spell = (concentration_of(player) or {}).get("spell")
+    concentration = concentration_of(player)
+    spell = (concentration or {}).get("spell")
     player.pop("concentration", None)
     if not spell:
         return None
+    source_id = str((concentration or {}).get("source_id") or spell)
     for foe in foes:
-        for kind in {e["kind"] for e in effects_of(foe) if e.get("source") == spell}:
-            release_effect(foe, kind)
+        effects = effects_of(foe)
+        removed = {
+            (e["kind"], str(e.get("source_id") or e.get("source") or ""))
+            for e in effects
+            if str(e.get("source_id") or e.get("source") or "") == source_id
+        }
+        if removed:
+            foe["effects"] = [
+                e for e in effects
+                if (e["kind"], str(e.get("source_id") or e.get("source") or "")) not in removed
+            ]
     return str(spell)
 
 
@@ -466,7 +491,12 @@ def settle_concentration(player: dict, foes: list[dict], round_num: int) -> str 
         return None
     last = concentration.get("expires_after_round")
     timed_out = last is not None and int(last) <= int(round_num)
-    held = any(e.get("source") == concentration["spell"] for f in foes for e in effects_of(f))
+    source_id = str(concentration.get("source_id") or concentration["spell"])
+    held = any(
+        str(e.get("source_id") or e.get("source") or "") == source_id
+        for f in foes
+        for e in effects_of(f)
+    )
     if timed_out or not held:
         return drop_concentration(player, foes)
     return None

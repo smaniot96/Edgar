@@ -65,6 +65,13 @@ class StatReference(Record):
         return self
 
 
+class LairReference(Record):
+    """An exact, separately reviewed passage containing one actor's lair actions."""
+
+    creature_name: str = Field(min_length=1, max_length=200)
+    passage_id: Identifier
+
+
 class Entity(Record):
     entity_id: Identifier
     kind: Literal["actor", "clue", "hint", "hazard", "ending"]
@@ -72,6 +79,9 @@ class Entity(Record):
     discovery_flag: Identifier | None = None
     reveal_on: Literal["success", "always"] = "success"
     stat_reference: StatReference | None = None
+    lair_reference: LairReference | None = None
+    # Surprise is an authored encounter fact, never inferred from narration or prose.
+    surprise: Literal["actor", "hero"] | None = None
     object_id: Identifier | None = None
 
 
@@ -571,6 +581,11 @@ class AdventureManifest(Record):
             ):
                 raise ValueError("Clue object binding needs a reviewed object in this manifest.")
             reference = entity.stat_reference
+            lair = entity.lair_reference
+            if entity.surprise is not None and entity.kind != "actor":
+                raise ValueError("Only an actor can declare encounter surprise.")
+            if lair is not None and (entity.kind != "actor" or reference is None):
+                raise ValueError("Lair actions require a reviewed actor statistics reference.")
             if reference is None:
                 continue
             if entity.kind != "actor":
@@ -588,6 +603,19 @@ class AdventureManifest(Record):
                 ):
                     raise ValueError(
                         "Module statistics must be a playable reviewed passage for this actor."
+                    )
+            if lair is not None:
+                passage = next((p for p in self.passages if p.passage_id == lair.passage_id), None)
+                if (
+                    self.rules_edition not in {"2014", "2024"}
+                    or passage is None
+                    or entity.entity_id not in passage.entity_ids
+                    or passage.audience != "planner"
+                    or lair.creature_name.strip().casefold()
+                    != reference.creature_name.strip().casefold()
+                ):
+                    raise ValueError(
+                        "Lair actions require an exact planner passage bound to the reviewed actor and creature."
                     )
         return self
 
@@ -664,6 +692,10 @@ def manifest_digest(manifest: AdventureManifest) -> str:
             entity.pop("stat_reference")
         if entity["object_id"] is None:
             entity.pop("object_id")
+        if entity.get("lair_reference") is None:
+            entity.pop("lair_reference")
+        if entity.get("surprise") is None:
+            entity.pop("surprise")
     for passage in body["passages"]:
         if not passage["known_scene_ids"]:
             passage.pop("known_scene_ids")

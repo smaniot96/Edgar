@@ -366,7 +366,9 @@ def attack_roll_mode(
         for e in effects_of(attacker)
     ):
         disadvantage = True
-    if ranged and within_five_feet:
+    # A nearby target imposes the ranged-attack penalty only when it can threaten the attacker:
+    # a blinded target cannot see the attacker, and an incapacitated one cannot threaten it.
+    if ranged and within_five_feet and not _incapacitated(target) and not has_effect(target, "blinded"):
         disadvantage = True
     for e in effects_of(target):
         if e["kind"] in _AGAINST_ADVANTAGE:
