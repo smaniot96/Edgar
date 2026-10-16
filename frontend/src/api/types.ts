@@ -589,6 +589,60 @@ export interface CombatRoundDiagnostics {
   timings_unavailable: string[];
 }
 
+/**
+ * One measured provider call of a DM turn (EDG-053). Every measured value is a number; a value
+ * the provider did not report is `null`, which the UI shows as "unknown" and never as zero.
+ */
+export interface ProviderCallDiagnostics {
+  kind: string;
+  profile: string;
+  requested_model: string | null;
+  resolved_model: string | null;
+  streamed: boolean;
+  latency_ms: number | null;
+  first_text_ms: number | null;
+  attempts: number | null;
+  error_category: string | null;
+  usage: { input_tokens: number | null; output_tokens: number | null; total_tokens: number | null };
+  cost_microusd: number | null;
+}
+
+/**
+ * Developer view of one DM turn's measured latency, usage and cost (EDG-053). Scope is DM turns
+ * only; infrastructure readiness probes are never part of it. `totals.complete` is false when any
+ * call lacked usage or cost, so a total with unknown parts is labelled partial.
+ */
+export interface TurnDiagnostics {
+  scope: "dm_turn";
+  version: number | null;
+  turn_id: string | null;
+  path: "normal" | "combat" | null;
+  delivery: "sync" | "stream" | null;
+  total_ms: number | null;
+  time_to_first_text_ms: number | null;
+  stages_ms: Partial<Record<string, number | null>>;
+  stages_unavailable: string[];
+  lock: { wait_ms: number | null; contended: boolean; attempts: number | null } | null;
+  retrieval: {
+    latency_ms: number | null;
+    rules_chunks: number | null;
+    adventure_chunks: number | null;
+    degraded: boolean;
+  } | null;
+  provider_calls: ProviderCallDiagnostics[];
+  totals: {
+    calls: number;
+    calls_dropped: number;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    total_tokens: number | null;
+    cost_microusd: number | null;
+    calls_unknown_usage: number;
+    calls_unknown_cost: number;
+    complete: boolean;
+  };
+}
+
 /** Payload of the optional `debug` SSE event, emitted only when debug=true. */
 export interface DebugPayload {
   parsed_input: ParsedInput | null;
@@ -601,6 +655,8 @@ export interface DebugPayload {
   timings_ms: DebugTimings;
   /** Combat turns only; null for a non-combat turn. */
   combat_diagnostics?: CombatRoundDiagnostics | null;
+  /** This turn's measured latency, usage and cost (EDG-053); absent on older builds. */
+  turn_diagnostics?: TurnDiagnostics | null;
   model: string;
 }
 

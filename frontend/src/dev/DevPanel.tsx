@@ -6,8 +6,18 @@ import type {
   CombatState,
   DebugPayload,
   RetrievedChunk,
+  TurnDiagnostics,
 } from "../api/types";
 import { cn } from "../lib/cn";
+import {
+  UNKNOWN,
+  callSummary,
+  fmtCostMicroUsd,
+  fmtCount,
+  fmtMs,
+  fmtText,
+  stageRows,
+} from "./turnDiagnostics";
 
 function Section({
   title,
@@ -144,6 +154,61 @@ function CombatBlock({ combat }: { combat: CombatState }) {
   );
 }
 
+/** Measured latency, usage and cost of one DM turn (EDG-053). Unknown is shown, never zero. */
+function TurnDiagnosticsBlock({ diag }: { diag: TurnDiagnostics }) {
+  const { totals, retrieval, lock } = diag;
+  return (
+    <div className="text-xs">
+      <div className="mb-1 flex flex-wrap gap-x-3 gap-y-0.5">
+        <KV k="path" v={fmtText(diag.path)} />
+        <KV k="delivery" v={fmtText(diag.delivery)} />
+        <KV k="total" v={fmtMs(diag.total_ms)} />
+        <KV k="time to first text" v={fmtMs(diag.time_to_first_text_ms)} />
+        <KV k="lock wait" v={lock ? fmtMs(lock.wait_ms) : UNKNOWN} />
+      </div>
+      {stageRows(diag).map(([stage, value]) => (
+        <KV key={stage} k={stage} v={value} />
+      ))}
+      <KV
+        k="retrieval"
+        v={
+          retrieval
+            ? `${fmtMs(retrieval.latency_ms)} · rules ${fmtCount(retrieval.rules_chunks)} · adventure ${fmtCount(retrieval.adventure_chunks)} · degraded ${
+                retrieval.degraded ? "yes" : "no"
+              }`
+            : UNKNOWN
+        }
+      />
+      <div className="mt-1 border-t border-line pt-1">
+        <KV k="tokens in" v={fmtCount(totals.input_tokens)} />
+        <KV k="tokens out" v={fmtCount(totals.output_tokens)} />
+        <KV k="tokens total" v={fmtCount(totals.total_tokens)} />
+        <KV k="cost" v={fmtCostMicroUsd(totals.cost_microusd)} />
+        {totals.complete ? null : (
+          <div className="mt-0.5 text-ember-300">
+            partial total: {totals.calls_unknown_usage} call(s) without usage,{" "}
+            {totals.calls_unknown_cost} without cost
+          </div>
+        )}
+        {totals.calls_dropped > 0 ? (
+          <div className="mt-0.5 text-ember-300">{totals.calls_dropped} call(s) not recorded (bound)</div>
+        ) : null}
+      </div>
+      {diag.provider_calls.length === 0 ? (
+        <div className="mt-1 text-ink-subtle">no provider calls</div>
+      ) : (
+        <ol className="mt-1 flex flex-col gap-1">
+          {diag.provider_calls.map((call, i) => (
+            <li key={i} className="break-words font-mono text-ink/85">
+              #{i + 1} {callSummary(call)}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 /**
  * Collapsible developer panel rendered under a DM message in dev mode. Shows
  * everything captured for the turn so correctness can be verified at a glance.
@@ -262,6 +327,16 @@ export function DevPanel({
           <KV k="narrating_ms" v={timing(timings.narrating_ms)} />
           <KV k="total_ms" v={timing(timings.total_ms)} />
           <KV k="model" v={mono(debug.model)} />
+        </Section>
+      ) : null}
+
+      {debug ? (
+        <Section title="Latency, usage & cost" defaultOpen={false}>
+          {debug.turn_diagnostics ? (
+            <TurnDiagnosticsBlock diag={debug.turn_diagnostics} />
+          ) : (
+            <span className="text-ink-subtle">{UNKNOWN}: not captured for this turn</span>
+          )}
         </Section>
       ) : null}
 
