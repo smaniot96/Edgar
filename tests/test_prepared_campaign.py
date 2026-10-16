@@ -341,3 +341,19 @@ def test_require_published_rejects_an_unvalidated_prepared_bundle():
         from edgar_core.manifests import require_published
 
         require_published(data)
+
+
+def test_outcome_label_cannot_reverse_the_selected_engine_result():
+    manifest, prepared = _fixture()
+    data = prepared.model_dump()
+    data["outcomes"][0]["policy_selections"][0]["result"] = "failure"
+    report = validate_prepared_campaign(manifest, data)
+    assert "outcome_result_mismatch" in {row.code for row in report.findings}
+
+
+def test_scene_packet_entry_gate_must_have_a_runtime_contract():
+    manifest, prepared = _fixture()
+    data = prepared.model_dump()
+    data["scene_packets"][0]["entry_requires"] = {"invented_gate": "yes"}
+    report = validate_prepared_campaign(manifest, data)
+    assert "unbacked_world_flag" in {row.code for row in report.findings}
