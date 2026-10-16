@@ -6,6 +6,7 @@ not from memory. Regression tests for the discrepancies fixed in EDG-149 are mar
 """
 
 import random
+from dataclasses import replace
 
 import pytest
 
@@ -25,6 +26,9 @@ from agent.resolution import (
     healing_dice_for,
     hit_dice_recovered_by_long_rest,
     proficiency_bonus,
+    resolve_attack,
+    resolve_check,
+    roll_attack_damage,
     weapon_proficient,
 )
 from agent.spells import (
@@ -129,6 +133,53 @@ def test_weapon_table_matches_the_phb_weapons_table() -> None:
         assert got[0] == dice or (name == "blowgun" and got[0] == "1d1"), name
 
 
+def test_versatile_weapons_match_the_phb_weapons_table() -> None:
+    # PHB Weapons table, PDF p.150: the Versatile property and its two-handed damage. The war pick
+    # and the other one-handed weapons are not versatile.
+    book = {
+        "quarterstaff": "1d8", "spear": "1d8", "trident": "1d8",
+        "battleaxe": "1d10", "longsword": "1d10", "warhammer": "1d10",
+    }  # fmt: skip
+    assert {w.name: w.versatile for w in _WEAPONS if w.versatile} == book
+
+
+@pytest.mark.parametrize(
+    ("hint", "shield", "dice"),
+    [
+        ("I swing my longsword", False, "1d8"),
+        # PHB Versatile, PDF p.148: "the damage when the weapon is used with two hands".
+        ("I swing my longsword with both hands", False, "1d10"),
+        ("I strike two-handed with the longsword", False, "1d10"),
+        ("I swing my longsword with both hands", True, "1d8"),  # the shield hand is not free
+    ],
+)
+def test_versatile_weapon_deals_two_handed_damage_only_when_declared_and_free_handed(
+    hint: str, shield: bool, dice: str
+) -> None:
+    weapons = ["Longsword", "Shield"] if shield else ["Longsword"]
+    fighter = {"class": "fighter", "stats": {"STR": 16}, "inventory": {"weapons": weapons}}
+    hit = replace(
+        resolve_attack(fighter, 1, hint=hint, rng=random.Random(2)), success=True, critical=False
+    )
+    _, outcome = roll_attack_damage(fighter, hit, hint=hint, rng=random.Random(2))
+    assert outcome.expression == f"{dice}+3"
+    # A critical hit doubles the two-handed dice (PHB p.197).
+    crit = replace(hit, critical=True)
+    _, doubled = roll_attack_damage(fighter, crit, hint=hint, rng=random.Random(2))
+    assert doubled.expression == f"2{dice[1:]}+3"
+
+
+def test_a_weapon_without_the_versatile_property_ignores_a_two_handed_grip() -> None:
+    # PHB PDF p.150: the war pick lists no Versatile damage, so "both hands" changes nothing.
+    fighter = {"class": "fighter", "stats": {"STR": 16}, "inventory": {"weapons": ["War pick"]}}
+    hint = "I swing the war pick with both hands"
+    hit = replace(
+        resolve_attack(fighter, 1, hint=hint, rng=random.Random(2)), success=True, critical=False
+    )
+    _, outcome = roll_attack_damage(fighter, hit, hint=hint, rng=random.Random(2))
+    assert outcome.expression == "1d8+3"
+
+
 def test_greatclub_deals_its_own_damage_not_the_club_dice() -> None:
     # fixed: "greatclub" contains "club", so it used to match the club's 1d4 (PHB PDF p.150, 1d8).
     sheet = {"class": "fighter", "inventory": {"weapons": ["Greatclub"]}, "stats": {}}
@@ -192,6 +243,38 @@ def test_armor_class_from_the_phb_armor_table(armor: str, dex: int, expected: in
     # dex is the ability SCORE; the modifier is floor((score - 10) / 2).
     # PHB Armor table, PDF p.146. The medium-armor cap is +2 and light armor takes the full DEX.
     assert _player_ac(_armored("fighter", armor, dex=dex)) == expected
+
+
+@pytest.mark.parametrize(
+    ("armor", "disadvantage"),
+    [
+        ("", False), ("padded armor", True), ("leather armor", False), ("studded leather", False),
+        ("hide armor", False), ("chain shirt", False), ("scale mail", True), ("breastplate", False),
+        ("half plate", True), ("ring mail", True), ("chain mail", True), ("splint", True),
+        ("plate", True),
+    ],
+)  # fmt: skip
+def test_stealth_check_in_armor_has_disadvantage_by_the_armor_table(
+    armor: str, disadvantage: bool
+) -> None:
+    # PHB Armor table, "Stealth" column, PDF p.146 (rule text PDF p.145): padded, scale mail, half
+    # plate, ring mail, chain mail, splint and plate give disadvantage on Dexterity (Stealth).
+    sheet = _armored("rogue", armor)
+    for seed in range(5):
+        check = resolve_check(sheet, "stealth", rng=random.Random(seed))
+        assert check.roll_mode == ("disadvantage" if disadvantage else "normal")
+        assert len(check.natural_rolls) == (2 if disadvantage else 1)
+        if disadvantage:
+            assert check.natural == min(check.natural_rolls)
+    # Only Stealth is hindered: other Dexterity checks keep their single d20.
+    assert resolve_check(sheet, "acrobatics", rng=random.Random(0)).roll_mode == "normal"
+
+
+def test_stealth_disadvantage_from_armor_cancels_against_an_engine_advantage() -> None:
+    # PHB PDF p.174: advantage and disadvantage cancel to a single normal roll.
+    plate = _armored("fighter", "plate")
+    check = resolve_check(plate, "stealth", roll_mode="advantage", rng=random.Random(1))
+    assert check.roll_mode == "normal" and len(check.natural_rolls) == 1
 
 
 def test_shield_adds_two_to_the_armor_class() -> None:

@@ -12,6 +12,7 @@ from agent.models.adjudication import AdjudicationResult, CharacterUpdate, RestR
 from agent.resolution import (
     HIT_DICE_REFUSAL,
     build_rest_record,
+    declared_hit_dice,
     enforce_side_effects,
     heal_from_rest,
     hit_dice_after_long_rest,
@@ -121,6 +122,50 @@ def test_short_rest_spends_one_die_and_records_the_roll() -> None:
     rolls = [d for d in adj.dice_log if d.get("purpose") == "short rest hit die"]
     assert len(rolls) == 1 and rolls[0]["total"] == record.rolled
     assert rolls[0]["expression"] == "1d10+2"
+
+
+@pytest.mark.parametrize(
+    ("text", "count"),
+    [
+        ("I take a short rest", 1),
+        ("I take a short rest and spend 3 hit dice", 3),
+        ("short rest, spending two hit dice", 2),
+        ("I rest for an hour and use four of my Hit Dice", 4),
+        ("I take a short rest and spend one hit die", 1),
+        ("I take a short rest with 3 hit dice left", 1),  # a count that is not being spent
+        ("I take a short rest and spend 0 hit dice", 1),
+    ],
+)
+def test_declared_hit_dice_are_read_from_the_players_words(text: str, count: int) -> None:
+    assert declared_hit_dice(text) == count
+
+
+def test_short_rest_spends_the_declared_number_of_dice_and_regains_their_total() -> None:
+    # PHB p.186 (PDF p.187): "spend one or more Hit Dice ... For each Hit Die spent in this way,
+    # the player rolls the die and adds the character's Constitution modifier to it. The character
+    # regains hit points equal to the total."
+    character = _char(level=4, hp=3, hp_max=40)  # CON 14: +2 per die
+
+    adj = _rest(character, "I take a short rest and spend 3 hit dice")
+
+    record = adj.rest_record
+    assert record is not None and not record.refused
+    assert record.expression == "3d10+6" and 9 <= record.rolled <= 36
+    assert record.healed == record.rolled
+    assert adj.character_update.hit_dice_spent == 3
+    assert (record.hit_dice_remaining, record.hit_dice_total) == (1, 4)
+    (log,) = [d for d in adj.dice_log if d.get("purpose") == "short rest hit die"]
+    assert len(log["rolls"]) == 3 and log["total"] == record.rolled
+
+
+def test_short_rest_cannot_spend_more_dice_than_are_left() -> None:
+    # PHB PDF p.187: "up to the character's maximum number of Hit Dice" (the level, less spent).
+    character = _char(level=2, hp=3, hp_max=40, spent=1)
+
+    adj = _rest(character, "I take a short rest and spend 5 hit dice")
+
+    assert adj.rest_record.expression == "1d10+2"
+    assert adj.character_update.hit_dice_spent == 2 and adj.rest_record.hit_dice_remaining == 0
 
 
 def test_short_rest_is_refused_without_a_roll_when_no_dice_are_left() -> None:

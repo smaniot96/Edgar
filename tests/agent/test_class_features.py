@@ -19,6 +19,7 @@ from agent.class_features import (
     class_feature_status,
     max_uses,
     rage_damage_bonus,
+    rage_resists,
     requested_features,
     resource_uses,
     ruling,
@@ -27,6 +28,7 @@ from agent.class_features import (
 )
 from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
+from agent.monster_stats import MonsterAttack, MonsterStats, combat_fields
 from agent.resolution import (
     CLASS_FEATURES_KEY,
     ENGINE_STATS_KEYS,
@@ -39,6 +41,7 @@ from agent.supported_rules import (
     apply_narration_boundary,
     classify_unsupported_actions,
 )
+from tests.agent.test_spells import ScriptedDice
 from tools.dice import use_rng
 
 ABILITIES = {"STR": 16, "DEX": 14, "CON": 14, "INT": 10, "WIS": 10, "CHA": 8}
@@ -200,6 +203,33 @@ def test_rage_damage_bonus_by_level_and_attack_type() -> None:
     rapier_sheet = _sheet("Barbarian", 1, weapons=("rapier",))
     rapier_sheet["stats"]["DEX"] = 18  # DEX above STR: the finesse attack uses DEX
     assert rage_damage_bonus(rapier_sheet, _hit(rapier_sheet), raging=True) == 0
+
+
+@pytest.mark.parametrize(
+    ("damage_type", "raging", "resisted"),
+    [
+        # PHB Barbarian, Rage, PDF p.49: resistance to bludgeoning, piercing and slashing damage.
+        ("bludgeoning", True, True),
+        ("piercing", True, True),
+        ("slashing", True, True),
+        ("fire", True, False),
+        (None, True, False),  # an attack with no stated damage type is not halved
+        ("slashing", False, False),
+    ],
+)
+def test_rage_resists_only_physical_damage_while_raging(damage_type, raging, resisted) -> None:
+    assert rage_resists(BARBARIAN_1, damage_type, raging=raging) is resisted
+    assert not rage_resists(FIGHTER_2, "slashing", raging=True)  # only a barbarian rages
+
+
+def test_rage_gives_nothing_in_heavy_armor() -> None:
+    # PHB Barbarian, Rage, PDF p.49: the benefits apply "if you aren't wearing heavy armor".
+    hit = _hit(BARBARIAN_1)
+    armors = {"": True, "chain mail": False, "plate": False, "half plate": True}
+    for armor, benefits in armors.items():
+        sheet = {**BARBARIAN_1, "inventory": {"weapons": ["greataxe"], "armor": armor}}
+        assert rage_resists(sheet, "slashing", raging=True) is benefits
+        assert rage_damage_bonus(sheet, hit, raging=True) == (2 if benefits else 0)
 
 
 def test_rage_as_an_idiom_is_not_a_declaration() -> None:
@@ -416,6 +446,95 @@ async def test_rage_adds_damage_uses_recharge_and_ends_with_the_encounter(
             break
     assert won["combat_state"]["ended"] is True
     assert won["combat_state"]["raging"] is False
+
+
+def _brute(damage_type: str) -> dict:
+    """An exact record whose only attack (Club, +3, 1d6+1) deals `damage_type`."""
+    stats = MonsterStats(
+        name="Brute",
+        hp_max=400,
+        ac=1,
+        abilities={"DEX": 1},
+        attacks=(MonsterAttack("Club", 3, "1d6+1", damage_type),),
+    )
+    return {
+        "name": "Brute",
+        "is_player": False,
+        "disposition": "active",
+        "alive": True,
+        "init": 1,
+        "init_bonus": 1,
+        "monster_stats": stats.to_dict(),
+        **combat_fields(stats),
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("damage_type", "armor", "taken"),
+    [("slashing", "", 3), ("piercing", "", 3), ("bludgeoning", "", 3), ("fire", "", 6),
+     ("slashing", "chain mail", 6)],
+)  # fmt: skip
+async def test_rage_halves_physical_damage_taken_outside_heavy_armor(
+    fake_llm_schema, fake_retrieval, damage_type, armor, taken
+) -> None:
+    """PHB Barbarian, Rage, PDF p.49: resistance to bludgeoning, piercing and slashing damage."""
+    from agent.graph_combat import combat_round_node
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    sheet = {**BARBARIAN_1, "inventory": {"weapons": ["greataxe"], "armor": armor}}
+    state = _state(sheet, [_brute(damage_type)], "I attack the brute")
+    state["parsed_input"] = ParsedInput(intent="combat", check="attack", target="brute")
+    hero = state["combat_state"]["combatants"][0]
+    hero.update(ac=10, raging=True, rage_round=1)
+    # The hero hits (d20 10 against AC 1) for 1d12 = 5; the brute hits (15 + 3 against AC 10) for
+    # 1d6 + 1 = 6 before resistance.
+    with use_rng(ScriptedDice([10, 5, 15, 5])):
+        out = await combat_round_node(state)
+    adj = out["adjudication_result"]
+    assert adj.character_update.hp_delta == -taken
+    assert ("halved by Rage resistance" in adj.mechanical_summary) is (taken == 3)
+
+
+@pytest.mark.asyncio
+async def test_rage_ends_after_one_minute(fake_llm_schema, fake_retrieval) -> None:
+    """PHB Barbarian, Rage, PDF p.49: "Your rage lasts for 1 minute", that is 10 rounds."""
+    from agent.graph_combat import combat_round_node
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    ogre = _enemy("Ogre", hp=400, ac=1, init=1, attack_bonus=-20)
+    expected = {10: ("1d12+5", True), 11: ("1d12+3", False)}  # begun in round 1: ends in round 11
+    for round_num, (expression, raging) in expected.items():
+        state = _state(BARBARIAN_1, [dict(ogre)], "I attack the ogre")
+        state["combat_state"]["round"] = round_num
+        state["combat_state"]["combatants"][0].update(raging=True, rage_round=1)
+        with use_rng(ScriptedDice([10, 5, 10])):
+            out = await combat_round_node(state)
+        adj = out["adjudication_result"]
+        assert _purpose(adj.dice_log, "player damage")[0]["expression"] == expression
+        assert out["combat_state"]["raging"] is raging
+        assert ("rage ends after 1 minute" in adj.mechanical_summary) is not raging
+
+
+@pytest.mark.asyncio
+async def test_declaring_rage_in_heavy_armor_spends_the_use_for_no_benefit(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    from agent.graph_combat import combat_round_node
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    sheet = {**BARBARIAN_1, "inventory": {"weapons": ["greataxe"], "armor": "chain mail"}}
+    state = _state(
+        sheet,
+        [_enemy("Ogre", hp=400, ac=1, init=1, attack_bonus=-20)],
+        "I rage and swing the greataxe at the ogre",
+    )
+    with use_rng(ScriptedDice([10, 5, 10])):
+        out = await combat_round_node(state)
+    adj = out["adjudication_result"]
+    assert adj.character_update.class_feature_uses == {RAGE: 1}
+    assert "Heavy armor blocks its benefits" in adj.mechanical_summary
+    assert _purpose(adj.dice_log, "player damage")[0]["expression"] == "1d12+3"  # no rage bonus
 
 
 @pytest.mark.asyncio

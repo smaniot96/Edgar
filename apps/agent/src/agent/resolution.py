@@ -135,6 +135,7 @@ class Weapon:
     finesse: bool = False
     ranged: bool = False
     simple: bool = False  # PHB simple weapon; everything else in the table is martial
+    versatile: str | None = None  # melee damage with two hands (PHB Versatile, PDF p.148)
 
 
 _WEAPONS = [
@@ -142,14 +143,15 @@ _WEAPONS = [
     # shorter "club" does not match it and grant a 1d4.
     Weapon("dagger", "1d4", finesse=True, simple=True), Weapon("club", "1d4", simple=True),
     Weapon("greatclub", "1d8", simple=True),
-    Weapon("quarterstaff", "1d6", simple=True), Weapon("mace", "1d6", simple=True),
-    Weapon("spear", "1d6", simple=True), Weapon("handaxe", "1d6", simple=True),
+    Weapon("quarterstaff", "1d6", simple=True, versatile="1d8"), Weapon("mace", "1d6", simple=True),
+    Weapon("spear", "1d6", simple=True, versatile="1d8"), Weapon("handaxe", "1d6", simple=True),
     Weapon("javelin", "1d6", simple=True), Weapon("light hammer", "1d4", simple=True),
     Weapon("sickle", "1d4", simple=True),
     Weapon("shortsword", "1d6", finesse=True), Weapon("scimitar", "1d6", finesse=True),
     Weapon("rapier", "1d8", finesse=True), Weapon("whip", "1d4", finesse=True),
-    Weapon("longsword", "1d8"), Weapon("battleaxe", "1d8"), Weapon("warhammer", "1d8"),
-    Weapon("morningstar", "1d8"), Weapon("flail", "1d8"), Weapon("trident", "1d6"),
+    Weapon("longsword", "1d8", versatile="1d10"), Weapon("battleaxe", "1d8", versatile="1d10"),
+    Weapon("warhammer", "1d8", versatile="1d10"),
+    Weapon("morningstar", "1d8"), Weapon("flail", "1d8"), Weapon("trident", "1d6", versatile="1d8"),
     Weapon("war pick", "1d8"), Weapon("greatsword", "2d6"), Weapon("greataxe", "1d12"),
     Weapon("maul", "2d6"), Weapon("glaive", "1d10"), Weapon("halberd", "1d10"),
     Weapon("pike", "1d10"), Weapon("lance", "1d12"),
@@ -389,10 +391,13 @@ class RollModeSource(StrEnum):
 
     # Attack rolls against an unconscious creature have advantage (PHB, conditions and combat).
     TARGET_UNCONSCIOUS = "target_unconscious"
+    # A Dexterity (Stealth) check made in armor the PHB Armor table marks with Stealth disadvantage.
+    ARMOR_STEALTH = "armor_stealth"
 
 
 ROLL_MODE_BY_SOURCE: dict[RollModeSource, RollMode] = {
     RollModeSource.TARGET_UNCONSCIOUS: "advantage",
+    RollModeSource.ARMOR_STEALTH: "disadvantage",
 }
 
 
@@ -569,6 +574,31 @@ def choose_weapon(character: dict | None, hint: str = "", *, prefer_ranged: bool
     return known[0] if known else _DEFAULT_WEAPON
 
 
+def carries_shield(character: dict | None) -> bool:
+    inv = (character or {}).get("inventory") or {}
+    weapons = inv.get("weapons") if isinstance(inv, dict) else None
+    return isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons)
+
+
+# PHB Armor table, PDF p.146: the heavy armors, and the other armor with Stealth "Disadvantage".
+_HEAVY_ARMOR = re.compile(r"\b(?:ring mail|chain mail|splint|(?<!half )plate)\b", re.IGNORECASE)
+_STEALTH_ARMOR = re.compile(r"\b(?:padded|scale(?: mail)?|half plate)\b", re.IGNORECASE)
+
+
+def _worn_armor(character: dict | None) -> str:
+    inv = (character or {}).get("inventory") or {}
+    return str(inv.get("armor") or "") if isinstance(inv, dict) else ""
+
+
+def wears_heavy_armor(character: dict | None) -> bool:
+    return bool(_HEAVY_ARMOR.search(_worn_armor(character)))
+
+
+def armor_hinders_stealth(character: dict | None) -> bool:
+    armor = _worn_armor(character)
+    return bool(_HEAVY_ARMOR.search(armor) or _STEALTH_ARMOR.search(armor))
+
+
 def _attack_ability(character: dict | None, weapon: Weapon) -> str:
     scores = ability_scores(character)
     if weapon.ranged and not weapon.finesse:
@@ -679,6 +709,8 @@ def resolve_check(
     if spec is None:
         return None
     mode = validate_roll_mode(roll_mode)
+    if spec.check == "stealth" and armor_hinders_stealth(character):
+        mode = combine_roll_modes(mode, ROLL_MODE_BY_SOURCE[RollModeSource.ARMOR_STEALTH])
     target = dc if dc is not None else dc_for(difficulty)
     natural, total, expr, log = _d20_roll(spec, mode, rng)
     faces = [natural] if mode == "normal" else list(log["rolls"])
@@ -803,6 +835,9 @@ def _double_dice(expr: str) -> str:
     return f"{min(p.count * 2, 100)}d{p.sides}{mod}"
 
 
+_TWO_HANDED = re.compile(r"\b(?:two|both)[- ]hand(?:s|ed)?\b", re.IGNORECASE)
+
+
 def roll_attack_damage(
     character: dict | None,
     attack: CheckResult,
@@ -813,14 +848,19 @@ def roll_attack_damage(
 ) -> tuple[int, DiceOutcome]:
     """Weapon (or cantrip) damage for a hit; dice doubled on a critical.
 
-    `bonus` is a flat engine-owned modifier (a class feature such as Rage); it is not doubled.
+    `bonus` is a flat engine-owned modifier (a class feature such as Rage); it is not doubled. A
+    versatile weapon deals its two-handed damage when the player declares a two-handed grip and no
+    shield is carried (the shield hand would not be free).
     """
     if attack.kind == "spell_attack":
         # Spell damage is a catalog effect (agent.spells); a class-die stand-in is never rolled.
         raise ValueError("spell attacks take their damage from agent.spells.resolve_spell")
     weapon = attack.weapon or choose_weapon(character, hint)
     mod = ability_modifier(character, _attack_ability(character, weapon)) + bonus
-    expr = f"{weapon.dice}{mod:+d}" if mod else weapon.dice
+    dice = weapon.dice
+    if weapon.versatile and _TWO_HANDED.search(hint) and not carries_shield(character):
+        dice = weapon.versatile
+    expr = f"{dice}{mod:+d}" if mod else dice
     if attack.critical:
         expr = _double_dice(expr)
     outcome = roll(expr, rng)
@@ -982,8 +1022,29 @@ def detect_rest(text: str | None) -> str | None:
     return None
 
 
+_COUNT_WORDS = {
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10,
+}  # fmt: skip
+_DECLARED_HIT_DICE = re.compile(
+    r"\b(?:spend|spends|spending|use|uses|using|roll|rolls|rolling)\s+(\d+|"
+    + "|".join(_COUNT_WORDS)
+    + r")\s+(?:of\s+(?:my|the)\s+)?hit\s+di(?:e|ce)\b",
+    re.IGNORECASE,
+)
+
+
+def declared_hit_dice(text: str | None) -> int:
+    """The Hit Dice a short rest declares to spend ("spend three hit dice"); one when none."""
+    match = _DECLARED_HIT_DICE.search(text or "")
+    if not match:
+        return 1
+    word = match.group(1).lower()
+    return max(1, int(word) if word.isdigit() else _COUNT_WORDS[word])
+
+
 def heal_from_rest(
-    character: dict | None, kind: str, rng: random.Random | None = None
+    character: dict | None, kind: str, rng: random.Random | None = None, *, hit_dice: int = 1
 ) -> HealResult | None:
     if not character:
         return None
@@ -995,9 +1056,10 @@ def heal_from_rest(
         if hit_dice_remaining(character) <= 0:
             # Refused without a roll: no Hit Die is left until a long rest.
             return None
+        count = min(hit_dice, hit_dice_remaining(character))
         die = hit_die_sides(character)
-        con = ability_modifier(character, "CON")
-        expr = f"1d{die}{con:+d}" if con else f"1d{die}"
+        con = ability_modifier(character, "CON") * count
+        expr = f"{count}d{die}{con:+d}" if con else f"{count}d{die}"
         outcome = roll(expr, rng)
         # PHB p.186: the character regains hit points equal to the total; no floor of 1.
         return HealResult(amount=max(0, outcome.total), source="short_rest", dice=outcome)
@@ -1009,10 +1071,11 @@ def heal_from_rest(
 # --------------------------------------------------------------------------------------------
 # Rule (2014 PHB, PDF p.187): a short rest spends one or more Hit Dice; each rolls the class die plus
 # CON and regains that total (no minimum). A long rest regains up to half the character's total Hit
-# Dice, rounded down, so a level-1 character regains none. The engine spends one die per short rest.
+# Dice, rounded down, so a level-1 character regains none. A short rest spends the declared number
+# of dice (see `declared_hit_dice`), one when none is declared, and no more than are left.
 # Total = character level. Spent count lives in CharacterAssignment.stats["hit_dice"] as
 # {"spent": n} (a JSONB key, no migration); a sheet without the key has none spent. 2024 campaigns
-# follow the same rule in this engine. A short rest spends one die: a declared count is not parsed.
+# follow the same rule in this engine.
 
 HIT_DICE_KEY = "hit_dice"
 HIT_DICE_REFUSAL = "{hero} has no Hit Dice left until a long rest. No healing is rolled."
@@ -1445,7 +1508,9 @@ def enforce_side_effects(
         else:
             rest = detect_rest(player_input)
             if rest:
-                heal = heal_from_rest(character, rest, rng)
+                heal = heal_from_rest(
+                    character, rest, rng, hit_dice=declared_hit_dice(player_input)
+                )
                 sw_remaining = second_wind_after_rest(character, rest)
                 # Class feature recovery (EDG-145). Local import: agent.class_features imports this module.
                 from agent.class_features import class_feature_after_rest
@@ -1456,8 +1521,8 @@ def enforce_side_effects(
                     if rest == "long":
                         hit_dice_next = hit_dice_after_long_rest(character)
                     elif heal is not None:
-                        # A short rest spends one Hit Die, and the roll is the engine's record of it.
-                        hit_dice_next = hit_dice_spent(character) + 1
+                        # The roll is the engine's record of the Hit Dice a short rest spent.
+                        hit_dice_next = hit_dice_spent(character) + heal.dice.count
                     else:
                         hit_dice_refusal = HIT_DICE_REFUSAL.format(hero=hero)
                     rest_record = build_rest_record(character, rest, heal, hit_dice_next)

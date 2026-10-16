@@ -112,7 +112,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "advantage, and the restrained or prone effects of a supported combat maneuver set "
             "advantage or disadvantage on attacks (see contested_maneuvers), and a hero who takes the "
             "Dodge action gives foes disadvantage on attacks until the hero's next turn (see "
-            "action_economy). A player's or the model's claim of advantage is never a source and is not "
+            "action_economy). A Dexterity (Stealth) check made in armor the PHB Armor table marks with "
+            "Stealth disadvantage (padded, scale mail, half plate and the heavy armors, PDF p.146) has "
+            "disadvantage. A player's or the model's claim of advantage is never a source and is not "
             "applied."
         ),
         implementation="agent.resolution:resolve_check",
@@ -139,7 +141,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "dice; a natural 1 always misses. Only weapons in the engine table are recognised "
             "(others use a generic d8). The proficiency bonus is added only when the class or "
             "sheet makes the weapon, or its simple or martial category, proficient; unarmed and "
-            "unrecognised attacks keep it."
+            "unrecognised attacks keep it. A versatile weapon (quarterstaff, spear, trident, "
+            "battleaxe, longsword, warhammer) deals its two-handed damage (PHB, PDF p.148) when the "
+            "player declares both hands and the sheet lists no shield."
         ),
         implementation="agent.resolution:resolve_attack",
         test="tests/agent/test_supported_rules.py::test_supported_weapon_attack_crit_and_fumble",
@@ -151,8 +155,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "AC from the armor table (PHB, 2014), DEX modifier as capped by the armor type (medium "
             "armor at most +2), plus 2 for a shield. Unarmored characters use 10 plus DEX, except a "
             "barbarian (10 plus DEX plus CON, a shield still counts) and a monk without a shield (10 "
-            "plus DEX plus WIS). Armor is matched by name; heavy-armor Strength requirements and "
-            "stealth are not applied."
+            "plus DEX plus WIS). Armor is matched by name. Armor with Stealth disadvantage in the "
+            "table gives disadvantage on Stealth checks (see advantage_disadvantage). A heavy "
+            "armor's Strength requirement only reduces speed, which is not simulated, so it is not "
+            "applied."
         ),
         implementation="agent.graph_combat:_player_ac",
         test="tests/agent/test_supported_rules.py::test_supported_armor_class_from_table",
@@ -225,14 +231,17 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="class_feature_rage",
-        title="Barbarian Rage (damage bonus; uses restored by a long rest)",
+        title="Barbarian Rage (damage bonus, resistance, 1 minute; uses restored by a long rest)",
         scope=(
             "Barbarian (PHB, PDF pp.48-49). Uses per long rest: 2 at level 1, 3 at level 3, 4 at level 6, "
             "5 at level 12 and 6 at level 17. Declared in combat, rage starts without using the round's attack (bonus "
             "actions are not tracked) and adds +2 damage, or +3 from level 9 and +4 from level 16, to each "
-            "hit with a melee weapon attack that uses Strength. It lasts until the encounter ends; the "
-            "1-minute limit is not tracked. A long rest restores uses; a short rest does not. Damage "
-            "resistance and the Strength advantage are not applied."
+            "hit with a melee weapon attack that uses Strength, and halves bludgeoning, piercing and "
+            "slashing damage the hero takes (damage with no stated type is not halved). Neither "
+            "applies in heavy armor, where a declared rage still spends its use. The rage lasts 1 "
+            "minute, 10 rounds, or until the encounter ends. Its early end (a turn with no attack or "
+            "damage taken, or by choice), the Strength advantage and the spell restriction are not "
+            "applied. A long rest restores uses; a short rest does not."
         ),
         implementation="agent.class_features:rage_damage_bonus",
         test=(
@@ -369,14 +378,16 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="short_rest",
-        title="Short rest healing spends one Hit Die",
+        title="Short rest healing spends the declared Hit Dice",
         scope=(
-            "A short rest (rest-for-an-hour wording) spends one Hit Die of the class and rolls it "
+            "A short rest (rest-for-an-hour wording) spends Hit Dice of the class and rolls each "
             "plus the CON modifier; the character regains that total (PHB, 2014, PDF p.187; no "
-            "minimum), capped at the missing HP. With no Hit Dice left it is refused: nothing is "
-            "rolled and nothing is healed until a long rest. The rules allow one or more dice; a "
-            "declared count of Hit Dice is not parsed, so one die is spent. A short rest also "
-            "restores a fighter's Second Wind and Action Surge uses."
+            "minimum), capped at the missing HP. The player's words set the count ('spend 3 hit "
+            "dice', numbers or words up to ten); with no count one die is spent, and never more "
+            "than are left. With no Hit Dice left it is refused: nothing is rolled and nothing is "
+            "healed until a long rest. The book's choice to spend another die after seeing each "
+            "roll is not offered: the count is declared first. A short rest also restores a "
+            "fighter's Second Wind and Action Surge uses."
         ),
         implementation="agent.resolution:heal_from_rest",
         test="tests/agent/test_supported_rules.py::test_supported_short_rest_spends_one_hit_die",
@@ -485,8 +496,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "total wins and a tie fails. Success restrains a grappled or pinned foe: its attacks have "
             "disadvantage, attacks against it have advantage and its Dexterity saves (a spell's, such as "
             "Sacred Flame's) have disadvantage. Success on a shove prone knocks the "
-            "foe prone: its attacks have disadvantage, and melee attacks against it have advantage "
-            "while ranged attacks have disadvantage. The maneuver replaces that turn's attack. A "
+            "foe prone: its attacks have disadvantage, and attacks against it have advantage from "
+            "within 5 feet (the melee band) and disadvantage from farther away (PHB, PDF p.293), so a "
+            "ranged attack made within 5 feet has advantage that its own disadvantage cancels. The "
+            "maneuver replaces that turn's attack. A "
             "restraint ends when the player declares a release, when the foe is defeated, or when the "
             "encounter ends. A prone foe does not stand up, and a restrained foe makes no escape "
             "contest; both are fixed for the rest of the encounter."
@@ -623,7 +636,7 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         boundary=(
             "Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery "
             "points, ki points, Flurry of Blows, Stunning Strike, Superiority Dice and Martial Arts have "
-            "no engine effect, and neither do Rage's damage resistance and Strength advantage. Their "
+            "no engine effect, and neither do Rage's Strength advantage and early end. Their "
             "effects, uses and recharge are not applied."
         ),
         owner="unassigned",

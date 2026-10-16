@@ -86,14 +86,19 @@ simulate (`GET /api/rules/supported-scope`):
 
 - Executed by the engine: d20 ability, skill, save and tool checks against DCs of 10/15/20/25;
   weapon attacks with natural 1 and 20 handling and proficiency only where the class or sheet grants
-  it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
-  table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, a bonus action
-  that may accompany the turn's action, restored by a short or long rest; no automatic use at 0 HP);
-  Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends one
-  die, rolls it plus CON and regains that total (capped at the missing HP), and is refused with none
-  left; a long rest restores HP, spell slots and up to half the total Hit Dice, rounded down (PHB
-  p.187; the 2024 campaigns use the same rule); healing potions taken from inventory. The AC table
-  follows PHB p.146 (hide armor included), with barbarian and monk Unarmored Defense (PHB pp.49, 79).
+  it (a versatile weapon deals its two-handed damage when the player declares both hands and no
+  shield is carried); advantage and disadvantage from engine-owned sources (both d20 faces logged);
+  AC from the armor table; initiative; combat rounds in initiative order; Fighter Second Wind (one
+  use, a bonus action that may accompany the turn's action, restored by a short or long rest; no
+  automatic use at 0 HP); Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a
+  short rest spends the declared number of dice (one when none is declared, never more than are
+  left), rolls them plus CON each and regains that total (capped at the missing HP), and is refused
+  with none left; a long rest restores HP, spell slots and up to half the total Hit Dice, rounded
+  down (PHB p.187; the 2024 campaigns use the same rule); healing potions taken from inventory. The
+  AC table follows PHB p.146 (hide armor included), with barbarian and monk Unarmored Defense (PHB
+  pp.49, 79). Armor the table marks with Stealth disadvantage gives disadvantage on Stealth checks;
+  a heavy armor's Strength requirement only slows movement, which is not simulated, so it is not
+  applied.
 - Action economy in combat: each player turn has one action and one bonus action. Attacks, contested
   maneuvers, item use, catalog action spells, Dodge, Dash and Disengage use the action; Second Wind,
   Healing Word and Rage use the bonus action. A second action or bonus action in the same turn is
@@ -114,8 +119,9 @@ simulate (`GET /api/rules/supported-scope`):
   long rest; it adds one more attack on the same foe in that round), Rogue Sneak Attack (1d6 per two
   rogue levels, once per turn, on a hit with a finesse or ranged weapon that has advantage from an
   engine source) and Barbarian Rage (uses per long rest by level; +2, +3 or +4 damage on melee
-  Strength hits until the encounter ends). Uses and recharge are tracked on the sheet; a declared
-  feature the engine does not execute gets a ruling and no effect.
+  Strength hits and half damage from bludgeoning, piercing and slashing attacks, outside heavy
+  armor, for 1 minute or until the encounter ends). Uses and recharge are tracked on the sheet; a
+  declared feature the engine does not execute gets a ruling and no effect.
 - Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
   darts, upcast by slot), Sacred Flame (DEX save), Cure Wounds (self-heal) and Healing Word (bonus
   action, self-heal). Their dice are rolled by the engine, leveled spells spend a slot tracked per
@@ -147,10 +153,10 @@ simulate (`GET /api/rules/supported-scope`):
 - Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
   are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
   attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or
-  knocks it prone (its attacks have
-  disadvantage; melee attacks against it have advantage, ranged attacks disadvantage). A declared
-  release ends a restraint; a restraint ends with the foe's defeat or the encounter. These effects
-  are shown in the combat roster and given to the narrator.
+  knocks it prone (its attacks have disadvantage; attacks against it have advantage from within 5
+  feet and disadvantage from farther away). A declared release ends a restraint; a restraint ends
+  with the foe's defeat or the encounter. These effects are shown in the combat roster and given to
+  the narrator.
 - Captives: a foe knocked out in a nonlethal victory stays alive as a captive. The player can release
   it (it is no longer a captive and is never an enemy again) or kill it, but only with an explicit
   lethal declaration in their own words; no dice are rolled. An attack on a captive without that
@@ -161,11 +167,10 @@ simulate (`GET /api/rules/supported-scope`):
   conditions (frightened, stunned, charmed and the rest have no engine effect; a poisoned hero's
   ability checks are not penalised), breath and other save-based recharge abilities, cover, high
   ground, flanking, difficult terrain and exact distances, Help, reactions other than opportunity
-  attacks, other bonus actions, declared counts of Hit Dice, and class features other than Second
-  Wind, Action Surge, Sneak Attack and Rage
-  (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery and ki
-  points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's damage
-  resistance). A declared action of this kind gets a narrative ruling and no
+  attacks, other bonus actions, and class features other than Second Wind, Action Surge, Sneak
+  Attack and Rage (Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape,
+  sorcery and ki points, Flurry of Blows, Stunning Strike, Superiority Dice, Martial Arts; Rage's
+  Strength advantage and early end). A declared action of this kind gets a narrative ruling and no
   mechanical effect.
 - Declared-action reading (EDG-147, measured against real model outputs; see
   `tests/fixtures/real_model/README.md`): Declared actions are read in English. Italian and Spanish are read only for a few casting, advantage, cover, lethality and action words. A catalog spell resolves only when its English name is in the declaration; a spell the parser names from another language is ruled as not resolved. Other languages are not classified by these words and rely on the parser's own entities. The unsupported-action

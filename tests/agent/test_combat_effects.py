@@ -53,6 +53,24 @@ def test_attack_roll_mode_follows_combatant_effects(attacker, target, ranged, mo
 
 
 @pytest.mark.parametrize(
+    ("ranged", "within_five_feet", "mode"),
+    [
+        (False, False, "advantage"),
+        # PHB Appendix A, Prone (PDF p.293): an attack roll against a prone creature has advantage
+        # if the attacker is within 5 feet of it, otherwise disadvantage. A ranged attack made
+        # within 5 feet of a hostile creature has its own disadvantage (PHB p.195), so they cancel.
+        (True, True, "normal"),
+        (True, False, "disadvantage"),
+    ],
+)
+def test_prone_target_grants_advantage_within_five_feet_even_for_a_ranged_attack(
+    ranged, within_five_feet, mode
+) -> None:
+    prone = {"effects": [{"kind": "prone"}]}
+    assert attack_roll_mode({}, prone, ranged=ranged, within_five_feet=within_five_feet) == mode
+
+
+@pytest.mark.parametrize(
     "raw",
     [None, "restrained", 7, {"kind": "restrained"}, [None, "x", {"kind": "stunned"}]],
 )
@@ -305,7 +323,7 @@ async def test_release_with_nothing_bound_is_a_plain_no_op(fake_llm_schema, fake
 
 
 @pytest.mark.asyncio
-async def test_shove_prone_gives_melee_advantage_and_ranged_disadvantage(
+async def test_shove_prone_gives_advantage_within_five_feet_and_disadvantage_beyond(
     fake_llm_schema, fake_retrieval
 ) -> None:
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
@@ -333,14 +351,17 @@ async def test_shove_prone_gives_melee_advantage_and_ranged_disadvantage(
         seed=6,
     )
     assert _entries(melee, "attack check")[0]["roll_mode"] == "advantage"
-    ranged = await _round(
-        fake_llm_schema,
-        copy.deepcopy(saved),
-        "I shoot the raider with my bow",
-        ParsedInput(intent="combat", check="attack", target="raider"),
-        seed=6,
+    # A ranged attack from within 5 feet (the melee band) has advantage against a prone foe, and
+    # its own within-5-feet disadvantage cancels it; from beyond 5 feet it has disadvantage.
+    shoot = ParsedInput(intent="combat", check="attack", target="raider")
+    close = await _round(
+        fake_llm_schema, copy.deepcopy(saved), "I shoot the raider with my bow", shoot, seed=6
     )
-    assert _entries(ranged, "attack check")[0]["roll_mode"] == "disadvantage"
+    assert "roll_mode" not in _entries(close, "attack check")[0]  # one plain d20
+    far = copy.deepcopy(saved)
+    _foe({"combat_state": {"combatants": far}}, "Raider")["band"] = "ranged"
+    distant = await _round(fake_llm_schema, far, "I shoot the raider with my bow", shoot, seed=6)
+    assert _entries(distant, "attack check")[0]["roll_mode"] == "disadvantage"
 
 
 @pytest.mark.asyncio

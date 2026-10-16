@@ -77,8 +77,10 @@ from agent.captives import CaptiveTurn, captive_turn, is_attack_text
 from agent.class_features import (
     ACTION_SURGE,
     RAGE,
+    RAGE_ROUNDS,
     SNEAK_ATTACK,
     rage_damage_bonus,
+    rage_resists,
     requested_features,
     resource_uses,
     sneak_attack_roll,
@@ -159,6 +161,7 @@ from agent.resolution import (
     SECOND_WIND_REFUSAL,
     CheckResult,
     ability_modifier,
+    carries_shield,
     character_class,
     check_spec,
     choose_weapon,
@@ -174,6 +177,7 @@ from agent.resolution import (
     second_wind_remaining,
     second_wind_status,
     spend_second_wind,
+    wears_heavy_armor,
 )
 from agent.spells import CastPlan, cast_request, narrate, resolve_spell
 from agent.state import AgentState
@@ -311,8 +315,7 @@ def _player_ac(character: dict | None) -> int:
     dex_mod = ability_modifier(character, "DEX")
     inv = character.get("inventory") or {}
     armor = str(inv.get("armor", "")).lower() if isinstance(inv, dict) else ""
-    weapons = inv.get("weapons") if isinstance(inv, dict) else None
-    shield = 2 if isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons) else 0
+    shield = 2 if carries_shield(character) else 0
     # Match medium armor before the generic "plate" substring.
     if "half plate" in armor:
         base = 15 + min(dex_mod, 2)
@@ -1054,10 +1057,14 @@ async def combat_round_node(state: AgentState) -> dict:
                 dmg_roll.to_log(f"{e['name']} {label} damage" if label else f"{e['name']} damage")
             )
             dmg = max(1, dmg_roll.total)
+            resisted = ""
+            if rage_resists(character, damage_type, raging=bool(player.get("raging"))):
+                dmg //= 2
+                resisted = ", halved by Rage resistance"
             crit = " Critical hit!" if natural == 20 else ""
             typed = f" {damage_type}" if damage_type else ""
             log_lines.append(
-                f"{subject} hits {hero} for {dmg}{typed} damage (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}"
+                f"{subject} hits {hero} for {dmg}{typed} damage{resisted} (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}"
             )
             outcomes.append(
                 {
@@ -1219,6 +1226,12 @@ async def combat_round_node(state: AgentState) -> dict:
     # EDG-044: a Dodge lasts until the hero's next turn starts, which is here (after the foes that
     # act ahead of the hero in initiative). A Dodge declared this turn applies to the foes after.
     release_effect(player, "dodging")
+    # A rage lasts 1 minute (PHB, PDF p.49), counted from the round it began in.
+    if player.get("raging") and (
+        int(combat_state.get("round", 1) or 1) - int(player.get("rage_round") or 1) >= RAGE_ROUNDS
+    ):
+        player.pop("raging")
+        log_lines.append(f"{hero}'s rage ends after 1 minute.")
     # Bonus action first (Second Wind, Healing Word): it sits beside the turn's action, not in place of it.
     bonus_text = ""
     bonus_record: dict | None = None
@@ -1256,8 +1269,12 @@ async def combat_round_node(state: AgentState) -> dict:
         if cf_left.get(RAGE, 0) > 0:
             cf_left[RAGE] = spend_use(character, RAGE, cf_left[RAGE])
             player["raging"] = True
+            player["rage_round"] = int(combat_state.get("round", 1) or 1)
             round_effects.append(RAGE)
-            log_lines.append(f"{hero} flies into a rage!")
+            log_lines.append(
+                f"{hero} flies into a rage!"
+                + (" Heavy armor blocks its benefits." if wears_heavy_armor(character) else "")
+            )
             bonus_record = bonus_record or {"action": "rage", "result": "started"}
     surge_swing = bool(
         player_acted
@@ -1644,6 +1661,7 @@ async def combat_round_node(state: AgentState) -> dict:
         clear_effects(combatants)
         player.pop("concentration", None)  # EDG-043: the caster stops concentrating with the fight
         player.pop("raging", None)  # rage, too, lasts only for this encounter (EDG-145)
+        player.pop("rage_round", None)
 
     # EDG-044: what this turn spent, kept on the player row (persisted with the combatants).
     spent = declared if player_acted and not fled else []
