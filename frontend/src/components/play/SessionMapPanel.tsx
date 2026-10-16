@@ -35,6 +35,13 @@ function placeStatus(status: string) {
   return status === "current" ? "Current place" : status === "visited" ? "Visited" : "Known place";
 }
 
+function artworkLabel(kind: string) {
+  return kind === "original_creature_art" ? "Original source artwork"
+    : kind === "source_map" ? "Retained source map"
+    : kind === "generated_illustration" ? "Generated illustration · decorative"
+    : "Player handout";
+}
+
 type SessionMapPanelProps = {
   sessionId: number;
   map: SessionMapRead | null;
@@ -227,6 +234,8 @@ function SessionMapPanelContent({
                   ) : (
                     <a className="block p-3 text-sm text-ember-700 underline" href={`${apiBase}${asset.url}`}>Open player handout</a>
                   )}
+                  <p className="px-3 pt-2 text-sm text-ink">{artworkLabel(asset.kind)}</p>
+                  <p className="px-3 pb-3 text-xs text-ink-muted">Version {asset.sha256.slice(0, 12)}</p>
                 </li>
               ))}
             </ul>
