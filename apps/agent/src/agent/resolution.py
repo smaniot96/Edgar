@@ -135,6 +135,7 @@ class Weapon:
     finesse: bool = False
     ranged: bool = False
     simple: bool = False  # PHB simple weapon; everything else in the table is martial
+    versatile: str | None = None  # melee damage with two hands (PHB Versatile, PDF p.148)
 
 
 _WEAPONS = [
@@ -142,14 +143,15 @@ _WEAPONS = [
     # shorter "club" does not match it and grant a 1d4.
     Weapon("dagger", "1d4", finesse=True, simple=True), Weapon("club", "1d4", simple=True),
     Weapon("greatclub", "1d8", simple=True),
-    Weapon("quarterstaff", "1d6", simple=True), Weapon("mace", "1d6", simple=True),
-    Weapon("spear", "1d6", simple=True), Weapon("handaxe", "1d6", simple=True),
+    Weapon("quarterstaff", "1d6", simple=True, versatile="1d8"), Weapon("mace", "1d6", simple=True),
+    Weapon("spear", "1d6", simple=True, versatile="1d8"), Weapon("handaxe", "1d6", simple=True),
     Weapon("javelin", "1d6", simple=True), Weapon("light hammer", "1d4", simple=True),
     Weapon("sickle", "1d4", simple=True),
     Weapon("shortsword", "1d6", finesse=True), Weapon("scimitar", "1d6", finesse=True),
     Weapon("rapier", "1d8", finesse=True), Weapon("whip", "1d4", finesse=True),
-    Weapon("longsword", "1d8"), Weapon("battleaxe", "1d8"), Weapon("warhammer", "1d8"),
-    Weapon("morningstar", "1d8"), Weapon("flail", "1d8"), Weapon("trident", "1d6"),
+    Weapon("longsword", "1d8", versatile="1d10"), Weapon("battleaxe", "1d8", versatile="1d10"),
+    Weapon("warhammer", "1d8", versatile="1d10"),
+    Weapon("morningstar", "1d8"), Weapon("flail", "1d8"), Weapon("trident", "1d6", versatile="1d8"),
     Weapon("war pick", "1d8"), Weapon("greatsword", "2d6"), Weapon("greataxe", "1d12"),
     Weapon("maul", "2d6"), Weapon("glaive", "1d10"), Weapon("halberd", "1d10"),
     Weapon("pike", "1d10"), Weapon("lance", "1d12"),
@@ -569,6 +571,12 @@ def choose_weapon(character: dict | None, hint: str = "", *, prefer_ranged: bool
     return known[0] if known else _DEFAULT_WEAPON
 
 
+def carries_shield(character: dict | None) -> bool:
+    inv = (character or {}).get("inventory") or {}
+    weapons = inv.get("weapons") if isinstance(inv, dict) else None
+    return isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons)
+
+
 def _attack_ability(character: dict | None, weapon: Weapon) -> str:
     scores = ability_scores(character)
     if weapon.ranged and not weapon.finesse:
@@ -803,6 +811,9 @@ def _double_dice(expr: str) -> str:
     return f"{min(p.count * 2, 100)}d{p.sides}{mod}"
 
 
+_TWO_HANDED = re.compile(r"\b(?:two|both)[- ]hand(?:s|ed)?\b", re.IGNORECASE)
+
+
 def roll_attack_damage(
     character: dict | None,
     attack: CheckResult,
@@ -813,14 +824,19 @@ def roll_attack_damage(
 ) -> tuple[int, DiceOutcome]:
     """Weapon (or cantrip) damage for a hit; dice doubled on a critical.
 
-    `bonus` is a flat engine-owned modifier (a class feature such as Rage); it is not doubled.
+    `bonus` is a flat engine-owned modifier (a class feature such as Rage); it is not doubled. A
+    versatile weapon deals its two-handed damage when the player declares a two-handed grip and no
+    shield is carried (the shield hand would not be free).
     """
     if attack.kind == "spell_attack":
         # Spell damage is a catalog effect (agent.spells); a class-die stand-in is never rolled.
         raise ValueError("spell attacks take their damage from agent.spells.resolve_spell")
     weapon = attack.weapon or choose_weapon(character, hint)
     mod = ability_modifier(character, _attack_ability(character, weapon)) + bonus
-    expr = f"{weapon.dice}{mod:+d}" if mod else weapon.dice
+    dice = weapon.dice
+    if weapon.versatile and _TWO_HANDED.search(hint) and not carries_shield(character):
+        dice = weapon.versatile
+    expr = f"{dice}{mod:+d}" if mod else dice
     if attack.critical:
         expr = _double_dice(expr)
     outcome = roll(expr, rng)

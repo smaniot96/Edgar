@@ -159,6 +159,7 @@ from agent.resolution import (
     SECOND_WIND_REFUSAL,
     CheckResult,
     ability_modifier,
+    carries_shield,
     character_class,
     check_spec,
     choose_weapon,
@@ -310,8 +311,7 @@ def _player_ac(character: dict | None) -> int:
     dex_mod = ability_modifier(character, "DEX")
     inv = character.get("inventory") or {}
     armor = str(inv.get("armor", "")).lower() if isinstance(inv, dict) else ""
-    weapons = inv.get("weapons") if isinstance(inv, dict) else None
-    shield = 2 if isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons) else 0
+    shield = 2 if carries_shield(character) else 0
     # Match medium armor before the generic "plate" substring.
     if "half plate" in armor:
         base = 15 + min(dex_mod, 2)

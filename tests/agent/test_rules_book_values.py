@@ -6,6 +6,7 @@ not from memory. Regression tests for the discrepancies fixed in EDG-149 are mar
 """
 
 import random
+from dataclasses import replace
 
 import pytest
 
@@ -25,6 +26,8 @@ from agent.resolution import (
     healing_dice_for,
     hit_dice_recovered_by_long_rest,
     proficiency_bonus,
+    resolve_attack,
+    roll_attack_damage,
     weapon_proficient,
 )
 from agent.spells import (
@@ -127,6 +130,53 @@ def test_weapon_table_matches_the_phb_weapons_table() -> None:
         assert got[1:] == (finesse, ranged, simple), name
         # The blowgun's flat 1 damage is written 1d1 in the engine, which rolls exactly 1.
         assert got[0] == dice or (name == "blowgun" and got[0] == "1d1"), name
+
+
+def test_versatile_weapons_match_the_phb_weapons_table() -> None:
+    # PHB Weapons table, PDF p.150: the Versatile property and its two-handed damage. The war pick
+    # and the other one-handed weapons are not versatile.
+    book = {
+        "quarterstaff": "1d8", "spear": "1d8", "trident": "1d8",
+        "battleaxe": "1d10", "longsword": "1d10", "warhammer": "1d10",
+    }  # fmt: skip
+    assert {w.name: w.versatile for w in _WEAPONS if w.versatile} == book
+
+
+@pytest.mark.parametrize(
+    ("hint", "shield", "dice"),
+    [
+        ("I swing my longsword", False, "1d8"),
+        # PHB Versatile, PDF p.148: "the damage when the weapon is used with two hands".
+        ("I swing my longsword with both hands", False, "1d10"),
+        ("I strike two-handed with the longsword", False, "1d10"),
+        ("I swing my longsword with both hands", True, "1d8"),  # the shield hand is not free
+    ],
+)
+def test_versatile_weapon_deals_two_handed_damage_only_when_declared_and_free_handed(
+    hint: str, shield: bool, dice: str
+) -> None:
+    weapons = ["Longsword", "Shield"] if shield else ["Longsword"]
+    fighter = {"class": "fighter", "stats": {"STR": 16}, "inventory": {"weapons": weapons}}
+    hit = replace(
+        resolve_attack(fighter, 1, hint=hint, rng=random.Random(2)), success=True, critical=False
+    )
+    _, outcome = roll_attack_damage(fighter, hit, hint=hint, rng=random.Random(2))
+    assert outcome.expression == f"{dice}+3"
+    # A critical hit doubles the two-handed dice (PHB p.197).
+    crit = replace(hit, critical=True)
+    _, doubled = roll_attack_damage(fighter, crit, hint=hint, rng=random.Random(2))
+    assert doubled.expression == f"2{dice[1:]}+3"
+
+
+def test_a_weapon_without_the_versatile_property_ignores_a_two_handed_grip() -> None:
+    # PHB PDF p.150: the war pick lists no Versatile damage, so "both hands" changes nothing.
+    fighter = {"class": "fighter", "stats": {"STR": 16}, "inventory": {"weapons": ["War pick"]}}
+    hint = "I swing the war pick with both hands"
+    hit = replace(
+        resolve_attack(fighter, 1, hint=hint, rng=random.Random(2)), success=True, critical=False
+    )
+    _, outcome = roll_attack_damage(fighter, hit, hint=hint, rng=random.Random(2))
+    assert outcome.expression == "1d8+3"
 
 
 def test_greatclub_deals_its_own_damage_not_the_club_dice() -> None:

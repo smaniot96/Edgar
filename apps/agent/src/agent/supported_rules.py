@@ -139,7 +139,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "dice; a natural 1 always misses. Only weapons in the engine table are recognised "
             "(others use a generic d8). The proficiency bonus is added only when the class or "
             "sheet makes the weapon, or its simple or martial category, proficient; unarmed and "
-            "unrecognised attacks keep it."
+            "unrecognised attacks keep it. A versatile weapon (quarterstaff, spear, trident, "
+            "battleaxe, longsword, warhammer) deals its two-handed damage (PHB, PDF p.148) when the "
+            "player declares both hands and the sheet lists no shield."
         ),
         implementation="agent.resolution:resolve_attack",
         test="tests/agent/test_supported_rules.py::test_supported_weapon_attack_crit_and_fumble",

@@ -86,7 +86,8 @@ simulate (`GET /api/rules/supported-scope`):
 
 - Executed by the engine: d20 ability, skill, save and tool checks against DCs of 10/15/20/25;
   weapon attacks with natural 1 and 20 handling and proficiency only where the class or sheet grants
-  it; advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
+  it (a versatile weapon deals its two-handed damage when the player declares both hands and no
+  shield is carried); advantage and disadvantage from engine-owned sources (both d20 faces logged); AC from the armor
   table; initiative; combat rounds in initiative order; Fighter Second Wind (one use, a bonus action
   that may accompany the turn's action, restored by a short or long rest; no automatic use at 0 HP);
   Hit Dice tracked on the sheet (level dice of the class die, d6 to d12): a short rest spends one
