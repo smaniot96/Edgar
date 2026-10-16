@@ -92,7 +92,7 @@ def test_source_version_and_retained_manuscript_receipts_must_match(tmp_path):
             {
                 "status": "ready",
                 "ingestion": {
-                    "index_version": "index-2",
+                    "index_version": "2" * 64,
                     "source_sha256": "b" * 64,
                     "extraction_sha256": "c" * 64,
                 },
@@ -103,7 +103,7 @@ def test_source_version_and_retained_manuscript_receipts_must_match(tmp_path):
                     "sha256": digest,
                     "source_sha256": "b" * 64,
                     "extraction_sha256": "c" * 64,
-                    "index_version": "index-2",
+                    "index_version": "2" * 64,
                 },
             }
         ),
@@ -112,17 +112,17 @@ def test_source_version_and_retained_manuscript_receipts_must_match(tmp_path):
     with pytest.raises(ValueError, match="active vector index version"):
         recovery._validate_source_bindings(
             data,
-            [{"collection": slug, "active_versions": {slug: "index-1"}}],
+            [{"collection": slug, "active_versions": {slug: "1" * 64}}],
         )
     recovery._validate_source_bindings(
         data,
-        [{"collection": slug, "active_versions": {slug: "index-2"}}],
+        [{"collection": slug, "active_versions": {slug: "2" * 64}}],
     )
     manuscript.write_bytes(b"changed text")
     with pytest.raises(ValueError, match="manuscript checksum"):
         recovery._validate_source_bindings(
             data,
-            [{"collection": slug, "active_versions": {slug: "index-2"}}],
+            [{"collection": slug, "active_versions": {slug: "2" * 64}}],
         )
 
 

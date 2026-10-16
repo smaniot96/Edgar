@@ -88,9 +88,19 @@ def _require_local_disposable_database(database_url: str) -> str:
         raise ValueError(
             "Restore target must be loopback and its database name must start with edgar_restore_."
         )
-    if parsed.username in {"postgres", "root", "admin"}:
+    if unquote(parsed.username or "") in {"postgres", "root", "admin"}:
         raise ValueError("Restore target must use a dedicated disposable database role.")
     return db_name
+
+
+def _validate_qdrant_url(qdrant_url: str, *, require_loopback: bool) -> None:
+    parsed = urlparse(qdrant_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Qdrant URL must use HTTP or HTTPS and identify a host.")
+    if parsed.username or parsed.password or parsed.query:
+        raise ValueError("Keep Qdrant credentials out of the URL; provide the API key separately.")
+    if require_loopback and parsed.hostname not in LOCAL_HOSTS:
+        raise ValueError("Qdrant restore target must be loopback.")
 
 
 def _is_secret_path(path: Path) -> bool:
@@ -140,6 +150,8 @@ def _validate_source_bindings(source_data: Path, vector_entries: list[dict]) -> 
     if not adventures.is_dir():
         return
     for meta_path in adventures.glob("*.json"):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,254}", meta_path.stem):
+            raise ValueError("Adventure metadata contains an invalid source binding.")
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -147,6 +159,8 @@ def _validate_source_bindings(source_data: Path, vector_entries: list[dict]) -> 
         ingestion = meta.get("ingestion")
         if meta.get("status") == "ready" and isinstance(ingestion, dict):
             expected = ingestion.get("index_version")
+            if expected and not re.fullmatch(r"[0-9a-f]{64}", expected):
+                raise ValueError(f"Adventure {meta_path.stem!r} has an invalid index-version receipt.")
             if expected and active.get(meta_path.stem, {}).get(meta_path.stem) != expected:
                 raise ValueError(
                     f"Adventure {meta_path.stem!r} metadata does not match its active vector index version."
@@ -170,7 +184,10 @@ def _validate_source_bindings(source_data: Path, vector_entries: list[dict]) -> 
         if manuscript.get("version") != manuscript.get("sha256"):
             raise ValueError(f"Adventure {meta_path.stem!r} manuscript version receipt is inconsistent.")
         for key in ("source_sha256", "extraction_sha256"):
-            if manuscript.get(key) != (ingestion or {}).get(key):
+            value = manuscript.get(key)
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ValueError(f"Adventure {meta_path.stem!r} manuscript provenance is invalid.")
+            if value != (ingestion or {}).get(key):
                 raise ValueError(
                     f"Adventure {meta_path.stem!r} manuscript provenance does not match ingestion metadata."
                 )
@@ -285,9 +302,11 @@ def create_bundle(
     """Capture a coordinated bundle. ``pg_dump`` is injectable for disposable integration drills."""
     if not writes_quiesced:
         raise ValueError("Stop API writers and background workers, then attest with --writes-quiesced.")
-    if not qdrant_url.startswith(("http://", "https://")):
-        raise ValueError("Qdrant URL must use HTTP or HTTPS.")
+    _validate_qdrant_url(qdrant_url, require_loopback=False)
     source_data = source_data.resolve(strict=True)
+    output = Path(output).expanduser()
+    if output.is_symlink():
+        raise ValueError("Backup output must not be a symlink.")
     output = output.resolve()
     if output.exists():
         raise ValueError("Backup output already exists; choose a new destination.")
@@ -365,7 +384,7 @@ def verify_bundle(bundle: Path) -> dict:
     for record in vectors:
         collection = record.get("collection")
         relative = record.get("artifact")
-        if not isinstance(collection, str) or collection in seen_collections:
+        if not isinstance(collection, str) or not collection or collection in seen_collections:
             raise ValueError("Qdrant collection inventory contains a duplicate or invalid name.")
         seen_collections.add(collection)
         if not isinstance(relative, str) or not re.fullmatch(
@@ -382,7 +401,9 @@ def verify_bundle(bundle: Path) -> dict:
             raise ValueError(f"Qdrant snapshot for {collection!r} failed its checksum.")
         versions = record.get("active_versions")
         if not isinstance(versions, dict) or any(
-            not isinstance(source, str) or not isinstance(version, str)
+            not isinstance(source, str)
+            or not isinstance(version, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", version)
             for source, version in versions.items()
         ):
             raise ValueError(f"Qdrant active-version receipts for {collection!r} are invalid.")
@@ -445,8 +466,7 @@ def _qdrant_is_empty(client: QdrantClient) -> bool:
 
 
 def _assert_empty_qdrant(qdrant_url: str, api_key: str | None) -> None:
-    if urlparse(qdrant_url).hostname not in LOCAL_HOSTS:
-        raise ValueError("Qdrant restore target must be loopback.")
+    _validate_qdrant_url(qdrant_url, require_loopback=True)
     client = QdrantClient(url=qdrant_url, api_key=api_key or None, timeout=30)
     try:
         if not _qdrant_is_empty(client):
@@ -456,9 +476,7 @@ def _assert_empty_qdrant(qdrant_url: str, api_key: str | None) -> None:
 
 
 def _restore_vectors(bundle: Path, manifest: dict, qdrant_url: str, api_key: str | None) -> None:
-    parsed = urlparse(qdrant_url)
-    if parsed.hostname not in LOCAL_HOSTS:
-        raise ValueError("Qdrant restore target must be loopback.")
+    _validate_qdrant_url(qdrant_url, require_loopback=True)
     client = QdrantClient(url=qdrant_url, api_key=api_key or None, timeout=60)
     try:
         if not _qdrant_is_empty(client):
@@ -535,8 +553,7 @@ def restore_bundle(
     manifest = verify_bundle(bundle)
     if database_name == manifest.get("source_database_label"):
         raise ValueError("Restore database must differ from the captured source database.")
-    if urlparse(qdrant_url).hostname not in LOCAL_HOSTS:
-        raise ValueError("Qdrant restore target must be loopback.")
+    _validate_qdrant_url(qdrant_url, require_loopback=True)
     if not empty_database_check(database_url):
         raise ValueError("PostgreSQL restore target must contain no public objects.")
     _assert_empty_qdrant(qdrant_url, qdrant_api_key)
