@@ -87,7 +87,7 @@ async def input_parser_node(state: AgentState) -> dict:
     if not OPENAI_API_KEY:
         return {"error": "OPENAI_API_KEY not set. Add it to Edgar/.env"}
 
-    llm = make_chat_model(temperature=0)
+    llm = make_chat_model(profile="play.parser", temperature=0)
     structured_llm = llm.with_structured_output(ParsedInput, method="function_calling")
 
     context = _parser_context(state)

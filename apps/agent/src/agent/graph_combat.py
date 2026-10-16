@@ -562,7 +562,7 @@ async def _build_enemy_roster(
 
     enemies: list[dict] = []
     try:
-        llm = make_chat_model(temperature=0)
+        llm = make_chat_model(profile="play.combat_builder", temperature=0)
         structured = llm.with_structured_output(EncounterSetup, method="function_calling")
         setup = await structured.ainvoke(
             [

@@ -52,7 +52,12 @@ from agent.supported_rules import (
     engine_applied_for_state,
 )
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
-from edgar_core.config import LLM_MODEL
+from edgar_core.model_profiles import (
+    current_model_profiles,
+    effective_profile,
+    model_profile_snapshot,
+    profile_diagnostics,
+)
 from edgar_core.sources import citations_for, public_citations
 
 from .campaign_completion import maybe_complete_campaign
@@ -403,11 +408,12 @@ async def persist_turn(
 
 async def run_turn(initial_state: dict[str, Any]) -> dict[str, Any]:
     """Run the full graph (sync endpoint). Node errors become TurnError("llm_unavailable")."""
-    result = await app.ainvoke(dict(initial_state))
-    if result.get("error"):
-        log.error("turn_agent_error", error=result["error"])
-        raise TurnError(result.get("error_code") or "llm_unavailable")
-    return result
+    with model_profile_snapshot():
+        result = await app.ainvoke(dict(initial_state))
+        if result.get("error"):
+            log.error("turn_agent_error", error=result["error"])
+            raise TurnError(result.get("error_code") or "llm_unavailable")
+        return result
 
 
 def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -522,7 +528,8 @@ def _debug_payload(
         "timings_ms": timings,
         # Combat turns only: the round's actors, original dice and outcomes (EDG-031).
         "combat_diagnostics": combat_diagnostics,
-        "model": LLM_MODEL,
+        "model": effective_profile("play.narrator").model,
+        "model_profiles": profile_diagnostics(current_model_profiles()),
     }
 
 
@@ -545,6 +552,24 @@ _TIMING_BUCKET = {
 
 
 async def stream_session_turn(
+    *,
+    session_id: int,
+    body_message: str,
+    initial_state: dict[str, Any],
+    debug: bool = False,
+) -> AsyncIterator[str]:
+    """Stream a turn under one immutable settings snapshot, including the narrator tail."""
+    with model_profile_snapshot():
+        async for frame in _stream_session_turn(
+            session_id=session_id,
+            body_message=body_message,
+            initial_state=initial_state,
+            debug=debug,
+        ):
+            yield frame
+
+
+async def _stream_session_turn(
     *,
     session_id: int,
     body_message: str,
