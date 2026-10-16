@@ -31,6 +31,16 @@ Changing process environment values such as API credentials, `LLM_MODEL`,
 `LLM_REASONING_EFFORT`, or `MODEL_PROFILES_PATH` requires the normal service restart. The
 profile TOML itself is reread per new operation.
 
+## Startup validation
+
+`validate_provider_configuration()` runs wherever a provider can be reached: API startup, before
+any background work, and the `ingestion` full-ingest path, `rules_engine`, and
+`inspect_collections --search` CLIs. It requires a real `OPENAI_API_KEY` (not blank or the
+`.env.example` placeholder), a syntactically valid `EMBEDDING_MODEL`, and a loadable profile set.
+Errors name the setting but never print its value. It makes no provider call, so model
+availability stays unchecked. Imports and `--help` skip it. At API startup Edgar logs the
+effective settings, profile digest, and required credential names once.
+
 ## Text stages
 
 The checked-in file names these actual play profiles:

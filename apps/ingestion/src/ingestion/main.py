@@ -7,6 +7,7 @@ from pathlib import Path
 from loguru import logger
 
 from db.vector.collections import campaign_lore_collection
+from edgar_core.model_profiles import ModelProfileError, validate_provider_configuration
 from ingestion.embed import run_pipeline
 from ingestion.extract import extract_document, save_extraction
 from ingestion.paths import default_markdown_dir
@@ -131,6 +132,10 @@ def main() -> None:
             sys.exit(1)
         return
 
+    try:
+        validate_provider_configuration()
+    except ModelProfileError as exc:
+        parser.exit(1, f"Configuration error: {exc}\n")
     collection_name = resolved_collection_name()
     try:
         n = run_pipeline(
