@@ -266,6 +266,7 @@ async def test_coordinated_bundle_restores_campaign_history_manuscript_vectors_a
                 [
                     {
                         "text": "A synthetic trail begins near the old bridge.",
+                        "index": 0,
                         "source": SLUG,
                         "page": 1,
                         "source_pages": [1],
