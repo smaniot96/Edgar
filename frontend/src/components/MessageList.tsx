@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { AdjudicationResult, DebugPayload } from "../api/types";
+import type { JournalEntry } from "./journal/types";
 import { useMode } from "../dev/ModeContext";
 import { cn } from "../lib/cn";
 import { Narration } from "./play/Narration";
@@ -58,7 +59,20 @@ function DmLabel() {
   );
 }
 
-const DmRow = memo(function DmRow({ line, isDev }: { line: DmLine; isDev: boolean }) {
+const DmRow = memo(function DmRow({
+  line,
+  isDev,
+  actorEntries,
+  onOpenActorEntry,
+}: {
+  line: DmLine;
+  isDev: boolean;
+  actorEntries: JournalEntry[];
+  onOpenActorEntry?: (entryId: string) => void;
+}) {
+  const referencedActors = line.eventId == null
+    ? []
+    : actorEntries.filter((entry) => entry.actor_reference_event_ids?.includes(line.eventId!));
   return (
     <article
       id={line.eventId != null ? `story-event-${line.eventId}` : undefined}
@@ -92,6 +106,22 @@ const DmRow = memo(function DmRow({ line, isDev }: { line: DmLine; isDev: boolea
             </li>)}</ul>
           </details> : null}
         </div>
+        {referencedActors.length ? (
+          <nav aria-label="People referenced by this saved turn" className="mt-2 flex flex-wrap items-center gap-2 font-sans text-sm">
+            <span className="text-xs text-ink-subtle">People:</span>
+            {referencedActors.map((entry) => (
+              <button
+                key={entry.actor_id ?? entry.id}
+                type="button"
+                className="min-h-11 rounded-control border border-line bg-surface px-3 py-1 text-left font-medium text-ember-700 underline decoration-ember-400 underline-offset-2 hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+                aria-label={`Open journal entry for NPC ${entry.title}`}
+                onClick={() => onOpenActorEntry?.(entry.id)}
+              >
+                NPC · {entry.title}
+              </button>
+            ))}
+          </nav>
+        ) : null}
         {line.interrupted ? (
           <p className="mt-1 text-xs italic text-ember-400/80">
             {line.uncertain ? "— narration interrupted; save not confirmed" : "— narration interrupted (not saved)"}
@@ -166,9 +196,13 @@ function Row({
   onRetry,
   onCheckReceipt,
   canRetry,
+  actorEntries,
+  onOpenActorEntry,
 }: {
   line: Line;
   isDev: boolean;
+  actorEntries: JournalEntry[];
+  onOpenActorEntry?: (entryId: string) => void;
   onRetry?: (turnId: string, input: string, requestId?: string, draftRevision?: number) => void;
   onCheckReceipt?: (turnId: string, requestId: string, input: string, draftRevision?: number) => void;
   canRetry: boolean;
@@ -190,7 +224,7 @@ function Row({
         </div>
       );
     case "dm":
-      return <DmRow line={line} isDev={isDev} />;
+      return <DmRow line={line} isDev={isDev} actorEntries={actorEntries} onOpenActorEntry={onOpenActorEntry} />;
     case "error":
       return <ErrorRow line={line} onRetry={onRetry} onCheckReceipt={onCheckReceipt} canRetry={canRetry} />;
     case "notice":
@@ -265,6 +299,8 @@ export function MessageList({
   openEventId,
   onHistoryOpened,
   onQuickReply,
+  actorEntries = [],
+  onOpenActorEntry,
 }: {
   messages: Line[];
   pending: PendingTurn | null;
@@ -282,6 +318,9 @@ export function MessageList({
   onHistoryOpened?: (eventId: number) => void;
   /** Send a canned reply (e.g. confirming the end of the adventure). Omit to hide such prompts. */
   onQuickReply?: (text: string) => void;
+  /** Session-scoped, earned person entries used for adjacent historical links. */
+  actorEntries?: JournalEntry[];
+  onOpenActorEntry?: (entryId: string) => void;
 }) {
   const { isDev } = useMode();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -460,7 +499,7 @@ export function MessageList({
           ) : null}
           {messages.map((m) => (
             <div key={m.id} data-message-id={m.id} data-event-id={m.role === "dm" ? m.eventId : undefined}>
-              <Row line={m} isDev={isDev} onRetry={onRetry} onCheckReceipt={onCheckReceipt} canRetry={canRetry} />
+              <Row line={m} isDev={isDev} onRetry={onRetry} onCheckReceipt={onCheckReceipt} canRetry={canRetry} actorEntries={actorEntries} onOpenActorEntry={onOpenActorEntry} />
             </div>
           ))}
           {showCompletionPrompt ? (

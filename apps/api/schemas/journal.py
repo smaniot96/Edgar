@@ -62,11 +62,16 @@ class JournalOrigin(JournalRecord):
     history_event_id: int | None
     place: str | None
     actor: str | None
+    actor_id: str | None = None
     citation: str | None
 
 
 class JournalEntry(JournalRecord):
     id: str
+    actor_id: str | None = None
+    actor_aliases: list[str] = Field(default_factory=list)
+    actor_reference_event_ids: list[int] = Field(default_factory=list)
+    related_actor_id: str | None = None
     category: JournalCategory
     title: str
     text: str | None

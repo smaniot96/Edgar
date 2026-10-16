@@ -248,6 +248,8 @@ export function mergeTurnCharacter(
 export interface HudCombatant {
   key: string;
   name: string;
+  /** Earned context used only when identical display labels need separation. */
+  actorContext: string | null;
   isPlayer: boolean;
   hp: number | null;
   hpMax: number | null;
@@ -307,14 +309,20 @@ export function mechanicalEffects(effects: CombatEffect[] | null | undefined): C
 export function orderCombatants(combat: CombatState): HudCombatant[] {
   const roster = combat.combatants ?? [];
   const used = new Set<number>();
-  const findIdx = (name: string, isPlayer?: boolean): number => {
+  const findIdx = (name: string, isPlayer?: boolean, actorId?: string): number => {
     const n = name.toLowerCase();
+    // An explicit initiative identity is authoritative. If it no longer exists in the
+    // roster, leave the initiative row unmatched instead of borrowing a same-name actor.
+    if (actorId) return roster.findIndex((c, idx) => !used.has(idx) && c.id === actorId);
     let i = roster.findIndex(
       (c, idx) =>
         !used.has(idx) &&
+        (isPlayer === undefined || c.is_player === isPlayer) &&
         (c.name?.toLowerCase() === n || c.display_name?.toLowerCase() === n),
     );
-    if (i < 0 && (isPlayer || n === "player")) i = roster.findIndex((c, idx) => !used.has(idx) && c.is_player);
+    if (i < 0 && (isPlayer || (isPlayer === undefined && n === "player"))) {
+      i = roster.findIndex((c, idx) => !used.has(idx) && c.is_player);
+    }
     return i;
   };
 
@@ -323,8 +331,9 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
     used.add(idx);
     const c = roster[idx];
     return {
-      key: `${idx}:${c.name}`,
+      key: c.id || `${idx}:${c.name}`,
       name: c.display_name || c.name,
+      actorContext: null,
       isPlayer: !!c.is_player,
       hp: num(c.hp_current),
       hpMax: num(c.hp_max),
@@ -341,7 +350,7 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
 
   if (Array.isArray(combat.initiative) && combat.initiative.length) {
     combat.initiative.forEach((e, i) => {
-      const idx = findIdx(e.name, e.is_player);
+      const idx = findIdx(e.name, e.is_player, e.id);
       if (idx >= 0) {
         const base = fromRoster(idx, num(e.init));
         const hp = num(e.hp) ?? base.hp;
@@ -359,8 +368,9 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
       } else {
         const hp = num(e.hp);
         out.push({
-          key: `i${i}:${e.name}`,
+          key: e.id || `i${i}:${e.name}`,
           name: e.name,
+          actorContext: null,
           isPlayer: !!e.is_player,
           hp,
           hpMax: num(e.hp_max),
@@ -386,13 +396,34 @@ export function orderCombatants(combat: CombatState): HudCombatant[] {
   });
 
   const cur = combat.current_turn;
-  if (typeof cur === "string" && cur) {
+  if (combat.current_turn_id != null) {
+    const hit = out.find((c) => c.key === combat.current_turn_id);
+    if (hit) hit.isCurrent = true;
+  } else if (typeof cur === "string" && cur) {
     const n = cur.toLowerCase();
-    const hit = out.find((c) => c.name.toLowerCase() === n) ?? (n === "player" ? out.find((c) => c.isPlayer) : undefined);
+    const hit = out.find((c) => c.key === cur)
+      ?? out.find((c) => c.name.toLowerCase() === n)
+      ?? (n === "player" ? out.find((c) => c.isPlayer) : undefined);
     if (hit) hit.isCurrent = true;
   } else if (typeof combat.current_turn_index === "number") {
     const hit = out[combat.current_turn_index];
     if (hit) hit.isCurrent = true;
+  }
+  const sameName = new Map<string, HudCombatant[]>();
+  for (const combatant of out) {
+    const key = combatant.name.trim().toLocaleLowerCase();
+    const group = sameName.get(key) ?? [];
+    group.push(combatant);
+    sameName.set(key, group);
+  }
+  for (const group of sameName.values()) {
+    if (group.length < 2) continue;
+    const nonPlayers = group.filter((combatant) => !combatant.isPlayer);
+    for (const [index, combatant] of nonPlayers.entries()) {
+      combatant.actorContext = group.some((item) => item.isPlayer)
+        ? nonPlayers.length > 1 ? `NPC ${index + 1}` : "NPC"
+        : `combatant ${index + 1}`;
+    }
   }
   return out;
 }

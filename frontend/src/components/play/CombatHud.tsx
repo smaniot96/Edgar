@@ -32,8 +32,8 @@ export function CombatHud({ combat }: { combat: CombatState }) {
           <span className="text-danger">⚔ Combat</span>
           <span className="text-ink-muted">Round {combat.round ?? 1}</span>
           {current ? (
-            <span className="ml-auto normal-case tracking-normal text-ember-300">
-              {current.isPlayer ? "Your turn" : `${current.name}'s turn`}
+            <span className="ml-auto break-words text-right normal-case tracking-normal text-ember-300">
+              {current.isPlayer ? "Your turn" : `${current.name}${current.actorContext ? ` (${current.actorContext})` : ""}'s turn`}
             </span>
           ) : null}
         </div>
@@ -46,6 +46,7 @@ export function CombatHud({ combat }: { combat: CombatState }) {
           {rows.map((c) => (
             <li
               key={c.key}
+              aria-label={`${c.isPlayer ? "Player" : "Combatant"}: ${c.name}${c.actorContext ? `, ${c.actorContext}` : ""}`}
               aria-current={c.isCurrent ? "true" : undefined}
               className={cn(
                 "flex w-40 shrink-0 flex-col gap-1 rounded-md border px-2 py-1.5 text-xs",
@@ -54,12 +55,13 @@ export function CombatHud({ combat }: { combat: CombatState }) {
                 (!c.alive || c.canAct === false) && "opacity-50",
               )}
             >
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {c.isCurrent ? <span aria-hidden className="text-ember-400">▶</span> : null}
-                <span className={cn("truncate font-semibold text-ink", !c.alive && "line-through")}>
+                <span className={cn("min-w-0 whitespace-normal break-words font-semibold text-ink", !c.alive && "line-through")}>
                   {c.name}
                 </span>
-                {c.isPlayer ? <span className="text-[0.6rem] uppercase text-ember-400/80">you</span> : null}
+                {c.isPlayer ? <span className="shrink-0 text-[0.6rem] uppercase text-ember-400/80">you</span> : null}
+                {!c.isPlayer && c.actorContext ? <span className="shrink-0 text-[0.6rem] uppercase text-ink-muted">{c.actorContext}</span> : null}
                 {c.disposition && DISPOSITION_LABEL[c.disposition] ? (
                   <span className="text-[0.6rem] uppercase text-ink-muted">{DISPOSITION_LABEL[c.disposition]}</span>
                 ) : null}
@@ -76,7 +78,7 @@ export function CombatHud({ combat }: { combat: CombatState }) {
                   {c.ac != null ? <span title="Armor class">AC {c.ac}</span> : null}
                 </span>
               </div>
-              <HpBar current={c.hp} max={c.hpMax} compact label={`${c.name} HP`} />
+              <HpBar current={c.hp} max={c.hpMax} compact label={`${c.name}${c.actorContext ? `, ${c.actorContext}` : ""} HP`} />
               {c.effects.length ? (
                 <ul aria-label={`${c.name} active effects`} className="flex flex-wrap gap-1">
                   {c.effects.map((e) => (

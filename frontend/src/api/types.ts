@@ -417,6 +417,8 @@ export interface CombatEffect {
 }
 
 export interface Combatant {
+  /** Stable roster identity supplied by the server; older saves may omit it. */
+  id?: string;
   name: string;
   display_name?: string | null;
   is_player: boolean;
@@ -440,6 +442,7 @@ export type CombatOutcome = "victory" | "defeat" | "fled" | null;
 
 /** Initiative entry (newer backends); `init` is the rolled initiative. */
 export interface InitiativeEntry {
+  id?: string;
   name: string;
   init?: number | null;
   is_player?: boolean;
@@ -475,6 +478,8 @@ export interface CombatState {
   second_wind_uses_remaining?: number | null;
   initiative_order?: string[];
   initiative?: InitiativeEntry[] | null;
+  /** Stable identity of the combatant whose turn it is; authoritative when provided. */
+  current_turn_id?: string | null;
   /** Index into the initiative order of whose turn it is (if provided). */
   current_turn_index?: number | null;
   /** Name of the combatant whose turn it is (if provided). */

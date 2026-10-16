@@ -84,7 +84,7 @@ function EntryCard({
           <p className="text-xs font-medium uppercase tracking-wide text-ink-subtle">
             {entry.category.replaceAll("_", " ")}
           </p>
-          <h3 className="mt-0.5 break-words font-semibold text-ink">{entry.title}</h3>
+          <h3 className="mt-0.5 break-words font-semibold text-ink">{entry.category === "person" ? `NPC · ${entry.title}` : entry.title}</h3>
         </div>
         <div className="flex items-center gap-2">
           <Pill tone={entry.status === "completed" || entry.status === "fulfilled" ? "success" : "neutral"}>
@@ -100,6 +100,9 @@ function EntryCard({
           </Button>
         </div>
       </div>
+      {entry.category === "person" && entry.actor_aliases?.length ? (
+        <p className="mt-2 text-xs text-ink-subtle"><span className="font-medium">Earned names:</span> {entry.actor_aliases.join(", ")}</p>
+      ) : null}
       {entry.text ? <p className={`journal-entry-copy mt-2 select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-ink-muted ${largeText ? "text-base leading-7" : "text-sm leading-relaxed"}`}>{entry.text}</p> : null}
       {entry.ownership ? (
         <p className="mt-2 text-xs text-ink-subtle"><span className="font-medium">Item:</span> {ownershipLabel(entry.ownership)}</p>
@@ -137,8 +140,8 @@ function EntryCard({
           <div>
             <dt className="inline">Person: </dt>
             <dd className="inline">{entry.related_entry_id ? (
-              <button type="button" className="underline underline-offset-2" onClick={() => onSelectRelated(entry.related_entry_id!)}>
-                {entry.origin.actor}
+              <button type="button" aria-label={`Open journal entry for ${entry.origin.actor}`} className="min-h-11 max-w-full whitespace-normal break-words text-left underline underline-offset-2" onClick={() => onSelectRelated(entry.related_actor_id ?? entry.related_entry_id!)}>
+                NPC · {entry.origin.actor}
               </button>
             ) : entry.origin.actor}</dd>
           </div>
