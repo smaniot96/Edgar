@@ -1,6 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 
+from agent.graph import route_after_input_parser
 from agent.models.parsed_input import ParsedInput
 
 
@@ -56,3 +57,37 @@ async def test_input_parser_wraps_untrusted_player_text(fake_llm_schema) -> None
     assert human.content.count("</player_action>") == 1  # the injected closing tag was neutralised
     assert human.content.rstrip().endswith("</player_action>")
     assert "cragmaw_cave" in human.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I'd rather avoid combat with the guards.",
+        "I sneak past the guards, avoiding a fight.",
+        "Let's negotiate with the guards instead of fighting them.",
+        "Can we talk about the fight with Klarg?",
+    ],
+)
+async def test_avoiding_or_discussing_a_fight_is_not_a_combat_intent(fake_llm_schema, text) -> None:
+    from agent.nodes import input_parser as ip
+
+    # The parser classifies the line as combat; the wording declares no hostile action (EDG-126).
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", target="guards")
+    out = await ip.input_parser_node({"player_input": text})
+    assert out["parsed_input"].intent == "exploration"
+    assert route_after_input_parser(out) == "normal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "check"),
+    [("I attack the goblin.", "attack"), ("I stab the goblin rather than avoid it.", None)],
+)
+async def test_hostile_action_keeps_its_combat_intent(fake_llm_schema, text, check) -> None:
+    from agent.nodes import input_parser as ip
+
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", check=check, target="goblin")
+    out = await ip.input_parser_node({"player_input": text})
+    assert out["parsed_input"].intent == "combat"
+    assert route_after_input_parser(out) == "combat"

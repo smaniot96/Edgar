@@ -5,6 +5,7 @@ import random
 
 import pytest
 
+from agent.graph import app
 from agent.graph_combat import (
     EncounterSetup,
     EnemyStat,
@@ -389,3 +390,70 @@ async def test_narrator_error_propagates(fake_llm_schema, fake_retrieval, monkey
     assert out["error"] == "provider down"
     assert out["retrieval_degraded"] is False
     assert "source_status" in out
+
+
+def _foe_record(name: str) -> dict:
+    return {
+        "creature_id": name.lower(),
+        "creature_name": name,
+        "text": f"{name}\nArmor Class 12\nHit Points 9\nComplete synthetic {name} record",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "target"),
+    [
+        ("I'd rather avoid combat with the guards.", None),
+        ("Let's talk about the fight with Klarg.", "Klarg"),
+        ("I sneak past Klarg, avoiding a fight.", "Klarg"),
+    ],
+)
+async def test_avoiding_or_discussing_a_fight_seeds_no_initiative(
+    fake_llm_schema, fake_retrieval, monkeypatch, text, target
+) -> None:
+    # A hostile Klarg is in the scene, so a seeded roster would fight him (EDG-126).
+    monkeypatch.setattr("agent.graph_combat.resolve_creature", lambda name, **kw: _foe_record(name))
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", target=target)
+    fake_llm_schema.responses[EncounterSetup] = EncounterSetup(
+        enemies=[EnemyStat(name="Klarg", hp_max=9)]
+    )
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    out = await app.ainvoke(_state(None, text, npcs=[{"name": "Klarg", "disposition": "hostile"}]))
+    assert not out.get("combat_state")
+    assert not any(schema is EncounterSetup for schema, _ in fake_llm_schema.calls)
+
+
+@pytest.mark.asyncio
+async def test_builder_finding_no_foe_present_starts_no_combat(
+    fake_llm_schema, fake_retrieval, monkeypatch
+) -> None:
+    monkeypatch.setattr("agent.graph_combat.resolve_creature", lambda name, **kw: _foe_record(name))
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", check="attack", target="goblin")
+    fake_llm_schema.responses[EncounterSetup] = EncounterSetup(enemies=[])
+    out = await _round(fake_llm_schema, _state(None, "I attack the goblin"))
+    assert "combat_state" not in out
+    assert "Who are you fighting" in out["narration"]
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_target_starts_no_combat(fake_llm_schema, fake_retrieval) -> None:
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", check="attack", target="unicorn")
+    out = await _round(fake_llm_schema, _state(None, "I attack the unicorn"))
+    assert "combat_state" not in out
+    assert out["error_code"] == "creature_identity_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_attack_on_a_present_hostile_actor_still_starts_combat(
+    fake_llm_schema, fake_retrieval, monkeypatch
+) -> None:
+    monkeypatch.setattr("agent.graph_combat.resolve_creature", lambda name, **kw: _foe_record(name))
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", check="attack", target="goblin")
+    fake_llm_schema.responses[EncounterSetup] = EncounterSetup(enemies=[EnemyStat(name="goblin", hp_max=9)])
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    with use_rng(random.Random(2)):
+        out = await _round(fake_llm_schema, _state(None, "I attack the goblin"))
+    combatants = out["combat_state"]["combatants"]
+    assert [c["name"] for c in combatants if not c["is_player"]] == ["goblin"]
+    assert all("init" in c for c in combatants)
