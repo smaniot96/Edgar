@@ -7,12 +7,15 @@ Implemented here (each has a contract entry in `agent.supported_rules`):
     attack has advantage from an engine source and uses a finesse or ranged weapon. It has no uses.
   * Barbarian Rage: uses per long rest by level (2, 3, 4, 5, 6 from levels 1, 3, 6, 12, 17). Raging
     adds +2 damage (+3 from level 9, +4 from level 16) to hits with a melee weapon whose attack
-    ability is Strength. It starts in a combat round without spending the attack and ends with the
-    encounter. Its 1-minute limit, damage resistance and Strength advantage are not tracked.
+    ability is Strength, and halves bludgeoning, piercing and slashing damage taken, but only
+    outside heavy armor. It starts in a combat round without spending the attack and ends after
+    1 minute (10 rounds) or with the encounter. Its Strength advantage and its early end (no attack
+    or damage in a turn, or by choice) are not tracked.
 
 Uses live in CharacterAssignment.stats["class_features"] (JSONB, no migration). A sheet without the
-key has its full uses. The rage flag is `raging` on the player's combatant entry, so it ends with
-the encounter. Nothing here rolls a number except through the caller's engine dice.
+key has its full uses. The rage flag is `raging` on the player's combatant entry, with the round it
+began in `rage_round`, so it ends with the encounter. Nothing here rolls a number except through the
+caller's engine dice.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from agent.resolution import (
     _attack_ability,
     character_class,
     choose_weapon,
+    wears_heavy_armor,
 )
 from tools.dice import DiceOutcome, roll
 
@@ -56,6 +60,8 @@ NARRATION_CLAIMS = {
 }
 
 _RAGE_USES = ((17, 6), (12, 5), (6, 4), (3, 3), (1, 2))  # (from level, uses per long rest)
+RAGE_ROUNDS = 10  # a rage lasts 1 minute (PHB, PDF p.49): 10 rounds of 6 seconds
+_RAGE_RESISTED = frozenset({"bludgeoning", "piercing", "slashing"})
 
 
 def _level(character: dict | None) -> int:
@@ -153,9 +159,19 @@ def class_feature_after_rest(character: dict | None, kind: str | None) -> dict[s
     return restored or None
 
 
+def _rage_in_effect(character: dict | None, raging: bool) -> bool:
+    """Rage's benefits apply only to a raging barbarian who is not wearing heavy armor (PHB p.49)."""
+    return raging and holds_feature(character, RAGE) and not wears_heavy_armor(character)
+
+
+def rage_resists(character: dict | None, damage_type: str | None, *, raging: bool) -> bool:
+    """Whether Rage halves this damage: bludgeoning, piercing or slashing. An untyped attack is not."""
+    return damage_type in _RAGE_RESISTED and _rage_in_effect(character, raging)
+
+
 def rage_damage_bonus(character: dict | None, attack: CheckResult, *, raging: bool) -> int:
     """Flat damage added to a raging hit: a melee weapon attack using Strength. 0 otherwise."""
-    if not raging or not holds_feature(character, RAGE):
+    if not _rage_in_effect(character, raging):
         return 0
     if attack.kind != "attack" or not attack.success or attack.weapon is None:
         return 0
@@ -215,7 +231,7 @@ def ruling(feature: str, character: dict | None) -> str:
         reason = "Rage has no uses left until a long rest."
     else:
         reason = (
-            "Rage is activated in combat and adds damage to melee weapon attacks that use "
-            "Strength. Damage resistance is not applied."
+            "Rage is activated in combat. It adds damage to melee weapon attacks that use Strength "
+            "and halves bludgeoning, piercing and slashing damage, outside heavy armor, for 1 minute."
         )
     return f"Narrative ruling: {reason} No rage is applied."

@@ -231,14 +231,17 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="class_feature_rage",
-        title="Barbarian Rage (damage bonus; uses restored by a long rest)",
+        title="Barbarian Rage (damage bonus, resistance, 1 minute; uses restored by a long rest)",
         scope=(
             "Barbarian (PHB, PDF pp.48-49). Uses per long rest: 2 at level 1, 3 at level 3, 4 at level 6, "
             "5 at level 12 and 6 at level 17. Declared in combat, rage starts without using the round's attack (bonus "
             "actions are not tracked) and adds +2 damage, or +3 from level 9 and +4 from level 16, to each "
-            "hit with a melee weapon attack that uses Strength. It lasts until the encounter ends; the "
-            "1-minute limit is not tracked. A long rest restores uses; a short rest does not. Damage "
-            "resistance and the Strength advantage are not applied."
+            "hit with a melee weapon attack that uses Strength, and halves bludgeoning, piercing and "
+            "slashing damage the hero takes (damage with no stated type is not halved). Neither "
+            "applies in heavy armor, where a declared rage still spends its use. The rage lasts 1 "
+            "minute, 10 rounds, or until the encounter ends. Its early end (a turn with no attack or "
+            "damage taken, or by choice), the Strength advantage and the spell restriction are not "
+            "applied. A long rest restores uses; a short rest does not."
         ),
         implementation="agent.class_features:rage_damage_bonus",
         test=(
@@ -633,7 +636,7 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         boundary=(
             "Divine Smite, Lay on Hands, Bardic Inspiration, Channel Divinity, Wild Shape, sorcery "
             "points, ki points, Flurry of Blows, Stunning Strike, Superiority Dice and Martial Arts have "
-            "no engine effect, and neither do Rage's damage resistance and Strength advantage. Their "
+            "no engine effect, and neither do Rage's Strength advantage and early end. Their "
             "effects, uses and recharge are not applied."
         ),
         owner="unassigned",
