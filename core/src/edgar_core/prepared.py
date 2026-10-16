@@ -347,6 +347,15 @@ def validate_prepared_campaign(
                 findings.append(_finding("unbacked_world_flag", f"routes[{index}].{group_name}", "Route predicates must name WorldFlag keys already consumed by a reviewed runtime route or policy."))
 
     for index, packet in enumerate(candidate.scene_packets):
+        if set(packet.entry_requires) - runtime_flag_keys:
+            findings.append(_finding("unbacked_world_flag", f"scene_packets[{index}].entry_requires", "Scene entry conditions must use canonical runtime WorldFlag keys."))
+        incoming = [requires for (source, destination), requires in manifest_routes.items() if destination == packet.scene_id]
+        if packet.entry_requires and (
+            packet.scene_id == canonical.opening_scene_id
+            or not incoming
+            or any(any(requires.get(key) != value for key, value in packet.entry_requires.items()) for requires in incoming)
+        ):
+            findings.append(_finding("entry_predicate_mismatch", f"scene_packets[{index}].entry_requires", "Every canonical incoming route must enforce the declared scene entry conditions; the opening cannot require an unearned entry flag."))
         if packet.scene_id not in scene_ids:
             findings.append(_finding("unknown_packet_scene", f"scene_packets[{index}].scene_id", "Scene packet names an unknown scene."))
         if not packet.passage_ids or any(pid not in passage_by_id and pid not in set(extension_passages) for pid in packet.passage_ids):
@@ -439,6 +448,11 @@ def validate_prepared_campaign(
             ):
                 findings.append(_finding("unreachable_outcome", f"outcomes[{index}]", "Quest, branch, outcome and selected policy predicates cannot all be true together."))
         effects = []
+        selected_results = {selection.result for selection in outcome.policy_selections}
+        if (outcome.result == "success" and "failure" in selected_results) or (
+            outcome.result in {"failure", "partial"} and "failure" not in selected_results
+        ):
+            findings.append(_finding("outcome_result_mismatch", f"outcomes[{index}].result", "The authored outcome label must agree with the selected engine policy results."))
         for selection in outcome.policy_selections:
             policy = policy_by_id.get(selection.policy_id)
             if policy is None:
