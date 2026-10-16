@@ -37,6 +37,8 @@ Defined in the `@theme` block in `src/index.css` — use these instead of hex va
 3. Vite proxies `/api` to `http://localhost:8000` (`vite.config.ts`). Leave `VITE_API_BASE_URL` unset so the browser calls same-origin `/api` and the proxy applies.
 4. Before committing: `npm run lint`, `npm test`, and `npm run build` (includes strict TypeScript and unused-local/parameter checks).
 
+The dev proxy does not buffer or time out turn streams. Measured on macOS with Node 24: a throwaway SSE server on port 8000 and `vite` on 5173, one token frame per second from 5 s to 95 s, then `done` at 96 s. Per-frame latency from server write to client arrival was at most 1 ms both direct and through `/api`. A 60 s and a 120 s idle gap passed through unchanged, the proxy added no `Content-Encoding` to an `Accept-Encoding: gzip` request, and a client abort closed the upstream connection within about 10 ms. The proxy therefore needs no timeout or buffering options. The app's own 90 s turn watchdog (`TURN_WATCHDOG_MS` in `src/components/play/useTurn.ts`) is independent of the proxy and still stops a turn after 90 s without frames.
+
 Production-style check: `make frontend-build`, then run the API — `GET /ui` serves the bundle from `frontend/dist/`.
 
 ## Docker
