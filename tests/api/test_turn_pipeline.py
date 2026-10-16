@@ -274,20 +274,22 @@ async def test_agent_errors_contain_no_exception_text(monkeypatch, fake_llm_turn
         yield  # pragma: no cover
 
     # Structured-output failures now degrade (parser -> exploration, adjudicator -> neutral);
-    # the narrator is the LLM call whose failure must surface as a sanitised 503.
+    # An arbitrary programming fault must remain internal, even at a model-call boundary.
     monkeypatch.setattr(fake, "ainvoke", boom)
     monkeypatch.setattr(fake, "astream", boom_stream)
 
     sid = (await _seed(api_client))["session_id"]
     sync = await api_client.post(f"/api/sessions/{sid}/turn", json={"message": "I look around."})
-    assert sync.status_code == 503
-    assert sync.json()["code"] == "llm_unavailable"
+    assert sync.status_code == 500
+    assert sync.json()["category"] == "internal"
+    assert sync.json()["outcome"] == "not_committed"
     assert "SECRET" not in sync.text
 
     stream = await api_client.post(f"/api/sessions/{sid}/turn/stream", json={"message": "I look around."})
     events = _sse_events(stream.text)
     assert events[-1][0] == "error"
-    assert events[-1][1]["code"] == "llm_unavailable"
+    assert events[-1][1]["category"] == "internal"
+    assert events[-1][1]["outcome"] == "not_committed"
     assert "SECRET" not in stream.text
 
 
@@ -304,7 +306,8 @@ async def test_narrator_stream_failure_is_sanitised(monkeypatch, fake_llm_turn, 
     r = await api_client.post(f"/api/sessions/{sid}/turn/stream", json={"message": "I look around."})
     events = _sse_events(r.text)
     assert events[-1] == ("error", events[-1][1])
-    assert events[-1][1]["code"] == "llm_unavailable"
+    assert events[-1][1]["category"] == "internal"
+    assert events[-1][1]["outcome"] == "not_committed"
     assert "SECRET" not in r.text
     assert await _count_events(sid, "narration") == 0
 

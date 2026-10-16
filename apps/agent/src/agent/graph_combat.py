@@ -1825,7 +1825,11 @@ async def combat_round_node(state: AgentState) -> dict:
     narr_updates = await narrator_node(narr_state)
     stage_ms["narrating_ms"] = int((time.monotonic() - t_stage) * 1000)
     if narr_updates.get("error"):
-        return {**retr, "error": narr_updates["error"]}
+        return {
+            **retr,
+            "error": narr_updates["error"],
+            "error_code": narr_updates.get("error_code", "turn_failed"),
+        }
     narration = narr_updates.get("narration", "")
     problems = roster_violations(narration, combatants)
     if problems:

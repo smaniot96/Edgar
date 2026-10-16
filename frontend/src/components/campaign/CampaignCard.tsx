@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { AdventureRead } from "../../api/types";
+import { safeTurnError } from "../../api/turnStream";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
 import { isPublicationCommitting, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
@@ -121,6 +122,8 @@ export function CampaignCard({
   }
 
   const progress = preparationProgress(job);
+  const failure = job?.failure ?? (adventure.failure_code ? { code: adventure.failure_code } : null);
+  const failureMessage = failure ? safeTurnError(failure).message : null;
 
   return (
     <article className={cn(cardClasses, "flex flex-col")}>
@@ -145,10 +148,10 @@ export function CampaignCard({
           {isDev && adventure.chunks != null ? <Pill>{adventure.chunks} chunks</Pill> : null}
           {isDev && card.campaign ? <Pill className="font-mono">campaign #{card.campaign.id}</Pill> : null}
         </div>
-        {state === "recovery" ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : adventure.error || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
+        {state === "recovery" ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : failureMessage || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
         {state === "failed" ? (
           <p className="mb-3 rounded-control bg-danger-soft px-2 py-1.5 text-xs text-danger">
-            {adventure.error || (job?.kind === "generation"
+            {failureMessage || (job?.kind === "generation"
               ? "Edgar couldn't finish generating this campaign. Resume the saved chapters or restart generation if retained work is unavailable."
               : "Edgar couldn't prepare this campaign. Retry the retained source or upload a corrected PDF.")}
           </p>
@@ -170,6 +173,7 @@ export function CampaignCard({
         {job && ["interrupted", "failed", "cancelled"].includes(job.state) ? (
           <div role="status" className="mb-3 rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-ink">
             <p className="font-medium">{jobFailureHeading(job)}</p>
+            {job.failure ? <ErrorNotice error={job.failure} className="mt-2" /> : null}
             {job.explanation ? <p className="mt-1 text-xs text-ink-muted">{job.explanation}</p> : null}
           </div>
         ) : null}

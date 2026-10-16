@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from agent.llm import make_chat_model
 from edgar_core.model_profiles import ModelProfileSnapshot, effective_profile
 from edgar_core.preparation import PreparationRunBinding, PreparationTask, ProviderUsage
+from edgar_core.safe_errors import provider_error_code
 
 # Conservative standard-service ceilings, frozen in the commission rather than read
 # again on retry. USD micro-units per token. Long-context requests are disallowed.
@@ -132,7 +133,9 @@ async def invoke_preparation[T: BaseModel](
     except asyncio.CancelledError:
         raise  # Supervisor charges its outstanding reservation before propagating cancellation.
     except Exception as exc:
-        raise PreparationTaskFailure("provider_request_failed", usage=unknown) from exc
+        code = provider_error_code(exc)
+        failed_usage = unknown.model_copy(update={"failure_code": code})
+        raise PreparationTaskFailure(code, usage=failed_usage) from exc
     raw = response.get("raw") if isinstance(response, dict) else None
     usage = getattr(raw, "usage_metadata", None) or {}
     metadata = getattr(raw, "response_metadata", None) or {}

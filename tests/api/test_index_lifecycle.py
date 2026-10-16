@@ -91,7 +91,7 @@ async def test_failed_reauthored_generation_retains_previous_receipt_and_canonic
     assert after["status"] == "ready"
     assert after["ingestion"] == before["ingestion"]
     assert after["last_attempt"]["status"] == "failed"
-    assert after["last_attempt"]["failure_code"] == "generation_error"
+    assert after["last_attempt"]["failure_code"] == "turn_failed"
     assert canonical.read_text() == manuscript_before
     assert campaign_sources.source_read("authored").status == "ready"
     assert (
