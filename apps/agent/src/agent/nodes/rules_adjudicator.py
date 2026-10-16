@@ -33,6 +33,7 @@ from agent.nodes.story_effects import (
     story_candidates,
     validate_story_effects,
 )
+from agent.prepared_amendments import accept_runtime_amendment, amendment_prompt_block
 from agent.prompts import RULES_ADJUDICATOR, wrap_player_action
 from agent.resolution import (
     CheckResult,
@@ -177,6 +178,17 @@ def build_adjudicator_prompt(
         parts.extend(
             cited_excerpt(c, state.get("rules_edition", "2014")) for c in state["planner_context"]
         )
+    if not (state.get("combat_state") or {}).get("ended") and not getattr(
+        parsed, "resolution_policy_id", None
+    ):
+        amendment_context = amendment_prompt_block(state)
+        if amendment_context:
+            parts.append(amendment_context)
+            parts.append(
+                "For an uncovered plausible action only, return a proposed_prepared_amendment "
+                "using the exact scene-bound structure above. A proposal is not accepted until "
+                "the engine validates it. Do not tell the player about preparation or validation."
+            )
     if state.get("discovery_entities"):
         parts.append(
             f"Canonical discoveries: {state['discovery_entities']}. Set only their exact discovery_flag to discovered after a justified successful discovery."
@@ -328,9 +340,13 @@ async def adjudicate(
     messages = build_adjudicator_prompt(
         state, check_result, extra_outcome=extra_outcome, dice_log=extra_log
     )
-    result = await _invoke_with_retry(messages) if selected is None else _neutral(check_result, state)
+    result = (
+        await _invoke_with_retry(messages) if selected is None else _neutral(check_result, state)
+    )
     if result is None:
         result = _neutral(check_result, state)
+    # These fields are engine-owned even if a provider returns undeclared output fields.
+    result.accepted_prepared_amendment = None
 
     # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
     # Runs before the engine's own roll line is stamped on, so engine dice are never stripped.
@@ -402,9 +418,7 @@ async def adjudicate(
         accepted = result.accepted_story_effects
         # Persistence validates the canonicalized accepted effects again. Object validation
         # may add a quantity or resolved owner, so authorize exactly that sealed form.
-        state["authorized_policy_effect_keys"] = [
-            policy_effect_key(effect) for effect in accepted
-        ]
+        state["authorized_policy_effect_keys"] = [policy_effect_key(effect) for effect in accepted]
         missing = [
             proposal
             for proposal in policy_effects
@@ -466,6 +480,20 @@ async def adjudicate(
     }
     result.citations = [refs[rid] for rid in dict.fromkeys(result.citation_ids) if rid in refs]
     result.citation_ids = [r["reference_id"] for r in result.citations]
+    if (
+        selected is None
+        and not in_combat
+        and not result.accepted_story_effects
+        and not result.flags_set
+        and not result.flags_cleared
+        and (not result.scene_id or result.scene_id == state.get("current_scene_id"))
+    ):
+        receipt = accept_runtime_amendment(
+            result.proposed_prepared_amendment, state, in_combat=in_combat
+        )
+        if receipt is not None:
+            result.accepted_prepared_amendment = receipt
+            state["accepted_prepared_amendment"] = receipt
     return result
 
 
@@ -479,5 +507,6 @@ async def rules_adjudicator_node(state: AgentState) -> dict:
         "policy_narration": state.get("policy_narration"),
         "authorized_policy_effect_keys": state.get("authorized_policy_effect_keys", []),
         "policy_reveal_authorizations": state.get("policy_reveal_authorizations", []),
+        "accepted_prepared_amendment": state.get("accepted_prepared_amendment"),
         ENGINE_ROLL_MODE_KEY: engine_applied_for_state(state).roll_mode,
     }

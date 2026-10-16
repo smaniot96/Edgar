@@ -113,6 +113,23 @@ async def _load_turn_initial_state(
             detail={"code": "adventure_manifest_review_required", "message": str(exc)},
         ) from exc
     story_state = await load_story_state(db, session_id, session.campaign_id)
+    from ..services.prepared_amendments import (
+        PreparedAmendmentConflict,
+        load_session_prepared_amendments,
+    )
+
+    try:
+        prepared_overlays, prepared_amendment_events = await load_session_prepared_amendments(
+            db, session_id, session.campaign_id, manifests
+        )
+    except PreparedAmendmentConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This session's saved adventure version is no longer available. "
+                "Recover its bound version before continuing."
+            ),
+        ) from exc
     world_flags = session_story_flags(
         story_state, manifests, await load_world_flags(db, session.campaign_id)
     )
@@ -143,6 +160,8 @@ async def _load_turn_initial_state(
         "source_mode": campaign.source_mode,
         "rules_edition": campaign.rules_edition,
         "adventure_manifests": manifests,
+        "prepared_campaign_overlays": prepared_overlays,
+        "prepared_amendment_events": prepared_amendment_events,
         "source_status": [s.model_dump() for s in sources],
         "retrieval_degraded": any(s.status != "ready" for s in sources),
         "world_flags": world_flags,

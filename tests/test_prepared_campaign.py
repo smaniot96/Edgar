@@ -24,6 +24,7 @@ from edgar_core.prepared import (
     validate_prepared_amendment,
     validate_prepared_campaign,
 )
+from edgar_core.story import StoryEffect, StoryFact, StoryRef, accept_story_effect
 
 
 def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCampaign]:
@@ -96,7 +97,15 @@ def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCam
     )
     prepared = PreparedCampaign(
         source_mode="pdf" if source.endswith(".pdf") else "ai",
-        acts=[PreparedAct(act_id="act_one", title="The rescue", order=1, scene_ids=["dock"], provenance=provenance)],
+        acts=[
+            PreparedAct(
+                act_id="act_one",
+                title="The rescue",
+                order=1,
+                scene_ids=["dock"],
+                provenance=provenance,
+            )
+        ],
         quests=[
             PreparedQuest(
                 quest_id="keeper_quest",
@@ -163,28 +172,36 @@ def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCam
                 outcome_id="negotiation_success",
                 branch_id="negotiate",
                 result="success",
-                policy_selections=[PreparedPolicySelection(policy_id="rescue_check", result="success")],
+                policy_selections=[
+                    PreparedPolicySelection(policy_id="rescue_check", result="success")
+                ],
                 provenance=provenance,
             ),
             PreparedOutcome(
                 outcome_id="negotiation_partial",
                 branch_id="negotiate",
                 result="partial",
-                policy_selections=[PreparedPolicySelection(policy_id="rescue_check", result="failure")],
+                policy_selections=[
+                    PreparedPolicySelection(policy_id="rescue_check", result="failure")
+                ],
                 provenance=provenance,
             ),
             PreparedOutcome(
                 outcome_id="fight_success",
                 branch_id="fight",
                 result="success",
-                policy_selections=[PreparedPolicySelection(policy_id="rescue_check", result="success")],
+                policy_selections=[
+                    PreparedPolicySelection(policy_id="rescue_check", result="success")
+                ],
                 provenance=provenance,
             ),
             PreparedOutcome(
                 outcome_id="fight_partial",
                 branch_id="fight",
                 result="partial",
-                policy_selections=[PreparedPolicySelection(policy_id="rescue_check", result="failure")],
+                policy_selections=[
+                    PreparedPolicySelection(policy_id="rescue_check", result="failure")
+                ],
                 provenance=provenance,
             ),
         ],
@@ -289,9 +306,12 @@ def test_old_manifest_digest_remains_compatible_when_preparation_is_absent():
 def test_extension_projection_requires_earned_gate_and_preserves_private_spans():
     manifest, prepared = _fixture()
     approved = _approved(manifest, prepared)
-    assert project_prepared_extension_chunks(
-        approved, scene_id="dock", world_flags={}, audience="player"
-    ) == []
+    assert (
+        project_prepared_extension_chunks(
+            approved, scene_id="dock", world_flags={}, audience="player"
+        )
+        == []
+    )
     visible = project_prepared_extension_chunks(
         approved, scene_id="dock", world_flags={"gate_open": "yes"}, audience="player"
     )
@@ -325,9 +345,173 @@ def test_amendment_is_bounded_additive_and_preserves_irreversible_facts():
         [],
     )
     assert not rejected.valid
-    assert "amendment_rewrites_irreversible_fact" in {
-        row.code for row in rejected.report.findings
+    assert "amendment_rewrites_irreversible_fact" in {row.code for row in rejected.report.findings}
+
+
+def test_ordinary_play_amendment_is_engine_accepted_and_replayed_in_future_context():
+    from agent.prepared_amendments import (
+        accept_runtime_amendment,
+        amendment_prompt_block,
+        prepared_runtime_context,
+    )
+
+    manifest, prepared = _fixture()
+    reviewed = _approved(manifest, prepared)
+    state = {
+        "manifest_status": "reviewed",
+        "current_scene_id": "dock",
+        "adventure_manifests": {"sample.pdf": reviewed.model_dump(mode="json")},
+        "prepared_campaign_overlays": {},
+        "world_flags": {"gate_open": "yes"},
+        "story_state": {"facts": []},
     }
+    amendment = _additive_amendment(prepared)
+    receipt = accept_runtime_amendment(amendment, state)
+    assert receipt is not None
+    assert receipt["base_prepared_sha256"] == prepared_digest(prepared)
+    assert receipt["manifest_sha256"] == reviewed.reviewed_sha256
+    assert prepared_digest(reviewed.prepared) == prepared_digest(prepared)
+
+    from agent.nodes.rules_adjudicator import build_adjudicator_prompt
+
+    planner_prompt = build_adjudicator_prompt(state, None)[-1]["content"]
+    assert "proposed_prepared_amendment" in planner_prompt
+    assert receipt["base_prepared_sha256"] in planner_prompt
+
+    accepted = validate_prepared_amendment(reviewed, prepared, amendment, [], [])
+    state["prepared_campaign_overlays"] = {"sample.pdf": accepted.amended.model_dump(mode="json")}
+    future = prepared_runtime_context(state)
+    assert future[0]["prepared_sha256"] == receipt["prepared_sha256"]
+    assert "unexpected_plan" in {branch["branch_id"] for branch in future[0]["branches"]}
+    prompt = amendment_prompt_block(state)
+    assert "Try an unanticipated plan." in prompt
+    assert receipt["prepared_sha256"] in prompt
+
+    stale = amendment.model_copy(update={"base_prepared_sha256": "f" * 64})
+    assert accept_runtime_amendment(stale, {**state, "prepared_campaign_overlays": {}}) is None
+
+    from agent.models.adjudication import AdjudicationResult
+    from apps.api.services.turn_runner import public_adjudication
+
+    public = public_adjudication(
+        AdjudicationResult(
+            success=True,
+            proposed_prepared_amendment=amendment,
+            accepted_prepared_amendment=receipt,
+        )
+    )
+    assert "proposed_prepared_amendment" not in public
+    assert "accepted_prepared_amendment" not in public
+
+
+def test_runtime_amendment_rejects_a_reversal_of_a_committed_objective():
+    from agent.prepared_amendments import accept_runtime_amendment
+
+    manifest, prepared = _fixture()
+    reviewed = _approved(manifest, prepared)
+    effect = accept_story_effect(
+        StoryEffect(
+            kind="objective",
+            target=StoryRef(
+                collection="sample.pdf",
+                source_sha256=reviewed.source_sha256,
+                manifest_sha256=reviewed.reviewed_sha256,
+                kind="objective",
+                canonical_id="rescue_keeper",
+            ),
+            status="completed",
+            source_reference_ids=["source_intro"],
+        ),
+        turn_id="turn-committed",
+        source_refs=[
+            {
+                "reference_id": "a" * 64,
+                "collection": "sample.pdf",
+                "source_sha256": reviewed.source_sha256,
+                "extraction_sha256": reviewed.extraction_sha256,
+                "manifest_sha256": reviewed.reviewed_sha256,
+                "passage_id": "source_intro",
+                "audience": "player",
+                "page": 1,
+            }
+        ],
+    )
+    fact = StoryFact(**effect.model_dump(), fact_id="b" * 64)
+    state = {
+        "manifest_status": "reviewed",
+        "current_scene_id": "dock",
+        "adventure_manifests": {"sample.pdf": reviewed.model_dump(mode="json")},
+        "world_flags": {"gate_open": "yes"},
+        "story_state": {"facts": [fact.model_dump(mode="json")]},
+    }
+    assert accept_runtime_amendment(_additive_amendment(prepared), state) is None
+
+
+async def test_session_amendment_event_replay_is_private_and_source_version_bound(db_session):
+    from apps.api.services.prepared_amendments import (
+        append_session_prepared_amendment,
+        load_session_prepared_amendments,
+    )
+    from db.postgres.models import Campaign, Session, User
+
+    manifest, prepared = _fixture()
+    reviewed = _approved(manifest, prepared)
+    state = {
+        "manifest_status": "reviewed",
+        "current_scene_id": "dock",
+        "adventure_manifests": {"sample.pdf": reviewed.model_dump(mode="json")},
+        "world_flags": {"gate_open": "yes"},
+        "story_state": {"facts": []},
+    }
+    from agent.prepared_amendments import accept_runtime_amendment
+
+    receipt = accept_runtime_amendment(_additive_amendment(prepared), state)
+    assert receipt is not None
+    user = User(email="amendment@example.test")
+    db_session.add(user)
+    await db_session.flush()
+    campaign = Campaign(title="Amendment", system="5e", created_by=user.id)
+    db_session.add(campaign)
+    await db_session.flush()
+    session_a = Session(campaign_id=campaign.id)
+    session_b = Session(campaign_id=campaign.id)
+    db_session.add_all([session_a, session_b])
+    await db_session.flush()
+
+    await append_session_prepared_amendment(
+        db_session,
+        session_id=session_a.id,
+        game_session=session_a,
+        receipt=receipt,
+        turn_id="turn-one",
+    )
+    await db_session.commit()
+    overlays, events = await load_session_prepared_amendments(
+        db_session,
+        session_a.id,
+        campaign.id,
+        {"sample.pdf": reviewed.model_dump(mode="json")},
+    )
+    assert overlays["sample.pdf"]["branches"][-1]["branch_id"] == "unexpected_plan"
+    assert events[0]["turn_id"] == "turn-one"
+    other_overlays, other_events = await load_session_prepared_amendments(
+        db_session,
+        session_b.id,
+        campaign.id,
+        {"sample.pdf": reviewed.model_dump(mode="json")},
+    )
+    assert other_overlays == {}
+    assert other_events == []
+    changed = _approved(manifest, prepared.model_copy(update={"unresolved_questions": ["new"]}))
+    from apps.api.services.prepared_amendments import PreparedAmendmentConflict
+
+    with pytest.raises(PreparedAmendmentConflict, match="source or base version is stale"):
+        await load_session_prepared_amendments(
+            db_session,
+            session_a.id,
+            campaign.id,
+            {"sample.pdf": changed.model_dump(mode="json")},
+        )
 
 
 def test_require_published_rejects_an_unvalidated_prepared_bundle():
