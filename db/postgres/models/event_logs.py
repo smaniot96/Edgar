@@ -23,6 +23,7 @@ EVENT_RETENTION: dict[str, RetentionClass] = {
     "memory_summary": "durable",
     "prepared_amendment": "durable",
     "combat_round": "diagnostic",
+    "turn_diagnostics": "diagnostic",
 }
 
 
