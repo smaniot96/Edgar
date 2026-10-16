@@ -48,7 +48,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
 
   if (healthyHomebrew) {
     return (
-      <section aria-label="Homebrew source status" className="mx-3 my-2 shrink-0 rounded-control border border-line bg-surface/60 px-3 py-2 text-sm sm:mx-4">
+      <section aria-label="Homebrew source status" className="mx-3 my-2 shrink-0 rounded-control border border-line bg-surface/60 px-3 py-2 text-sm [overflow-wrap:anywhere] [&_button]:min-h-11 sm:mx-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="font-medium text-ink">Homebrew play selected</p>
           <p className="text-ink-muted">The DM is improvising from your saved story.</p>
@@ -68,7 +68,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
                 {source.status !== "ready" && source.job?.kind !== "generation" ? (
                   <label className="block space-y-1">
                     <span className="block text-ink-muted">Recover with a PDF</span>
-                    <input aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
+                    <input className="min-h-11 max-w-full" aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
                       onChange={(event) => {
                         const file = event.currentTarget.files?.[0];
                         event.currentTarget.value = "";
@@ -89,7 +89,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
   }
 
   return (
-    <section aria-label="Campaign source recovery" className="m-3 space-y-3 rounded-card border border-warning bg-surface-sunken p-4 text-sm">
+    <section aria-label="Campaign source recovery" className="m-3 space-y-3 rounded-card border border-warning bg-surface-sunken p-4 text-sm [overflow-wrap:anywhere] [&_button]:min-h-11">
       <h2 className="font-semibold">{campaign.source_mode === "homebrew" ? "Homebrew play selected" : processing ? "Source preparation in progress" : campaign.retrieval_degraded ? "Adventure sources need recovery" : "Adventure source update needs attention"}</h2>
       <p className="text-ink-muted">
         {campaign.source_mode === "homebrew"
@@ -143,9 +143,9 @@ export function SourceRecovery({ campaign, onUpdated }: {
           ) : null}
           {["missing", "empty", "partial", "failed"].includes(source.status) && !(source.job?.kind === "generation" && source.job.retryable) ? (
             <div className="flex flex-wrap items-center gap-3">
-              <label className="space-y-1">
+              <label className="min-w-0 max-w-full space-y-1">
                 <span className="block">Re-upload the PDF for {source.title}</span>
-                <input aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
+                <input className="min-h-11 max-w-full" aria-label={`Recover ${source.title} PDF`} type="file" accept=".pdf,application/pdf" disabled={busy}
                   onChange={(e) => {
                     const file = e.currentTarget.files?.[0];
                     e.currentTarget.value = "";

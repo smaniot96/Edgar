@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { JournalPanel } from "../journal/JournalPanel";
 import type { JournalCategory, JournalRead } from "../journal/types";
@@ -34,6 +34,7 @@ export function PlayToolBar({
           className="min-h-11"
           disabled={disabled}
           aria-pressed={activeTool === tool.id}
+          data-play-tool-trigger={tool.id}
           onClick={() => onToggle(tool.id)}
         >
           {tool.label}
@@ -89,7 +90,11 @@ export function PlayToolPanel({
   const [expandedMap, setExpandedMap] = useState(false);
   const [largeJournalText, setLargeJournalText] = useState(false);
   const modal = narrow || (activeTool === "map" && expandedMap);
-  useModalFocus(open, modal, onClose, panelRef);
+  const findOpener = useCallback(
+    () => document.querySelector<HTMLElement>(`[data-play-tool-trigger="${activeTool}"]`),
+    [activeTool],
+  );
+  useModalFocus(open, modal, onClose, panelRef, findOpener);
   if (!open) return null;
 
   const title = activeTool === "journal" ? "Journal" : "Map";
@@ -104,7 +109,7 @@ export function PlayToolPanel({
         tabIndex={modal ? -1 : undefined}
         className={`fixed inset-y-0 right-0 z-40 flex ${activeTool === "map" && narrow ? "w-full" : "w-[min(28rem,92vw)]"} flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 ${activeTool === "map" && expandedMap ? "lg:inset-4 lg:w-auto" : `lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "map" ? "lg:w-[min(60vw,60rem)]" : activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}`}
       >
-        <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
+        <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <h2 className="min-w-0 flex-1 font-display text-lg font-semibold text-ink">{title}</h2>
           {activeTool === "map" && !narrow ? (
             <Button className="min-h-11" variant="secondary" size="sm" aria-expanded={expandedMap} onClick={() => setExpandedMap((value) => !value)}>
@@ -141,7 +146,7 @@ export function PlayToolPanel({
             ✕
           </button>
         </header>
-        <div className={activeTool === "map" ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]"}>
+        <div className={activeTool === "map" ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] [overflow-wrap:anywhere]"}>
           {activeTool === "journal" ? (
             <JournalPanel
               {...journal}

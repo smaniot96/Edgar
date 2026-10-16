@@ -350,7 +350,7 @@ async def test_coordinated_bundle_restores_campaign_history_manuscript_vectors_a
             async def override_redis():
                 yield redis
 
-            async def offline_turn(initial):
+            async def offline_turn(initial, **_kwargs):
                 assert initial["player_input"] == "I trace the trail."
                 assert initial["turn_snapshot"]["character"]["name"] == "Mira"
                 return {

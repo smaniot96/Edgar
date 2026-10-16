@@ -182,47 +182,55 @@ def _frontend_dist_dir() -> Path | None:
 
 _frontend_dist = _frontend_dist_dir()
 
-if _frontend_dist is not None:
-    app.mount(
+def mount_frontend_routes(api: FastAPI, frontend_dist: Path | None) -> None:
+    """Mount the same-origin Vite bundle and nested SPA routes on an ASGI app."""
+    if frontend_dist is None:
+        @api.get("/ui", include_in_schema=False)
+        @api.get("/ui/", include_in_schema=False)
+        @api.get("/ui/{path:path}", include_in_schema=False)
+        async def ui_unavailable() -> JSONResponse:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        "Frontend bundle not found. Run `make frontend-build` from the repo root "
+                        "or `npm run build` in `frontend/`."
+                    )
+                },
+            )
+
+        return
+
+    api.mount(
         "/ui/assets",
-        StaticFiles(directory=str(_frontend_dist / "assets")),
+        StaticFiles(directory=str(frontend_dist / "assets")),
         name="ui-assets",
     )
 
-    @app.get("/ui", include_in_schema=False)
-    @app.get("/ui/", include_in_schema=False)
+    @api.get("/ui", include_in_schema=False)
+    @api.get("/ui/", include_in_schema=False)
     async def ui_shell() -> FileResponse:
-        return FileResponse(_frontend_dist / "index.html")
+        return FileResponse(frontend_dist / "index.html")
 
-    _frontend_root = _frontend_dist.resolve()
+    frontend_root = frontend_dist.resolve()
 
-    @app.get("/ui/{path:path}", include_in_schema=False)
+    @api.get("/ui/{path:path}", include_in_schema=False)
     async def ui_spa(path: str) -> FileResponse:
         # Resolve before checking so `..` segments (raw or %2f-encoded) cannot
         # escape the dist folder and serve arbitrary files from the host.
-        requested = (_frontend_root / path).resolve()
-        if requested.is_relative_to(_frontend_root) and requested.is_file():
+        requested = (frontend_root / path).resolve()
+        if requested.is_relative_to(frontend_root) and requested.is_file():
             return FileResponse(requested)
-        return FileResponse(_frontend_root / "index.html")
-else:
+        return FileResponse(frontend_root / "index.html")
+
+
+mount_frontend_routes(app, _frontend_dist)
+
+if _frontend_dist is None:
     log.warning(
         "frontend_dist_missing",
         hint="Run `cd frontend && npm ci && npm run build` to serve the UI at /ui",
     )
-
-    @app.get("/ui", include_in_schema=False)
-    @app.get("/ui/", include_in_schema=False)
-    @app.get("/ui/{path:path}", include_in_schema=False)
-    async def ui_unavailable() -> JSONResponse:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "detail": (
-                    "Frontend bundle not found. Run `make frontend-build` from the repo root "
-                    "or `npm run build` in `frontend/`."
-                )
-            },
-        )
 
 
 @app.get("/", include_in_schema=False)

@@ -868,7 +868,10 @@ SOLO_ADAPTATIONS: tuple[str, ...] = (
         "clamped into range or left out, never renamed. An exact creature is never rescaled: its "
         "record's numbers apply, the budget limits only how many foes take part, and a record that "
         "exceeds a per-foe band is noted as an unscaled exact creature. The combat start notes any "
-        "adaptation, and the combat state records it."
+        "adaptation, and the combat state records it. The limits were checked per level against the "
+        "2014 DMG XP thresholds for one hero, so a generic roster stays at or below the deadly "
+        "threshold. An exact foe above that threshold is not refused and not rescaled: the combat "
+        "start and the combat state carry an engine-written warning that names it and gives the numbers."
     ),
 )
 

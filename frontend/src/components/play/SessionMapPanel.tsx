@@ -144,7 +144,7 @@ function SessionMapPanelContent({
         <Button className="min-h-11 min-w-11" variant="secondary" size="sm" aria-label="Zoom in" disabled={view.zoom >= 1.5} onClick={() => updateView({ zoom: Math.min(1.5, view.zoom + 0.25) })}>+</Button>
         <Button className="min-h-11" variant="secondary" size="sm" onClick={onRefresh}>Refresh map</Button>
       </div>
-      <div ref={mapPaneRef} onScroll={(event) => updateView({ scrollTop: event.currentTarget.scrollTop })} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div ref={mapPaneRef} onScroll={(event) => updateView({ scrollTop: event.currentTarget.scrollTop })} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] [overflow-wrap:anywhere]">
         {loading && !map ? <p className="text-sm text-ink-muted" role="status">Loading this session’s map…</p> : null}
         {error && !map ? (
           <section className="rounded-control border border-line bg-surface p-4" role="alert">

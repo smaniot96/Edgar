@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from edgar_core.preparation import SafePreparationFailure
 from edgar_core.sources import RulesEdition, SourceEdition
@@ -73,6 +73,13 @@ class AdventureUpdate(BaseModel):
     description: str | None = None
     level_range: str | None = None
     cover_image: str | None = None
+
+    @field_validator("cover_image")
+    @classmethod
+    def validate_cover_image(cls, value: str | None) -> str | None:
+        from ..services.cover_images import normalize_cover_image
+
+        return normalize_cover_image(value)
 
 
 class AdventureUploadResponse(BaseModel):

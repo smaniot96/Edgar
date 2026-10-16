@@ -139,6 +139,7 @@ from agent.conditions import (
     start_concentration,
     stun_ends_before_turn,
 )
+from agent.dmg_thresholds import printed_challenge
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model, message_text
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
@@ -561,11 +562,14 @@ def _exact_enemy(identity: dict, *, is_boss: bool = False) -> dict:
             f"Creature record for {name!r} has no parseable stat block ({exc}). "
             "Review and reingest its source."
         ) from exc
+    challenge = printed_challenge(str(identity.get("text") or ""))  # the record's own CR and XP
     return {
         "name": name[:60],
         "creature_id": identity["creature_id"],
         "source_reference": _creature_source_reference(identity),
         "stat_adaptation": "exact_record",
+        "challenge_cr": challenge[0] if challenge else None,
+        "challenge_xp": challenge[1] if challenge else None,
         **combat_fields(stats),
         "monster_stats": stats.to_dict(),
         "surprised": identity.get("actor_surprise") == "actor",

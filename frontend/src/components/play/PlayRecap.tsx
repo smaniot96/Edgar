@@ -43,8 +43,8 @@ export function PlayRecap({
   const promises = data?.entries.filter(isOpenPromise) ?? [];
 
   return (
-    <details className="mx-3 mb-2 shrink-0 rounded-control border border-line bg-surface/60 px-3 py-2 sm:mx-4">
-      <summary className="cursor-pointer text-sm font-semibold text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400">
+    <details className="mx-3 mb-2 shrink-0 rounded-control border border-line bg-surface/60 px-3 py-2 [overflow-wrap:anywhere] sm:mx-4">
+      <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400">
         Session recap
         {data ? <span className="ml-2 font-normal text-ink-muted">{data.entries.length} saved {data.entries.length === 1 ? "entry" : "entries"}</span> : null}
       </summary>
@@ -60,13 +60,13 @@ export function PlayRecap({
               <div>
                 <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Known place</dt>
                 <dd className="mt-0.5">
-                  {data.current_place ? <button type="button" className="text-left font-medium text-ember-300 underline decoration-ember-400 underline-offset-2" onClick={() => onOpenEntry(data.current_place!.id)}>{data.current_place.title}</button> : <span className="text-ink-muted">No place recorded</span>}
+                  {data.current_place ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => onOpenEntry(data.current_place!.id)}>{data.current_place.title}</button> : <span className="text-ink-muted">No place recorded</span>}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Active goal</dt>
                 <dd className="mt-0.5">
-                  {data.active_goal ? <button type="button" className="text-left font-medium text-ember-300 underline decoration-ember-400 underline-offset-2" onClick={() => onOpenEntry(data.active_goal!.id)}>{data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}
+                  {data.active_goal ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => onOpenEntry(data.active_goal!.id)}>{data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}
                 </dd>
               </div>
             </dl>
@@ -76,7 +76,7 @@ export function PlayRecap({
                 {changes.length ? (
                   <ul className="mt-1 space-y-1">
                     {changes.map((change, index) => <li key={`${change.entry.id}-${change.status}-${change.turnNumber ?? "unknown"}-${index}`}>
-                      <button type="button" className="text-left text-ink hover:text-ember-300" onClick={() => onOpenEntry(change.entry.id)}>
+                      <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ink hover:text-ember-300 [overflow-wrap:anywhere]" onClick={() => onOpenEntry(change.entry.id)}>
                         {change.turnNumber !== null ? `Turn ${change.turnNumber} · ` : ""}{change.entry.title} · {change.status.replaceAll("_", " ")}
                       </button>
                     </li>)}
@@ -88,7 +88,7 @@ export function PlayRecap({
                 {promises.length ? (
                   <ul className="mt-1 space-y-1">
                     {promises.slice(0, 3).map((entry) => <li key={entry.id}>
-                      <button type="button" className="text-left text-ink hover:text-ember-300" onClick={() => onOpenEntry(entry.id)}>
+                      <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ink hover:text-ember-300 [overflow-wrap:anywhere]" onClick={() => onOpenEntry(entry.id)}>
                         <span className="font-medium">{entry.origin.actor ? `NPC · ${entry.origin.actor}: ` : ""}{entry.title}</span>
                         {entry.text ? <span className="mt-0.5 block line-clamp-2 text-xs text-ink-muted">{entry.text}</span> : null}
                       </button>
@@ -99,7 +99,7 @@ export function PlayRecap({
             </div>
           </>
         ) : null}
-        <Button variant="secondary" size="sm" onClick={onResume}>Resume adventure</Button>
+        <Button variant="secondary" size="sm" className="min-h-11" onClick={onResume}>Resume adventure</Button>
       </div>
     </details>
   );
