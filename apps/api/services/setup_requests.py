@@ -1,0 +1,52 @@
+"""Durable create retries for guided setup; no process-local cache or entity guessing.
+
+The transaction advisory lock serializes a request key before lookup/create. Scoped unique
+constraints remain the database backstop. The original payload digest survives later edits,
+so a retry replays the same entity without mutating it or bypassing future play readiness.
+"""
+
+import hashlib
+import json
+
+from fastapi import HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.postgres.models import Character, Session
+
+
+def creation_identity(body: BaseModel) -> dict[str, str | None]:
+    request_id = getattr(body, "request_id", None)
+    if request_id is None:
+        return {"creation_request_id": None, "creation_request_hash": None}
+    payload = json.dumps(
+        body.model_dump(mode="json", exclude={"request_id"}),
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    return {
+        "creation_request_id": str(request_id),
+        "creation_request_hash": hashlib.sha256(payload.encode()).hexdigest(),
+    }
+
+
+async def creation_replay[CreationModel: (Character, Session)](
+    db: AsyncSession, model: type[CreationModel], scope_id: int, body: BaseModel,
+) -> CreationModel | None:
+    identity = creation_identity(body)
+    key = identity["creation_request_id"]
+    if key is None:
+        return None
+    lock_name = f"setup:{model.__tablename__}:{scope_id}:{key}"
+    lock_id = int.from_bytes(hashlib.sha256(lock_name.encode()).digest()[:8], "big", signed=True)
+    await db.execute(select(func.pg_advisory_xact_lock(lock_id)))
+    scope = Character.owner_user_id if model is Character else Session.campaign_id
+    existing = await db.scalar(select(model).where(
+        scope == scope_id, model.creation_request_id == key,
+    ))
+    if existing is not None and existing.creation_request_hash != identity["creation_request_hash"]:
+        raise HTTPException(status_code=409, detail={
+            "code": "validation_failed",
+            "message": "This setup request was already used with different details. Resume the saved setup or start a new attempt.",
+        })
+    return existing

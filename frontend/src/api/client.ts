@@ -367,8 +367,8 @@ export interface CharacterCreateBody {
   base_inventory: Record<string, unknown>;
 }
 
-export function createCharacter(body: CharacterCreateBody): Promise<CharacterRead> {
-  return sendJson("POST", "/api/characters", body);
+export function createCharacter(body: CharacterCreateBody, requestId?: string): Promise<CharacterRead> {
+  return sendJson("POST", "/api/characters", { ...body, ...(requestId ? { request_id: requestId } : {}) });
 }
 
 export function deleteCharacter(id: number): Promise<void> {
@@ -406,9 +406,11 @@ export function startSessionIntro(id: number): Promise<SessionIntroRead> {
 export function createSession(
   campaignId: number,
   activeCharacterId?: number,
+  requestId?: string,
 ): Promise<SessionRead> {
   return sendJson("POST", "/api/sessions", {
     campaign_id: campaignId,
+    ...(requestId ? { request_id: requestId } : {}),
     ...(activeCharacterId != null ? { active_character_id: activeCharacterId } : {}),
   });
 }
