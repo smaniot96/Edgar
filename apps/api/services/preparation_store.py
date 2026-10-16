@@ -14,6 +14,7 @@ from edgar_core.preparation import (
     PreparationRunBinding,
     PreparationRunState,
     assert_artifact_integrity,
+    canonical_sha256,
 )
 
 from . import adventures_meta
@@ -116,6 +117,14 @@ class PreparationStore:
                 raise PreparationStoreError("Accepted task is missing its exact validation receipt.")
         if expected_artifacts != set(state.artifacts):
             raise PreparationStoreError("Saved artifact inventory does not match accepted tasks.")
+        contexts = {a.payload["round_id"]: a for a in state.artifacts.values()
+                    if a.artifact_kind == "repair_context"}
+        if len(state.repair_history) != state.repair_rounds or len(contexts) != state.repair_rounds:
+            raise PreparationStoreError("Repair evidence inventory is incomplete.")
+        for archive in state.repair_history:
+            context = contexts.get(archive.get("round_id"))
+            if context is None or context.payload.get("archive_sha256") != canonical_sha256(archive):
+                raise PreparationStoreError("Repair evidence no longer matches its exact accepted digest.")
         budget = state.binding.budget
         over_budget = (
             state.provider_calls_spent + state.provider_calls_reserved > budget.max_provider_calls

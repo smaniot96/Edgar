@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE = [
   "a[href]", "button:not([disabled])", "input:not([disabled])", "select:not([disabled])", "summary",
@@ -22,9 +22,15 @@ export function useModalFocus(
   onClose: () => void,
   containerRef: RefObject<HTMLElement | null>,
 ) {
+  const openerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (!open) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!open) {
+      openerRef.current = null;
+      return;
+    }
+    // Expanding a side panel into a modal must preserve its original toolbar opener.
+    if (!openerRef.current) openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previous = openerRef.current;
     const container = containerRef.current;
     let focusFrame: number | null = null;
     if (modal) {

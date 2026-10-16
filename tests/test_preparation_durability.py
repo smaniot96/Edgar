@@ -202,3 +202,79 @@ async def test_expired_worker_cannot_overwrite_replacement_lease(private_store):
     assert final == replacement.state
     assert final.tasks["P01:unit"].attempt_count == 2
     assert len(final.artifacts) == 1
+
+
+@pytest.mark.asyncio
+async def test_long_running_worker_renews_exact_lease_without_duplicate_dispatch(private_store):
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def wait(*_):
+        calls.append(1)
+        started.set()
+        await release.wait()
+
+    supervisor = harness(private_store, execute_hook=wait)
+    supervisor.lease_seconds = 1
+    supervisor.create_run(binding())
+    worker = asyncio.create_task(supervisor.step("mystery", binding().run_id, "owner", lambda _: True))
+    await started.wait()
+    before = private_store.load_run("mystery", binding().run_id).tasks["P01:unit"].lease_expires_at
+    await asyncio.sleep(0.45)
+    duplicate = await supervisor.step("mystery", binding().run_id, "duplicate", lambda _: True)
+    after = duplicate.state.tasks["P01:unit"].lease_expires_at
+    assert after > before
+    assert calls == [1]
+    release.set()
+    final = await worker
+    assert final.state.tasks["P01:unit"].status.value == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_stops_inflight_multicall_work_before_another_call(private_store):
+    started, stopped = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def two_calls(*_):
+        calls.append("first")
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+        calls.append("second")
+
+    supervisor = harness(private_store, execute_hook=two_calls)
+    supervisor.lease_seconds = 1
+    supervisor.create_run(binding())
+    worker = asyncio.create_task(supervisor.step("mystery", binding().run_id, "owner", lambda _: True))
+    await started.wait()
+    supervisor.cancel("mystery", binding().run_id)
+    final = await asyncio.wait_for(worker, timeout=2)
+    assert stopped.is_set()
+    assert calls == ["first"]
+    assert final.state.status.value == "cancelled"
+    assert not final.state.artifacts
+
+
+@pytest.mark.asyncio
+async def test_subcall_guard_observes_cancellation_before_heartbeat(private_store):
+    from apps.api.services.preparation import assert_current_preparation_worker
+
+    calls = []
+    supervisor = None
+
+    async def two_calls(*_):
+        assert_current_preparation_worker()
+        calls.append("first")
+        supervisor.cancel("mystery", binding().run_id)
+        # No await: cancellation has not reached the periodic heartbeat.
+        assert_current_preparation_worker()
+        calls.append("second")
+
+    supervisor = harness(private_store, execute_hook=two_calls)
+    supervisor.create_run(binding())
+    final = await supervisor.step("mystery", binding().run_id, "owner", lambda _: True)
+    assert calls == ["first"]
+    assert final.state.status.value == "cancelled"
+    assert not final.state.artifacts

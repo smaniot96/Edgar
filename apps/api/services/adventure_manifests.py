@@ -16,6 +16,11 @@ def _bundle(slug: str):
 
     validate_binding(slug)
     raw_meta = store.load_meta(slug)
+    if raw_meta.get("private_preparation") is True:
+        from .preparation_runtime import private_preparation_ready
+
+        if not private_preparation_ready(slug, raw_meta):
+            raise ManifestError("This private adventure is not ready to play yet.")
     meta = active_metadata(slug, raw_meta)
     if raw_meta.get("status") == "processing" and meta.get("artifact_attempt") != (
         raw_meta.get("attempt") or {}

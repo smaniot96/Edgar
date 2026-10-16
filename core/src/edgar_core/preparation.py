@@ -327,6 +327,7 @@ class PreparationRunState(PreparationRecord):
     tokens_reserved: Nonnegative = 0
     cost_microusd_reserved: Nonnegative = 0
     repair_rounds: Nonnegative = 0
+    repair_history: tuple[dict[str, Any], ...] = ()
     publication_inventory: dict[ArtifactId, Digest] | None = None
     published_bundle_sha256: Digest | None = None
     created_at: str
