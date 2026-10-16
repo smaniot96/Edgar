@@ -1159,6 +1159,9 @@ async def _run_image_job(
             if completed is not None:
                 _read_artifact(completed)
                 return completed, 0
+    from .preparation import assert_current_preparation_worker
+
+    assert_current_preparation_worker()
     attempt_id = _reserve_image_call(
         collection=collection,
         source_sha256=manifest.source_sha256,

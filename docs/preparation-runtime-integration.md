@@ -30,9 +30,16 @@ is the read gate for player/session consumers; it requires that metadata receipt
 `prepared_bundle` match each other and the immutable READY checkpoint, the retained
 extraction/manifest still match, and the active index version match the receipt. A staged
 index is therefore not playable during the crash window before READY or metadata
-finalization. Startup recovery should call `prepare_adventure` for interrupted runs; it
-repeats publication idempotently or finalizes an already-READY checkpoint without provider
-work.
+finalization. Application startup calls `recover_private_preparations` for interrupted runs;
+it reclaims the stable job and calls `prepare_adventure`, repeating publication idempotently
+or finalizing an already-READY checkpoint without provider work.
+
+Every chapter critic receives the complete finished manuscript, canonical cross-act
+contracts, and source/hero/mechanical evidence. The provider enforces a conservative
+128,000-token per-call input limit; oversized evidence blocks preparation explicitly rather
+than silently truncating other chapters. Long multi-call stages renew the exact worker lease
+under short lifecycle locks. Cancellation or replacement fences every subsequent semantic
+and image subcall; no lock spans provider work.
 
 Public status comes from `safe_preparation_status` and contains only fixed progress labels,
 safe status values and retry actions. It omits task names, private artifact data, findings,

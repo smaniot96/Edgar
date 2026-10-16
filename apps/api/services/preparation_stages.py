@@ -429,6 +429,9 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
     usages = []
 
     async def propose(schema, instruction, evidence, *, suffix="", call_limit=None, images=()):
+        from .preparation import assert_current_preparation_worker
+
+        assert_current_preparation_worker()
         single = task
         if call_limit:
             single = task.model_copy(
@@ -1000,6 +1003,7 @@ async def _review_campaign(binding, task, deps, key, propose):
             "binding": bindings.model_dump(mode="json"),
             "whole_design": design_from(deps).model_dump(mode="json"),
             "reviewed_chapter": chapter.model_dump(mode="json"),
+            "complete_manuscript": manuscript.model_dump(mode="json"),
             "canonical": canonical,
             "source_guidance": _guidance(deps),
             "actual_party": binding.hero_party_snapshot,
@@ -1021,7 +1025,7 @@ async def _review_campaign(binding, task, deps, key, propose):
         observation = await propose(
             CriticObservations,
             "Act as the INDEPENDENT campaign critic. Read this complete retained chapter with the whole campaign design, "
-            "canonical cross-act facts/branches, exact source/hero/mechanical and asset evidence. Check causal continuity, "
+            "the COMPLETE finished manuscript, canonical cross-act facts/branches, exact source/hero/mechanical and asset evidence. Compare this chapter against the actual other chapter text, not just planned summaries. Check causal continuity, "
             "motives/knowledge, distinct progression, chronology, exact clues, viable choices, failure/partial consequences, "
             "resource assumptions, supported high-level abilities, compatible endings, scope and visual agreement. "
             "Return reviewed_chapter_ids containing exactly this chapter ID. Findings must follow the supplied CriticFinding "

@@ -183,6 +183,10 @@ class OfflineAuthor:
         elif schema is CriticObservations:
             from edgar_core.artifacts import text_digest
 
+            finished = evidence["complete_manuscript"]
+            assert len(finished["chapters"]) == len(design.acts)
+            assert evidence["reviewed_chapter"] in finished["chapters"]
+            assert all(chapter["text"] for chapter in finished["chapters"])
             self.critic_count += 1
             findings = []
             if self.criticize_once and self.critic_count == 1:
@@ -600,3 +604,49 @@ async def test_joined_pdf_visual_critic_receives_pixels_and_required_rejection_b
     assert bool(published) is approved
     assert any(name == "IndependentVisualReviewDecision" for _, name, _ in author.calls)
     assert state.provider_calls_spent == len(author.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair_rounds", [0, 1])
+async def test_joined_repair_exhaustion_retains_spend_and_archive_integrity(
+    tmp_path, monkeypatch, source_index, repair_rounds  # noqa: F811
+):
+    import json
+
+    from apps.api.services import adventure_assets
+    from apps.api.services.preparation_stages import CriticObservations
+    from apps.api.services.preparation_store import PreparationStoreError, preparation_path
+
+    class PersistentFindingAuthor(OfflineAuthor):
+        async def __call__(self, binding, task, schema, **kwargs):
+            if schema is CriticObservations:
+                self.critic_count = 0
+            return await super().__call__(binding, task, schema, **kwargs)
+
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(adventure_assets, "ASSET_ROOT", tmp_path / "assets")
+    author = PersistentFindingAuthor(criticize_once=True)
+    supervisor = make_preparation_supervisor(provider=author, book_client=source_index[0])
+    binding = _binding(rounds=repair_rounds)
+    supervisor.create_run(binding)
+    published = []
+    for _ in range(100):
+        result = await supervisor.step(binding.source_slug, binding.run_id, "offline", lambda _: True,
+                                       lambda bundle: published.append(bundle) or bundle.bundle_sha256)
+        if result.state.status.value in {"blocked", "failed", "ready"}:
+            break
+    state = supervisor.store.load_run(binding.source_slug, binding.run_id)
+    assert state.status.value == "blocked"
+    assert state.last_safe_error_code == "repair_budget_exhausted"
+    assert not published
+    assert state.repair_rounds == repair_rounds
+    assert state.provider_calls_spent == len(author.calls)
+    assert state.cost_microusd_spent == 2400 * len(author.calls)
+    assert len(state.repair_history) == repair_rounds
+    if repair_rounds:
+        path = preparation_path(binding.source_slug, binding.run_id)
+        checkpoint = json.loads(path.read_text())
+        checkpoint["repair_history"][0]["findings"][0]["message"] = "tampered archive"
+        path.write_text(json.dumps(checkpoint))
+        with pytest.raises(PreparationStoreError, match="Repair evidence"):
+            supervisor.store.load_run(binding.source_slug, binding.run_id)

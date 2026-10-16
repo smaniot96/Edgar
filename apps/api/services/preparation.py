@@ -8,6 +8,7 @@ Provider execution and publication callbacks always run outside the lifecycle fi
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -41,6 +42,17 @@ from edgar_core.preparation import (
 )
 
 from .preparation_store import PreparationStore, StalePreparationRevision
+
+_WORKER_GUARD: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
+    "preparation_worker_guard", default=None
+)
+
+
+def assert_current_preparation_worker() -> None:
+    """Fence each external subcall when running inside a supervised stage."""
+    guard = _WORKER_GUARD.get()
+    if guard is not None:
+        guard()
 
 
 class PreparationError(RuntimeError):
@@ -599,8 +611,10 @@ class PreparationSupervisor:
             )
             try:
                 self._check_live(state, source_guard)
-                result = await _call(adapter.execute, state.binding, task, deps,
-                                     task_state.attempt_count, idem_key)
+                result = await self._execute_with_lease(
+                    slug, run_id, worker_id, task, task_state.lease_fence, source_guard,
+                    adapter.execute, state.binding, task, deps, task_state.attempt_count, idem_key,
+                )
                 if not isinstance(result, StageExecutionResult):
                     raise PreparationTaskFailure("worker_result_invalid")
                 self._check_live(self.store.load_run(slug, run_id), source_guard)
@@ -622,6 +636,47 @@ class PreparationSupervisor:
                 state = self._record_failure(slug, run_id, worker_id, task, task_state.lease_fence,
                                              _exception_code(exc), None, reserved_calls, reserved_tokens, reserved_cost)
                 return PreparationStep(state)
+
+    async def _execute_with_lease(
+        self, slug, run_id, worker_id, task, fence, source_guard, executor, *args
+    ):
+        """Keep a long multi-call stage fenced and stop work after cancellation.
+
+        The heartbeat holds a lifecycle lock only while extending the exact active
+        lease. No lock or database transaction spans provider work.
+        """
+        def guard():
+            latest = self.store.load_run(slug, run_id)
+            self._check_live(latest, source_guard)
+            saved = latest.tasks[_task_key(task)]
+            if (saved.status != PreparationTaskStatus.RUNNING
+                    or saved.lease_owner != worker_id or saved.lease_fence != fence):
+                raise PreparationError("Task lease was superseded before an external call.")
+
+        token = _WORKER_GUARD.set(guard)
+        try:
+            work = asyncio.create_task(_call(executor, *args))
+        finally:
+            _WORKER_GUARD.reset(token)
+        try:
+            while True:
+                done, _ = await asyncio.wait({work}, timeout=min(30.0, self.lease_seconds / 3))
+                if done:
+                    return await work
+                self._check_live(self.store.load_run(slug, run_id), source_guard)
+
+                def renew(payload):
+                    if payload["cancel_requested"] or payload["status"] in ("cancelled", "ready"):
+                        raise PreparationError("Preparation run stopped during work.")
+                    saved = payload["tasks"][_task_key(task)]
+                    _assert_fence(saved, worker_id, fence)
+                    saved["lease_expires_at"] = _iso(_now() + timedelta(seconds=self.lease_seconds))
+
+                self.store.mutate_run(slug, run_id, update=renew)
+        finally:
+            if not work.done():
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
 
     def _claim_task(
         self, slug: str, run_id: str, worker_id: str, task: PreparationTask,
