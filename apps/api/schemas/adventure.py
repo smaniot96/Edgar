@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 from edgar_core.sources import RulesEdition, SourceEdition
 
+from .preparation_setup import PreparationSetup
+
 AdventureStatus = Literal[
     "processing", "ready", "failed", "missing", "empty", "partial", "unavailable"
 ]
@@ -24,7 +26,12 @@ class AdventureJobRead(BaseModel):
     checkpoint_available: bool = False
     retryable: bool = False
     retained_work: Literal[
-        "none", "outline_and_chapters", "complete_manuscript", "source_pdf", "inspected_extraction", "published"
+        "none",
+        "outline_and_chapters",
+        "complete_manuscript",
+        "source_pdf",
+        "inspected_extraction",
+        "published",
     ] = "none"
     action_label: str | None = None
     explanation: str | None = None
@@ -53,6 +60,7 @@ class AdventureRead(BaseModel):
     ingestion: dict | None = None
     can_retry: bool = False
     job: AdventureJobRead | None = None
+    preparation_setup_required: bool = False
 
 
 class AdventureUpdate(BaseModel):
@@ -74,6 +82,11 @@ class AdventureRetryRequest(BaseModel):
     reviewed_extraction_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
+class AdventurePreparationRequest(BaseModel):
+    rules_edition: RulesEdition
+    preparation: PreparationSetup
+
+
 CampaignSize = Literal["small", "medium", "large", "gigantic"]
 
 
@@ -84,3 +97,4 @@ class AdventureGenerateRequest(BaseModel):
     theme: str | None = None  # free-text premise/setting/tone the player wants
     size: CampaignSize = "medium"
     rules_edition: RulesEdition = "2014"
+    preparation: PreparationSetup | None = None

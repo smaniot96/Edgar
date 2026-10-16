@@ -31,6 +31,7 @@ from .routers.npc import router as npc_router
 from .routers.rules import router as rules_router
 from .routers.seed import router as seed_router
 from .routers.session import router as session_router
+from .routers.session_assets import router as session_assets_router
 from .routers.user import router as user_router
 from .routers.world_flag import router as world_flag_router
 
@@ -50,6 +51,9 @@ async def lifespan(app: FastAPI):
         stale = await run_in_threadpool(fail_stale_processing)
         if stale:
             log.warning("adventures_marked_failed_after_restart", slugs=stale)
+        from .services.preparation_runtime import recover_private_preparations
+
+        await recover_private_preparations()
     except OSError:
         log.exception("adventures_stale_scan_failed")
     try:
@@ -114,6 +118,7 @@ app.include_router(npc_router, prefix="/api")
 app.include_router(rules_router, prefix="/api")
 app.include_router(seed_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
+app.include_router(session_assets_router, prefix="/api")
 app.include_router(user_router, prefix="/api")
 app.include_router(world_flag_router, prefix="/api")
 

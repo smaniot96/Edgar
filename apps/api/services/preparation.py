@@ -8,6 +8,7 @@ Provider execution and publication callbacks always run outside the lifecycle fi
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -33,12 +34,25 @@ from edgar_core.preparation import (
     ValidationReceipt,
     ValidationResult,
     assert_artifact_integrity,
+    build_artifact,
     build_publication,
+    build_validation_receipt,
     canonical_sha256,
     safe_public_stage,
 )
 
 from .preparation_store import PreparationStore, StalePreparationRevision
+
+_WORKER_GUARD: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
+    "preparation_worker_guard", default=None
+)
+
+
+def assert_current_preparation_worker() -> None:
+    """Fence each external subcall when running inside a supervised stage."""
+    guard = _WORKER_GUARD.get()
+    if guard is not None:
+        guard()
 
 
 class PreparationError(RuntimeError):
@@ -226,6 +240,8 @@ class PreparationSupervisor:
         if task_state is not None:
             return await self._execute_task(slug, run_id, worker_id, source_guard, state, task_state)
         if all(state.tasks[_task_key(task)].status == PreparationTaskStatus.ACCEPTED for task in plan.tasks):
+            if stage == PreparationStage.P11 and any(a.artifact_kind == "repair_plan" for a in state.artifacts.values()):
+                return PreparationStep(self._restart_for_repair(slug, run_id, state))
             state = self._finish_stage(slug, run_id, state, stage)
             if state.status == PreparationJobStatus.BLOCKED:
                 return PreparationStep(state)
@@ -384,6 +400,72 @@ class PreparationSupervisor:
 
         return self.store.mutate_run(slug, run_id, update=update)
 
+    def _restart_for_repair(self, slug: str, run_id: str, state: PreparationRunState) -> PreparationRunState:
+        """Archive exact review evidence and rewind all dependent authoring atomically.
+
+        The P11 model only proposes repair directions. Code selects the immutable
+        source/hero boundary and invalidates design, mechanics, scenes, prose, assets
+        and reviews. A later independent review must earn a fresh clearance.
+        """
+        plans = [a for a in state.artifacts.values() if a.artifact_kind == "repair_plan"]
+        if len(plans) != 1 or state.repair_rounds >= state.binding.budget.max_repair_rounds:
+            return self._block_run(slug, run_id, "repair_budget_exhausted")
+        proposal = plans[0]
+        material = {f.finding_id for f in state.findings
+                    if f.status == "open" and f.severity in ("medium", "high", "critical")}
+        directions = proposal.payload.get("directions", {})
+        if not material or set(directions.get("finding_ids", ())) != material or directions.get("preserve_exact_source") is not True:
+            return self._block_run(slug, run_id, "repair_scope_invalid")
+        if any(t.status in (PreparationTaskStatus.RUNNING, PreparationTaskStatus.LEASED) for t in state.tasks.values()):
+            return state
+        retained = tuple(a for a in state.artifacts.values() if a.stage.ordinal < 3)
+        discarded = tuple(a for a in state.artifacts.values() if a.stage.ordinal >= 3)
+        round_number = state.repair_rounds + 1
+        round_id = f"repair_{round_number}"
+        archive = {"round_id": round_id, "artifacts": [a.model_dump(mode="json") for a in discarded],
+                   "validation_receipts": [r.model_dump(mode="json") for r in state.validation_receipts.values()],
+                   "findings": [f.model_dump(mode="json") for f in state.findings],
+                   "prior_inventory": {a.artifact_id: a.content_sha256 for a in state.artifacts.values()}}
+        context_task = PreparationTask(task_id=round_id, stage=PreparationStage.P02,
+            task_kind="repair_context", scope_keys=(), dependency_artifact_ids=tuple(a.artifact_id for a in retained),
+            max_input_tokens=0, max_output_tokens=1, max_cost_microusd=0, requires_provider=False)
+        context = build_artifact(state.binding, stage=PreparationStage.P02, task_id=round_id,
+            artifact_kind="repair_context", payload={"round_id": round_id,
+                "directions": directions, "findings": proposal.payload.get("findings", []),
+                "archive_sha256": canonical_sha256(archive)}, dependency_artifacts=retained,
+            version=round_number, created_at=_iso(_now()), scope_keys=())
+        receipt = build_validation_receipt("p02_repair_context", artifacts=(context,), dependencies=retained,
+            passed=True, details={"archive_sha256": canonical_sha256(archive)}, created_at=_iso(_now()))
+        receipt_key = receipt.validator_id + ":" + receipt.details_sha256
+        def restart(payload: dict[str, Any]) -> None:
+            if payload["cancel_requested"] or payload["status"] in ("ready", "cancelled"):
+                raise PreparationError("Repair was superseded.")
+            payload["repair_history"].append(archive)
+            payload["repair_rounds"] = round_number
+            payload["repair_round_ids"].append(round_id)
+            payload["artifacts"] = {a.artifact_id: a.model_dump(mode="json") for a in retained}
+            payload["artifacts"][context.artifact_id] = context.model_dump(mode="json")
+            payload["tasks"] = {k: t for k, t in payload["tasks"].items()
+                                if PreparationStage(t["task"]["stage"]).ordinal < 3}
+            payload["tasks"][_task_key(context_task)] = PreparationTaskState(task=context_task,
+                status=PreparationTaskStatus.ACCEPTED, accepted_artifact_ids=(context.artifact_id,),
+                validation_receipt_ids=(receipt_key,), updated_at=_iso(_now())).model_dump(mode="json")
+            kept_ids = {a.artifact_id for a in retained}
+            payload["validation_receipts"] = {k: r for k, r in payload["validation_receipts"].items()
+                if set(r["artifact_digests"]) <= kept_ids and set(r["dependency_digests"]) <= kept_ids}
+            payload["validation_receipts"][receipt_key] = receipt.model_dump(mode="json")
+            for stage in PreparationStage:
+                if stage.ordinal >= 3:
+                    payload["stage_plans"].pop(stage.value, None)
+                    payload["stage_statuses"].pop(stage.value, None)
+            payload["stage_plans"]["P02"]["tasks"].append(context_task.model_dump(mode="json"))
+            payload.update(findings=[], current_stage="P03", status="repairing", last_safe_error_code=None,
+                           publication_inventory=None, published_bundle_sha256=None)
+        try:
+            return self.store.update_run(slug, run_id, expected_revision=state.revision, update=restart)
+        except StalePreparationRevision:
+            return self.store.load_run(slug, run_id)
+
     async def _ensure_current_plan(
         self, slug: str, run_id: str, state: PreparationRunState
     ) -> PreparationRunState:
@@ -529,8 +611,10 @@ class PreparationSupervisor:
             )
             try:
                 self._check_live(state, source_guard)
-                result = await _call(adapter.execute, state.binding, task, deps,
-                                     task_state.attempt_count, idem_key)
+                result = await self._execute_with_lease(
+                    slug, run_id, worker_id, task, task_state.lease_fence, source_guard,
+                    adapter.execute, state.binding, task, deps, task_state.attempt_count, idem_key,
+                )
                 if not isinstance(result, StageExecutionResult):
                     raise PreparationTaskFailure("worker_result_invalid")
                 self._check_live(self.store.load_run(slug, run_id), source_guard)
@@ -552,6 +636,47 @@ class PreparationSupervisor:
                 state = self._record_failure(slug, run_id, worker_id, task, task_state.lease_fence,
                                              _exception_code(exc), None, reserved_calls, reserved_tokens, reserved_cost)
                 return PreparationStep(state)
+
+    async def _execute_with_lease(
+        self, slug, run_id, worker_id, task, fence, source_guard, executor, *args
+    ):
+        """Keep a long multi-call stage fenced and stop work after cancellation.
+
+        The heartbeat holds a lifecycle lock only while extending the exact active
+        lease. No lock or database transaction spans provider work.
+        """
+        def guard():
+            latest = self.store.load_run(slug, run_id)
+            self._check_live(latest, source_guard)
+            saved = latest.tasks[_task_key(task)]
+            if (saved.status != PreparationTaskStatus.RUNNING
+                    or saved.lease_owner != worker_id or saved.lease_fence != fence):
+                raise PreparationError("Task lease was superseded before an external call.")
+
+        token = _WORKER_GUARD.set(guard)
+        try:
+            work = asyncio.create_task(_call(executor, *args))
+        finally:
+            _WORKER_GUARD.reset(token)
+        try:
+            while True:
+                done, _ = await asyncio.wait({work}, timeout=min(30.0, self.lease_seconds / 3))
+                if done:
+                    return await work
+                self._check_live(self.store.load_run(slug, run_id), source_guard)
+
+                def renew(payload):
+                    if payload["cancel_requested"] or payload["status"] in ("cancelled", "ready"):
+                        raise PreparationError("Preparation run stopped during work.")
+                    saved = payload["tasks"][_task_key(task)]
+                    _assert_fence(saved, worker_id, fence)
+                    saved["lease_expires_at"] = _iso(_now() + timedelta(seconds=self.lease_seconds))
+
+                self.store.mutate_run(slug, run_id, update=renew)
+        finally:
+            if not work.done():
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
 
     def _claim_task(
         self, slug: str, run_id: str, worker_id: str, task: PreparationTask,

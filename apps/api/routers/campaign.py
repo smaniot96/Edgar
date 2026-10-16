@@ -74,6 +74,7 @@ async def open_campaign_for_adventure(
     title = meta.get("title") or slug.replace("_", " ").title()
     campaign = Campaign(
         title=title,
+        rules_edition=meta.get("rules_edition", "2014"),
         system="D&D 5e",
         created_by=owner_id,
         adventure_collections=[slug],
@@ -98,6 +99,9 @@ async def create_campaign(
     for slug in adv:
         validate_binding(slug)
     await require_sources(adv, body.source_mode)
+    from ..services.prepared_play import require_prepared_play
+
+    await run_in_threadpool(require_prepared_play, adv, body.rules_edition)
     campaign = Campaign(
         source_mode=body.source_mode,
         rules_edition=body.rules_edition,
@@ -118,6 +122,9 @@ async def update_campaign(
 ):
     campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
     update_data = body.model_dump(exclude_unset=True)
+    from ..services.prepared_play import protect_prepared_campaign_binding, require_prepared_play
+
+    await run_in_threadpool(protect_prepared_campaign_binding, campaign, update_data)
     for slug in update_data.get("adventure_collections", []):
         validate_binding(slug)
     if "adventure_collections" in update_data or "source_mode" in update_data:
@@ -125,6 +132,11 @@ async def update_campaign(
             update_data.get("adventure_collections", campaign.adventure_collections),
             update_data.get("source_mode", campaign.source_mode),
         )
+    await run_in_threadpool(
+        require_prepared_play,
+        update_data.get("adventure_collections", campaign.adventure_collections),
+        update_data.get("rules_edition", campaign.rules_edition),
+    )
     for key, value in update_data.items():
         setattr(campaign, key, value)
     await db.commit()

@@ -38,9 +38,50 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
         "queued", "outline", "generating_chapters", "extracting", "embedding", "indexing",
         "publishing", "completed", "failed", "cancelled",
     }
-    if kind not in ("generation", "ingestion") or state not in allowed_states:
-        return None
     if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
+        return None
+    if meta.get("private_preparation") is True:
+        from .preparation_runtime import safe_preparation_status
+
+        projected = safe_preparation_status(meta, slug)
+        if projected is None:
+            return None
+        public_state = {
+            "queued": "queued",
+            "preparing": "running",
+            "reviewing": "running",
+            "repairing": "running",
+            "publishing": "running",
+            "ready": "completed",
+            "blocked": "failed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }.get(projected.status.value, "running")
+        action_copy = {
+            "wait": "Preparation is in progress. Check back for an update.",
+            "retry": "Saved preparation work can be retried.",
+            "restart": "Preparation needs attention before it can continue.",
+            "none": "Your adventure is ready to play.",
+        }.get(projected.action)
+        return AdventureJobRead(
+            version=1,
+            job_id=job_id,
+            kind="generation" if (meta.get("generation") or {}).get("kind") == "ai" else "ingestion",
+            state=public_state,
+            stage=projected.stage,
+            completed_chapters=0,
+            total_chapters=None,
+            checkpoint_available=bool(meta.get("preparation_run_id")),
+            retryable=projected.retryable,
+            retained_work=(job.get("retained_work") if job.get("retained_work") in {
+                "none", "outline_and_chapters", "complete_manuscript", "source_pdf", "inspected_extraction", "published"
+            } else "none"),
+            action_label=action_copy,
+            explanation=action_copy,
+            source_version=(meta.get("prepared_bundle") or {}).get("bundle_sha256")
+            if projected.status.value == "ready" else None,
+        )
+    if kind not in ("generation", "ingestion") or state not in allowed_states:
         return None
     total = job.get("total_chapters")
     total = total if isinstance(total, int) and 0 < total <= 24 else None
@@ -156,6 +197,14 @@ def active_metadata(slug: str, meta: dict | None = None) -> dict:
     remains authoritative; afterward a crash before the final JSON update is recoverable.
     """
     meta = load_meta(slug) if meta is None else meta
+    if meta.get("private_preparation") is True:
+        from .preparation_runtime import private_preparation_ready
+
+        if not private_preparation_ready(slug, meta):
+            # A staged candidate can already have an activated vector version. Keep every
+            # legacy metadata/index consumer blind until checkpoint and metadata receipts agree.
+            return {"private_preparation": True, "status": "processing"}
+        return meta
     receipts = meta.get("index_receipts") or {}
     if receipts:
         try:
@@ -186,6 +235,30 @@ def source_read(slug: str) -> SourceRead:
             message="This legacy source binding is invalid. Bind a valid adventure source or choose homebrew play.",
         )
     raw_meta = load_meta(slug)
+    if raw_meta.get("private_preparation") is True:
+        from .preparation_runtime import private_preparation_ready, safe_preparation_status
+
+        if not private_preparation_ready(slug, raw_meta):
+            projected = safe_preparation_status(raw_meta, slug)
+            failed = projected is not None and projected.status.value in ("blocked", "failed", "cancelled")
+            return SourceRead(
+                slug=slug,
+                title="Private adventure",
+                status="failed" if failed else "processing",
+                usable_chunks=0,
+                expected_chunks=None,
+                collection_exists=False,
+                source_pdf_available=False,
+                message=(
+                    "Private preparation needs attention. Retry the saved work or start a new adventure."
+                    if failed else "Your adventure is being prepared privately."
+                ),
+                failure_code="preparation_blocked" if failed else None,
+                extraction_preview_available=False,
+                extraction_preview_current=False,
+                ingestion=None,
+                job=safe_job_read(raw_meta, slug),
+            )
     meta = active_metadata(slug, raw_meta)
     ingestion = meta.get("ingestion")
     live = inspect_ingestion_source(slug, meta)
@@ -215,7 +288,12 @@ def source_read(slug: str) -> SourceRead:
         else attempt_dir(slug, token) if token else ADVENTURES_DIR / slug
     )
     preview_path = preview_dir / f"{slug}.extraction.json"
-    preview_available = preview_path.is_file() and (preview_dir / f"{slug}.md").is_file()
+    is_private_preparation = raw_meta.get("private_preparation") is True
+    preview_available = (
+        not is_private_preparation
+        and preview_path.is_file()
+        and (preview_dir / f"{slug}.md").is_file()
+    )
     preview_current = preview_available and live["source_file_matches"]
     if preview_available and candidate_preview == preview_dir:
         try:
@@ -240,7 +318,9 @@ def source_read(slug: str) -> SourceRead:
     return SourceRead(
         **live,
         title=meta.get("title") or slug.replace("_", " ").title(),
-        source_pdf_available=source_pdf_path(slug, meta).is_file(),
+        source_pdf_available=(
+            False if is_private_preparation else source_pdf_path(slug, meta).is_file()
+        ),
         message=meta.get("error")
         if live["status"] == "failed" and meta.get("error")
         else messages.get(live["status"]),

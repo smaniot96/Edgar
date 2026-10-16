@@ -16,6 +16,9 @@ class ManifestReview(BaseModel):
 
 
 def _call(action, *args, **kwargs):
+    from ..services.preparation_privacy import require_public_source
+
+    require_public_source(args[0])
     try:
         return action(*args, **kwargs)
     except (ValueError, OSError, KeyError) as exc:

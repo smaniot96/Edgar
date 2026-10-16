@@ -291,7 +291,13 @@ async def _generate_campaign(
 
 
 async def build_generated_campaign(
-    slug: str, title_hint: str, theme: str, size: str, *, attempt_id: str | None = None
+    slug: str,
+    title_hint: str,
+    theme: str,
+    size: str,
+    *,
+    attempt_id: str | None = None,
+    model_profiles=None,
 ) -> None:
     """Background worker: generate the campaign, embed it, flip metadata to ready/failed."""
     from db.vector.versions import SupersededIngestion
@@ -300,6 +306,12 @@ async def build_generated_campaign(
 
     from . import adventures_meta as store
     from .adventures_meta import load_meta
+
+    if load_meta(slug).get("private_preparation") is True:
+        from .preparation_runtime import prepare_adventure
+
+        await prepare_adventure(slug, attempt_token=attempt_id, model_profiles=model_profiles)
+        return
 
     token = attempt_id or store.begin_attempt(slug, job_attempt=True, job_kind="generation")
     job = store.ensure_job(slug, token, kind="generation", stage="outline")

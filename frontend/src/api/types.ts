@@ -62,7 +62,17 @@ export interface ExtractionPreview extends IngestionSummary {
 
 export type AdventureSize = "small" | "medium" | "large" | "gigantic";
 
+export interface PreparationSetup {
+  character_ids: number[];
+  target_level?: number;
+  max_cost_microusd: number;
+  required_maps: boolean;
+  required_handouts: boolean;
+}
+
 export interface AdventureGenerateRequest {
+  preparation?: PreparationSetup;
+  rules_edition?: RulesEdition;
   title?: string;
   theme?: string;
   size: AdventureSize;
@@ -75,6 +85,7 @@ export interface AdventureGenerateResponse {
 }
 
 export interface AdventureRead {
+  preparation_setup_required?: boolean;
   rules_edition?: RulesEdition | "unspecified";
   slug: string;
   title: string;
@@ -164,6 +175,45 @@ export interface SessionRead {
   ended_at: string | null;
   current_scene_id: string | null;
   active_character_id: number | null;
+}
+
+export interface SessionMapPlace {
+  scene_id: string;
+  title: string;
+  status: "current" | "visited" | "known";
+  detail: string | null;
+}
+
+export interface SessionMapRoute {
+  from_scene_id: string;
+  to_scene_id: string;
+}
+
+export interface SessionMapAsset {
+  asset_id: string;
+  kind: string;
+  url: string;
+  media_type: string;
+  sha256: string;
+  entity_id: string | null;
+  provenance: Record<string, unknown>;
+  profile_settings: Record<string, unknown>;
+}
+
+export interface SessionMapRead {
+  session_id: number;
+  source_version: string;
+  topology: "prepared" | "reviewed_manifest" | "unavailable";
+  schematic: boolean;
+  scale: null;
+  current_scene_id: string | null;
+  places: SessionMapPlace[];
+  routes: SessionMapRoute[];
+  note: string | null;
+  journal_entry_ids: Record<string, string>;
+  known_place_entries: Array<{ id: string; title: string; text: string | null; status: string; origin: Record<string, unknown> }>;
+  artwork: SessionMapAsset[];
+  tracking: "available" | "legacy_untracked";
 }
 
 /** Whether a DM line's original roll was stored (EDG-030). Legacy rows are "not_captured". */
