@@ -137,8 +137,7 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     )
 
 
-@router.get("/adventures", response_model=list[AdventureRead])
-def list_adventures():
+def _list_adventures():
     """All adventure modules: embedded collections plus any still-processing/failed uploads."""
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
@@ -153,13 +152,42 @@ def list_adventures():
     return out
 
 
-@router.get("/adventures/{slug}", response_model=AdventureRead)
-def get_adventure(slug: str):
+def _get_adventure(slug: str):
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
     if slug not in collection_slugs and not _metadata_path(slug).is_file():
         raise HTTPException(status_code=404, detail="Adventure not found")
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
+
+
+async def _with_readiness(adventure: AdventureRead) -> AdventureRead:
+    """Use actual play gates for modules before a campaign has been created."""
+    from db.postgres.models import Campaign
+
+    from ..services.campaign_readiness import evaluate_play_readiness
+
+    prospective = Campaign(
+        id=0,
+        status="active",
+        source_mode="module",
+        adventure_collections=[adventure.slug],
+        rules_edition=adventure.rules_edition,
+    )
+    adventure.readiness = await evaluate_play_readiness(
+        None, prospective, observed_sources=[adventure]
+    )
+    return adventure
+
+
+@router.get("/adventures", response_model=list[AdventureRead])
+async def list_adventures():
+    adventures = await run_in_threadpool(_list_adventures)
+    return [await _with_readiness(adventure) for adventure in adventures]
+
+
+@router.get("/adventures/{slug}", response_model=AdventureRead)
+async def get_adventure(slug: str):
+    return await _with_readiness(await run_in_threadpool(_get_adventure, slug))
 
 
 def _extraction_path(slug: str, name: str, *, candidate_attempt_id: str | None = None) -> Path:

@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ._validators import forbid_null
+from .readiness import ReadinessRead
 
 
 class SessionCreate(BaseModel):
@@ -26,6 +27,10 @@ class SessionRead(BaseModel):
     ended_at: datetime | None
     current_scene_id: str | None = None
     active_character_id: int | None = None
+    character_name: str | None = None
+    has_history: bool = False
+    last_played_at: datetime | None = None
+    readiness: ReadinessRead | None = None
 
 
 class ChatMessageRead(BaseModel):
