@@ -456,7 +456,7 @@ async def test_npc_projection_deduplicates_source_revisions_and_keeps_only_earne
         f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}"
     )
     assert len(response.json()) == 1
-    assert response.json()[0]["name"] == "Mara"
+    assert response.json()[0]["name"] == "Mara · person encountered on turn 1"
     assert response.json()[0]["journal_entry_id"] == actor_entry_id(sessions[0].id, original.target)
     assert "Quill" not in response.text
     assert "Secret prepared identity" not in response.text
