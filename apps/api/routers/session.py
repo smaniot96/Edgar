@@ -16,7 +16,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
@@ -525,7 +524,8 @@ async def session_turn_stream(
 
     A 409 (lock contention) or 404 is returned as a regular JSON error before the stream opens.
     Errors after the stream begins are emitted as `error` SSE frames; the connection then
-    closes and the lock is released in the generator's `finally`.
+    closes and the lock is released in the generator's `finally`. A client that disconnects
+    before the body starts never runs that `finally`, so the background task releases it too.
     """
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
@@ -564,6 +564,11 @@ async def session_turn_stream(
             structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
             await lock.release()
 
+    background = BackgroundTasks()
+    # Idempotent, so it is a no-op after the generator's `finally` already released the lock.
+    background.add_task(lock.release)
+    # Runs after the stream closes (and the lock is released); never fails the turn.
+    background.add_task(maybe_update_memory_summary, session_id)
     return StreamingResponse(
         event_gen(),
         media_type="text/event-stream",
@@ -572,6 +577,5 @@ async def session_turn_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
-        # Runs after the stream closes (and the lock is released); never fails the turn.
-        background=BackgroundTask(maybe_update_memory_summary, session_id),
+        background=background,
     )

@@ -7,18 +7,25 @@ from pathlib import Path
 from loguru import logger
 
 from db.vector.collections import campaign_lore_collection
+from edgar_core.log_safety import error_summary, redact_text
 from edgar_core.model_profiles import ModelProfileError, validate_provider_configuration
 from ingestion.embed import run_pipeline
 from ingestion.extract import extract_document, save_extraction
 from ingestion.paths import default_markdown_dir
 
 
+def _write_redacted(message: str) -> None:
+    # Same credential redaction as the API sink; applies to every formatted line.
+    sys.stderr.write(redact_text(message))
+
+
 def main() -> None:
     # Configure only the CLI process; importing it must not replace API logging sinks.
     logger.remove()
     logger.add(
-        sys.stderr,
+        _write_redacted,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        colorize=sys.stderr.isatty(),
         backtrace=False,
         diagnose=False,
     )
@@ -127,8 +134,8 @@ def main() -> None:
             out_path, report_path = save_extraction(extraction, out_dir)
             logger.info("Saved markdown to {} and diagnostics to {}", out_path, report_path)
             extraction.require_valid()
-        except Exception:
-            logger.exception("Extract failed")
+        except Exception as e:
+            logger.error("Extract failed: {}", error_summary(e))
             sys.exit(1)
         return
 
@@ -150,8 +157,8 @@ def main() -> None:
             rules_edition=args.rules_edition,
         )
         logger.info("Ingested {} chunks from {} into {}", n, args.path.name, collection_name)
-    except Exception:
-        logger.exception("Ingestion failed")
+    except Exception as e:
+        logger.error("Ingestion failed: {}", error_summary(e))
         sys.exit(1)
 
 

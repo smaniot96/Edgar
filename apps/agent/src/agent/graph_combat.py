@@ -189,6 +189,7 @@ from agent.supported_rules import (
 )
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference, reference_matches
+from edgar_core.log_safety import error_summary
 from tools.dice import DiceOutcome, parse_dice, roll
 
 log = logging.getLogger(__name__)
@@ -456,7 +457,10 @@ async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
         except CreatureResolutionError:
             raise
         except Exception as exc:
-            log.info("monster_lookup_failed", extra={"monster_name": name, "error": str(exc)[:200]})
+            log.info(
+                "monster_lookup_failed",
+                extra={"monster_name": name, "error": error_summary(exc)},
+            )
             raise CreatureResolutionError(
                 f"Creature source unavailable for {name!r}. Retry once the source is available."
             ) from exc
@@ -586,7 +590,7 @@ async def _build_enemy_roster(
     except CreatureResolutionError:
         raise
     except Exception as e:
-        log.warning("encounter_builder_failed", extra={"error": str(e)[:200]})
+        log.warning("encounter_builder_failed", extra={"error": error_summary(e)})
         # Builder unavailable: every resolved foe still fights with its own exact record. A builder
         # that answers with no foe present starts no fight (EDG-126).
         enemies = [_exact_enemy(c) for c in monster_ctx]

@@ -22,7 +22,7 @@ import json
 import logging
 from dataclasses import replace
 
-from agent.history import continuity_context
+from agent.history import fit_continuity
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.nodes.manifest_effects import enforce_manifest_effects
@@ -61,6 +61,7 @@ from agent.supported_rules import (
     engine_applied_for_state,
 )
 from db.vector.retrieval import rule_policy
+from edgar_core.log_safety import error_summary
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
 
 log = logging.getLogger(__name__)
@@ -137,9 +138,7 @@ def build_adjudicator_prompt(
     else:
         parts.append("Current world flags: (none)")
 
-    continuity = continuity_context(state)
-    if continuity:
-        parts.append(continuity)
+    continuity_slot = len(parts)
 
     if state.get("resolved_combat_outcomes"):
         parts.append(
@@ -197,6 +196,8 @@ def build_adjudicator_prompt(
         "Return citation_ids only for the exact supplied references supporting the ruling. Do not cite unrelated excerpts."
     )
 
+    if continuity := fit_continuity(state, "play.consequence_planner", [RULES_ADJUDICATOR, *parts]):
+        parts.insert(continuity_slot, continuity)
     return [
         {"role": "system", "content": RULES_ADJUDICATOR},
         {"role": "user", "content": "\n".join(parts)},
@@ -233,7 +234,7 @@ async def _invoke_with_retry(messages: list[dict]) -> AdjudicationResult | None:
         except Exception as e:
             log.warning(
                 "adjudicator_structured_output_failed",
-                extra={"attempt": attempt, "error": str(e)[:200]},
+                extra={"attempt": attempt, "error": error_summary(e)},
             )
     return None
 

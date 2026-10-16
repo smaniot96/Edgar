@@ -77,6 +77,61 @@ async def _assignment_hp(session_id: int) -> int:
         ).scalar_one()
 
 
+async def _disconnect_turn_stream(session_id: int, *, on_token: bool) -> bytes:
+    """POST the SSE turn over raw ASGI and drop the client at one point in the stream.
+
+    `on_token` disconnects once the first token frame is sent. Otherwise the client is already
+    gone when the response starts, and the start write suspends so the disconnect can cancel
+    the stream before its body has begun. Returns the bytes the client received.
+    """
+    from apps.api.main import app
+
+    payload = json.dumps({"message": "I look around."}).encode()
+    path = f"/api/sessions/{session_id}/turn/stream"
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"test"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(payload)).encode()),
+        ],
+        "client": ("test", 1),
+        "server": ("test", 80),
+    }
+    disconnected = asyncio.Event()
+    if not on_token:
+        disconnected.set()
+    body_sent = False
+    received = bytearray()
+
+    async def receive() -> dict:
+        nonlocal body_sent
+        if not body_sent:
+            body_sent = True
+            return {"type": "http.request", "body": payload, "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        if message["type"] == "http.response.start":
+            await asyncio.sleep(0)  # a real socket write can suspend here
+        body = message.get("body", b"")
+        received.extend(body)
+        if on_token and b"event: token" in body:
+            disconnected.set()
+
+    await asyncio.wait_for(app(scope, receive, send), 20)
+    return bytes(received)
+
+
 # --- Turn lock -----------------------------------------------------------------------------
 
 
@@ -148,7 +203,7 @@ async def test_turn_writes_telemetry_and_narration_together(fake_llm_turn, fake_
 
 @pytest.mark.asyncio
 async def test_stream_persist_failure_emits_error_and_leaves_no_partial_writes(
-    monkeypatch, fake_llm_turn, fake_retrieval, api_client
+    monkeypatch, fake_llm_turn, fake_retrieval, api_client, redis_client
 ) -> None:
     from apps.api.services import turn_runner
 
@@ -163,6 +218,8 @@ async def test_stream_persist_failure_emits_error_and_leaves_no_partial_writes(
     assert r.status_code == 200
     events = _sse_events(r.text)
     names = [n for n, _ in events]
+    # Narration was already streamed as uncommitted tokens before the commit failed.
+    assert "token" in names
     assert names[-1] == "error"
     assert "done" not in names
     err = events[-1][1]
@@ -173,6 +230,7 @@ async def test_stream_persist_failure_emits_error_and_leaves_no_partial_writes(
     assert await _count_events(sid, "narration") == 0
     assert await _count_events(sid, "adjudication") == 0
     assert await _assignment_hp(sid) == 12
+    assert await redis_client.get(f"turn:{sid}") is None
 
     import db.postgres.session as sm
 
@@ -248,6 +306,67 @@ async def test_narrator_stream_failure_is_sanitised(monkeypatch, fake_llm_turn, 
     assert events[-1] == ("error", events[-1][1])
     assert events[-1][1]["code"] == "llm_unavailable"
     assert "SECRET" not in r.text
+    assert await _count_events(sid, "narration") == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_provider_error_after_tokens_is_an_uncommitted_error(
+    monkeypatch, fake_llm_turn, fake_retrieval, api_client, redis_client
+) -> None:
+    from langchain_core.messages import AIMessage
+
+    async def failing_astream(*_a, **_kw):
+        yield AIMessage(content="The arrow grazes ")
+        raise RuntimeError(SECRET)
+
+    monkeypatch.setattr(_fake_chat(), "astream", failing_astream)
+    sid = (await _seed(api_client))["session_id"]
+    r = await api_client.post(f"/api/sessions/{sid}/turn/stream", json={"message": "I look around."})
+    names = [n for n, _ in _sse_events(r.text)]
+    assert "token" in names
+    assert names[-1] == "error"
+    assert "done" not in names
+    assert "SECRET" not in r.text
+
+    assert await _count_events(sid, "narration") == 0
+    assert await _count_events(sid, "adjudication") == 0
+    assert await _assignment_hp(sid) == 12
+    assert await redis_client.get(f"turn:{sid}") is None
+
+
+@pytest.mark.asyncio
+async def test_stream_disconnect_mid_narration_releases_lock_and_commits_nothing(
+    monkeypatch, fake_llm_turn, fake_retrieval, api_client, redis_client
+) -> None:
+    from langchain_core.messages import AIMessage
+
+    stalled = asyncio.Event()
+
+    async def stalled_astream(*_a, **_kw):
+        yield AIMessage(content="The arrow grazes ")
+        await stalled.wait()  # narration stalls until the client disconnects
+
+    monkeypatch.setattr(_fake_chat(), "astream", stalled_astream)
+    sid = (await _seed(api_client))["session_id"]
+    sent = await _disconnect_turn_stream(sid, on_token=True)
+    assert b"event: token" in sent
+    assert b"event: done" not in sent
+
+    assert await redis_client.get(f"turn:{sid}") is None
+    assert await _count_events(sid, "narration") == 0
+    assert await _count_events(sid, "adjudication") == 0
+    assert await _assignment_hp(sid) == 12
+
+
+@pytest.mark.asyncio
+async def test_stream_disconnect_before_body_releases_lock(
+    fake_llm_turn, fake_retrieval, api_client, redis_client
+) -> None:
+    sid = (await _seed(api_client))["session_id"]
+    sent = await _disconnect_turn_stream(sid, on_token=False)
+    assert b"event: token" not in sent
+
+    assert await redis_client.get(f"turn:{sid}") is None
     assert await _count_events(sid, "narration") == 0
 
 
@@ -451,8 +570,8 @@ async def test_turn_prompts_cover_full_uncovered_history_after_summary_or_failur
         seen["planner"].append(prompt[1]["content"])
         return prompt
 
-    def capture_narrator(state):
-        prompt = original_narrator(state)
+    def capture_narrator(state, *args):
+        prompt = original_narrator(state, *args)
         seen["narrator"].append(prompt[-1].content)
         return prompt
 

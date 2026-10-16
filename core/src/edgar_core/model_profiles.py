@@ -33,6 +33,7 @@ _PROFILE_KEYS = {
     "model",
     "reasoning_effort",
     "temperature",
+    "max_input_tokens",
     "max_output_tokens",
     "timeout_seconds",
     "retries",
@@ -78,6 +79,7 @@ class ModelProfile:
     model: str
     reasoning_effort: str | None = None
     temperature: float | None = None
+    max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     timeout_seconds: float = 60.0
     retries: int = 3
@@ -88,6 +90,7 @@ class ModelProfile:
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,
             "temperature": self.temperature,
+            "max_input_tokens": self.max_input_tokens,
             "max_output_tokens": self.max_output_tokens,
             "timeout_seconds": self.timeout_seconds,
             "retries": self.retries,
@@ -246,6 +249,11 @@ def _profile_from_mapping(name: Any, settings: Any, *, locked: bool = False) -> 
         or not 0 <= temperature <= 2
     ):
         raise ModelProfileError(f"Profile '{known_name}' temperature must be between 0 and 2.")
+    input_tokens = settings.get("max_input_tokens")
+    if input_tokens is not None and (
+        isinstance(input_tokens, bool) or not isinstance(input_tokens, int) or input_tokens < 1
+    ):
+        raise ModelProfileError(f"Profile '{known_name}' max_input_tokens must be a positive integer.")
     output_tokens = settings.get("max_output_tokens")
     if output_tokens is not None and (
         isinstance(output_tokens, bool) or not isinstance(output_tokens, int) or output_tokens < 1
@@ -286,6 +294,7 @@ def _profile_from_mapping(name: Any, settings: Any, *, locked: bool = False) -> 
         model=model,
         reasoning_effort=effort,
         temperature=float(temperature) if temperature is not None else None,
+        max_input_tokens=input_tokens,
         max_output_tokens=output_tokens,
         timeout_seconds=float(timeout),
         retries=retries,
