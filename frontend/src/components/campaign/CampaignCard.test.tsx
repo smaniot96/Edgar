@@ -61,7 +61,7 @@ it("shows real chapter progress and lets the owner cancel while the published so
   const onRetried = vi.fn();
   await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} onRetried={onRetried} />));
   expect(container.textContent).toContain("Generating campaign chapters — 2 of 6 saved.");
-  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Play" && !button.disabled)).toBe(true);
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Start adventure") && !button.disabled)).toBe(true);
   await act(async () => {
     [...container.querySelectorAll("button")].find((button) => button.textContent === "Cancel preparation")!.click();
   });

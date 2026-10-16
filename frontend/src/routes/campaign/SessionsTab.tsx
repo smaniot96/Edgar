@@ -1,27 +1,20 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
 
-import {
-  assignCharacterToCampaign,
-  createSession,
-  deleteSession,
-  listCharacters,
-  listSessions,
-} from "../../api/client";
-import type { CharacterListItem, ReadinessRead, SessionRead } from "../../api/types";
-import { CharacterForm } from "../../components/CharacterForm";
+import { deleteSession, listSessions } from "../../api/client";
+import type { ReadinessRead, SessionRead } from "../../api/types";
 import { ReadinessNotice } from "../../components/campaign/ReadinessNotice";
 import { Pill } from "../../components/Pill";
-import { Button } from "../../components/ui/Button";
+import { Button, ButtonLink } from "../../components/ui/Button";
 import { EmptyState, LoadingText } from "../../components/ui/EmptyState";
 import { ErrorNotice } from "../../components/ui/ErrorNotice";
 import { PlayIcon, PlusIcon } from "../../components/ui/icons";
-import { cardClasses, linkClasses } from "../../components/ui/styles";
+import { cardClasses } from "../../components/ui/styles";
 import { useMode } from "../../dev/ModeContext";
 import { cn } from "../../lib/cn";
 import { dateTime, relativeTime } from "../../lib/format";
 import { rememberLastSession } from "../../lib/lastSession";
 import { useQuery } from "../../lib/useQuery";
+import { Link, useNavigate } from "react-router-dom";
 
 interface NumberedSession extends SessionRead {
   number: number;
@@ -41,58 +34,27 @@ export default function SessionsTab({
   const navigate = useNavigate();
   const { isDev } = useMode();
   const sessions = useQuery(`sessions:${campaignId}`, (s) => listSessions(campaignId, s));
-  const characters = useQuery("characters", (s) => listCharacters(s));
-
-  // `null` = default: open the picker when there are no sessions yet.
-  const [pickerOpen, setPickerOpen] = useState<boolean | null>(null);
-  const [creatingChar, setCreatingChar] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
-  // Number sessions oldest→newest ("Session 1", "Session 2"…), list newest first.
   const numbered = useMemo<NumberedSession[] | undefined>(() => {
     if (!sessions.data) return undefined;
     const asc = [...sessions.data].sort((a, b) => a.started_at.localeCompare(b.started_at));
-    return asc.map((s, i) => ({ ...s, number: i + 1 })).reverse();
+    return asc.map((session, i) => ({ ...session, number: i + 1 })).reverse();
   }, [sessions.data]);
 
-  const charById = useMemo(
-    () => new Map((characters.data ?? []).map((c) => [c.id, c])),
-    [characters.data],
-  );
-
   const campaignCanPlay = readiness?.play_allowed ?? playAllowed;
-  const showPicker = !ended && campaignCanPlay && (pickerOpen ?? numbered?.length === 0);
+  const canStart = !ended && campaignCanPlay;
 
-  function play(id: number) {
-    rememberLastSession(id);
-    navigate(`/play/${id}`);
+  function play(session: SessionRead) {
+    rememberLastSession(session.id);
+    navigate(`/play/${session.id}`);
   }
 
-  async function startSession(character?: Pick<CharacterListItem, "id" | "current_assignment">) {
-    if (!campaignCanPlay) return;
-    setBusy(true);
+  async function handleDelete(session: NumberedSession) {
+    if (!window.confirm(`Delete Session ${session.number}? Its history will be lost.`)) return;
     setError(null);
     try {
-      // A PG must be assigned to this campaign before the first turn (the DM needs its sheet).
-      if (character && character.current_assignment?.campaign_id !== campaignId) {
-        await assignCharacterToCampaign(campaignId, character.id);
-      }
-      const s = await createSession(campaignId, character?.id);
-      play(s.id);
-    } catch (e) {
-      // 409 → PG engaged in another campaign; the API's message says so.
-      setError(e);
-      setBusy(false);
-      characters.refetch();
-    }
-  }
-
-  async function handleDelete(s: NumberedSession) {
-    if (!window.confirm(`Delete Session ${s.number}? Its history will be lost.`)) return;
-    setError(null);
-    try {
-      await deleteSession(s.id);
+      await deleteSession(session.id);
       sessions.refetch();
     } catch (e) {
       setError(e);
@@ -103,192 +65,74 @@ export default function SessionsTab({
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-xl text-sm text-ink-muted">
-          A session is one saved playthrough. Pick up where you left off with{" "}
-          <strong className="text-ink">Continue</strong>, or start a fresh one.
+          A session is one saved playthrough. Continue an existing story, or start a fresh playthrough without changing another save.
         </p>
-        {!showPicker && !ended && campaignCanPlay ? (
-          <Button
-            onClick={() => {
-              setError(null);
-              setPickerOpen(true);
-            }}
-          >
+        {canStart ? (
+          <ButtonLink to={`/campaigns/${campaignId}/setup`}>
             <PlusIcon className="h-4 w-4" /> New session
-          </Button>
+          </ButtonLink>
         ) : null}
       </div>
 
       {ended ? (
         <p className="rounded-control border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-muted">
-          This campaign has ended, so new sessions can't be started. Reopen it to keep playing.
+          This campaign has ended, so new sessions cannot be started. Reopen it from Campaign settings to keep playing.
         </p>
       ) : null}
-
-      {showPicker ? (
-        <section
-          aria-labelledby="new-session-title"
-          className={cn(cardClasses, "space-y-3 p-4")}
-        >
-          <div className="flex items-center justify-between">
-            <h3 id="new-session-title" className="text-sm font-semibold">
-              Start a new session
-            </h3>
-            {numbered && numbered.length > 0 ? (
-              <Button variant="ghost" size="sm" onClick={() => setPickerOpen(false)}>
-                Cancel
-              </Button>
-            ) : null}
-          </div>
-          <p className="text-sm text-ink-muted">
-            Choose who you'll play — they join this campaign — or jump in without a character and
-            let the DM improvise.
-          </p>
-
-          {characters.error ? (
-            <ErrorNotice error={characters.error} onRetry={characters.refetch} />
-          ) : characters.data === undefined ? (
-            <LoadingText>Loading characters…</LoadingText>
-          ) : characters.data.length === 0 && !creatingChar ? (
-            <p className="text-sm text-ink-muted">You don't have any characters yet.</p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {characters.data.map((c) => {
-                const elsewhere =
-                  c.current_assignment != null && c.current_assignment.campaign_id !== campaignId;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    disabled={busy || elsewhere}
-                    onClick={() => void startSession(c)}
-                    className={cn(
-                      "rounded-card border border-line bg-surface-sunken p-3 text-left transition-colors",
-                      "hover:border-ember-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400",
-                      "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-line",
-                    )}
-                  >
-                    <p className="text-sm font-medium">{c.name}</p>
-                    <p className="text-xs text-ink-muted">
-                      Level {c.level} {c.character_class} · HP {c.hp_max}
-                    </p>
-                    {elsewhere ? (
-                      <p className="mt-1 text-xs text-warning">
-                        Busy in {c.current_assignment?.campaign_title}
-                      </p>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {creatingChar ? (
-            <CharacterForm
-              title="New character"
-              submitLabel="Create & start playing"
-              onCancel={() => setCreatingChar(false)}
-              onCreated={(c) => {
-                setCreatingChar(false);
-                characters.refetch();
-                void startSession({ id: c.id, current_assignment: null });
-              }}
-              className="bg-surface-sunken"
-            />
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" disabled={busy} onClick={() => setCreatingChar(true)}>
-                <PlusIcon className="h-3.5 w-3.5" /> Create a new character
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                loading={busy}
-                loadingText="Starting…"
-                onClick={() => void startSession()}
-              >
-                Start without a character
-              </Button>
-            </div>
-          )}
-        </section>
-      ) : null}
-
       <ErrorNotice error={error} />
 
       <section aria-labelledby="sessions-title" className="space-y-2">
-        <h3 id="sessions-title" className="text-sm font-semibold">
-          Saved sessions
-        </h3>
+        <h3 id="sessions-title" className="text-sm font-semibold">Saved playthroughs</h3>
         {sessions.error && numbered === undefined ? (
           <ErrorNotice error={sessions.error} onRetry={sessions.refetch} />
         ) : numbered === undefined ? (
           <LoadingText />
         ) : numbered.length === 0 ? (
-          <EmptyState title="No sessions yet">
+          <EmptyState title="No saved playthroughs yet">
             {ended
-              ? "This campaign ended before any session was played."
-              : "Choose a character above to begin your first session."}
+              ? "This campaign ended before a playthrough was started."
+              : canStart
+                ? "Choose a hero and start your first saved playthrough."
+                : "Resolve the campaign readiness step before starting a playthrough."}
           </EmptyState>
         ) : (
           <ul className="space-y-2">
-            {numbered.map((s) => {
-              const ch = s.active_character_id != null ? charById.get(s.active_character_id) : null;
-              const who =
-                s.active_character_id == null
-                  ? "No character"
-                  : s.character_name
-                    ? `${s.character_name}${ch ? `, ${ch.character_class}` : ""}`
-                    : ch
-                    ? `${ch.name}, ${ch.character_class}`
-                    : "Character removed";
+            {numbered.map((session) => {
+              const who = session.active_character_id == null
+                ? "No hero"
+                : session.character_name || "Character removed";
+              const canRead = session.readiness?.play_allowed === true ||
+                (session.has_history && session.readiness?.history_allowed === true);
               return (
-                <li
-                  key={s.id}
-                  className={cn(
-                    cardClasses,
-                    "flex flex-wrap items-center justify-between gap-3 px-4 py-3",
-                  )}
-                >
+                <li key={session.id} className={cn(cardClasses, "flex flex-wrap items-center justify-between gap-3 px-4 py-3")}>
                   <div className="min-w-0">
-                    <p className="flex items-center gap-2 text-sm font-medium">
-                      Session {s.number}
-                      {s.ended_at ? <Pill>Finished</Pill> : null}
+                    <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                      Playthrough {session.number}
+                      {session.ended_at ? <Pill>Finished</Pill> : null}
                     </p>
-                    {s.has_history && s.last_played_at ? (
-                      <p className="text-xs text-ink-subtle">Last played {relativeTime(s.last_played_at)}</p>
+                    {session.has_history && session.last_played_at ? (
+                      <p className="text-xs text-ink-subtle">Last played {relativeTime(session.last_played_at)}</p>
                     ) : <p className="text-xs text-ink-subtle">No story history yet</p>}
-                    {s.readiness?.play_allowed !== true ? (
-                      <ReadinessNotice readiness={s.readiness} onRetry={sessions.refetch} className="mt-2 text-xs" />
+                    {session.readiness?.play_allowed !== true ? (
+                      <ReadinessNotice readiness={session.readiness} onRetry={sessions.refetch} className="mt-2 text-xs" />
                     ) : null}
-                    <p className="text-xs text-ink-muted">
-                      {who} · started{" "}
-                      <time dateTime={s.started_at} title={dateTime(s.started_at)}>
-                        {relativeTime(s.started_at)}
-                      </time>
+                    <p className="break-words text-xs text-ink-muted">
+                      {who} · started <time dateTime={session.started_at} title={dateTime(session.started_at)}>{relativeTime(session.started_at)}</time>
                     </p>
-                    {isDev ? (
-                      <p className="font-mono text-[11px] text-ink-subtle">
-                        session #{s.id}
-                        {s.active_character_id != null ? ` · char #${s.active_character_id}` : ""}
-                        {s.current_scene_id ? ` · scene ${s.current_scene_id}` : ""}
-                      </p>
-                    ) : null}
+                    {isDev ? <p className="font-mono text-[11px] text-ink-subtle">session #{session.id}{session.active_character_id != null ? ` · char #${session.active_character_id}` : ""}{session.current_scene_id ? ` · scene ${session.current_scene_id}` : ""}</p> : null}
                   </div>
-                  <div className="flex gap-2">
-                    {s.readiness?.play_allowed === true || (s.has_history && s.readiness?.history_allowed !== false) ? (
-                      <Button size="sm" onClick={() => play(s.id)}>
-                        <PlayIcon className="h-3 w-3" />
-                        {s.readiness?.play_allowed === true ? "Continue" : "Read story"}
+                  <div className="flex flex-wrap gap-2">
+                    {canRead ? (
+                      <Button size="sm" onClick={() => play(session)}>
+                        <PlayIcon className="h-3 w-3" /> {session.readiness?.play_allowed === true ? "Continue" : "Read story"}
                       </Button>
                     ) : null}
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => void handleDelete(s)}
-                      aria-label={`Delete Session ${s.number}`}
-                    >
-                      Delete
-                    </Button>
+                    <details className="relative">
+                      <summary className="inline-flex min-h-9 cursor-pointer list-none items-center rounded-control border border-line px-3 text-sm text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">More</summary>
+                      <div className="absolute right-0 z-10 mt-1 rounded-control border border-line bg-surface-raised p-2 shadow-lg">
+                        <Button variant="danger" size="sm" onClick={() => void handleDelete(session)} aria-label={`Delete Playthrough ${session.number}`}>Delete playthrough</Button>
+                      </div>
+                    </details>
                   </div>
                 </li>
               );
@@ -297,13 +141,7 @@ export default function SessionsTab({
         )}
       </section>
 
-      <p className="text-xs text-ink-subtle">
-        Manage your roster on the{" "}
-        <Link to="/characters" className={linkClasses}>
-          Characters
-        </Link>{" "}
-        page.
-      </p>
+      <p className="text-xs text-ink-subtle">Manage your roster on the <Link to="/characters" className="underline decoration-ember-500 underline-offset-2">Characters</Link> page.</p>
     </div>
   );
 }

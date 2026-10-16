@@ -13,6 +13,7 @@ import {
   getAdventure,
   getCampaign,
   isNotFound,
+  listSessions,
   reopenCampaign,
   setCampaignRulesEdition,
 } from "../api/client";
@@ -29,7 +30,9 @@ import { Page } from "../components/ui/Page";
 import { TabPanel, Tabs } from "../components/ui/Tabs";
 import { useMode } from "../dev/ModeContext";
 import { campaignDisplayName } from "../lib/campaign";
-import { dateTime } from "../lib/format";
+import { dateTime, relativeTime } from "../lib/format";
+import { selectCampaignSession } from "../lib/campaignCards";
+import { rememberLastSession } from "../lib/lastSession";
 import { useQuery } from "../lib/useQuery";
 import CharactersTab from "./campaign/CharactersTab";
 import NpcsTab from "./campaign/NpcsTab";
@@ -75,6 +78,7 @@ export default function CampaignView() {
   const slug = campaign.data?.adventure_collections[0] ?? null;
   // Best-effort: only used for the display name / subtitle.
   const adventure = useQuery(slug ? `adventure:${slug}` : null, (s) => getAdventure(slug!, s));
+  const sessions = useQuery(validId ? `sessions:${campaignId}` : null, (s) => listSessions(campaignId, s));
 
   const [busy, setBusy] = useState<"end" | "reopen" | "delete" | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -124,6 +128,10 @@ export default function CampaignView() {
   const ended = c.status === "ended";
   const name = campaignDisplayName(c, adventure.data);
   const adventureTitle = adventure.data?.title;
+  const savedSession = selectCampaignSession(sessions.data, c.id);
+  const canContinue = savedSession?.readiness?.play_allowed === true;
+  const canReadStory = savedSession?.has_history === true && savedSession.readiness?.history_allowed === true;
+  const canStartSession = !ended && c.readiness?.play_allowed === true;
 
   async function run(kind: "end" | "reopen" | "delete") {
     if (!c) return;
@@ -176,53 +184,67 @@ export default function CampaignView() {
               </p>
             ) : null}
           </div>
-          <div className="flex flex-wrap gap-2">
-            {ended ? (
-              <Button
-                size="sm"
-                loading={busy === "reopen"}
-                loadingText="Reopening…"
-                disabled={busy != null}
-                onClick={() => void run("reopen")}
-              >
-                Reopen campaign
-              </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={busy === "end"}
-                loadingText="Ending…"
-                disabled={busy != null}
-                onClick={() => void run("end")}
-              >
-                End campaign
-              </Button>
-            )}
-            <Button
-              variant="danger"
-              size="sm"
-              loading={busy === "delete"}
-              loadingText="Deleting…"
-              disabled={busy != null}
-              onClick={() => void run("delete")}
-            >
-              Delete
-            </Button>
-          </div>
         </div>
         <ErrorNotice error={actionError} />
       </header>
-      <Field label="Rules edition" hint="Source excerpts from a different edition are excluded. Sources without a declared edition remain unverified.">
-        {(p) => <select {...p} className={controlClasses} value={c.rules_edition ?? "2014"}
-          onChange={(e) => { void setCampaignRulesEdition(c.id, e.target.value as "2014" | "2024").then((updated) => campaign.setData(() => updated)).catch(setActionError); }}>
-          <option value="2014">D&D 5e · 2014</option><option value="2024">D&D 5e · 2024</option>
-        </select>}
-      </Field>
-      <SourceRecovery campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
-      {c.readiness && !c.readiness.play_allowed ? (
-        <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} className="mt-3" />
-      ) : null}
+
+      <section aria-labelledby="saved-playthrough-title" className="rounded-card border border-line bg-surface-raised p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="saved-playthrough-title" className="font-display text-xl">Your saved playthrough</h2>
+            {savedSession ? (
+              <p className="mt-1 break-words text-sm text-ink-muted">
+                {savedSession.character_name || "No hero"}
+                {savedSession.has_history && savedSession.last_played_at ? ` · last played ${relativeTime(savedSession.last_played_at)}` : " · no story history yet"}
+              </p>
+            ) : sessions.data === undefined ? (
+              <p className="mt-1 text-sm text-ink-muted">Loading saved playthroughs…</p>
+            ) : sessions.data.some((session) => session.has_history) ? (
+              <p className="mt-1 text-sm text-ink-muted">An older saved story is available below. Its current readiness needs checking before you open it.</p>
+            ) : ended ? (
+              <p className="mt-1 text-sm text-ink-muted">This campaign ended before a playthrough was started. Reopen it in settings to begin again.</p>
+            ) : (
+              <p className="mt-1 text-sm text-ink-muted">No saved playthrough yet. Choose a hero and start the adventure.</p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {savedSession && (canContinue || canReadStory) ? (
+              <Button onClick={() => { rememberLastSession(savedSession.id); navigate(`/play/${savedSession.id}`); }}>
+                {canContinue ? "Continue" : "Read story"}
+              </Button>
+            ) : null}
+            {canStartSession ? (
+              <ButtonLink variant={savedSession && (canContinue || canReadStory) ? "secondary" : "primary"} to={`/campaigns/${c.id}/setup`}>
+                {savedSession ? "New session" : "Set up first session"}
+              </ButtonLink>
+            ) : null}
+            {!savedSession && !ended && !canStartSession ? <ButtonLink variant="secondary" to={`/campaigns/${c.id}/setup`}>View recovery steps</ButtonLink> : null}
+          </div>
+        </div>
+        {c.readiness && !c.readiness.play_allowed ? <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} className="mt-3" /> : null}
+      </section>
+
+      <details className="rounded-card border border-line bg-surface-sunken px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">Campaign settings and administration</summary>
+        <div className="mt-4 space-y-4">
+          <Field label="Rules edition" hint="Source excerpts from a different edition are excluded. Sources without a declared edition remain unverified.">
+            {(p) => <select {...p} className={controlClasses} value={c.rules_edition ?? "2014"}
+              onChange={(e) => { void setCampaignRulesEdition(c.id, e.target.value as "2014" | "2024").then((updated) => campaign.setData(() => updated)).catch(setActionError); }}>
+              <option value="2014">D&D 5e · 2014</option><option value="2024">D&D 5e · 2024</option>
+            </select>}
+          </Field>
+          <SourceRecovery campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
+          {c.readiness ? <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} /> : null}
+          <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+            {ended ? (
+              <Button size="sm" loading={busy === "reopen"} loadingText="Reopening…" disabled={busy != null} onClick={() => void run("reopen")}>Reopen campaign</Button>
+            ) : (
+              <Button variant="secondary" size="sm" loading={busy === "end"} loadingText="Ending…" disabled={busy != null} onClick={() => void run("end")}>End campaign</Button>
+            )}
+            <Button variant="danger" size="sm" loading={busy === "delete"} loadingText="Deleting…" disabled={busy != null} onClick={() => void run("delete")} aria-label="Delete campaign and all its saved playthroughs">Delete campaign</Button>
+          </div>
+        </div>
+      </details>
 
       <div>
         <Tabs idBase="campaign" label="Campaign sections" items={TABS} value={tab} onChange={selectTab} />

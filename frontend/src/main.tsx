@@ -32,6 +32,7 @@ const router = createBrowserRouter(
               errorElement: <RouteError />,
               children: [
                 { path: "campaigns", element: <Home /> },
+                { path: "campaigns/:id/setup", lazy: lazyPage(() => import("./routes/CampaignSetup.tsx")) },
                 { path: "campaigns/:id", lazy: lazyPage(() => import("./routes/Campaign.tsx")) },
                 { path: "characters", lazy: lazyPage(() => import("./routes/Characters.tsx")) },
                 { path: "settings", lazy: lazyPage(() => import("./routes/Settings.tsx")) },
