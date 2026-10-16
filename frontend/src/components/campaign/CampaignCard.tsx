@@ -18,8 +18,8 @@ import { ExtractionPreview } from "./ExtractionPreview";
 import { PreparationRecovery } from "./PreparationRecovery";
 
 function StatusBadge({ state, readiness }: { state: CardModel["state"]; readiness: ReadinessRead | null }) {
-  if (readiness && !readiness.play_allowed && state === "ready") {
-    return <Pill tone="warning">Needs attention</Pill>;
+  if (state === "ready" && readiness?.play_allowed !== true) {
+    return <Pill tone="warning">{readiness ? "Needs attention" : "Readiness unknown"}</Pill>;
   }
   switch (state) {
     case "ready":
@@ -90,7 +90,8 @@ export function CampaignCard({
   const { adventure, name, state, lastPlayed } = card;
   const job = adventure.job;
   const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
-  const playable = !!card.campaign || state === "ready" || state === "ended";
+  const playable = !!card.campaign || (state === "ready" && card.readiness?.play_allowed === true) || state === "ended";
+  const showReadiness = (state === "ready" && card.readiness?.play_allowed !== true) || card.readiness?.play_allowed === false;
   const showAdventureTitle = name !== adventure.title;
   const recoverable = state === "failed" || state === "recovery";
   const canRetryJob = job
@@ -146,7 +147,7 @@ export function CampaignCard({
         {adventure.description ? (
           <p className="mb-2 line-clamp-2 text-sm text-ink-muted">{adventure.description}</p>
         ) : null}
-        {card.readiness && !card.readiness.play_allowed ? (
+        {showReadiness ? (
           <ReadinessNotice readiness={card.readiness} onRetry={onRetried} className="mb-3 text-xs" />
         ) : null}
         <div className="mb-3 flex flex-wrap gap-1.5">
@@ -208,8 +209,10 @@ export function CampaignCard({
             loadingText="Opening…"
             onClick={() => onPlay(card)}
           >
-            {card.campaign && card.readiness?.play_allowed === false ? (
+            {card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
               "View campaign"
+            ) : !card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
+              card.readiness ? "Needs attention" : "Readiness unknown"
             ) : state === "ready" ? (
               <>
                 <PlayIcon className="h-3.5 w-3.5" /> Play

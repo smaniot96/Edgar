@@ -96,6 +96,7 @@ export interface AdventureGenerateResponse {
 }
 
 export interface AdventureRead {
+  readiness?: ReadinessRead | null;
   preparation_setup_required?: boolean;
   rules_edition?: RulesEdition | "unspecified";
   slug: string;

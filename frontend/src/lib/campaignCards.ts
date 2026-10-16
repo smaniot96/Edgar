@@ -76,7 +76,7 @@ export function buildCards(
     const name = campaign
       ? campaignDisplayName(campaign, adventure)
       : adventure.title;
-    return { adventure, name, campaign, state, lastPlayed, readiness: campaign?.readiness ?? null };
+    return { adventure, name, campaign, state, lastPlayed, readiness: campaign?.readiness ?? adventure.readiness ?? null };
   });
   // Most recently played first; never-played keep API order after them.
   return cards

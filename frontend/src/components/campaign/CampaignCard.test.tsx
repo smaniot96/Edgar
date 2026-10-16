@@ -47,6 +47,7 @@ it("shows real chapter progress and lets the owner cancel while the published so
   const adventure: AdventureRead = {
     slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null,
     status: "ready", can_retry: false,
+    readiness: { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] },
     job: {
       version: 1, job_id: "a".repeat(32), kind: "generation", state: "running",
       stage: "generating_chapters", completed_chapters: 2, total_chapters: 6,
@@ -102,4 +103,26 @@ it("keeps a blocked campaign open for saved history and explains the safe next s
   expect(open.disabled).toBe(false);
   await act(() => open.click());
   expect(onPlay).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])("never advertises index-only standalone modules as playable (projection present: %s)", async (hasProjection) => {
+  const adventure: AdventureRead = {
+    slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "ready",
+    ...(hasProjection ? { readiness: { play_allowed: false, history_allowed: true, state: "adventure_review_needed", primary_action: "review_adventure", blockers: [{ code: "adventure_review_needed", message: "Review and publish the adventure before starting or continuing play.", action: "review_adventure" }] } } : {}),
+  };
+  const onPlay = vi.fn();
+  const onRetried = vi.fn();
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} deleting={false} onRetried={onRetried} />));
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Play")).toBe(false);
+  const blocked = [...container.querySelectorAll("button")].find((button) => button.textContent === (hasProjection ? "Needs attention" : "Readiness unknown"))!;
+  expect(blocked.disabled).toBe(true);
+  await act(() => blocked.click());
+  expect(onPlay).not.toHaveBeenCalled();
+  if (hasProjection) {
+    expect(container.textContent).toContain("Ask the campaign host to review and publish the adventure.");
+  } else {
+    expect(container.textContent).toContain("Campaign readiness could not be checked.");
+    await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Check again")!.click());
+    expect(onRetried).toHaveBeenCalledOnce();
+  }
 });
