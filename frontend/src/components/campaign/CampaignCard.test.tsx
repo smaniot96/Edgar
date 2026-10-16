@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { cancelAdventure, getExtractionPreview, retryAdventure } from "../../api/client";
-import type { AdventureRead } from "../../api/types";
+import type { AdventureRead, CampaignRead } from "../../api/types";
 import { buildCards } from "../../lib/campaignCards";
 import { CampaignCard } from "./CampaignCard";
 
@@ -83,4 +83,23 @@ it("does not offer cancellation after validated-source publication begins", asyn
   await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
   expect(container.textContent).toContain("Finishing publication of the validated source.");
   expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Cancel preparation"))).toBe(false);
+});
+
+it("keeps a blocked campaign open for saved history and explains the safe next step", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "ready" };
+  const campaign: CampaignRead = {
+    id: 7, title: "Bridge", system: "5e", created_by: 1, created_at: "2026-10-14",
+    adventure_collections: ["bridge"], source_mode: "module", status: "active", ended_at: null,
+    retrieval_degraded: false, play_allowed: true, sources: [],
+    readiness: { play_allowed: false, history_allowed: true, state: "adventure_review_needed", primary_action: "review_adventure", blockers: [{ code: "adventure_review_needed", message: "Review and publish the adventure before starting or continuing play.", action: "review_adventure" }] },
+  };
+  const card = buildCards([adventure], [campaign], [], 1)[0];
+  const onPlay = vi.fn();
+  await act(() => root.render(<CampaignCard card={card} onPlay={onPlay} onDelete={vi.fn()} opening={false} deleting={false} />));
+  expect(container.textContent).toContain("Needs attention");
+  expect(container.textContent).toContain("Ask the campaign host to review and publish the adventure.");
+  const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("View campaign"))!;
+  expect(open.disabled).toBe(false);
+  await act(() => open.click());
+  expect(onPlay).toHaveBeenCalledOnce();
 });

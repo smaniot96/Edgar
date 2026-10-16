@@ -240,6 +240,7 @@ def test_stale_receipts_source_versions_and_inspected_drafts_rejected(source_bun
         review_manifest(
             extraction, edited, reviewed_digest=manifest_digest(draft), reviewer="Reader"
         )
+
     published = approve(extraction, edited)
     changed = published.model_dump()
     changed["passages"][0]["audience"] = "planner"
@@ -260,6 +261,34 @@ def test_stale_receipts_source_versions_and_inspected_drafts_rejected(source_bun
             reviewed_extraction=pdf.parent.parent
             / "adventures/branching/branching.extraction.json",
         )
+
+
+def test_campaign_manifests_rechecks_the_retained_canonical_extraction(source_bundle):
+    from apps.api.services import adventure_manifests, adventures_meta
+
+    pdf, extraction, draft = source_bundle
+    reviewed = approve(extraction, edited_manifest(extraction, draft))
+    metadata = adventures_meta.load_meta("branching")
+    metadata["manifest"] = reviewed.model_dump()
+    adventures_meta.save_meta("branching", metadata)
+
+    assert adventure_manifests.campaign_manifests(["branching"])["branching"][
+        "reviewed_sha256"
+    ] == reviewed.reviewed_sha256
+
+    extraction_report = adventures_meta.ADVENTURES_DIR / "branching" / "branching.extraction.json"
+    original = extraction_report.read_bytes()
+    report = json.loads(original)
+    report["pages"][0]["text"] += " changed after review"
+    extraction_report.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ManifestError, match="retained adventure extraction"):
+        adventure_manifests.campaign_manifests(["branching"])
+
+    extraction_report.write_bytes(original)
+    with pdf.open("ab") as changed:
+        changed.write(b"changed source bytes")
+    with pytest.raises(ManifestError, match="retained adventure extraction"):
+        adventure_manifests.campaign_manifests(["branching"])
 
 
 def test_missing_indexed_passage_and_ambiguous_binding_fail_closed(source_bundle, isolated_index):

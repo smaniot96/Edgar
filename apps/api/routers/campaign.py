@@ -101,7 +101,11 @@ async def create_campaign(
     await require_sources(adv, body.source_mode)
     from ..services.prepared_play import require_prepared_play
 
-    await run_in_threadpool(require_prepared_play, adv, body.rules_edition)
+    await run_in_threadpool(
+        require_prepared_play,
+        [] if body.source_mode == "homebrew" else adv,
+        body.rules_edition,
+    )
     campaign = Campaign(
         source_mode=body.source_mode,
         rules_edition=body.rules_edition,
@@ -134,7 +138,9 @@ async def update_campaign(
         )
     await run_in_threadpool(
         require_prepared_play,
-        update_data.get("adventure_collections", campaign.adventure_collections),
+        []
+        if update_data.get("source_mode", campaign.source_mode) == "homebrew"
+        else update_data.get("adventure_collections", campaign.adventure_collections),
         update_data.get("rules_edition", campaign.rules_edition),
     )
     for key, value in update_data.items():

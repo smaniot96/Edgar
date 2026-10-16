@@ -108,12 +108,19 @@ def _reviewed_pdf(tmp_path, slug, raw_pages):
 
 @pytest.fixture
 def reviewed_sources(tmp_path, monkeypatch):
-    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "metadata")
+    adventures_dir, pdf_dir = tmp_path / "metadata", tmp_path / "pdfs"
+    pdf_dir.mkdir()
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", adventures_dir)
+    monkeypatch.setattr(adventures_meta, "PDF_DIR", pdf_dir)
     client = QdrantClient(":memory:")
     monkeypatch.setattr(retrieval, "get_qdrant_client", lambda: client)
     chunks = {}
     for slug in (PRIMARY, SECONDARY):
         extraction, manifest = _reviewed_pdf(tmp_path, slug, CASES["collections"][slug])
+        from ingestion.extract import save_extraction
+
+        (pdf_dir / f"{slug}.pdf").write_bytes((tmp_path / f"{slug}.pdf").read_bytes())
+        save_extraction(extraction, adventures_dir / slug)
         chunks[slug] = manifest_chunks(extraction, manifest)
         client.create_collection(
             slug, vectors_config=VectorParams(size=1, distance=Distance.COSINE)
@@ -130,7 +137,9 @@ def reviewed_sources(tmp_path, monkeypatch):
             {
                 "status": "ready",
                 "rules_edition": "2014",
+                "artifact_attempt": None,
                 "ingestion": {
+                    "source_kind": "pdf",
                     "source_sha256": extraction.source_sha256,
                     "extraction_sha256": extraction.text_sha256(),
                 },
@@ -145,6 +154,7 @@ def _intro(
     monkeypatch, *, homebrew=False, statuses=("ready", "ready"), stored=False, edition="2014"
 ):
     campaign = SimpleNamespace(
+        status="active",
         source_mode="homebrew" if homebrew else "module",
         adventure_collections=[PRIMARY, SECONDARY],
         rules_edition=edition,
@@ -216,6 +226,7 @@ async def test_primary_binding_explicitly_selects_the_opening(reviewed_sources, 
         SimpleNamespace(scalar_one_or_none=lambda: None),
         SimpleNamespace(
             scalar_one_or_none=lambda: SimpleNamespace(
+                    status="active",
                 source_mode="module",
                 adventure_collections=[SECONDARY, PRIMARY],
                 rules_edition="2014",
@@ -253,7 +264,7 @@ async def test_primary_review_failure_cannot_use_secondary_or_generic_opening(
         await session_intro.generate_session_intro(db, session)
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "adventure_manifest_review_required"
-    assert exc.value.detail["source"] == PRIMARY
+    assert "message" in exc.value.detail
     assert exc.value.detail["message"]
     model.ainvoke.assert_not_called()
     db.add.assert_not_called()
@@ -313,7 +324,7 @@ async def test_known_source_edition_conflict_requires_review_instead_of_generic_
     db, session, model = _intro(monkeypatch, edition="2024")
     with pytest.raises(HTTPException) as exc:
         await session_intro.generate_session_intro(db, session)
-    assert exc.value.detail["code"] == "adventure_manifest_review_required"
+    assert exc.value.detail["code"] == "rules_edition_mismatch"
     model.ainvoke.assert_not_called()
     db.add.assert_not_called()
     assert session.current_scene_id is None

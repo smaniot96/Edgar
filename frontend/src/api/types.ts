@@ -186,6 +186,10 @@ export interface SessionRead {
   ended_at: string | null;
   current_scene_id: string | null;
   active_character_id: number | null;
+  character_name?: string | null;
+  has_history?: boolean;
+  last_played_at?: string | null;
+  readiness?: ReadinessRead | null;
 }
 
 export interface SessionMapPlace {
@@ -298,6 +302,47 @@ export interface SessionIntroRead {
 }
 
 export type RulesEdition = "2014" | "2024";
+
+export type ReadinessCode =
+  | "ready"
+  | "source_missing"
+  | "source_unavailable"
+  | "source_review_needed"
+  | "adventure_review_needed"
+  | "preparation_in_progress"
+  | "preparation_failed"
+  | "rules_edition_mismatch"
+  | "choose_character"
+  | "character_assignment_conflict"
+  | "completed"
+  | "readiness_unavailable";
+
+export type ReadinessAction =
+  | "play"
+  | "read_history"
+  | "recover_source"
+  | "review_source"
+  | "review_adventure"
+  | "wait_for_preparation"
+  | "repair_preparation"
+  | "choose_character"
+  | "reopen_campaign"
+  | "retry_readiness";
+
+export interface ReadinessBlocker {
+  code: ReadinessCode;
+  message: string;
+  action: ReadinessAction;
+}
+
+export interface ReadinessRead {
+  play_allowed: boolean;
+  history_allowed: boolean;
+  state: ReadinessCode;
+  primary_action: ReadinessAction;
+  blockers: ReadinessBlocker[];
+}
+
 export interface SourceCitation {
   reference_id: string; source: string; rules_edition: RulesEdition | "unspecified";
   source_pages: number[]; source_sha256: string | null; extraction_sha256: string | null;
@@ -316,6 +361,7 @@ export interface CampaignRead {
   sources?: SourceRead[];
   retrieval_degraded?: boolean;
   play_allowed?: boolean;
+  readiness?: ReadinessRead | null;
   status: "active" | "ended";
   ended_at: string | null;
 }

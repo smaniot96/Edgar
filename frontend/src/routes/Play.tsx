@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 
 import { ApiError, getCampaign, isNotFound, startSessionIntro } from "../api/client";
 import { SourceRecovery } from "../components/campaign/SourceRecovery";
+import { ReadinessNotice } from "../components/campaign/ReadinessNotice";
 import { ComposerBar } from "../components/ComposerBar";
 import { MessageList } from "../components/MessageList";
 import { CampaignEndPanel } from "../components/play/CampaignEndPanel";
@@ -66,7 +67,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const [searchParams] = useSearchParams();
   const { isDev } = useMode();
   const game = usePlaySession(sessionId);
-  const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign } = game;
+  const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign, refreshReadiness } = game;
 
   const {
     draft,
@@ -190,7 +191,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
       clearDraftRequest(requestId);
     },
     onCampaignEnded: () => setCampaignComplete(true),
-    onSourcesUnavailable: () => {
+    onReadinessRejected: () => {
+      void refreshReadiness();
       if (game.campaignId) void getCampaign(game.campaignId).then(updateCampaign).catch(() => {});
     },
     onSettled: focusInput,
@@ -233,7 +235,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const introRequested = useRef(false);
   useEffect(() => {
     if (!boot || !campaign) return;
-    if (boot.history.length > 0 || boot.campaignEnded || campaign.play_allowed === false || introRequested.current) return;
+    if (boot.history.length > 0 || boot.campaignEnded || game.readiness?.play_allowed !== true || introRequested.current) return;
     introRequested.current = true;
     setIntroPending(true);
     (async () => {
@@ -244,6 +246,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           if (data.current_scene_id !== undefined) setSceneId(data.current_scene_id);
         }
       } catch (error) {
+        void refreshReadiness();
         if (error instanceof ApiError) {
           let detail;
           try { detail = JSON.parse(error.body)?.detail; } catch { /* non-JSON failure */ }
@@ -256,20 +259,20 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
         setIntroPending(false);
       }
     })();
-  }, [boot, sessionId, dispatch, setSceneId, campaign, updateCampaign]);
+  }, [boot, sessionId, dispatch, setSceneId, campaign, updateCampaign, refreshReadiness, game.readiness?.play_allowed]);
 
   const handleSend = useCallback(() => {
     const msg = draft.trim();
-    if (!msg || busy || hasUncertainAction || campaignComplete || game.campaign?.play_allowed === false) return;
+    if (!msg || busy || hasUncertainAction || campaignComplete || game.readiness?.play_allowed !== true) return;
     void send(msg, draftRevision);
-  }, [draft, draftRevision, busy, hasUncertainAction, campaignComplete, send, game.campaign?.play_allowed]);
+  }, [draft, draftRevision, busy, hasUncertainAction, campaignComplete, send, game.readiness?.play_allowed]);
 
   const handleQuickReply = useCallback(
     (text: string) => {
-      if (busy || hasUncertainAction || campaignComplete || game.campaign?.play_allowed === false) return;
+      if (busy || hasUncertainAction || campaignComplete || game.readiness?.play_allowed !== true) return;
       void send(text);
     },
-    [busy, hasUncertainAction, campaignComplete, send, game.campaign?.play_allowed],
+    [busy, hasUncertainAction, campaignComplete, send, game.readiness?.play_allowed],
   );
 
   const handleRetry = useCallback(
@@ -281,12 +284,13 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
 
   const handleReopened = useCallback(() => {
     setCampaignComplete(false);
+    void refreshReadiness();
     dispatch({
       type: "append",
       line: { id: `reopen-${Date.now()}`, role: "notice", content: "The campaign has been reopened. The adventure continues…" },
     });
     focusInput();
-  }, [dispatch, focusInput, setCampaignComplete]);
+  }, [dispatch, focusInput, refreshReadiness, setCampaignComplete]);
 
   if (game.error) {
     if (isNotFound(game.error)) return <PlayNotFound />;
@@ -331,7 +335,11 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             sessionId={sessionId}
             sceneId={game.sceneId}
           />
-          {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={game.updateCampaign} /> : null}
+          <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} className="mx-3 mt-2 sm:mx-4" />
+          {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={(updated) => {
+            game.updateCampaign(updated);
+            void game.refreshReadiness();
+          }} /> : null}
           {isDev ? <DevPipeline stage={pending?.stage ?? null} /> : null}
           <PlayRecap
             data={journal.data}
@@ -386,11 +394,14 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                   restoreReady={!game.loading && !!boot && turn.state.historyReady}
                   openEventId={openEventId}
                   onHistoryOpened={clearOpenedHistory}
-                  onQuickReply={campaignComplete || game.campaign?.play_allowed === false ? undefined : handleQuickReply}
+                  onQuickReply={campaignComplete || game.readiness?.play_allowed !== true ? undefined : handleQuickReply}
                 />
               )}
 
               <div ref={composerRef} className="shrink-0">
+                {!campaignComplete ? (
+                  <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} className="mx-3 mb-2 sm:mx-4" />
+                ) : null}
                 {campaignComplete ? (
                   <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
                 ) : (
@@ -403,7 +414,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                     busy={busy}
                     canStop={pending?.stage !== "saving"}
                     allowSend={!hasUncertainAction}
-                    disabled={game.loading || introPending || game.campaign?.play_allowed === false}
+                    disabled={game.loading || introPending || game.readiness?.play_allowed !== true}
                   />
                 )}
               </div>

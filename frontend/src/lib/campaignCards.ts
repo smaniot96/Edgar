@@ -1,4 +1,4 @@
-import type { AdventureRead, CampaignRead, SessionRead } from "../api/types";
+import type { AdventureRead, CampaignRead, ReadinessRead, SessionRead } from "../api/types";
 import { campaignDisplayName } from "./campaign";
 
 export interface CardModel {
@@ -8,6 +8,19 @@ export interface CardModel {
   campaign: CampaignRead | null;
   state: "processing" | "failed" | "ready" | "ended" | "recovery";
   lastPlayed: string | null;
+  readiness: ReadinessRead | null;
+}
+
+/** Choose a resumable transcript without letting a newer blocked/empty save hide it. */
+export function selectResumeSession(sessions: SessionRead[] | undefined): SessionRead | null {
+  const newest = (items: SessionRead[]) => [...items].sort((a, b) =>
+    (b.last_played_at ?? b.started_at).localeCompare(a.last_played_at ?? a.started_at),
+  )[0] ?? null;
+  const history = (sessions ?? []).filter(
+    (session) => session.has_history && session.readiness?.history_allowed !== false,
+  );
+  return newest(history.filter((session) => session.readiness?.play_allowed === true))
+    ?? newest(history);
 }
 
 export function buildCards(
@@ -18,8 +31,10 @@ export function buildCards(
 ): CardModel[] {
   const lastByCampaign = new Map<number, string>();
   for (const s of sessions ?? []) {
+    if (!s.has_history) continue;
+    const played = s.last_played_at ?? s.started_at;
     const prev = lastByCampaign.get(s.campaign_id);
-    if (!prev || s.started_at > prev) lastByCampaign.set(s.campaign_id, s.started_at);
+    if (!prev || played > prev) lastByCampaign.set(s.campaign_id, played);
   }
   const modules = new Map(adventures.map((a) => [a.slug, a]));
   for (const campaign of campaigns ?? []) {
@@ -61,7 +76,7 @@ export function buildCards(
     const name = campaign
       ? campaignDisplayName(campaign, adventure)
       : adventure.title;
-    return { adventure, name, campaign, state, lastPlayed };
+    return { adventure, name, campaign, state, lastPlayed, readiness: campaign?.readiness ?? null };
   });
   // Most recently played first; never-played keep API order after them.
   return cards

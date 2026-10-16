@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   getAdventure,
@@ -13,6 +13,7 @@ import type {
   CampaignRead,
   ChatMessageRead,
   CombatState,
+  ReadinessRead,
   TurnResult,
 } from "../../api/types";
 import { campaignDisplayName, isGenericCampaignTitle } from "../../lib/campaign";
@@ -26,6 +27,7 @@ export interface PlaySessionState {
   title: string;
   campaignId: number | null;
   campaign: CampaignRead | null;
+  readiness: ReadinessRead | null;
   campaignComplete: boolean;
   character: SheetCharacter | null;
   sceneId: string | null;
@@ -40,11 +42,24 @@ const initial: PlaySessionState = {
   title: "Edgar",
   campaignId: null,
   campaign: null,
+  readiness: null,
   campaignComplete: false,
   character: null,
   sceneId: null,
   combat: null,
   boot: null,
+};
+
+const READINESS_UNKNOWN: ReadinessRead = {
+  play_allowed: false,
+  history_allowed: true,
+  state: "readiness_unavailable",
+  primary_action: "retry_readiness",
+  blockers: [{
+    code: "readiness_unavailable",
+    message: "Campaign readiness could not be checked. Retry before starting a turn.",
+    action: "retry_readiness",
+  }],
 };
 
 /** Active, un-ended combat for the session; null if none or the endpoint isn't available. */
@@ -82,10 +97,12 @@ async function loadCharacter(
 export function usePlaySession(sessionId: number) {
   const [state, setState] = useState<PlaySessionState>(initial);
   const [attempt, setAttempt] = useState(0);
+  const readinessRevision = useRef(0);
 
   useEffect(() => {
     if (!Number.isFinite(sessionId) || sessionId < 1) return;
     const ctrl = new AbortController();
+    const revision = ++readinessRevision.current;
     (async () => {
       try {
         const session = await getSession(sessionId, ctrl.signal);
@@ -98,7 +115,7 @@ export function usePlaySession(sessionId: number) {
           listSessionMessages(sessionId, ctrl.signal),
         ]);
         const title = await loadTitle(campaign, ctrl.signal);
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted || revision !== readinessRevision.current) return;
         rememberLastSession(sessionId);
         setState({
           loading: false,
@@ -106,6 +123,7 @@ export function usePlaySession(sessionId: number) {
           title,
           campaignId: session.campaign_id,
           campaign,
+          readiness: session.readiness ?? campaign?.readiness ?? READINESS_UNKNOWN,
           campaignComplete: campaign?.status === "ended",
           character,
           sceneId: session.current_scene_id,
@@ -122,9 +140,27 @@ export function usePlaySession(sessionId: number) {
 
   /** Re-run the boot fetch (after an error). */
   const reload = useCallback(() => {
+    readinessRevision.current += 1;
     setState(initial);
     setAttempt((n) => n + 1);
   }, []);
+
+  const refreshReadiness = useCallback(async () => {
+    const revision = ++readinessRevision.current;
+    try {
+      const session = await getSession(sessionId);
+      if (revision !== readinessRevision.current) return;
+      setState((s) => ({
+        ...s,
+        readiness: session.readiness ?? READINESS_UNKNOWN,
+        campaignComplete: s.campaignComplete || session.readiness?.state === "completed",
+      }));
+    } catch {
+      if (revision === readinessRevision.current) {
+        setState((s) => ({ ...s, readiness: READINESS_UNKNOWN }));
+      }
+    }
+  }, [sessionId]);
 
   /** Apply a `done` payload (character/HP, scene, combat, campaign end). */
   const applyTurnResult = useCallback((r: TurnResult) => {
@@ -135,11 +171,30 @@ export function usePlaySession(sessionId: number) {
       // Hide the HUD when combat ends; keep it while combat is ongoing.
       combat: r.combat_state && !r.combat_state.ended ? r.combat_state : null,
       campaignComplete: s.campaignComplete || !!r.campaign_complete,
+      readiness: r.campaign_complete
+        ? {
+            play_allowed: false,
+            history_allowed: true,
+            state: "completed",
+            primary_action: "read_history",
+            blockers: [{ code: "completed", message: "This campaign is complete. Read the saved story or reopen the campaign to continue.", action: "read_history" }],
+          }
+        : s.readiness,
     }));
   }, []);
 
   const setCampaignComplete = useCallback((v: boolean) => {
-    setState((s) => ({ ...s, campaignComplete: v }));
+    setState((s) => ({
+      ...s,
+      campaignComplete: v,
+      readiness: v ? {
+        play_allowed: false,
+        history_allowed: true,
+        state: "completed",
+        primary_action: "read_history",
+        blockers: [{ code: "completed", message: "This campaign is complete. Read the saved story or reopen the campaign to continue.", action: "read_history" }],
+      } : s.readiness,
+    }));
   }, []);
 
   const setSceneId = useCallback((sceneId: string | null) => {
@@ -150,5 +205,5 @@ export function usePlaySession(sessionId: number) {
     setState((s) => ({ ...s, campaign }));
   }, []);
 
-  return { ...state, applyTurnResult, setCampaignComplete, setSceneId, reload, updateCampaign };
+  return { ...state, applyTurnResult, setCampaignComplete, setSceneId, reload, refreshReadiness, updateCampaign };
 }

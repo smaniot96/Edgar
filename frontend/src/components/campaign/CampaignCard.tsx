@@ -1,8 +1,9 @@
 import { useState } from "react";
 
 import { cancelAdventure, retryAdventure } from "../../api/client";
-import type { AdventureRead } from "../../api/types";
+import type { AdventureRead, ReadinessRead } from "../../api/types";
 import { safeTurnError } from "../../api/turnStream";
+import { ReadinessNotice } from "./ReadinessNotice";
 import { useMode } from "../../dev/ModeContext";
 import type { CardModel } from "../../lib/campaignCards";
 import { isPublicationCommitting, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
@@ -16,7 +17,10 @@ import { cardClasses } from "../ui/styles";
 import { ExtractionPreview } from "./ExtractionPreview";
 import { PreparationRecovery } from "./PreparationRecovery";
 
-function StatusBadge({ state }: { state: CardModel["state"] }) {
+function StatusBadge({ state, readiness }: { state: CardModel["state"]; readiness: ReadinessRead | null }) {
+  if (readiness && !readiness.play_allowed && state === "ready") {
+    return <Pill tone="warning">Needs attention</Pill>;
+  }
   switch (state) {
     case "ready":
       return <Pill tone="success">Ready</Pill>;
@@ -86,7 +90,7 @@ export function CampaignCard({
   const { adventure, name, state, lastPlayed } = card;
   const job = adventure.job;
   const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
-  const playable = state === "ready" || state === "ended" || (state === "recovery" && !!card.campaign);
+  const playable = !!card.campaign || state === "ready" || state === "ended";
   const showAdventureTitle = name !== adventure.title;
   const recoverable = state === "failed" || state === "recovery";
   const canRetryJob = job
@@ -131,7 +135,7 @@ export function CampaignCard({
       <div className="flex flex-1 flex-col p-4">
         <div className="mb-1 flex items-start justify-between gap-2">
           <h3 className="font-display text-display-sm leading-tight">{name}</h3>
-          <StatusBadge state={state} />
+          <StatusBadge state={state} readiness={card.readiness} />
         </div>
         {showAdventureTitle ? (
           <p className="mb-1 text-xs text-ink-muted">{adventure.title}</p>
@@ -141,6 +145,9 @@ export function CampaignCard({
         </p>
         {adventure.description ? (
           <p className="mb-2 line-clamp-2 text-sm text-ink-muted">{adventure.description}</p>
+        ) : null}
+        {card.readiness && !card.readiness.play_allowed ? (
+          <ReadinessNotice readiness={card.readiness} onRetry={onRetried} className="mb-3 text-xs" />
         ) : null}
         <div className="mb-3 flex flex-wrap gap-1.5">
           {adventure.level_range ? <Pill>Levels {adventure.level_range}</Pill> : null}
@@ -201,7 +208,9 @@ export function CampaignCard({
             loadingText="Opening…"
             onClick={() => onPlay(card)}
           >
-            {state === "ready" ? (
+            {card.campaign && card.readiness?.play_allowed === false ? (
+              "View campaign"
+            ) : state === "ready" ? (
               <>
                 <PlayIcon className="h-3.5 w-3.5" /> Play
               </>
