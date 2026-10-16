@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
+  ApiError,
   assignCharacterToCampaign,
   createSession,
   getCampaign,
@@ -34,7 +35,10 @@ function getSetupSession(sessions: SessionRead[] | undefined, id: number | null)
 
 export default function CampaignSetup() {
   const { id } = useParams<{ id: string }>();
-  const campaignId = Number(id);
+  return <CampaignSetupScreen key={id} campaignId={Number(id)} />;
+}
+
+function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
   const validId = Number.isInteger(campaignId) && campaignId > 0;
   const navigate = useNavigate();
   const [progress, setProgress] = useState<CampaignSetupProgress>(() =>
@@ -171,6 +175,15 @@ export default function CampaignSetup() {
       navigate(`/play/${session.id}`);
     } catch (error) {
       setActionError(error);
+      const current = readCampaignSetupProgress(campaignId);
+      if (current.pendingSession?.requestId === pending.requestId && error instanceof ApiError &&
+        ["character_not_assigned", "character_assignment_conflict", "character_assignment_required"].includes(error.failure.code ?? "")) {
+        // A classified assignment rejection occurs before creation; the player can choose again.
+        save({ ...current, stage: "hero", assignedCharacterId: null, pendingSession: null });
+        setSetupMessage("No saved playthrough was created. Choose an available hero assigned to this adventure, then try again.");
+        characters.refetch();
+      }
+      campaign.refetch();
       sessions.refetch();
     } finally {
       setStarting(false);

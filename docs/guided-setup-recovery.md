@@ -2,7 +2,9 @@
 
 The guided setup retains its adventure/campaign, hero, assignment and save IDs in browser
 storage. Back navigation and retries resume that attempt. A deliberate fresh playthrough
-gets a new attempt. Repair and source review use the server's existing readiness result.
+gets a new attempt. If browser storage cannot retain the pending creation key/body, the UI
+keeps same-tab progress and blocks the create request with actionable copy until storage
+works. This avoids losing the only retry identity on reload. Repair and source review use the server's existing readiness result.
 
 `POST /api/characters` and `POST /api/sessions` accept an optional UUID `request_id`. The UI
 retains one key and the exact original request body at each creation boundary until its

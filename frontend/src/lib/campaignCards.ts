@@ -34,7 +34,8 @@ export function selectCampaignSession(
   const newest = (items: SessionRead[]) => [...items].sort((a, b) =>
     (b.last_played_at ?? b.started_at).localeCompare(a.last_played_at ?? a.started_at),
   )[0] ?? null;
-  return newest(matching.filter((session) => session.readiness?.play_allowed === true))
+  return newest(matching.filter((session) => session.has_history && session.readiness?.play_allowed === true))
+    ?? newest(matching.filter((session) => session.readiness?.play_allowed === true))
     ?? newest(matching.filter((session) => session.has_history && session.readiness?.history_allowed === true));
 }
 

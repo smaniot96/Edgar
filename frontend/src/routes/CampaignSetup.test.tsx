@@ -253,6 +253,12 @@ it("retries an ambiguous hero creation with the saved request key and original b
   });
   await settle();
 
+  // Leave and return after an ambiguous response; changed presets must not change the retry body.
+  await act(async () => { await root.unmount(); });
+  root = createRoot(container);
+  api.listCharacterPresets.mockResolvedValue([{ ...preset, hp_max: 20, level: 2 }]);
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
   const firstCall = api.createCharacter.mock.calls[0];
   expect(firstCall?.[0]).toMatchObject({ name: "Brannoc", character_class: "Fighter", hp_max: 12 });
   expect(JSON.parse(window.localStorage.getItem(`edgar:campaign-setup:v1:${campaign.id}`)!).pendingCharacter.requestId).toBe(firstCall?.[1]);
@@ -313,4 +319,30 @@ it("does not create a hero when the exact request cannot be persisted", async ()
   await settle();
   expect(api.createCharacter).not.toHaveBeenCalled();
   expect(container.textContent).toContain("No hero was created");
+});
+
+it("recovers a lost assignment response through the authoritative roster without assigning twice", async () => {
+  const assigned = { ...existingCharacter, current_assignment: { campaign_id: campaign.id, campaign_title: campaign.title } };
+  api.listCharacters.mockResolvedValueOnce([existingCharacter]).mockResolvedValueOnce([existingCharacter]).mockResolvedValue([assigned]);
+  api.assignCharacterToCampaign.mockRejectedValueOnce(new ApiError(0, "offline"));
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Mara Venn"))!.click(); });
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Assign hero and continue"))!.click(); });
+  await settle();
+  expect(api.assignCharacterToCampaign).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(window.localStorage.getItem(`edgar:campaign-setup:v1:${campaign.id}`)!).assignedCharacterId).toBe(existingCharacter.id);
+  expect(container.textContent).toContain("Create your saved playthrough");
+});
+
+it("allows hero recovery after the server rejects an assignment before save creation", async () => {
+  writeCampaignSetupProgress({ ...newCampaignSetupProgress(campaign.id), stage: "playthrough", characterId: 30, assignedCharacterId: 30 });
+  api.createSession.mockRejectedValueOnce(new ApiError(409, JSON.stringify({ code: "character_not_assigned" })));
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click(); });
+  await settle();
+  expect(api.createSession).toHaveBeenCalledTimes(1);
+  expect(container.textContent).toContain("No saved playthrough was created. Choose an available hero");
+  expect(container.textContent).toContain("Choose who will explore");
 });

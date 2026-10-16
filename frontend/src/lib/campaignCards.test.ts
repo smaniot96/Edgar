@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import type { ReadinessRead, SessionRead } from "../api/types";
-import { selectResumeSession } from "./campaignCards";
+import { selectCampaignSession, selectResumeSession } from "./campaignCards";
 
 const ready: ReadinessRead = {
   play_allowed: true,
@@ -50,4 +50,13 @@ it("falls back to the newest readable history if every saved session is blocked"
   ]);
   expect(chosen?.id).toBe(1);
   expect(selectResumeSession([session(3, { has_history: false })])).toBeNull();
+});
+
+it("keeps a campaign's played save primary over newer blank, blocked or unrelated saves", () => {
+  expect(selectCampaignSession([
+    session(1), session(2, { has_history: false }), session(3, { readiness: blocked }),
+    session(4, { campaign_id: 9 }),
+  ], 1)?.id).toBe(1);
+  expect(selectCampaignSession([session(1, { readiness: blocked }), session(2, { has_history: false })], 1)?.id).toBe(2);
+  expect(selectCampaignSession([session(1, { readiness: blocked })], 1)?.id).toBe(1);
 });

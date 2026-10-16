@@ -49,6 +49,7 @@ export function CharacterForm({
   const [charClass, setCharClass] = useState<string | null>(initialDraft?.characterClass ?? null);
   const [hpText, setHpText] = useState<string | null>(initialDraft?.hpText ?? null);
   const [busy, setBusy] = useState(false);
+  const [localPending, setLocalPending] = useState<PendingCharacterCreate | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [hpError, setHpError] = useState<string | null>(null);
@@ -59,7 +60,8 @@ export function CharacterForm({
   // Class/HP default to the selected preset until the player edits them.
   const classValue = charClass ?? selected?.character_class ?? "";
   const hpValue = hpText ?? String(selected?.hp_max ?? 10);
-  const locked = pendingCreate != null;
+  const retainedCreate = pendingCreate ?? (onCreateRequested ? null : localPending);
+  const locked = retainedCreate != null;
   const safeToEditAfterRejection = error instanceof ApiError && [400, 422].includes(error.status);
 
   function saveDraft(next: Partial<CharacterDraft>) {
@@ -91,7 +93,7 @@ export function CharacterForm({
     setStorageError(null);
     setHpError(null);
     try {
-      const body: CharacterCreateBody = pendingCreate?.body ?? {
+      const body: CharacterCreateBody = retainedCreate?.body ?? {
         name: name.trim(),
         character_class: classValue.trim(),
         level: selected?.level ?? 1,
@@ -99,12 +101,14 @@ export function CharacterForm({
         base_stats: selected?.stats ?? {},
         base_inventory: selected?.inventory ?? {},
       };
-      const requestId = pendingCreate?.requestId ?? crypto.randomUUID();
+      const requestId = retainedCreate?.requestId ?? crypto.randomUUID();
+      if (!onCreateRequested) setLocalPending({ requestId, body });
       if (onCreateRequested?.({ requestId, body }) === false) {
         setStorageError("Browser storage could not retain the retry details. Allow storage and try again. No hero was created.");
         return;
       }
       const created = await createCharacter(body, requestId);
+      setLocalPending(null);
       setName("");
       onCreated(created);
     } catch (err) {
@@ -217,11 +221,11 @@ export function CharacterForm({
       {storageError ? <p role="alert" className="text-sm text-warning">{storageError}</p> : null}
       {locked ? (
         <p className="text-xs text-ink-muted">
-          This hero request is saved. Retry uses the same details, so a completed creation is reused.
+          This hero request is retained. Retry uses the same details, so a completed creation is reused.
         </p>
       ) : null}
-      {locked && safeToEditAfterRejection && onEditPendingCreate ? (
-        <Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); onEditPendingCreate(); }}>
+      {locked && safeToEditAfterRejection ? (
+        <Button type="button" variant="ghost" size="sm" onClick={() => { setError(null); setLocalPending(null); onEditPendingCreate?.(); }}>
           Edit details after validation error
         </Button>
       ) : null}
