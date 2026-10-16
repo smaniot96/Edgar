@@ -158,7 +158,7 @@ function ErrorRow({
   onCheckReceipt?: (turnId: string, requestId: string, input: string, draftRevision?: number) => void;
   canRetry: boolean;
 }) {
-  const retryable = !!(onRetry && line.turnId && line.retryInput && line.retryRequestId && !line.uncertain);
+  const retryable = !!(onRetry && line.turnId && line.retryInput && line.retryRequestId && !line.uncertain && line.retryable === true);
   const checkable = !!(onCheckReceipt && line.turnId && line.retryInput && line.retryRequestId && line.uncertain);
   return (
     <div

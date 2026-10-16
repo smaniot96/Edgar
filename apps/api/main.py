@@ -10,9 +10,12 @@ from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException
 
 from edgar_core.config import API_TITLE, API_VERSION
 from edgar_core.model_profiles import validate_provider_configuration
@@ -34,6 +37,7 @@ from .routers.session import router as session_router
 from .routers.session_assets import router as session_assets_router
 from .routers.user import router as user_router
 from .routers.world_flag import router as world_flag_router
+from .services.safe_errors import classify_error, classify_http_failure, log_failure
 
 log = structlog.get_logger()
 
@@ -76,29 +80,70 @@ app.add_middleware(RequestContextMiddleware)
 
 @app.exception_handler(HTTPErrorWithContext)
 async def http_error_with_context_handler(request: Request, exc: HTTPErrorWithContext):
-    """`{"detail": "<message>", **context}` — detail stays a string on every error body."""
+    """Keep assignment context without copying arbitrary exception details."""
+    failure = classify_http_failure(
+        exc.status_code,
+        code="character_assignment_conflict" if "active_campaign_id" in exc.context else None,
+        outcome="not_committed",
+    )
+    context = {
+        key: value
+        for key, value in exc.context.items()
+        if key in {"active_campaign_id", "character_id"} and type(value) is int and value > 0
+    }
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail, **exc.context},
+        content={**failure.to_payload(), **context},
         headers=exc.headers,
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request: Request, exc: RequestValidationError):
+    """Pydantic's input/context fields can contain private player text or credentials."""
+    failure = classify_error("validation_failed", outcome="not_committed")
+    return JSONResponse(status_code=422, content=failure.to_payload())
+
+
+@app.exception_handler(HTTPException)
+async def player_http_error_handler(request: Request, exc: HTTPException):
+    """Use the same error boundary for preparation and session preflight failures."""
+    if not request.url.path.startswith(("/api/sessions", "/api/adventures")):
+        return await http_exception_handler(request, exc)
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    failure = classify_http_failure(
+        exc.status_code,
+        code=detail.get("code"),
+        outcome=detail.get("outcome", "unknown"),
+        support_ref=detail.get("support_ref"),
+    )
+    # A fixed gate can prove rejection; a generic server/transport failure cannot.
+    if failure.category in {"source", "review", "validation", "assignment", "not_found"}:
+        failure = classify_http_failure(
+            exc.status_code,
+            code=detail.get("code"),
+            outcome="not_committed",
+            support_ref=failure.support_ref,
+        )
+    return JSONResponse(status_code=exc.status_code, content=failure.to_payload())
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Last-resort handler so 500s carry a request_id and never leak internals.
 
-    Only reached for exceptions nobody else handled: HTTPException and RequestValidationError
-    are converted by FastAPI's own handlers (ExceptionMiddleware) before they get here.
+    Only reached for exceptions nobody else handled. A programming fault stays internal;
+    no exception message, traceback chain, or request path enters the covered log event.
     """
     request_id = getattr(request.state, "request_id", None) or request_id_from_header(
         request.headers.get("x-request-id")
     )
-    log.exception("unhandled", request_id=request_id, path=request.url.path)
+    failure = classify_error("internal_fault")
+    log_failure("unhandled", failure)
     return JSONResponse(
         status_code=500,
         content={
-            "detail": "Internal server error",
+            **failure.to_payload(),
             "type": "internal",
             "request_id": request_id,
         },

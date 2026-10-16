@@ -34,6 +34,7 @@ from ..services.combat import (
 )
 from ..services.npcs import load_npcs, model_context_npcs
 from ..services.roll_record import stored_roll
+from ..services.safe_errors import classify_error, classify_http_failure, log_failure
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
     load_session_context,
@@ -45,7 +46,6 @@ from ..services.turn_runner import (
     TurnError,
     combat_round_from_events,
     combat_state_public,
-    error_body,
     persist_turn,
     public_adjudication,
     run_turn,
@@ -395,7 +395,20 @@ async def delete_session(session_id: int, db: AsyncSession = Depends(get_session
 
 
 def _turn_error_response(err: TurnError) -> JSONResponse:
-    return JSONResponse(status_code=err.status_code, content=error_body(err.code))
+    return JSONResponse(status_code=err.status_code, content=err.body())
+
+
+def _turn_http_error_response(exc: HTTPException) -> JSONResponse:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    code = detail.get("code")
+    if exc.detail == _BUSY_DETAIL:
+        code = "session_busy"
+    elif exc.detail == "Campaign has ended; reopen it to continue.":
+        code = "campaign_ended"
+    failure = classify_http_failure(exc.status_code, code=code, outcome="not_committed")
+    if failure.category == "busy":
+        failure = classify_http_failure(exc.status_code, code=code, outcome="unknown")
+    return JSONResponse(status_code=failure.status_code, content=failure.to_payload())
 
 
 async def _replayed_turn(
@@ -435,12 +448,15 @@ async def get_turn_receipt(
     response.headers["Cache-Control"] = "private, no-store"
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
-        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+        raise HTTPException(status_code=409, detail=classify_error("session_busy").to_payload())
     try:
         await get_or_404(db, SessionModel, session_id, "Session")
         receipt = await load_turn_receipt(db, session_id, request_id)
         if receipt is None:
-            raise HTTPException(status_code=404, detail="No committed turn with this identity.")
+            raise HTTPException(
+                status_code=404,
+                detail=classify_error("turn_not_found", outcome="not_committed").to_payload(),
+            )
         return {"status": "committed", "result": receipt[1]}
     finally:
         await lock.release()
@@ -463,9 +479,10 @@ async def session_turn(
     """
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
-        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+        return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
 
     structlog.contextvars.bind_contextvars(session_id=session_id)
+    outcome = "not_committed"
     try:
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
@@ -476,7 +493,9 @@ async def session_turn(
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
 
         result = {**initial_state, **await run_turn(initial_state)}
+        outcome = "unknown"
         done = await persist_turn(session_id, body.message, result)
+        outcome = "committed"
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 
         adjudication = result.get("adjudication_result")
@@ -501,13 +520,14 @@ async def session_turn(
             roll_status=done.get("roll_status"),
             roll=done.get("roll"),
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _turn_http_error_response(exc)
     except TurnError as e:
         return _turn_error_response(e)
-    except Exception:
-        log.exception("turn_failed", session_id=session_id)
-        return _turn_error_response(TurnError("turn_failed"))
+    except Exception as exc:
+        failure = TurnError(exc, outcome=outcome)
+        log_failure("turn_failed", failure.failure, session_id=session_id)
+        return _turn_error_response(failure)
     finally:
         structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
         await lock.release()
@@ -529,7 +549,7 @@ async def session_turn_stream(
     """
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
-        raise HTTPException(status_code=409, detail=_BUSY_DETAIL)
+        return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
     try:
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
@@ -543,6 +563,9 @@ async def session_turn_stream(
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         if body.request_id is not None:
             initial_state["turn_id"] = body.request_id
+    except HTTPException as exc:
+        await lock.release()
+        return _turn_http_error_response(exc)
     except BaseException:
         await lock.release()
         raise

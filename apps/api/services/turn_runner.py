@@ -19,8 +19,8 @@ Event types (see apps/api/README.md for the public contract):
   done: {"narration", "character", "current_scene_id", "combat_state", "campaign_complete"}
   error: {"code", "message", "detail"}              # stable code + generic text; never raw errors
 
-Raw exception text is only ever logged server-side; clients get a stable `code` and a generic
-`message` (`detail` repeats the message for older clients).
+Responses and covered failure logs use fixed categories and opaque support references;
+exception messages and provider bodies are never copied to either boundary.
 """
 
 from __future__ import annotations
@@ -52,19 +52,20 @@ from agent.supported_rules import (
     engine_applied_for_state,
 )
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
-from edgar_core.log_safety import error_summary
 from edgar_core.model_profiles import (
     current_model_profiles,
     effective_profile,
     model_profile_snapshot,
     profile_diagnostics,
 )
+from edgar_core.safe_errors import OutcomeState, SafeFailure
 from edgar_core.sources import citations_for, public_citations
 
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
 from .roll_record import build_roll_record, roll_status_for
+from .safe_errors import classify_error, log_failure
 from .world_writes import (
     MissingCharacterAssignmentError,
     apply_adjudication,
@@ -74,49 +75,43 @@ from .world_writes import (
 log = structlog.get_logger()
 
 
-# code -> (HTTP status for the sync endpoint, message shown to the player)
-PUBLIC_ERRORS: dict[str, tuple[int, str]] = {
-    "campaign_sources_unavailable": (
-        409,
-        "The campaign adventure source is unavailable. Recover it or choose homebrew play.",
-    ),
-    "adventure_manifest_review_required": (
-        409,
-        "Review and publish the adventure scene manifest before module play.",
-    ),
-    "creature_identity_unresolved": (
-        409,
-        "Use an exact verified creature name, or review the actor's statistics reference. If its source is unavailable, recover it before retrying.",
-    ),
-    "llm_unavailable": (503, "The Dungeon Master is unavailable right now. Try again."),
-    "character_not_assigned": (
-        409,
-        "The active character is not assigned to this campaign. Pick a character for the session.",
-    ),
-    "turn_save_failed": (500, "The turn could not be saved. Try again."),
-    "turn_failed": (500, "The turn failed due to an internal error. Try again."),
-}
-
-
 class TurnError(Exception):
-    """A turn failure with a stable public code. The underlying cause is logged, never shown."""
+    """One safe projection retained across response and log correlation."""
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
-        self.status_code, self.message = PUBLIC_ERRORS[code]
+    def __init__(
+        self,
+        error: BaseException | str | None,
+        *,
+        outcome: OutcomeState | str = OutcomeState.UNKNOWN,
+    ) -> None:
+        self.failure = classify_error(error, outcome=outcome)
+        super().__init__(self.failure.code)
+        self.code = self.failure.code
+        self.status_code = self.failure.status_code
+        self.message = self.failure.message
 
     def body(self) -> dict[str, Any]:
-        return error_body(self.code)
+        return _failure_body(self.failure)
 
 
-def error_body(code: str) -> dict[str, Any]:
-    """Public error payload. `detail` mirrors `message` (the frontend and FastAPI clients read it)."""
-    _, message = PUBLIC_ERRORS[code]
-    body: dict[str, Any] = {"code": code, "message": message, "detail": message}
-    if code == "campaign_sources_unavailable":
+def _failure_body(failure: SafeFailure) -> dict[str, Any]:
+    body = failure.to_payload()
+    if failure.code == "campaign_sources_unavailable":
         body["retrieval_degraded"] = True
     return body
+
+
+def error_body(
+    error: BaseException | str | None,
+    *,
+    outcome: OutcomeState | str = OutcomeState.NOT_COMMITTED,
+    event: str | None = None,
+    session_id: int | None = None,
+) -> dict[str, Any]:
+    failure = classify_error(error, outcome=outcome)
+    if event:
+        log_failure(event, failure, session_id=session_id)
+    return _failure_body(failure)
 
 
 def sse_event(event: str, data: Any) -> str:
@@ -442,23 +437,26 @@ async def persist_turn(
             await db.commit()
         except MissingCharacterAssignmentError as e:
             await db.rollback()
-            log.warning("turn_persist_missing_assignment", session_id=session_id, error=str(e))
-            raise TurnError("character_not_assigned") from e
+            failure = TurnError("character_not_assigned", outcome="not_committed")
+            log_failure("turn_persist_missing_assignment", failure.failure, session_id=session_id)
+            raise failure from e
         except Exception as e:
             await db.rollback()
-            log.exception("turn_persist_failed", session_id=session_id)
-            raise TurnError("turn_save_failed") from e
+            failure = TurnError("turn_save_failed")
+            log_failure("turn_persist_failed", failure.failure, session_id=session_id)
+            raise failure from e
 
     return done
 
 
 async def run_turn(initial_state: dict[str, Any]) -> dict[str, Any]:
-    """Run the full graph (sync endpoint). Node errors become TurnError("llm_unavailable")."""
+    """Run the full graph, retaining provider attribution only from recognized failures."""
     with model_profile_snapshot():
         result = await app.ainvoke(dict(initial_state))
         if result.get("error"):
-            log.error("turn_agent_error", error=result["error"])
-            raise TurnError(result.get("error_code") or "llm_unavailable")
+            failure = TurnError(result.get("error_code"), outcome="not_committed")
+            log_failure("turn_agent_error", failure.failure)
+            raise failure
         return result
 
 
@@ -667,14 +665,15 @@ async def _stream_session_turn(
                         yield sse_event("status", {"stage": "adjudicating"})
                 elif node == "world_retriever":
                     yield sse_event("status", {"stage": "adjudicating"})
-    except Exception:
-        log.exception("turn_agent_crashed", session_id=session_id)
-        yield sse_event("error", error_body("turn_failed"))
+    except Exception as exc:
+        yield sse_event("error", error_body(exc, event="turn_agent_crashed", session_id=session_id))
         return
 
     if state.get("error"):
-        log.error("turn_agent_error", session_id=session_id, error=state["error"])
-        yield sse_event("error", error_body(state.get("error_code") or "llm_unavailable"))
+        yield sse_event(
+            "error",
+            error_body(state.get("error_code"), event="turn_agent_error", session_id=session_id),
+        )
         return
 
     adjudication = state.get("adjudication_result")
@@ -698,8 +697,9 @@ async def _stream_session_turn(
         try:
             response = await llm.ainvoke(prompt)
         except Exception as e:
-            log.error("turn_narrator_failed", session_id=session_id, error=error_summary(e))
-            yield sse_event("error", error_body("llm_unavailable"))
+            yield sse_event(
+                "error", error_body(e, event="turn_narrator_failed", session_id=session_id)
+            )
             return
         narration = apply_narration_boundary(
             message_text(response), actions, applied=engine_applied_for_state(state)
@@ -719,8 +719,9 @@ async def _stream_session_turn(
                 narration_parts.append(tok)
                 yield sse_event("token", {"text": tok})
         except Exception as e:
-            log.error("turn_narrator_failed", session_id=session_id, error=error_summary(e))
-            yield sse_event("error", error_body("llm_unavailable"))
+            yield sse_event(
+                "error", error_body(e, event="turn_narrator_failed", session_id=session_id)
+            )
             return
         narration = "".join(narration_parts)
         lap("narrating_ms")
@@ -735,8 +736,15 @@ async def _stream_session_turn(
     except Exception:
         # persist_turn maps its own failures to TurnError; this only catches e.g. a failed
         # rollback or connection checkout, which must still reach the client as an event.
-        log.exception("turn_persist_failed", session_id=session_id)
-        yield sse_event("error", error_body("turn_save_failed"))
+        yield sse_event(
+            "error",
+            error_body(
+                "turn_save_failed",
+                outcome="unknown",
+                event="turn_persist_failed",
+                session_id=session_id,
+            ),
+        )
         return
     lap("saving_ms")
 
