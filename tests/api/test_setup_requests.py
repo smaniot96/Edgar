@@ -118,3 +118,29 @@ def test_request_ids_must_be_uuid(schema, payload):
 
     with pytest.raises(ValidationError):
         schema(**payload, request_id="arbitrary-unbounded-client-input")
+
+
+async def test_concurrent_save_requests_create_one_row(api_client, fake_retrieval):
+    import asyncio
+
+    from apps.api.routers.session import create_session
+    from db.postgres import session as sessions
+    from db.postgres.models import Session as SessionModel
+
+    seed = (await api_client.post("/api/seed")).json()
+    character_id = (await api_client.get("/api/characters")).json()[0]["id"]
+    body = SessionCreate(
+        campaign_id=seed["campaign_id"], active_character_id=character_id, request_id=uuid4(),
+    )
+
+    async def create():
+        async with sessions.async_session_factory() as db:
+            return await create_session(body, db)
+
+    first, second = await asyncio.gather(create(), create())
+    assert first.id == second.id
+    async with sessions.async_session_factory() as db:
+        assert await db.scalar(select(func.count()).select_from(SessionModel).where(
+            SessionModel.campaign_id == body.campaign_id,
+            SessionModel.creation_request_id == str(body.request_id),
+        )) == 1
