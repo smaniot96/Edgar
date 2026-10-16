@@ -249,6 +249,36 @@ def test_commissioned_image_budget_freezes_matching_profile_and_trusted_price(mo
         )
 
 
+def test_parallel_manifest_versions_share_one_atomic_run_image_limit(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    monkeypatch.setattr(assets, "ASSET_ROOT", tmp_path)
+    start = Barrier(2)
+
+    def reserve(version):
+        start.wait(timeout=5)
+        try:
+            return assets._reserve_image_call(
+                collection="synthetic", source_sha256=version * 64,
+                manifest_sha256=version * 64, prepared_sha256=version * 64,
+                job_key=version * 64, max_image_calls=1, max_image_cost_microusd=250_000,
+                max_image_call_cost_microusd=250_000, image_price_revision="offline-price",
+                image_price_model="gpt-image-1", image_price_size="1024x1024",
+                image_price_quality="medium", timeout_seconds=1, run_id="prep-" + "8" * 32,
+            )
+        except assets.ImageBudgetExceeded:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(workers.map(reserve, ["a", "b"]))
+    assert sum(result is not None for result in results) == 1
+    usage = assets.image_usage(collection="synthetic", source_sha256="a" * 64,
+                               manifest_sha256="a" * 64, prepared_sha256="a" * 64,
+                               run_id="prep-" + "8" * 32)
+    assert usage["reserved"] == 1 and usage["reserved_cost_microusd"] == 250_000
+
+
 def test_image_budget_requires_frozen_total_and_per_call_cost_caps():
     with pytest.raises(ValueError, match="per-call image cost cap"):
         assets.AssetImageBudget(max_image_calls=1, max_image_cost_microusd=10)

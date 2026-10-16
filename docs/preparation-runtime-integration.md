@@ -41,6 +41,16 @@ than silently truncating other chapters. Long multi-call stages renew the exact 
 under short lifecycle locks. Cancellation or replacement fences every subsequent semantic
 and image subcall; no lock spans provider work.
 
+Setup optionally accepts paired `max_image_calls` and `max_image_cost_microusd` values;
+both default to zero. The image allowance is part of `max_cost_microusd`, and semantic
+workers receive only the remainder. Commissioning requires a server-owned
+`EDGAR_TRUSTED_IMAGE_PRICE_RECORD` matching the frozen illustration model, size and
+quality, with a documented revision and per-call cost in micro-USD. No price is inferred.
+The exact record and image profile are retained in the commission; a changed or missing
+trusted record prevents new paid dispatch. Image reservations use one locked run-level
+ledger across all repair and manifest versions, so repairs cannot reset spent allowance.
+Required topology maps and clue handouts use deterministic rendering and retained text.
+
 Public status comes from `safe_preparation_status` and contains only fixed progress labels,
 safe status values and retry actions. It omits task names, private artifact data, findings,
 provider diagnostics, creatures, scenes and manuscript text. `campaign_sources` and

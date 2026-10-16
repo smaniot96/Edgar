@@ -102,6 +102,7 @@ def _binding(*, mode="ai", level=1, rounds=2):
         "target_level": level,
         "required_maps": True,
         "required_handouts": True,
+        "max_cost_microusd": 200_000_000,
     }
     return PreparationRunBinding(
         run_id="prep-" + "d" * 32,
@@ -427,7 +428,7 @@ async def test_joined_long_high_level_and_pdf_are_independent_scopes(
                 "extraction_sha256": extraction.text_sha256(),
             }
         )
-    commission = {**binding.commission, "act_count": count}
+    commission = {**binding.commission, "act_count": count, "max_cost_microusd": 1_000_000_000}
     binding = binding.model_copy(
         update={
             "commission": commission,
@@ -650,3 +651,103 @@ async def test_joined_repair_exhaustion_retains_spend_and_archive_integrity(
         path.write_text(json.dumps(checkpoint))
         with pytest.raises(PreparationStoreError, match="Repair evidence"):
             supervisor.store.load_run(binding.source_slug, binding.run_id)
+
+
+@pytest.mark.asyncio
+async def test_joined_commissioned_images_use_frozen_budget_and_real_asset_path(
+    tmp_path, monkeypatch, source_index  # noqa: F811
+):
+    import base64
+    import io
+    import json
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from PIL import Image
+
+    from apps.api.services import adventure_assets as assets
+    from edgar_core.assets import IndependentVisualReviewDecision
+    from edgar_core.model_profiles import effective_image_profile
+
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(assets, "ASSET_ROOT", tmp_path / "assets")
+    key = Ed25519PrivateKey.generate()
+    monkeypatch.setenv("EDGAR_VISUAL_REVIEW_PRIVATE_KEY", base64.b64encode(key.private_bytes(
+        serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()
+    )).decode())
+    monkeypatch.setenv("EDGAR_VISUAL_REVIEW_PUBLIC_KEY", base64.b64encode(key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )).decode())
+    binding = _binding()
+    profiles = load_model_profiles()
+    profile = effective_image_profile("image.illustration", profiles)
+    monkeypatch.setenv("EDGAR_TRUSTED_IMAGE_PRICE_RECORD", json.dumps({
+        "revision": "offline-fixture-price", "model": profile.model,
+        "size": profile.size, "quality": profile.quality, "unit_cost_microusd": 250_000,
+    }))
+    frozen = assets.commissioned_image_budget(
+        profile_snapshot=binding.profile_snapshot, max_image_calls=1,
+        max_image_cost_microusd=250_000,
+    )
+    commission = {**binding.commission, "max_image_calls": 1,
+                  "max_image_cost_microusd": 250_000, "image_budget": frozen}
+    binding = binding.model_copy(update={
+        "commission": commission, "commission_sha256": canonical_sha256(commission),
+        "budget": binding.budget.model_copy(update={"max_cost_microusd": 199_750_000}),
+    })
+    image_calls = []
+
+    class OfflineImageProvider:
+        async def generate(self, prompt, effective):
+            assert effective.to_dict() == frozen["effective_profile"]
+            image_calls.append(prompt)
+            data = io.BytesIO()
+            Image.new("RGB", (64, 64), color="navy").save(data, format="PNG")
+            return assets.GeneratedImage(data=data.getvalue(), media_type="image/png",
+                                         cost_microusd=100_000)
+
+    monkeypatch.setattr(assets, "OpenAIImageProvider", OfflineImageProvider)
+
+    class IllustratedAuthor(OfflineAuthor):
+        async def __call__(self, binding, task, schema, *, images=(), **kwargs):
+            if schema is IndependentVisualReviewDecision:
+                assert images[0][0].startswith(b"\x89PNG")
+                self.calls.append((task.stage.value, schema.__name__, kwargs["idempotency_key"]))
+                candidate = kwargs["evidence"]["candidate"]
+                return schema(candidate_id=candidate["candidate_id"],
+                              artifact_sha256=candidate["artifact_sha256"],
+                              decision="approved", reasons=["Synthetic fixture pixels."]), ProviderUsage(
+                    provider_called=True, call_count=1, input_tokens=100, output_tokens=100,
+                    cost_microusd=2400, task_version="offline-visual",
+                )
+            result, usage = await super().__call__(binding, task, schema, **kwargs)
+            if schema.__name__ == "AssetRequests":
+                result = schema(requirements=[{
+                    "asset_id": "dock_decoration", "kind": "generated_illustration",
+                    "required": False, "act_id": "act_one", "scene_ids": ["dock"],
+                    "prompt": "A plain blue evening sky over the ferry dock, with no labels.",
+                }])
+            return result, usage
+
+    author = IllustratedAuthor()
+    supervisor = make_preparation_supervisor(provider=author, book_client=source_index[0])
+    supervisor.create_run(binding)
+    published = []
+    for _ in range(100):
+        step = await supervisor.step(binding.source_slug, binding.run_id, "offline", lambda _: True,
+                                     lambda bundle: published.append(bundle) or bundle.bundle_sha256)
+        if step.state.status.value in {"ready", "blocked", "failed"}:
+            break
+    state = supervisor.store.load_run(binding.source_slug, binding.run_id)
+    assert state.status.value == "ready", (state.current_stage, state.last_safe_error_code)
+    assert len(published) == 1 and len(image_calls) == 1
+    assert state.provider_calls_spent == len(author.calls)
+    receipt = next(a for a in state.artifacts.values() if a.artifact_kind == "asset_coverage").payload["receipt"]
+    assert receipt["image_calls_reserved"] == 1
+    assert receipt["image_cost_succeeded_microusd"] == 100_000
+    assert receipt["image_cost_refunded_microusd"] == 150_000
+    usage = assets.image_usage(collection=binding.source_slug, source_sha256="0" * 64,
+                               manifest_sha256=receipt["manifest_sha256"],
+                               prepared_sha256=receipt["prepared_sha256"], run_id=binding.run_id)
+    assert usage["reserved"] == 1 and usage["reserved_cost_microusd"] == 100_000
+    assert state.cost_microusd_spent + usage["reserved_cost_microusd"] <= commission["max_cost_microusd"]

@@ -378,6 +378,21 @@ def test_ordinary_play_amendment_is_engine_accepted_and_replayed_in_future_conte
     assert receipt["manifest_sha256"] == reviewed.reviewed_sha256
     assert prepared_digest(reviewed.prepared) == prepared_digest(prepared)
 
+    from apps.api.services.prepared_amendments import (
+        PreparedAmendmentConflict,
+        revalidate_runtime_amendment,
+    )
+
+    assert revalidate_runtime_amendment(
+        receipt, state=state, manifests=state["adventure_manifests"]
+    ) == receipt
+    with pytest.raises(PreparedAmendmentConflict, match="no longer matches"):
+        revalidate_runtime_amendment(
+            receipt,
+            state={**state, "world_flags": {"gate_open": "no"}},
+            manifests=state["adventure_manifests"],
+        )
+
     from agent.nodes.rules_adjudicator import build_adjudicator_prompt
 
     planner_prompt = build_adjudicator_prompt(state, None)[-1]["content"]
@@ -744,7 +759,12 @@ async def test_session_amendment_event_replay_is_private_and_source_version_boun
     )
     assert other_overlays == {}
     assert other_events == []
-    changed = _approved(manifest, prepared.model_copy(update={"unresolved_questions": ["new"]}))
+    changed_data = prepared.model_dump()
+    changed_data["acts"][0]["title"] = "A revised published act"
+    changed = _approved(manifest, PreparedCampaign.model_validate(changed_data))
+    from edgar_core.manifests import require_published
+
+    require_published(changed)  # A valid new publication must still reject the old event chain.
     from apps.api.services.prepared_amendments import PreparedAmendmentConflict
 
     with pytest.raises(PreparedAmendmentConflict, match="source or base version is stale"):
