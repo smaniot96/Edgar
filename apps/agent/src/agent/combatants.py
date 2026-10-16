@@ -17,8 +17,9 @@ the kinds in `EFFECT_KINDS` are read. Restraint (`restrained`) and `prone` come 
 contested maneuver, persist in this same JSONB list, and end explicitly: a declared release,
 the foe's defeat, or the end of the encounter. `attack_roll_mode` turns them into the 5e
 advantage/disadvantage state of an attack. Missing or malformed `effects` reads as none.
-`dodging` (EDG-044) is the Dodge action: attacks against that combatant have disadvantage. It
-ends when the combatant's next turn starts (see `agent.graph_combat`), not at the end of a round.
+`dodging` (EDG-044) is the Dodge action: attacks against that combatant have disadvantage and its
+Dexterity saves advantage (EDG-043, `save_roll_mode`). It ends when the combatant's next turn starts
+(see `agent.graph_combat`), not at the end of a round.
 
 Spell conditions (EDG-043, see `agent.conditions`) add `blinded`, `marked` and `paralyzed` to the same
 list. Monster riders add `poisoned` to a player. They may also carry `expires_after_round` (the last
@@ -91,7 +92,10 @@ _EFFECT_TEXT = {
         "from within 5 feet is a critical hit"
     ),
     "poisoned": "poisoned by {source}: its attacks have disadvantage",
-    "dodging": "dodging (Dodge action): attacks against it have disadvantage until its next turn",
+    "dodging": (
+        "dodging (Dodge action): attacks against it have disadvantage and its Dexterity saves "
+        "advantage until its next turn"
+    ),
 }
 
 # The player's own declared intent, read from their words. Nonlethal wins when both appear
@@ -332,6 +336,12 @@ def attack_roll_mode(
     if advantage == disadvantage:
         return "normal"
     return "advantage" if advantage else "disadvantage"
+
+
+def save_roll_mode(combatant: Mapping[str, Any], ability: str) -> str:
+    """The 5e saving-throw mode from the bearer's effects: a dodging combatant has advantage on its
+    Dexterity saves (PHB, PDF p.193, Dodge). Pure: it never rolls."""
+    return "advantage" if ability == "DEX" and has_effect(combatant, "dodging") else "normal"
 
 
 def apply_player_disposition(player: dict, *, subdued: bool) -> None:
