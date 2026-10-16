@@ -159,3 +159,43 @@ it("accepts a committed receipt after a lost stream and acknowledges only then",
     await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
   }
 });
+
+it("does not unlock a paid retry from an unstructured 404 receipt response", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const fetchMock = vi.fn()
+    .mockRejectedValueOnce(new TypeError("private network detail"))
+    .mockResolvedValueOnce(new Response("proxy page not found", { status: 404 }));
+  vi.stubGlobal("fetch", fetchMock);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  function Harness() {
+    const turn = useTurn(7, { debug: false });
+    const error = turn.state.lines.find((line) => line.role === "error");
+    return <>
+      <button onClick={() => void turn.send("Open the gate")}>Send</button>
+      <button onClick={() => {
+        if (error?.role === "error" && error.turnId && error.retryRequestId && error.retryInput) {
+          turn.checkReceipt(error.turnId, error.retryRequestId, error.retryInput);
+        }
+      }}>Check</button>
+      <button onClick={() => {
+        if (error?.role === "error" && error.turnId && error.retryRequestId && error.retryInput) {
+          turn.retry(error.turnId, error.retryInput, error.retryRequestId);
+        }
+      }}>Retry</button>
+      <p>{error?.content}</p>
+    </>;
+  }
+  try {
+    await act(() => root.render(<Harness />));
+    await act(async () => container.querySelectorAll("button")[0].click());
+    await act(async () => container.querySelectorAll("button")[1].click());
+    expect(container.textContent).toContain("Couldn't confirm whether this action was saved");
+    await act(async () => container.querySelectorAll("button")[2].click());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("private network detail");
+    expect(container.textContent).not.toContain("proxy page not found");
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});
