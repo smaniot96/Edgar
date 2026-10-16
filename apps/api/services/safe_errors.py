@@ -88,6 +88,16 @@ def error_payload(
     return classify_error(error, outcome=outcome, support_ref=support_ref).to_payload()
 
 
+def http_failure_payload(failure: SafeFailure) -> dict[str, Any]:
+    """Preserve safe historical gate envelopes alongside the shared top-level fields."""
+    payload = failure.to_payload()
+    if failure.category in {"source", "review"}:
+        payload["detail"] = {"code": failure.code, "message": failure.message}
+        if failure.code == "campaign_sources_unavailable":
+            payload["detail"]["retrieval_degraded"] = True
+    return payload
+
+
 def log_failure(
     event: str,
     failure: SafeFailure,

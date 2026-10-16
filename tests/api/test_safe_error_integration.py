@@ -181,7 +181,7 @@ async def test_receipt_not_found_retains_definitive_outcome_and_reference():
     assert response.json()["support_ref"] == "err-0123456789abcdef"
 
 
-@pytest.mark.parametrize("code", ["campaign_sources_unavailable", "adventure_manifest_review_required", "turn_identity_conflict"])
+@pytest.mark.parametrize("code", ["campaign_sources_unavailable", "adventure_manifest_review_required", "turn_identity_conflict", "preparation_in_progress"])
 async def test_safe_http_boundary_preserves_actionable_codes_and_gate_envelopes(code):
     from fastapi import HTTPException
 
@@ -199,11 +199,21 @@ async def test_safe_http_boundary_preserves_actionable_codes_and_gate_envelopes(
     payload = response.json()
     assert response.status_code == 409
     assert payload["code"] == code
-    assert payload["outcome"] == "not_committed"
+    assert payload["outcome"] == ("unknown" if code == "preparation_in_progress" else "not_committed")
     assert payload["retryable"] is False
     assert SECRET not in response.text
-    if code != "turn_identity_conflict":
+    if code in {"campaign_sources_unavailable", "adventure_manifest_review_required"}:
         assert payload["detail"]["code"] == code
         assert "sources" not in payload["detail"]
     if code == "campaign_sources_unavailable":
         assert payload["detail"]["retrieval_degraded"] is True
+
+    from apps.api.routers.session import _turn_http_error_response
+
+    turn = _turn_http_error_response(HTTPException(409, detail={"code": code, "message": SECRET}))
+    turn_payload = json.loads(turn.body)
+    assert turn.status_code == 409
+    assert {key: value for key, value in turn_payload.items() if key not in {"support_ref", "outcome"}} == {
+        key: value for key, value in payload.items() if key not in {"support_ref", "outcome"}
+    }
+    assert SECRET not in turn.body.decode()
