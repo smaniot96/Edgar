@@ -12,7 +12,8 @@ What is measured, and where it comes from:
     calls too, whose return value is the parsed object and carries no usage. Unreported usage is
     `None`, never zero;
   * resolved model: the `model_name` the provider echoed in response metadata;
-  * cost: only when `CONFIGURED_PRICES` has a price for the model. Otherwise `None`;
+  * cost: an ESTIMATE at the configured conservative per-token rates (not a billed amount), only
+    when `CONFIGURED_PRICES` has a rate for the model. Otherwise `None`;
   * error category: a member of `ERROR_CATEGORIES`, derived from the exception class and the
     existing safe provider code. The exception message and provider body are never read or kept.
 

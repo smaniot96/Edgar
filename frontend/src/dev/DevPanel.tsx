@@ -183,7 +183,7 @@ function TurnDiagnosticsBlock({ diag }: { diag: TurnDiagnostics }) {
         <KV k="tokens in" v={fmtCount(totals.input_tokens)} />
         <KV k="tokens out" v={fmtCount(totals.output_tokens)} />
         <KV k="tokens total" v={fmtCount(totals.total_tokens)} />
-        <KV k="cost" v={fmtCostMicroUsd(totals.cost_microusd)} />
+        <KV k="cost (estimate)" v={fmtCostMicroUsd(totals.cost_microusd)} />
         {totals.complete ? null : (
           <div className="mt-0.5 text-ember-300">
             partial total: {totals.calls_unknown_usage} call(s) without usage,{" "}
