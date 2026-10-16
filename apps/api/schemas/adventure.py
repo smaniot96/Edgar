@@ -26,7 +26,12 @@ class AdventureJobRead(BaseModel):
     checkpoint_available: bool = False
     retryable: bool = False
     retained_work: Literal[
-        "none", "outline_and_chapters", "complete_manuscript", "source_pdf", "inspected_extraction", "published"
+        "none",
+        "outline_and_chapters",
+        "complete_manuscript",
+        "source_pdf",
+        "inspected_extraction",
+        "published",
     ] = "none"
     action_label: str | None = None
     explanation: str | None = None
@@ -55,6 +60,7 @@ class AdventureRead(BaseModel):
     ingestion: dict | None = None
     can_retry: bool = False
     job: AdventureJobRead | None = None
+    preparation_setup_required: bool = False
 
 
 class AdventureUpdate(BaseModel):
@@ -74,6 +80,11 @@ class AdventureUploadResponse(BaseModel):
 class AdventureRetryRequest(BaseModel):
     reviewed_source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     reviewed_extraction_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class AdventurePreparationRequest(BaseModel):
+    rules_edition: RulesEdition
+    preparation: PreparationSetup
 
 
 CampaignSize = Literal["small", "medium", "large", "gigantic"]

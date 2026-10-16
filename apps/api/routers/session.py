@@ -86,6 +86,15 @@ async def _load_turn_initial_state(
             detail="Campaign has ended; reopen it to continue.",
         )
     sources = await require_campaign_sources(campaign)
+    from ..services.prepared_play import require_prepared_play
+
+    await run_in_threadpool(
+        require_prepared_play,
+        campaign.adventure_collections,
+        campaign.rules_edition,
+        character_id=session.active_character_id,
+        require_hero=True,
+    )
     from edgar_core.manifests import ManifestError
 
     from ..services.adventure_manifests import campaign_manifests
@@ -299,6 +308,15 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
     await require_campaign_sources(campaign)
+    from ..services.prepared_play import require_prepared_play
+
+    await run_in_threadpool(
+        require_prepared_play,
+        campaign.adventure_collections,
+        campaign.rules_edition,
+        character_id=body.active_character_id,
+        require_hero=True,
+    )
     if body.active_character_id is not None:
         ass = await load_active_assignment(db, body.active_character_id, body.campaign_id)
         if ass is None:
@@ -327,6 +345,16 @@ async def update_session(
     update_data = body.model_dump(exclude_unset=True)
     # Same invariant create enforces: the active character must be playing in this campaign.
     new_character_id = update_data.get("active_character_id")
+    campaign = await get_or_404(db, Campaign, session.campaign_id, "Campaign")
+    from ..services.prepared_play import require_prepared_play
+
+    await run_in_threadpool(
+        require_prepared_play,
+        campaign.adventure_collections,
+        campaign.rules_edition,
+        character_id=update_data.get("active_character_id", session.active_character_id),
+        require_hero=True,
+    )
     if new_character_id is not None:
         ass = await load_active_assignment(db, new_character_id, session.campaign_id)
         if ass is None:
@@ -365,7 +393,10 @@ async def _replayed_turn(
     if original_input != body.message:
         raise HTTPException(
             status_code=409,
-            detail={"code": "turn_identity_conflict", "message": "This action identity was already used."},
+            detail={
+                "code": "turn_identity_conflict",
+                "message": "This action identity was already used.",
+            },
         )
     return result
 

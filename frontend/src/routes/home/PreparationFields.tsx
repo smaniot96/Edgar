@@ -14,10 +14,12 @@ export function usePreparationSetup() {
   const [budget, setBudget] = useState("");
   const hero = characters.data?.find((character) => String(character.id) === heroId);
   const amount = Number(budget);
-  const setup: PreparationSetup | undefined = hero && Number.isFinite(amount) && amount > 0
+  const targetNumber = target ? Number(target) : hero?.level;
+  const setup: PreparationSetup | undefined = hero && Number.isFinite(amount) && amount >= 0.01 && amount <= 1000
+    && Number.isInteger(targetNumber) && targetNumber! >= hero.level && targetNumber! <= 20
     ? {
         character_ids: [hero.id],
-        target_level: target ? Number(target) : hero.level,
+        target_level: targetNumber,
         max_cost_microusd: Math.round(amount * 1_000_000),
         required_maps: true,
         required_handouts: true,
@@ -53,6 +55,8 @@ export function usePreparationSetup() {
       <ErrorNotice error={characters.error} onRetry={characters.refetch} />
       <p className="text-xs text-ink-muted">Preparation stops at this budget. It may need a retry;
         this limit is not a promise about cost or completion time.</p>
+      <p className="text-xs text-ink-muted">The current rules engine supports one active hero and 2014 rules.
+        A request needing unsupported level progression, spells or other mechanics will stop before readiness.</p>
     </fieldset>
   );
   return { setup, fields };

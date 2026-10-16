@@ -7,7 +7,12 @@ from pathlib import Path
 
 from edgar_core.artifacts import text_digest
 from edgar_core.preparation import PreparationRunBinding
-from ingestion.extract import Extraction, extract_document, load_reviewed_extraction, save_extraction
+from ingestion.extract import (
+    Extraction,
+    extract_document,
+    load_reviewed_extraction,
+    save_extraction,
+)
 from ingestion.readiness import prepare_report, require_ready
 
 

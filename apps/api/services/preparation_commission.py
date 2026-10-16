@@ -21,25 +21,30 @@ async def capture_setup(setup: PreparationSetup | None) -> dict | None:
     async with async_session_factory() as db:
         owner = (await db.execute(select(User).order_by(User.id).limit(1))).scalar_one_or_none()
         if owner is None:
-            raise HTTPException(status_code=400, detail="Complete first-run setup before preparation.")
+            raise HTTPException(
+                status_code=400, detail="Complete first-run setup before preparation."
+            )
         characters = (
-            await db.execute(
-                select(Character).where(
-                    Character.id.in_(setup.character_ids), Character.owner_user_id == owner.id
+            (
+                await db.execute(
+                    select(Character).where(
+                        Character.id.in_(setup.character_ids), Character.owner_user_id == owner.id
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         by_id = {character.id: character for character in characters}
         if set(by_id) != set(setup.character_ids):
             raise HTTPException(status_code=422, detail="A selected hero is no longer available.")
         heroes = [
             {
-                "id": character.id,
+                "character_id": character.id,
                 "name": character.name,
                 "character_class": character.character_class,
                 "level": character.level,
                 "hp_max": character.hp_max,
-                "hp_current": character.hp_max,
                 "stats": copy.deepcopy(character.base_stats or {}),
                 "inventory": copy.deepcopy(character.base_inventory or {}),
             }

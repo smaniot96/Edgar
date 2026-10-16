@@ -3,8 +3,9 @@
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-from db.vector.retrieval import retrieve_active_scene
 from test_prepared_campaign import _approved, _fixture
+
+from db.vector.retrieval import retrieve_active_scene
 
 
 def test_runtime_extension_is_current_scene_gated_and_has_no_fabricated_pdf_page(monkeypatch):

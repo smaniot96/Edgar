@@ -85,6 +85,7 @@ export interface AdventureGenerateResponse {
 }
 
 export interface AdventureRead {
+  preparation_setup_required?: boolean;
   rules_edition?: RulesEdition | "unspecified";
   slug: string;
   title: string;

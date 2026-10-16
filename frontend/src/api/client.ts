@@ -203,6 +203,10 @@ export function generateAdventure(
   return sendJson("POST", "/api/adventures/generate", body);
 }
 
+export function completePreparationSetup(slug: string, rules_edition: "2014" | "2024", preparation: import("./types").PreparationSetup): Promise<AdventureGenerateResponse> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/preparation/setup`, { rules_edition, preparation });
+}
+
 export async function deleteAdventure(slug: string): Promise<void> {
   await apiFetch(`/api/adventures/${encodeURIComponent(slug)}`, {
     method: "DELETE",
