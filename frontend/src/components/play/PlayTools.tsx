@@ -2,10 +2,12 @@ import { useRef, useState } from "react";
 
 import { JournalPanel } from "../journal/JournalPanel";
 import type { JournalCategory, JournalRead } from "../journal/types";
+import type { SessionMapRead } from "../../api/types";
 import { Button } from "../ui/Button";
 import type { PlayTool } from "./usePlayWorkspaceState";
 import { useModalFocus } from "./useModalFocus";
 import { useNarrowViewport } from "./useNarrowViewport";
+import { SessionMapPanel } from "./SessionMapPanel";
 
 export function PlayToolBar({
   activeTool,
@@ -52,6 +54,13 @@ export function PlayToolPanel({
   onRefresh,
   onClose,
   onOpenHistory,
+  sessionId,
+  map,
+  mapLoading,
+  mapError,
+  onMapRefresh,
+  onOpenMapJournalEntry,
+  onPrepareTravel,
 }: {
   activeTool: PlayTool;
   journal: { data: JournalRead | null; loading: boolean; error: unknown; stale: boolean };
@@ -64,6 +73,13 @@ export function PlayToolPanel({
   onRefresh: () => void;
   onClose: () => void;
   onOpenHistory: (eventId: number) => void;
+  sessionId: number;
+  map: SessionMapRead | null;
+  mapLoading: boolean;
+  mapError: unknown;
+  onMapRefresh: () => void;
+  onOpenMapJournalEntry: (entryId: string) => void;
+  onPrepareTravel: (place: string) => void;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
   const narrow = useNarrowViewport();
@@ -83,7 +99,7 @@ export function PlayToolPanel({
         role={narrow ? "dialog" : undefined}
         aria-modal={narrow ? true : undefined}
         tabIndex={narrow ? -1 : undefined}
-        className={`fixed inset-y-0 right-0 z-40 flex w-[min(28rem,92vw)] flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}
+        className={`fixed inset-y-0 right-0 z-40 flex ${activeTool === "map" && narrow ? "w-full" : "w-[min(28rem,92vw)]"} flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "map" ? "lg:w-[min(60vw,60rem)]" : activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
           <h2 className="min-w-0 flex-1 font-display text-lg font-semibold text-ink">{title}</h2>
@@ -117,7 +133,7 @@ export function PlayToolPanel({
             ✕
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className={activeTool === "map" ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]"}>
           {activeTool === "journal" ? (
             <JournalPanel
               {...journal}
@@ -132,12 +148,15 @@ export function PlayToolPanel({
               largeText={largeJournalText}
             />
           ) : (
-            <section aria-labelledby="map-unavailable-heading" className="rounded-control border border-line bg-surface p-4">
-              <h3 id="map-unavailable-heading" className="font-serif text-lg font-semibold text-ink">No map is available</h3>
-              <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-                This session does not have a map to show yet. The journal still tracks the places the story has recorded.
-              </p>
-            </section>
+            <SessionMapPanel
+              sessionId={sessionId}
+              map={map}
+              loading={mapLoading}
+              error={mapError}
+              onRefresh={onMapRefresh}
+              onOpenJournal={onOpenMapJournalEntry}
+              onPrepareTravel={onPrepareTravel}
+            />
           )}
         </div>
       </aside>

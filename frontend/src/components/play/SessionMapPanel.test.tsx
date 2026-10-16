@@ -1,0 +1,71 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { expect, it, vi } from "vitest";
+
+import type { SessionMapRead } from "../../api/types";
+import { SessionMapPanel } from "./SessionMapPanel";
+
+const map: SessionMapRead = {
+  session_id: 12,
+  source_version: "a".repeat(64),
+  topology: "prepared",
+  schematic: true,
+  scale: null,
+  current_scene_id: "harbor",
+  places: [
+    { scene_id: "harbor", title: "The harbor", status: "current", detail: null },
+    { scene_id: "watchtower", title: "The watchtower", status: "known", detail: "A narrow stair climbs above the pier." },
+  ],
+  routes: [{ from_scene_id: "harbor", to_scene_id: "watchtower" }],
+  note: "Schematic only.",
+  journal_entry_ids: { harbor: "entry-harbor", watchtower: "entry-watchtower" },
+  known_place_entries: [],
+  artwork: [],
+  tracking: "available",
+};
+
+it("fits and returns to the current place, and travel only calls the draft callback", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const onPrepareTravel = vi.fn();
+  const onOpenJournal = vi.fn();
+  const onSubmit = vi.fn();
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(() => root.render(
+      <form onSubmit={onSubmit}>
+        <SessionMapPanel
+          sessionId={12}
+          map={map}
+          loading={false}
+          error={null}
+          onRefresh={vi.fn()}
+          onOpenJournal={onOpenJournal}
+          onPrepareTravel={onPrepareTravel}
+        />
+      </form>,
+    ));
+
+    await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')!.click());
+    expect(container.querySelector("img")?.getAttribute("style")).toContain("125%");
+    await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Fit map")!.click());
+    expect(container.querySelector("img")?.getAttribute("style")).toContain("100%");
+
+    await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("The watchtower"))!.click());
+    expect(container.textContent).toContain("A narrow stair climbs above the pier.");
+    await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Add travel idea to draft")!.click());
+    expect(onPrepareTravel).toHaveBeenCalledExactlyOnceWith("The watchtower");
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Current place"))!.click());
+    expect(container.querySelector('button[aria-pressed="true"]')?.textContent).toContain("The harbor");
+    expect(localStorage.getItem(`edgar_play_map:v1:12:${map.source_version}`)).toContain('"sceneId":"harbor"');
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  }
+});

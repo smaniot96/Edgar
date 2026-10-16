@@ -16,6 +16,7 @@ import type {
   NPCListRead,
   SessionRead,
   SessionIntroRead,
+  SessionMapRead,
   UserRead,
   WorldFlagRead,
 } from "./types";
@@ -375,6 +376,10 @@ export function listSessions(campaignId?: number, signal?: AbortSignal): Promise
 
 export function getSession(id: number | string, signal?: AbortSignal): Promise<SessionRead> {
   return getJson(`/api/sessions/${id}`, signal);
+}
+
+export function getSessionMap(id: number | string, signal?: AbortSignal): Promise<SessionMapRead> {
+  return getJson(`/api/sessions/${id}/map`, signal);
 }
 
 export function listSessionMessages(id: number, signal?: AbortSignal): Promise<ChatMessageRead[]> {
