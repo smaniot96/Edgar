@@ -36,7 +36,7 @@ from sqlalchemy import select
 
 import db.postgres.session as db_session_module
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
-from agent.combatants import can_act, concentration_of, disposition_of
+from agent.combatants import can_act, concentration_of, disposition_of, stable_id
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
 from agent.nodes.narrator import (
@@ -469,6 +469,15 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
     """
     if not combat_state:
         return None
+    initiative = combat_state.get("initiative") or []
+    current_index = combat_state.get("current_turn_index")
+    current_turn_id = None
+    if (
+        not combat_state.get("ended")
+        and type(current_index) is int
+        and 0 <= current_index < len(initiative)
+    ):
+        current_turn_id = initiative[current_index].get("id")
     return {
         "round": combat_state.get("round"),
         "ended": combat_state.get("ended", False),
@@ -480,7 +489,7 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
                 "hp_current": c.get("hp_current"),
                 "hp_max": c.get("hp_max"),
                 "ac": c.get("ac"),
-                "id": c.get("name"),
+                "id": stable_id(c),
                 "alive": c.get("alive", True),
                 "disposition": disposition_of(c),
                 "can_act": can_act(c),
@@ -490,7 +499,8 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
             }
             for c in (combat_state.get("combatants") or [])
         ],
-        "initiative": combat_state.get("initiative") or [],
+        "initiative": initiative,
+        "current_turn_id": current_turn_id,
         "current_turn": combat_state.get("current_turn"),
         "current_turn_index": combat_state.get("current_turn_index"),
         "player_ac": combat_state.get("player_ac"),

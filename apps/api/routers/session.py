@@ -32,7 +32,7 @@ from ..services.combat import (
     load_combat_captives,
     load_resolved_combat_outcomes,
 )
-from ..services.npcs import load_npcs
+from ..services.npcs import load_npcs, model_context_npcs
 from ..services.roll_record import stored_roll
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
@@ -138,7 +138,7 @@ async def _load_turn_initial_state(
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
     npcs = await load_npcs(db, session.campaign_id, session_id)
-    npc_summaries = [{"name": n.name, "disposition": n.disposition} for n in npcs]
+    npc_summaries = model_context_npcs(npcs, story_state)
 
     initial_state: dict[str, Any] = {
         "player_input": message,
