@@ -88,6 +88,8 @@ disadvantage. The PARTIAL rows that remain say in their note why the engine cann
 | Healing Word: 1st, bonus action, 60 ft, 1d4 + mod, +1d4 per slot | `spells.CATALOG` | PHB PDF p.251 | PARTIAL | Dice, action and upcast MATCH. Caster-only target, as above (left in EDG-152 for the same reason). |
 | Guiding Bolt: 1st, 120 ft, spell attack, 4d6 radiant; next attack against target has advantage until end of your next turn; +1d6 per slot | `spells.CATALOG`, `conditions` | PHB PDF p.249 | MATCH | Mark kept for two rounds, which is "until the end of your next turn". Not concentration. Class cleric (PDF p.208). |
 | Blindness/Deafness: 2nd, 30 ft, CON save, one minute, repeat save at end of each turn, not concentration | `spells.CATALOG`, `conditions` | PHB PDF p.220 | MATCH | Duration 1 minute = 10 rounds. Blindness only, one target: PARTIAL (documented). |
+| Hold Person: 2nd, 60 ft, WIS save, paralyzed for up to one minute (concentration), humanoid only, repeat save at the end of each of its turns; one more humanoid per slot level above 2nd | `spells.CATALOG`, `spells.target_count`, `conditions`, `graph_combat` | PHB PDF p.252 | PARTIAL | Save, duration, humanoid gate, paralysis, repeat saves and the extra targets MATCH; each target rolls its own save and the spell lasts while any one is held. The extra targets are the foes the player names (the parser's target list), then the next humanoids in roster order, and fewer when fewer humanoids stand. The 60-foot range and the 30-foot limit between targets are not modelled: the engine tracks melee and ranged bands, not distances. Pinned in `tests/agent/test_concentration.py`. |
+| Concentration: one spell at a time; ends when another concentration spell is cast, when a damage save fails (DC 10 or half the damage, one save per source), and when the caster is incapacitated or dies | `conditions.concentration_save`, `drop_concentration`, `settle_concentration`, `graph_combat` | PHB p.203, PDF p.204 | PARTIAL | Everything but incapacitation MATCHES (a fall to 0 HP ends it without a save). Nothing the engine applies incapacitates the hero today, so that clause is not reachable and not applied. Of the catalog spells only Hold Person needs concentration: Blindness/Deafness (PDF p.220) lasts one minute and Guiding Bolt (PDF p.249) one round without it, and Cure Wounds, Fire Bolt, Healing Word, Magic Missile and Sacred Flame are instantaneous. Pinned in `tests/agent/test_concentration.py`. |
 | Full caster slot table (wizard, sorcerer, bard, cleric, druid) | `spells.FULL_CASTER_SLOTS` | PHB Wizard table, PDF p.114 | MATCH | All 20 rows read; rows 1, 5, 9, 17, 20 pinned in tests. |
 | Half caster slot table (paladin, ranger) | `spells.HALF_CASTER_SLOTS` | PHB Paladin table, PDF p.84; Ranger table PDF p.91 | MATCH | Paladin: all 20 rows. Ranger: rows 2-9 read, same progression. |
 | Cantrip dice scale at levels 5, 11, 17 | `spells._cantrip_tier` | PDF pp.243, 273 | MATCH | |
@@ -218,3 +220,13 @@ No 2024 book is on this machine, so these 2024 claims are not implemented or ver
   fixture in `tests/agent/test_monster_stats.py` now reads its Spit Breath as an executed action.
 - Full suite: 1431 passed, 200 skipped (DB-backed), 2 failed (the same Docker-only Qdrant tests as
   above). `uv run ruff check .` passes.
+
+## EDG-043: spell cases
+
+- Added rows: Hold Person (section 3) and Concentration (section 3), both PARTIAL for the clauses the
+  engine cannot express. Hold Person cast with a 3rd-level or higher slot holds one more humanoid per
+  level above 2nd; no other catalog spell needs concentration, so none gained it.
+- Left open: further concentration spells (for example Hold Monster, Bless or Hunter's Mark) are not in
+  the catalog and were not added; the concentration of the hero ending when it is incapacitated waits
+  for a condition the engine can apply to the hero.
+- Tests: `tests/agent/test_concentration.py` (seven cases added, scripted dice).

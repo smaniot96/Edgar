@@ -143,9 +143,12 @@ simulate (`GET /api/rules/supported-scope`):
   save DC is paralyzed for up to one minute. It cannot act but stays in the fight, attacks against it
   have advantage, a melee hit from within 5 feet is a critical hit (not from a reach weapon, whose
   distance is not tracked), and it repeats the save at the end of each of its turns. A foe whose
-  record gives no readable humanoid type is refused before any roll or slot. Only one target; upcast
-  extra targets are not modelled.
-- Concentration: the caster holds one concentration spell at a time. Casting another ends the first
+  record gives no readable humanoid type is refused before any roll or slot. Cast with a slot of 3rd
+  level or higher it holds one more humanoid per level above 2nd, each with its own save and repeat
+  save: the foes the player names first, then the next humanoids in roster order. The book's 30-foot
+  limit between the targets is not modelled (the engine tracks no distances).
+- Concentration: the caster holds one concentration spell at a time (Hold Person is the only
+  catalog spell that needs it). Casting another ends the first
   and its effects on foes. Taking damage requires a Constitution save (DC 10 or half the damage,
   whichever is higher, rounded down, with the sheet's save modifier); a failure, or a fall to 0 HP,
   ends it, as does the spell's minute or the end of its effect on every foe. The spell is shown in the

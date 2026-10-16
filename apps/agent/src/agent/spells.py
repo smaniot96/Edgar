@@ -25,13 +25,17 @@ the totals are derived from class and level, and a long rest clears the expended
 Casting time: `action` is "action" (the default) or "bonus_action" (Healing Word). A bonus-action
 spell uses the turn's bonus action slot (agent.action_economy), so the same turn may also attack.
 
-Concentration (Hold Person) is held by the caster and ends with the spell (`agent.conditions`). A
-humanoid-only spell is refused, with no slot spent, unless the target's record gives a humanoid type.
+Concentration (Hold Person) is held by the caster and ends with the spell (`agent.conditions`). Of the
+spells below only Hold Person needs it: Blindness/Deafness lasts one minute without concentration,
+Guiding Bolt one round, and the others are instantaneous (PHB pp.220, 231, 243, 249, 251, 252, 258,
+273). A humanoid-only spell is refused, with no slot spent, unless the target's record gives a humanoid
+type.
 Deliberately absent: Burning Hands (an area effect). Blindness/Deafness is cast here as blindness
 only, at one target: a declaration that names deafness alone is refused, and the upcast extra targets
-are not modelled. Hold Person is cast at one humanoid only; its upcast extra targets are not modelled. Healing Word heals only its caster, as Cure Wounds does; a creature
-other than the hero is not a target. A spell is added here only with its effect, cost and
-targeting implemented.
+are not modelled. Hold Person cast at a slot above 2nd affects one more humanoid per level
+(`target_count`); the "within 30 feet of each other" clause is not modelled, as the engine tracks
+bands, not distances. Healing Word heals only its caster, as Cure Wounds does; a creature other than
+the hero is not a target. A spell is added here only with its effect, cost and targeting implemented.
 """
 
 from __future__ import annotations
@@ -75,6 +79,7 @@ class SpellSpec:
     action: str = ACTION  # the turn slot the cast uses: ACTION or BONUS_ACTION
     concentration: bool = False  # the caster must concentrate; a second such spell ends this one
     humanoid_only: bool = False  # the target must be a humanoid (its record's type line)
+    upcast_targets: bool = False  # one more target per slot level above `level` (Hold Person)
     source: str = ""
 
 
@@ -171,9 +176,11 @@ CATALOG: tuple[SpellSpec, ...] = (
         duration_rounds=10,
         concentration=True,
         humanoid_only=True,
+        upcast_targets=True,
         source=(
             f"{_PHB}, Hold Person: a humanoid you can see makes a Wisdom save or is paralyzed for up to "
-            "one minute (concentration); it repeats the save at the end of each of its turns"
+            "one minute (concentration); it repeats the save at the end of each of its turns; one more "
+            "humanoid per slot level above 2nd"
         ),
     ),
     SpellSpec(
@@ -382,6 +389,11 @@ def cast_request(
         )
     plan, refusal = plan_cast(character, spell, requested_slot_level(player_input))
     return spell, plan, refusal
+
+
+def target_count(spec: SpellSpec, slot_level: int | None) -> int:
+    """How many creatures the cast may affect: one, plus one per slot level above the spell's if it scales."""
+    return 1 + (max(0, (slot_level or spec.level) - spec.level) if spec.upcast_targets else 0)
 
 
 def _cantrip_tier(level: int) -> int:

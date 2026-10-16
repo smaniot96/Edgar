@@ -30,7 +30,7 @@ from agent.graph_combat import combat_round_node
 from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
 from agent.monster_stats import MonsterStats, parse_monster_stats, stats_of
-from agent.spells import CATALOG, cast_request
+from agent.spells import CATALOG, cast_request, target_count
 from agent.supported_rules import (
     EngineApplied,
     apply_narration_boundary,
@@ -40,6 +40,8 @@ from tests.agent.test_spells import CLERIC, ScriptedDice, _combat_state, _foe, _
 from tools.dice import use_rng
 
 CLERIC_3 = {**CLERIC, "level": 3}  # second-level slots; spell save DC 13 (WIS 16)
+CLERIC_5 = {**CLERIC, "level": 5}  # a third-level slot; spell save DC 14
+CLERIC_7 = {**CLERIC, "level": 7}  # a fourth-level slot; spell save DC 14
 HOLD = next(s for s in CATALOG if s.name == "Hold Person")
 
 GOBLIN_TEXT = """Goblin
@@ -70,8 +72,8 @@ def _exact_foe(text: str = GOBLIN_TEXT, name: str = "Goblin", hp: int = 7) -> di
     return {**_foe(name, hp=hp, ac=stats.ac), "band": "melee", "monster_stats": stats.to_dict()}
 
 
-def _state(message: str, foes: list[dict], parsed: ParsedInput) -> dict:
-    state = _combat_state(CLERIC_3, message, parsed=parsed)
+def _state(message: str, foes: list[dict], parsed: ParsedInput, character: dict = CLERIC_3) -> dict:
+    state = _combat_state(character, message, parsed=parsed)
     state["combat_state"]["combatants"] = [state["combat_state"]["combatants"][0], *foes]
     return state
 
@@ -92,10 +94,12 @@ def _entries(out: dict, purpose: str) -> list[dict]:
     return [d for d in out["adjudication_result"].dice_log if d.get("purpose") == purpose]
 
 
-def _next_round(out: dict, message: str, parsed: ParsedInput, *, round_num: int) -> dict:
+def _next_round(
+    out: dict, message: str, parsed: ParsedInput, *, round_num: int, character: dict = CLERIC_3
+) -> dict:
     """The saved combat row round-tripped through JSON, as the next turn reads it."""
     saved = json.loads(json.dumps(out["combat_state"]["combatants"]))
-    follow = _state(message, [], parsed)
+    follow = _state(message, [], parsed, character)
     follow["combat_state"]["combatants"] = saved
     follow["combat_state"]["round"] = round_num
     return follow
@@ -517,3 +521,188 @@ async def test_a_hit_that_breaks_concentration_releases_the_held_foe(
     assert "Dara loses concentration on Hold Person (rolled 5 vs DC 10)." in _summary(out)
     assert concentration_of(out["combat_state"]["combatants"][0]) is None
     assert effects_of(_foe_in(out, "Bandit")) == []
+
+
+# --- which catalog spells need concentration, and Hold Person at a higher slot -----------------------
+
+
+def test_only_hold_person_among_the_catalog_spells_is_a_concentration_spell() -> None:
+    """PHB duration lines: Hold Person (PDF p.252) is "Concentration, up to 1 minute". Blindness/
+    Deafness (p.220) is 1 minute and Guiding Bolt (p.249) 1 round, with no concentration; Cure Wounds
+    (p.231), Fire Bolt (p.243), Healing Word (p.251), Magic Missile (p.258) and Sacred Flame (p.273)
+    are instantaneous.
+    """
+    assert {spell.name for spell in CATALOG if spell.concentration} == {"Hold Person"}
+
+
+def test_hold_person_reaches_one_more_humanoid_per_slot_level_above_second() -> None:
+    """PHB p.252 (PDF): "one additional humanoid for each slot level above 2nd". Blindness/Deafness
+    would reach more at a higher slot in the book, but the engine does not model that.
+    """
+    assert [target_count(HOLD, slot) for slot in (2, 3, 4, 9)] == [1, 2, 3, 8]
+    blindness = next(s for s in CATALOG if s.name == "Blindness/Deafness")
+    fire_bolt = next(s for s in CATALOG if s.name == "Fire Bolt")
+    assert (target_count(blindness, 4), target_count(fire_bolt, None)) == (1, 1)
+
+
+def _roster() -> list[dict]:
+    return [
+        _exact_foe(),
+        _exact_foe(BEAST_TEXT, name="Wolf"),
+        _exact_foe(name="Goblin 2"),
+        _exact_foe(name="Goblin 3"),
+        _exact_foe(name="Goblin 4"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_fourth_level_hold_person_holds_the_target_and_the_next_two_humanoids(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    """Only "Goblin" is named, so the two extra targets are the next humanoids in roster order:
+    Goblin 2 and Goblin 3 (the Wolf is a beast and Goblin 4 is beyond the count). Each makes its own
+    Wisdom save against DC 14 (8 + 3 proficiency + 3 WIS): Goblin rolls 5 - 1 and
+    Goblin 3 rolls 3 - 1, both failures; Goblin 2 rolls 15 - 1 = 14, a success. One 4th-level slot is
+    spent and one concentration holds both. Then the turns: the held goblins keep the effect (10 - 1 = 9)
+    and the free Wolf, Goblin 2 and Goblin 4 miss (2 + 4 = 6 vs AC 14).
+    """
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    state = _state(
+        "I cast Hold Person at Goblin using a 4th-level slot", _roster(), _cast(), CLERIC_7
+    )
+    with use_rng(ScriptedDice([5, 15, 3, 10, 2, 2, 10, 2])):
+        out = await combat_round_node(state)
+    held = {
+        c["name"]: [e["kind"] for e in effects_of(c)]
+        for c in out["combat_state"]["combatants"]
+        if not c.get("is_player")
+    }
+    assert held == {
+        "Goblin": ["paralyzed"],
+        "Wolf": [],
+        "Goblin 2": [],
+        "Goblin 3": ["paralyzed"],
+        "Goblin 4": [],
+    }
+    saves = _entries(out, "WIS save")
+    assert [(d["rolls"], d["total"]) for d in saves] == [([5], 4), ([15], 14), ([3], 2)]
+    assert "Goblin 2 succeeds on the WIS save against Hold Person (DC 14)" in _summary(out)
+    assert "Goblin 3 is paralyzed" in _summary(out)
+    assert out["adjudication_result"].character_update.spell_slots_expended == {"4": 1}
+    assert concentration_of(out["combat_state"]["combatants"][0])["spell"] == "Hold Person"
+
+
+@pytest.mark.asyncio
+async def test_the_players_named_humanoids_are_held_before_roster_order(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    """A 3rd-level slot reaches one extra humanoid. The player names Goblin, the Wolf and Goblin 4:
+    the beast is skipped (the spell affects humanoids only) and Goblin 4 is held rather than Goblin 2,
+    which is next in roster order but not named.
+    """
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    parsed = ParsedInput(
+        intent="combat",
+        check="spell_attack",
+        target="Goblin",
+        entities={"targets": ["Goblin", "Wolf", "Goblin 4"]},
+    )
+    roster = [
+        _exact_foe(),
+        _exact_foe(BEAST_TEXT, name="Wolf"),
+        _exact_foe(name="Goblin 2"),
+        _exact_foe(name="Goblin 4"),
+    ]
+    state = _state(
+        "I cast Hold Person at the goblin and Goblin 4 using a 3rd-level slot",
+        roster,
+        parsed,
+        CLERIC_5,
+    )
+    with use_rng(ScriptedDice([5, 5, 10, 2, 2, 10])):
+        out = await combat_round_node(state)
+    assert [c["name"] for c in out["combat_state"]["combatants"] if effects_of(c)] == [
+        "Goblin",
+        "Goblin 4",
+    ]
+    assert out["adjudication_result"].character_update.spell_slots_expended == {"3": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_higher_slot_with_no_other_humanoid_holds_one_foe_and_still_spends_the_slot(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    roster = [_exact_foe(), _exact_foe(BEAST_TEXT, name="Wolf")]
+    state = _state(
+        "I cast Hold Person at the goblin using a 3rd-level slot", roster, _cast(), CLERIC_5
+    )
+    with use_rng(ScriptedDice([5, 10, 2])):  # one save, the goblin's repeat save, the wolf's miss
+        out = await combat_round_node(state)
+    assert [c["name"] for c in out["combat_state"]["combatants"] if effects_of(c)] == ["Goblin"]
+    assert out["adjudication_result"].character_update.spell_slots_expended == {"3": 1}
+
+
+@pytest.mark.asyncio
+async def test_each_held_humanoid_repeats_its_own_save_and_the_spell_lasts_while_any_is_held(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    """Round 1 holds Goblin and Goblin 2 (saves 5 and 5, both keep the effect at 10 - 1 = 9 vs DC 14).
+    Round 2: Goblin's repeat save succeeds (15 - 1 = 14) and ends its paralysis, Goblin 2 keeps it
+    (10), so the concentration continues. Round 3: Goblin attacks and misses (2 + 4 = 6), Goblin 2's
+    save succeeds (15) and the concentration ends with the last held foe.
+    """
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    state = _state(
+        "I cast Hold Person at the goblin using a 3rd-level slot",
+        [_exact_foe(), _exact_foe(name="Goblin 2")],
+        _cast(),
+        CLERIC_5,
+    )
+    # Both saves fail, then each goblin keeps the effect at the end of its own turn.
+    with use_rng(ScriptedDice([5, 5, 9, 9])):
+        held = await combat_round_node(state)
+    wait = ParsedInput(intent="other")
+
+    second = _next_round(held, "I wait and watch", wait, round_num=2, character=CLERIC_5)
+    with use_rng(ScriptedDice([15, 10])):
+        out = await combat_round_node(second)
+    assert effects_of(_foe_in(out, "Goblin")) == []
+    assert [e["kind"] for e in effects_of(_foe_in(out, "Goblin 2"))] == ["paralyzed"]
+    assert concentration_of(out["combat_state"]["combatants"][0]) is not None
+
+    third = _next_round(out, "I wait and watch", wait, round_num=3, character=CLERIC_5)
+    with use_rng(ScriptedDice([2, 15])):
+        out = await combat_round_node(third)
+    assert effects_of(_foe_in(out, "Goblin 2")) == []
+    assert "Dara's concentration on Hold Person ends." in _summary(out)
+    assert concentration_of(out["combat_state"]["combatants"][0]) is None
+
+
+@pytest.mark.asyncio
+async def test_damage_that_breaks_concentration_releases_every_held_humanoid(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    """Goblin and Goblin 2 are held by one 3rd-level Hold Person. Round 2: Goblin 3 hits the cleric
+    (17 vs AC 14) for 6; the Constitution save is DC 10 and rolls 3 + 2 = 5, so both are released.
+    """
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    state = _state(
+        "I cast Hold Person at the goblin using a 3rd-level slot",
+        [_exact_foe(), _exact_foe(name="Goblin 2"), _exact_foe(name="Goblin 3")],
+        _cast(),
+        CLERIC_5,
+    )
+    with use_rng(ScriptedDice([5, 5, 9, 9, 2])):
+        held = await combat_round_node(state)
+    assert [c["name"] for c in held["combat_state"]["combatants"] if effects_of(c)] == [
+        "Goblin",
+        "Goblin 2",
+    ]
+    second = _next_round(
+        held, "I wait and watch", ParsedInput(intent="other"), round_num=2, character=CLERIC_5
+    )
+    with use_rng(ScriptedDice([9, 9, 17, 6, 3])):
+        out = await combat_round_node(second)
+    assert "Dara loses concentration on Hold Person (rolled 5 vs DC 10)." in _summary(out)
+    assert [c for c in out["combat_state"]["combatants"] if effects_of(c)] == []
