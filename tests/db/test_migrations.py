@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import URL
@@ -133,6 +134,49 @@ async def test_character_bounds_migration_preserves_rows_refuses_invalid_data_an
             )
         _alembic(postgres_env, "upgrade", "head")
         await engine.dispose()
+
+
+async def test_concurrent_upgrades_apply_each_migration_once(postgres_env) -> None:
+    # Two deploys race the same pending migrations on a populated database. Without the migration
+    # lock, the loser deadlocks or fails on a DDL statement the winner already ran.
+    database = f"migration_race_{uuid4().hex}"
+    url = URL.create(
+        "postgresql+asyncpg",
+        username=postgres_env["POSTGRES_USER"],
+        password=postgres_env["POSTGRES_PASSWORD"],
+        host=postgres_env["DB_HOST"],
+        port=int(postgres_env["DB_PORT"]),
+        database=postgres_env["POSTGRES_DB"],
+    )
+    admin = create_async_engine(url, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+    async with admin.connect() as connection:
+        await connection.execute(text(f'CREATE DATABASE "{database}"'))
+    try:
+        env = {**postgres_env, "POSTGRES_DB": database}
+        _alembic(env, "upgrade", "10_integrity")
+        racers = [
+            subprocess.Popen(
+                [sys.executable, "-m", "alembic", "upgrade", "head"],
+                cwd=_ROOT / "db",
+                env={**os.environ, **env},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            for _ in range(2)
+        ]
+        outputs = [racer.communicate(timeout=300)[0] for racer in racers]
+        assert [racer.returncode for racer in racers] == [0, 0], outputs
+        applied = [
+            line for output in outputs for line in output.splitlines() if "Running upgrade" in line
+        ]
+        assert applied, "neither migrator applied the pending revisions"
+        assert len(applied) == len(set(applied)), "a migration was applied twice"
+        assert "(head)" in _alembic(env, "current").stdout
+    finally:
+        async with admin.connect() as connection:
+            await connection.execute(text(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)'))
+        await admin.dispose()
 
 
 async def _constraint_names(connection, table):

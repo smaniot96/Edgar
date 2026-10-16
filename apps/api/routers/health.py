@@ -2,19 +2,24 @@
 
 `/ready` checks every backing service the API needs to serve a turn — Postgres, Redis and
 Qdrant — each with a short timeout, and returns 503 with a per-component breakdown if any
-of them is unreachable.
+of them is unreachable. It also reports `schema` as unavailable while the database revision is
+not this code's Alembic head, so a replica started against an older schema stays out of rotation.
 """
 
 import asyncio
+from functools import lru_cache
+from pathlib import Path
 
 import httpx
 import structlog
+from alembic.script import ScriptDirectory
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import db as db_package
 from edgar_core.config import VECTOR_DB_API_KEY, VECTOR_DB_URL
 
 from ..dependencies import get_redis, get_session
@@ -23,6 +28,7 @@ log = structlog.get_logger()
 router = APIRouter(tags=["health"])
 
 READY_TIMEOUT_SEC = 2.0
+ALEMBIC_DIR = Path(db_package.__file__).resolve().parent / "alembic"
 
 
 @router.get("/health")
@@ -32,6 +38,17 @@ def health():
 
 async def _check_postgres(db: AsyncSession) -> None:
     await db.execute(text("SELECT 1"))
+
+
+@lru_cache(maxsize=1)
+def _code_head() -> str:
+    return ScriptDirectory(str(ALEMBIC_DIR)).get_current_head()
+
+
+async def _check_schema(db: AsyncSession) -> None:
+    revision = (await db.execute(text("SELECT version_num FROM alembic_version"))).scalar_one()
+    if revision != _code_head():
+        raise RuntimeError(f"database is at {revision}, this code expects {_code_head()}")
 
 
 async def _check_redis(redis: Redis) -> None:
@@ -59,8 +76,13 @@ async def ready(
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
-    # Postgres runs on its own: the AsyncSession must not be used concurrently.
-    results = dict([await _probe("postgres", _check_postgres(db))])
+    # Postgres and schema share the AsyncSession, so they run one after the other.
+    results = dict(
+        [
+            await _probe("postgres", _check_postgres(db)),
+            await _probe("schema", _check_schema(db)),
+        ]
+    )
     results.update(
         await asyncio.gather(
             _probe("redis", _check_redis(redis)),
