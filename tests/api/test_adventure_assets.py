@@ -149,6 +149,106 @@ def test_image_spend_reserves_call_cap_and_refunds_only_authoritative_actual(tmp
         assets._reserve_image_call(**{**binding, "job_key": "f" * 64})
 
 
+def test_run_image_reservations_remain_bounded_across_repair_versions(tmp_path, monkeypatch):
+    monkeypatch.setattr(assets, "ASSET_ROOT", tmp_path)
+    run_id = "prep-" + "9" * 32
+    base = {
+        "collection": "synthetic",
+        "max_image_calls": 2,
+        "max_image_cost_microusd": 500_000,
+        "max_image_call_cost_microusd": 250_000,
+        "image_price_revision": "vendor-price-2026-09",
+        "image_price_model": "gpt-image-1",
+        "image_price_size": "1024x1024",
+        "image_price_quality": "medium",
+        "timeout_seconds": 1,
+        "run_id": run_id,
+    }
+    first = assets._reserve_image_call(
+        **base,
+        source_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        prepared_sha256="c" * 64,
+        job_key="d" * 64,
+    )
+    assert assets._finish_job(
+        collection="synthetic",
+        source_sha256="a" * 64,
+        manifest_sha256="b" * 64,
+        job_key="d" * 64,
+        attempt_id=first,
+        state="failed",
+    )
+    # Repair changes all version digests, while the same run-level allowance is charged.
+    second = assets._reserve_image_call(
+        **base,
+        source_sha256="e" * 64,
+        manifest_sha256="f" * 64,
+        prepared_sha256="1" * 64,
+        job_key="2" * 64,
+    )
+    assert assets._finish_job(
+        collection="synthetic",
+        source_sha256="e" * 64,
+        manifest_sha256="f" * 64,
+        job_key="2" * 64,
+        attempt_id=second,
+        state="failed",
+    )
+    with pytest.raises(assets.ImageBudgetExceeded):
+        assets._reserve_image_call(
+            **base,
+            source_sha256="3" * 64,
+            manifest_sha256="4" * 64,
+            prepared_sha256="5" * 64,
+            job_key="6" * 64,
+        )
+    usage = assets.image_usage(
+        collection="synthetic",
+        source_sha256="e" * 64,
+        manifest_sha256="f" * 64,
+        prepared_sha256="1" * 64,
+        run_id=run_id,
+    )
+    assert usage["reserved"] == 2
+    assert usage["reserved_cost_microusd"] == 500_000
+    assert usage["failed"] == 2
+    assert usage["failed_cost_microusd"] == 500_000
+    assert len(usage["job_keys"]) == 2
+
+
+def test_commissioned_image_budget_freezes_matching_profile_and_trusted_price(monkeypatch):
+    profiles = assets.current_model_profiles()
+    profile = assets.effective_image_profile("image.illustration", profiles)
+    price = {
+        "revision": "documented-price-test",
+        "model": profile.model,
+        "size": profile.size,
+        "quality": profile.quality,
+        "unit_cost_microusd": 125_000,
+    }
+    monkeypatch.setenv("EDGAR_TRUSTED_IMAGE_PRICE_RECORD", json.dumps(price))
+    frozen = assets.commissioned_image_budget(
+        profile_snapshot=profiles.to_dict(),
+        max_image_calls=4,
+        max_image_cost_microusd=400_000,
+    )
+    assert frozen["max_image_calls"] == 4
+    assert frozen["max_image_call_cost_microusd"] == 125_000
+    assert frozen["image_price_revision"] == "documented-price-test"
+    assert frozen["effective_profile"] == profile.to_dict()
+    assert frozen["profile_digest"] == profiles.digest
+
+    price["model"] = "other-image-model"
+    monkeypatch.setenv("EDGAR_TRUSTED_IMAGE_PRICE_RECORD", json.dumps(price))
+    with pytest.raises(assets.AssetServiceError, match="does not match"):
+        assets.commissioned_image_budget(
+            profile_snapshot=profiles.to_dict(),
+            max_image_calls=4,
+            max_image_cost_microusd=400_000,
+        )
+
+
 def test_image_budget_requires_frozen_total_and_per_call_cost_caps():
     with pytest.raises(ValueError, match="per-call image cost cap"):
         assets.AssetImageBudget(max_image_calls=1, max_image_cost_microusd=10)

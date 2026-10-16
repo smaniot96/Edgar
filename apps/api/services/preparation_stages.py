@@ -681,13 +681,21 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             from edgar_core.assets import AssetRequirement, plan_assets
 
             manifest, _ = assemble_manifest(binding, deps)
+            image_calls = binding.commission.get("image_budget", {}).get("max_image_calls", 0)
+            image_instruction = (
+                f"Generated scene art may be proposed as optional decoration, within at most {image_calls} "
+                "commissioned image calls and the frozen image sub-budget. Generated illustrations remain optional "
+                "because this commission does not make any illustration a required asset."
+                if image_calls
+                else "No image generation is enabled in this commission; do not propose generated illustrations."
+            )
             requests = await propose(
                 AssetRequests,
                 "Plan only relevant supporting assets against canonical IDs: exact clue handouts, printed map crops/original "
                 "creature art when verified provenance exists, and optional generated scene art. Requirements use AssetRequirement "
                 "schema given below. Every act already receives a required deterministic topology map. Exact clue handouts "
                 "needed to play are required. Never fabricate source crops/art IDs. Generated decoration is optional unless "
-                "explicitly commissioned; no image generation budget is enabled in this commission.",
+                f"explicitly commissioned. {image_instruction}",
                 {
                     **base,
                     "canonical": manifest.model_dump(mode="json"),
@@ -696,7 +704,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             )
             requirements = [AssetRequirement.model_validate(r) for r in requests.requirements]
             if any(r.kind == "generated_illustration" and r.required for r in requirements):
-                raise ValueError("Uncommissioned required paid illustration.")
+                raise ValueError("Generated illustrations are optional under the frozen commission.")
             plan = plan_assets(
                 manifest,
                 [r for r in requirements if r.kind != "handout"],
@@ -867,13 +875,13 @@ async def _review_campaign(binding, task, deps, key, propose):
     )
 
     from .adventure_assets import (
-        AssetImageBudget,
         apply_rejected_visual_review_to_coverage,
         apply_visual_review_to_coverage,
         enumerate_private_visual_candidates,
         prepare_assets,
         sign_and_persist_visual_review,
     )
+    from .preparation_runtime import _asset_image_budget_for_binding
 
     manifest, extraction = assemble_manifest(binding, deps, final=True)
     manuscript = _retained(binding, deps, manifest)
@@ -906,7 +914,8 @@ async def _review_campaign(binding, task, deps, key, propose):
         else None,
         page_texts=dict(extraction.text_pages()),
         image_profiles=ModelProfileSnapshot.from_dict(binding.profile_snapshot),
-        image_budget=AssetImageBudget(max_image_calls=0),
+        image_budget=_asset_image_budget_for_binding(binding),
+        run_id=binding.run_id,
     )
     visual_reviews = []
     for candidate in enumerate_private_visual_candidates(

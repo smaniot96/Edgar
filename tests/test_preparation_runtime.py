@@ -233,6 +233,76 @@ def test_generation_commission_freezes_validated_scope(size, act_count):
     assert commission["setup"] == setup["request"]
 
 
+def test_binding_freezes_image_price_and_partitions_total_budget(monkeypatch):
+    import json
+
+    from apps.api.schemas.preparation_setup import PreparationSetup
+    from apps.api.services import adventure_assets
+    from edgar_core.model_profiles import effective_image_profile
+
+    profiles, profile_data = runtime._profiles_snapshot()
+    profile = effective_image_profile("image.illustration", profiles)
+    monkeypatch.setenv(
+        "EDGAR_TRUSTED_IMAGE_PRICE_RECORD",
+        json.dumps(
+            {
+                "revision": "documented-price-test",
+                "model": profile.model,
+                "size": profile.size,
+                "quality": profile.quality,
+                "unit_cost_microusd": 100,
+            }
+        ),
+    )
+    request = PreparationSetup(
+        character_ids=[7],
+        max_cost_microusd=1000,
+        max_image_calls=4,
+        max_image_cost_microusd=400,
+    ).model_dump()
+    meta = {"generation": {"kind": "ai", "size": "small"}}
+    binding = runtime._binding_for(
+        "private",
+        meta,
+        {"request": request, "heroes": {"heroes": [{"character_id": 7}]}},
+        profile_data,
+        "prep-" + "a" * 32,
+        None,
+    )
+
+    frozen = binding.commission["image_budget"]
+    assert frozen["image_price_revision"] == "documented-price-test"
+    assert frozen["max_image_calls"] == 4
+    assert frozen["max_image_cost_microusd"] == 400
+    assert frozen["effective_profile"] == profile.to_dict()
+    assert binding.budget.max_cost_microusd == 600
+    assert runtime._asset_image_budget_for_binding(binding).max_image_calls == 4
+    assert adventure_assets.commissioned_image_budget(
+        profile_snapshot=profile_data,
+        max_image_calls=4,
+        max_image_cost_microusd=400,
+    ) == frozen
+
+
+def test_default_image_budget_stays_disabled_and_keeps_full_semantic_budget(monkeypatch):
+    from apps.api.schemas.preparation_setup import PreparationSetup
+
+    monkeypatch.delenv("EDGAR_TRUSTED_IMAGE_PRICE_RECORD", raising=False)
+    _, profile_data = runtime._profiles_snapshot()
+    request = PreparationSetup(character_ids=[7], max_cost_microusd=1000).model_dump()
+    binding = runtime._binding_for(
+        "private",
+        {"generation": {"kind": "ai", "size": "small"}},
+        {"request": request, "heroes": {"heroes": [{"character_id": 7}]}},
+        profile_data,
+        "prep-" + "b" * 32,
+        None,
+    )
+    assert binding.commission["image_budget"]["max_image_calls"] == 0
+    assert binding.budget.max_cost_microusd == 1000
+    assert runtime._asset_image_budget_for_binding(binding).max_image_calls == 0
+
+
 def test_asset_coverage_uses_the_real_receipt_contract():
     from edgar_core.assets import AssetCoverageReceipt
 

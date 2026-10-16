@@ -132,19 +132,23 @@ def _setup_snapshot(meta: dict) -> dict | None:
     if len(set(request.character_ids)) != len(request.character_ids):
         raise ValueError("Captured hero selection contains duplicates.")
     heroes = setup.get("heroes")
-    if isinstance(heroes, list) and heroes:
-        from edgar_core.grounding import HeroPartySnapshot
+    if not isinstance(heroes, list) or not heroes:
+        return None
+    from edgar_core.grounding import HeroPartySnapshot
 
-        try:
-            party = HeroPartySnapshot.model_validate({"heroes": heroes})
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Captured hero snapshot is invalid.") from exc
-        canonical_party = party.model_dump(mode="json")
-        ids = [hero.character_id for hero in party.heroes]
-        if ids != request.character_ids:
-            raise ValueError("Captured hero selection does not match the setup request.")
-        return {"request": request.model_dump(), "heroes": canonical_party}
-    return None
+    try:
+        party = HeroPartySnapshot.model_validate({"heroes": heroes})
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Captured hero snapshot is invalid.") from exc
+    canonical_party = party.model_dump(mode="json")
+    ids = [hero.character_id for hero in party.heroes]
+    if ids != request.character_ids:
+        raise ValueError("Captured hero selection does not match the setup request.")
+    normalized_request = request.model_dump()
+    for name in ("max_image_calls", "max_image_cost_microusd"):
+        if name not in setup["request"]:
+            normalized_request.pop(name, None)
+    return {"request": normalized_request, "heroes": canonical_party}
 
 
 def _generation_commission(meta: dict, setup: dict) -> dict[str, Any]:
@@ -207,13 +211,23 @@ def _binding_for(
         commission.update({"source_kind": "ai", "rules_edition": edition})
         source_sha = None
         extraction_sha = None
+
+    from .adventure_assets import commissioned_image_budget
+
+    image_budget = commissioned_image_budget(
+        profile_snapshot=profile_data,
+        max_image_calls=request.get("max_image_calls", 0),
+        max_image_cost_microusd=request.get("max_image_cost_microusd", 0),
+    )
+    commission["image_budget"] = image_budget
+    if mode == "ai":
         commission_digest = digest(commission)
         version = f"ai-{commission_digest[:40]}"
 
     budget = PreparationBudget(
         max_provider_calls=request["max_provider_calls"],
         max_total_tokens=request["max_total_tokens"],
-        max_cost_microusd=request["max_cost_microusd"],
+        max_cost_microusd=request["max_cost_microusd"] - image_budget["max_image_cost_microusd"],
         max_attempts_per_task=3,
         max_repair_rounds=2,
         max_parallel_tasks=3,
@@ -242,6 +256,46 @@ def _binding_for(
         profile_snapshot_sha256=profile_sha,
         verified_book_bindings=tuple(copy.deepcopy(book_bindings)),
         budget=budget,
+    )
+
+
+def _asset_image_budget_for_binding(binding: PreparationRunBinding):
+    """Validate and expose the image allowance frozen in a run commission."""
+    from edgar_core.model_profiles import ModelProfileSnapshot, effective_image_profile
+
+    from .adventure_assets import AssetImageBudget
+
+    request = binding.commission.get("setup", binding.commission)
+    frozen = binding.commission.get("image_budget")
+    if frozen is None and request.get("max_image_calls", 0) == 0:
+        # Existing persisted runs predate optional image commissioning and remain disabled.
+        if binding.budget.max_cost_microusd != request.get("max_cost_microusd", 0):
+            raise PreparationError("The legacy semantic budget does not match its commission.")
+        return AssetImageBudget(max_image_calls=0)
+    if not isinstance(frozen, dict):
+        raise PreparationError("The run commission has no frozen image budget.")
+    enabled = frozen.get("max_image_calls", 0) > 0
+    if enabled:
+        profile_snapshot = ModelProfileSnapshot.from_dict(binding.profile_snapshot)
+        effective = effective_image_profile("image.illustration", profile_snapshot)
+        if (
+            frozen.get("effective_profile") != effective.to_dict()
+            or frozen.get("profile_digest") != profile_snapshot.digest
+        ):
+            raise PreparationError("The frozen image profile does not match this preparation run.")
+    if not enabled and (frozen.get("effective_profile") is not None or frozen.get("profile_digest") is not None):
+        raise PreparationError("Disabled image generation cannot carry a paid image profile.")
+    if (
+        frozen.get("max_image_calls") != request.get("max_image_calls", 0)
+        or frozen.get("max_image_cost_microusd") != request.get("max_image_cost_microusd", 0)
+        or frozen.get("max_image_cost_microusd", 0) > request.get("max_cost_microusd", 0)
+        or binding.budget.max_cost_microusd
+        + frozen.get("max_image_cost_microusd", 0)
+        != request.get("max_cost_microusd", 0)
+    ):
+        raise PreparationError("The frozen semantic and image budgets do not match the total commission.")
+    return AssetImageBudget.model_validate(
+        {key: value for key, value in frozen.items() if key in AssetImageBudget.model_fields}
     )
 
 
@@ -310,15 +364,19 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             expected_commission.update(
                 {"source_kind": "pdf", "source_sha256": binding.source_sha256}
             )
+            if "image_budget" in binding.commission:
+                expected_commission["image_budget"] = copy.deepcopy(binding.commission["image_budget"])
             if canonical_sha256(expected_commission) != binding.commission_sha256:
                 return False
         else:
+            expected_commission = _generation_commission(meta, setup)
+            expected_commission.update(
+                {"source_kind": "ai", "rules_edition": binding.rules_edition}
+            )
+            if "image_budget" in binding.commission:
+                expected_commission["image_budget"] = copy.deepcopy(binding.commission["image_budget"])
             if (
-                canonical_sha256(
-                    _generation_commission(meta, setup)
-                    | {"source_kind": "ai", "rules_edition": binding.rules_edition}
-                )
-                != binding.commission_sha256
+                canonical_sha256(expected_commission) != binding.commission_sha256
             ):
                 return False
         frozen = meta.get("preparation_binding")

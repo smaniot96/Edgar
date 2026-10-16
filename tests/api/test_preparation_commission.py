@@ -58,3 +58,16 @@ async def test_duplicate_heroes_rejected_before_database():
     with pytest.raises(HTTPException) as error:
         await capture_setup(PreparationSetup(character_ids=[7, 7], max_cost_microusd=1000000))
     assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"max_image_calls": 2},
+        {"max_image_cost_microusd": 100},
+        {"max_image_calls": 2, "max_image_cost_microusd": 1_000_001},
+    ],
+)
+def test_image_budget_requires_paired_caps_within_total(values):
+    with pytest.raises(ValueError):
+        PreparationSetup(character_ids=[7], max_cost_microusd=1_000_000, **values)

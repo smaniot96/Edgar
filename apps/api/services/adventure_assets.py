@@ -203,6 +203,50 @@ class TrustedImagePriceRecord(BaseModel):
     unit_cost_microusd: int = Field(gt=0)
 
 
+def commissioned_image_budget(
+    *, profile_snapshot: dict[str, Any], max_image_calls: int, max_image_cost_microusd: int
+) -> dict[str, Any]:
+    """Freeze the requested image sub-budget against server-owned profile and pricing data."""
+    if max_image_calls == 0:
+        if max_image_cost_microusd != 0:
+            raise AssetServiceError("Image budget must be disabled when image calls are disabled.")
+        return {
+            "max_image_calls": 0,
+            "max_image_cost_microusd": 0,
+            "max_image_call_cost_microusd": 0,
+            "image_price_revision": None,
+            "image_price_model": None,
+            "image_price_size": None,
+            "image_price_quality": None,
+            "effective_profile": None,
+            "profile_digest": None,
+        }
+    if max_image_calls < 0 or max_image_cost_microusd <= 0:
+        raise AssetServiceError("The commissioned image budget is invalid.")
+    profiles = ModelProfileSnapshot.from_dict(profile_snapshot)
+    profile = effective_image_profile("image.illustration", profiles)
+    price = _trusted_image_price_record()
+    if price is None:
+        raise AssetServiceError(
+            "Paid image generation requires a server-configured documented price record."
+        )
+    if (price.model, price.size, price.quality) != (profile.model, profile.size, profile.quality):
+        raise AssetServiceError("The documented image price does not match the effective illustration profile.")
+    if price.unit_cost_microusd > max_image_cost_microusd:
+        raise AssetServiceError("The image sub-budget is below the documented cost of one image call.")
+    return {
+        "max_image_calls": max_image_calls,
+        "max_image_cost_microusd": max_image_cost_microusd,
+        "max_image_call_cost_microusd": price.unit_cost_microusd,
+        "image_price_revision": price.revision,
+        "image_price_model": price.model,
+        "image_price_size": price.size,
+        "image_price_quality": price.quality,
+        "effective_profile": profile.to_dict(),
+        "profile_digest": profiles.digest,
+    }
+
+
 def _trusted_image_price_record() -> TrustedImagePriceRecord | None:
     raw = os.environ.get("EDGAR_TRUSTED_IMAGE_PRICE_RECORD")
     if not raw:
@@ -345,7 +389,18 @@ def _job_key(
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _budget_file(collection: str, source_sha256: str, manifest_sha256: str, prepared_sha256: str) -> Path:
+def _budget_file(
+    collection: str,
+    source_sha256: str,
+    manifest_sha256: str,
+    prepared_sha256: str,
+    *,
+    run_id: str | None = None,
+) -> Path:
+    if run_id is not None:
+        if not re.fullmatch(r"prep-[0-9a-f]{32}", run_id):
+            raise AssetServiceError("Preparation run identity is invalid.")
+        return (_ASSET_ROOT_OVERRIDE.get() or ASSET_ROOT) / collection / "runs" / run_id / "image-budget.json"
     return _version_dir(collection, source_sha256, manifest_sha256) / f"budget-{prepared_sha256}.json"
 
 
@@ -363,15 +418,22 @@ def _reserve_image_call(
     image_price_size: str,
     image_price_quality: str,
     timeout_seconds: float,
+    run_id: str | None = None,
 ) -> str:
     version_dir = _version_dir(collection, source_sha256, manifest_sha256)
     version_dir.mkdir(parents=True, exist_ok=True)
-    budget_path = _budget_file(collection, source_sha256, manifest_sha256, prepared_sha256)
+    budget_path = _budget_file(
+        collection, source_sha256, manifest_sha256, prepared_sha256, run_id=run_id
+    )
     job_path = version_dir / "jobs" / f"{job_key}.json"
     lock_path = version_dir / "jobs.lock"
+    budget_lock_path = budget_path.with_suffix(".lock")
+    budget_lock_path.parent.mkdir(parents=True, exist_ok=True)
     attempt_id = uuid.uuid4().hex
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        budget_lock = budget_lock_path.open("a+")
+        fcntl.flock(budget_lock.fileno(), fcntl.LOCK_EX)
         try:
             job = json.loads(job_path.read_text()) if job_path.is_file() else {}
             if job.get("state") == "completed":
@@ -428,8 +490,42 @@ def _reserve_image_call(
                 prepared_sha256=prepared_sha256,
                 stale_after=time.time() + timeout_seconds + 30,
             )
+            if run_id is not None:
+                job["run_id"] = run_id
+                job["manifest_sha256"] = manifest_sha256
+                job["source_sha256"] = source_sha256
             _atomic_write(job_path, json.dumps(job, sort_keys=True).encode())
             return attempt_id
+        finally:
+            fcntl.flock(budget_lock.fileno(), fcntl.LOCK_UN)
+            budget_lock.close()
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _refund_image_budget(
+    *,
+    collection: str,
+    source_sha256: str,
+    manifest_sha256: str,
+    prepared_sha256: str,
+    run_id: str | None,
+    amount_microusd: int,
+) -> None:
+    if amount_microusd <= 0:
+        return
+    budget_path = _budget_file(
+        collection, source_sha256, manifest_sha256, prepared_sha256, run_id=run_id
+    )
+    lock_path = budget_path.with_suffix(".lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            budget = json.loads(budget_path.read_text())
+            reserved = int(budget.get("reserved_cost_microusd", 0))
+            if amount_microusd > reserved:
+                raise AssetServiceError("Image budget settlement exceeded its frozen reservation.")
+            budget["reserved_cost_microusd"] = reserved - amount_microusd
+            _atomic_write(budget_path, json.dumps(budget, sort_keys=True).encode())
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
@@ -469,18 +565,18 @@ def _finish_job(
                 job["cost_refunded_microusd"] = int(
                     job.get("cost_refunded_microusd", 0)
                 ) + (call_cap - actual)
-                budget_path = _budget_file(
-                    collection, source_sha256, manifest_sha256, job["prepared_sha256"]
-                )
             job.pop("attempt_id", None)
             job.pop("active_call_cost_microusd", None)
             _atomic_write(job_path, json.dumps(job, sort_keys=True).encode())
             if state == "completed":
-                budget = json.loads(budget_path.read_text())
-                budget["reserved_cost_microusd"] = int(
-                    budget.get("reserved_cost_microusd", 0)
-                ) - (call_cap - actual)
-                _atomic_write(budget_path, json.dumps(budget, sort_keys=True).encode())
+                _refund_image_budget(
+                    collection=collection,
+                    source_sha256=source_sha256,
+                    manifest_sha256=manifest_sha256,
+                    prepared_sha256=job["prepared_sha256"],
+                    run_id=job.get("run_id"),
+                    amount_microusd=call_cap - actual,
+                )
             return True
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -573,17 +669,17 @@ def _record_artifact(
             current["cost_refunded_microusd"] = int(
                 current.get("cost_refunded_microusd", 0)
             ) + call_cap - actual
-            budget_path = _budget_file(
-                collection, manifest.source_sha256, manifest_hash, current["prepared_sha256"]
-            )
             current.pop("attempt_id", None)
             current.pop("active_call_cost_microusd", None)
             _atomic_write(job_path, json.dumps(current, sort_keys=True).encode())
-            budget = json.loads(budget_path.read_text())
-            budget["reserved_cost_microusd"] = int(
-                budget.get("reserved_cost_microusd", 0)
-            ) - (call_cap - actual)
-            _atomic_write(budget_path, json.dumps(budget, sort_keys=True).encode())
+            _refund_image_budget(
+                collection=collection,
+                source_sha256=manifest.source_sha256,
+                manifest_sha256=manifest_hash,
+                prepared_sha256=current["prepared_sha256"],
+                run_id=current.get("run_id"),
+                amount_microusd=call_cap - actual,
+            )
     finally:
         if job_lock is not None:
             fcntl.flock(job_lock.fileno(), fcntl.LOCK_UN)
@@ -1108,6 +1204,7 @@ async def _run_image_job(
     image_price_quality: str,
     retry_failed: bool,
     on_reserved: Callable[[str], None],
+    run_id: str | None = None,
 ) -> tuple[AssetArtifactRecord, int]:
     if (
         image_price_model != profile.model
@@ -1176,6 +1273,7 @@ async def _run_image_job(
         image_price_size=image_price_size,
         image_price_quality=image_price_quality,
         timeout_seconds=profile.timeout_seconds,
+        run_id=run_id,
     )
     on_reserved(job_key)
     try:
@@ -1232,6 +1330,7 @@ async def prepare_assets(
     image_budget: AssetImageBudget | dict | None = None,
     image_provider: ImageGenerationProvider | None = None,
     retry_failed: bool = False,
+    run_id: str | None = None,
 ) -> AssetCoverageReceipt:
     """P08 production adapter; writes retained artifacts and a typed per-item gate receipt."""
     reviewed = require_published(manifest)
@@ -1363,6 +1462,7 @@ async def prepare_assets(
                         image_price_size=budget.image_price_size or "",
                         image_price_quality=budget.image_price_quality or "",
                         on_reserved=reserved_keys.append,
+                        run_id=run_id,
                     )
                     image_calls_reserved += len(reserved_keys)
                     image_calls_succeeded += len(reserved_keys)
@@ -1574,31 +1674,54 @@ def get_asset_bytes(
 
 
 def image_usage(
-    *, collection: str, source_sha256: str, manifest_sha256: str, prepared_sha256: str
+    *,
+    collection: str,
+    source_sha256: str,
+    manifest_sha256: str,
+    prepared_sha256: str,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Read durable reservation and outcome counters for supervisor reconciliation."""
     directory = _version_dir(collection, source_sha256, manifest_sha256)
     jobs_dir = directory / "jobs"
-    jobs = []
-    if jobs_dir.is_dir():
-        for path in jobs_dir.glob("*.json"):
-            if not path.is_file():
-                continue
-            job = json.loads(path.read_text())
-            if job.get("prepared_sha256") == prepared_sha256:
-                jobs.append(job)
-    budget_path = _budget_file(collection, source_sha256, manifest_sha256, prepared_sha256)
+    if run_id is None:
+        job_paths = jobs_dir.glob("*.json") if jobs_dir.is_dir() else ()
+        jobs = [
+            job
+            for path in job_paths
+            if path.is_file()
+            and (job := json.loads(path.read_text())).get("prepared_sha256") == prepared_sha256
+        ]
+        known_jobs = sorted(
+            path.stem
+            for path in jobs_dir.glob("*.json")
+            if path.is_file()
+            and json.loads(path.read_text()).get("prepared_sha256") == prepared_sha256
+        ) if jobs_dir.is_dir() else []
+    else:
+        if not re.fullmatch(r"prep-[0-9a-f]{32}", run_id):
+            raise AssetServiceError("Preparation run identity is invalid.")
+        collection_dir = (_ASSET_ROOT_OVERRIDE.get() or ASSET_ROOT) / collection
+        job_paths = list(collection_dir.glob("*/*/jobs/*.json"))
+        jobs = [
+            job
+            for path in job_paths
+            if path.is_file() and (job := json.loads(path.read_text())).get("run_id") == run_id
+        ]
+        known_jobs = sorted(
+            f"{job.get('manifest_sha256', '')}:{path.stem}"
+            for path in job_paths
+            if path.is_file()
+            and (job := json.loads(path.read_text())).get("run_id") == run_id
+        )
+    budget_path = _budget_file(
+        collection, source_sha256, manifest_sha256, prepared_sha256, run_id=run_id
+    )
     budget = (
         json.loads(budget_path.read_text())
         if budget_path.is_file()
         else {"reserved_calls": 0, "reserved_cost_microusd": 0}
     )
-    known_jobs = sorted(
-        path.stem
-        for path in jobs_dir.glob("*.json")
-        if path.is_file()
-        and json.loads(path.read_text()).get("prepared_sha256") == prepared_sha256
-    ) if jobs_dir.is_dir() else []
     return {
         "prepared_sha256": prepared_sha256,
         "reserved": int(budget.get("reserved_calls", 0)),
@@ -1745,5 +1868,5 @@ __all__ = [
     "get_asset_bytes", "plan_assets", "prepare_assets", "release_player_visual",
     "sign_and_persist_visual_review", "validate_asset_coverage",
     "get_authorized_player_asset_bytes",
-    "image_usage",
+    "image_usage", "commissioned_image_budget",
 ]
