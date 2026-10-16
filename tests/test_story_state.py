@@ -61,6 +61,15 @@ def test_session_npc_projection_deduplicates_revisions_and_rejects_unearned_rows
             disposition="dead",
             stat_block={},
         ),
+        NPC(
+            id=5,
+            campaign_id=3,
+            session_id=9,
+            story_identity=None,
+            name="Legacy session note",
+            disposition="friendly",
+            stat_block={},
+        ),
     ]
     projected = _project_session_npcs(
         rows,
@@ -69,7 +78,69 @@ def test_session_npc_projection_deduplicates_revisions_and_rejects_unearned_rows
     assert [(npc.name, npc.disposition, npc.journal_entry_id) for npc in projected] == [
         ("Mara", "friendly", "actor_entry"),
         ("Goblin", "dead", None),
+        ("Legacy session note", "friendly", None),
     ]
+
+
+def test_model_npc_context_uses_only_earned_actor_names():
+    from apps.api.services.npcs import model_context_npcs
+    from edgar_core.story import StoryFact, story_target_id
+
+    first_effect = effect(
+        "encounter",
+        "mara_quill",
+        "encountered",
+        player_text="A guard named Mara asks you to wait.",
+        display_name="Mara Quill",
+    )
+    second_effect = effect(
+        "encounter",
+        "unnamed_guard",
+        "encountered",
+        player_text="A hooded stranger greets you.",
+        display_name="Ilyra Vane",
+    )
+    first = StoryFact(**first_effect.model_dump(), fact_id=story_target_id(first_effect.target))
+    second = StoryFact(**second_effect.model_dump(), fact_id=story_target_id(second_effect.target))
+    rows = [
+        NPC(
+            id=1,
+            campaign_id=3,
+            session_id=9,
+            story_identity=first.fact_id,
+            name="Mara Quill",
+            disposition="friendly",
+            stat_block={},
+        ),
+        NPC(
+            id=2,
+            campaign_id=3,
+            session_id=9,
+            story_identity=second.fact_id,
+            name="Ilyra Vane",
+            disposition="neutral",
+            stat_block={},
+        ),
+        NPC(
+            id=3,
+            campaign_id=3,
+            session_id=None,
+            story_identity=None,
+            name="Manual ally",
+            disposition="friendly",
+            stat_block={},
+        ),
+    ]
+
+    context = model_context_npcs(rows, {"facts": [first.model_dump(), second.model_dump()]})
+
+    assert context == [
+        {"name": "Mara", "disposition": "friendly"},
+        {"name": "Encountered person", "disposition": "neutral"},
+        {"name": "Manual ally", "disposition": "friendly"},
+    ]
+    assert "Quill" not in str(context)
+    assert "Ilyra" not in str(context)
 
 
 async def setup(db):
@@ -320,6 +391,32 @@ async def test_legacy_session_tracking_state_and_earned_name_refresh(api_client,
     assert [npc["name"] for npc in refreshed.json()] == ["Known person"]
 
 
+async def test_untracked_session_npc_remains_readable_in_list_and_detail(api_client, db_session):
+    campaign, sessions, _ = await setup(db_session)
+    legacy = NPC(
+        campaign_id=campaign.id,
+        session_id=sessions[0].id,
+        story_identity=None,
+        name="Legacy companion",
+        disposition="friendly",
+        stat_block={"legacy": True},
+    )
+    db_session.add(legacy)
+    await db_session.commit()
+
+    listed = await api_client.get(f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}")
+    assert listed.status_code == 200
+    assert [npc["name"] for npc in listed.json()] == ["Legacy companion"]
+    assert listed.json()[0]["journal_entry_id"] is None
+    assert (await api_client.get(f"/api/npcs/{legacy.id}")).status_code == 404
+    assert (await api_client.get(f"/api/npcs/{legacy.id}?session_id={sessions[0].id}")).json()[
+        "name"
+    ] == "Legacy companion"
+    assert (
+        await api_client.get(f"/api/npcs/{legacy.id}?session_id={sessions[1].id}")
+    ).status_code == 404
+
+
 async def test_npc_projection_deduplicates_source_revisions_and_keeps_only_earned_name(
     api_client, db_session
 ):
@@ -327,19 +424,30 @@ async def test_npc_projection_deduplicates_source_revisions_and_keeps_only_earne
 
     campaign, sessions, events = await setup(db_session)
     original = effect(
-        "encounter", "mara_quill", "encountered", player_text="A guard named Mara asks you to wait.",
+        "encounter",
+        "mara_quill",
+        "encountered",
+        player_text="A guard named Mara asks you to wait.",
         display_name="Mara Quill",
     )
     revised = effect(
-        "encounter", "mara_quill", "encountered", source_sha256="d" * 64,
-        manifest_sha256="e" * 64, player_text="Mara now trusts you with the lantern.",
+        "encounter",
+        "mara_quill",
+        "encountered",
+        source_sha256="d" * 64,
+        manifest_sha256="e" * 64,
+        player_text="Mara now trusts you with the lantern.",
         display_name="Mara Quill",
     )
     await persist_story_effects(db_session, sessions[0], [original], event_id=events[0].id)
     await persist_story_effects(db_session, sessions[0], [revised], event_id=events[0].id)
     stale = NPC(
-        campaign_id=campaign.id, session_id=sessions[0].id, story_identity="invalid-private",
-        name="Secret prepared identity", disposition="neutral", stat_block={},
+        campaign_id=campaign.id,
+        session_id=sessions[0].id,
+        story_identity="invalid-private",
+        name="Secret prepared identity",
+        disposition="neutral",
+        stat_block={},
     )
     db_session.add(stale)
     await db_session.commit()
@@ -352,7 +460,9 @@ async def test_npc_projection_deduplicates_source_revisions_and_keeps_only_earne
     assert response.json()[0]["journal_entry_id"] == actor_entry_id(sessions[0].id, original.target)
     assert "Quill" not in response.text
     assert "Secret prepared identity" not in response.text
-    assert (await api_client.get(f"/api/npcs/{stale.id}?session_id={sessions[0].id}")).status_code == 404
+    assert (
+        await api_client.get(f"/api/npcs/{stale.id}?session_id={sessions[0].id}")
+    ).status_code == 404
 
 
 async def test_selected_session_people_are_not_crowded_out_by_campaign_notes(

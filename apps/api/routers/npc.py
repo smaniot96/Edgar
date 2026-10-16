@@ -67,7 +67,7 @@ def _project_session_npcs(
         if actor is not None:
             if latest_actor_rows.get(actor[0]) is not npc:
                 continue
-        elif not identity.startswith("combat:"):
+        elif identity and not identity.startswith("combat:"):
             # A stored story-person label is not a public identifier. Only reveal it when
             # its exact actor has a matching player-safe journal entry.
             continue
@@ -171,7 +171,8 @@ async def get_npc(
         )
         journal = project_player_journal(session_id, state, narration_events)
         actor_entries = _session_actor_entries(session_id, state, journal)
-        if npc.story_identity not in actor_entries and not (npc.story_identity or "").startswith("combat:"):
+        identity = npc.story_identity or ""
+        if identity and identity not in actor_entries and not identity.startswith("combat:"):
             raise HTTPException(status_code=404, detail="NPC not found for session")
         return _read_npc(npc, actor_entries)
     return _read_npc(npc)
