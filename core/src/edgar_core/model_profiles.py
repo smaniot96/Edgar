@@ -136,6 +136,8 @@ class ModelProfileSnapshot:
         ):
             raise ModelProfileError("Unsupported model profile snapshot schema version.")
         _validate_version(self.profile_version)
+        if self.source not in {"toml", "environment"}:
+            raise ModelProfileError("Model profile snapshot source is invalid.")
         _validate_snapshot_profiles(self.profiles, self.image_profiles)
 
     def to_dict(self) -> dict[str, Any]:
@@ -378,6 +380,8 @@ def load_model_profiles(
     env = environ if environ is not None else _env_mapping()
     configured_path = path if path is not None else env.get("MODEL_PROFILES_PATH")
     profile_path = Path(configured_path).expanduser() if configured_path else DEFAULT_PROFILE_PATH
+    if configured_path and not profile_path.is_file():
+        raise ModelProfileError("Configured model profile file is unavailable. Check MODEL_PROFILES_PATH.")
     raw: Mapping[str, Any] = {}
     source: Literal["toml", "environment"] = "environment"
     if profile_path.exists():

@@ -14,9 +14,12 @@ from edgar_core.model_profiles import (
 )
 
 
-def test_legacy_environment_remains_play_default_without_a_profile_file(tmp_path: Path) -> None:
+def test_legacy_environment_remains_play_default_without_a_profile_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("edgar_core.model_profiles.DEFAULT_PROFILE_PATH", tmp_path / "missing.toml")
     snapshot = load_model_profiles(
-        tmp_path / "missing.toml",
+        None,
         environ={"LLM_MODEL": "gpt-4o-mini", "LLM_REASONING_EFFORT": "low"},
     )
 
@@ -26,6 +29,11 @@ def test_legacy_environment_remains_play_default_without_a_profile_file(tmp_path
     assert effective_profile("play.parser", snapshot).temperature is None
     assert effective_profile("authoring.outline", snapshot).model == "gpt-6.1-sol"
     assert effective_profile("authoring.outline", snapshot).reasoning_effort == "high"
+
+
+def test_explicit_missing_profile_does_not_silently_use_defaults(tmp_path: Path) -> None:
+    with pytest.raises(ModelProfileError, match="unavailable"):
+        load_model_profiles(tmp_path / "missing.toml", environ={})
 
 
 def test_toml_override_changes_only_its_named_stage_and_image_options_are_separate(

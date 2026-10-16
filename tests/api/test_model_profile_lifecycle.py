@@ -50,6 +50,7 @@ async def test_sync_turn_freezes_profile_file_until_graph_finishes(
     monkeypatch.setenv("MODEL_PROFILES_PATH", str(path))
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
     monkeypatch.setattr(input_parser, "OPENAI_API_KEY", "test-key-for-edg-141")
+    monkeypatch.setattr(llm, "OPENAI_API_KEY", "test-key-for-edg-141")
     provider_calls: list[dict] = []
     monkeypatch.setattr(
         llm, "ChatOpenAI", lambda **kwargs: _ProviderSpy(provider_calls, **kwargs)
@@ -83,6 +84,7 @@ async def test_sse_turn_uses_same_frozen_profiles_for_parser_and_streamed_narrat
     monkeypatch.setenv("MODEL_PROFILES_PATH", str(path))
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
     monkeypatch.setattr(input_parser, "OPENAI_API_KEY", "test-key-for-edg-141")
+    monkeypatch.setattr(llm, "OPENAI_API_KEY", "test-key-for-edg-141")
     provider_calls: list[dict] = []
     monkeypatch.setattr(
         llm, "ChatOpenAI", lambda **kwargs: _ProviderSpy(provider_calls, **kwargs)
