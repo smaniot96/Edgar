@@ -259,7 +259,7 @@ async def evaluate_play_readiness(
         return _project([_blocker("readiness_unavailable")])
 
 
-def require_play_readiness(readiness: ReadinessRead) -> None:
+def require_play_readiness(readiness: ReadinessRead, *, source_slug: str | None = None) -> None:
     """Translate the shared projection into stable turn-preflight errors."""
     if readiness.play_allowed:
         return
@@ -274,9 +274,20 @@ def require_play_readiness(readiness: ReadinessRead) -> None:
             },
         )
     if blocker.code == "adventure_review_needed":
+        detail = {"code": "adventure_manifest_review_required", "message": blocker.message}
+        if source_slug is not None:
+            from .campaign_sources import validate_binding
+
+            try:
+                validate_binding(source_slug)
+            except HTTPException:
+                pass
+            else:
+                # Preserve the intro API's already-public binding identifier.
+                detail["source"] = source_slug
         raise HTTPException(
             status_code=409,
-            detail={"code": "adventure_manifest_review_required", "message": blocker.message},
+            detail=detail,
         )
     if blocker.code == "saved_version_conflict":
         raise HTTPException(

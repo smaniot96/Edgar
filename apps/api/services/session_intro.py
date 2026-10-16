@@ -100,7 +100,11 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         session_id=session.id,
         observed_sources=sources,
     )
-    require_play_readiness(readiness)
+    require_play_readiness(
+        readiness,
+        source_slug=next(iter(campaign.adventure_collections or []), None)
+        if campaign.source_mode != "homebrew" else None,
+    )
     homebrew = campaign.source_mode == "homebrew"
     adventure_collections = [] if homebrew else list(campaign.adventure_collections or [])
 
@@ -123,6 +127,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
                 detail={
                     "code": "adventure_manifest_review_required",
                     "message": "Review and publish the adventure before opening this session.",
+                    "source": adventure_collections[0],
                 },
             ) from exc
         except Exception as exc:
