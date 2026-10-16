@@ -114,6 +114,11 @@ disadvantage. The PARTIAL rows that remain say in their note why the engine cann
 | Resistances, immunities, vulnerabilities by type | `monster_stats._damage_rules` | MM Young Red Dragon (fire immunity), PDF p.99 | MATCH | |
 | Speed, senses, saves, skills | `monster_stats.MonsterStats` | MM PDF pp.99, 167, 292, 329, 342, 344 | MATCH | Speed is declared, movement not simulated. |
 | Breath weapon: Recharge 5-6, DC, saving-throw ability, damage dice and type, half damage on a success | `monster_stats._save_action`, `graph_combat` (`enemy_save_action`) | MM Young Red Dragon Fire Breath, PDF p.99 (30-foot cone, DC 17 Dexterity, 56 (16d6) fire); Red Dragon Wyrmling, PDF p.99 | MATCH | Added in EDG-043. The hero's save is d20 + ability modifier + proficiency when the class is proficient (`resolution.CLASS_SAVES`, PHB p.46); a success takes half, rounded down. The wording is read exactly, so a clause such as "provided that it has no creature grappled" (Ankheg Acid Spray) or a rider after the damage stays declared. The cone or line shape and range are not modelled: the hero is the only creature in the area. Pinned in `tests/agent/test_monster_save_actions.py`. |
+| Legendary actions: N per round, at most one option at the end of another creature's turn, regained at the start of its own turn, none while incapacitated | `monster_stats.legendary_plan`, `graph_combat` (`legendary_action`) | MM "Legendary Actions", PDF p.12; Ancient Black Dragon, PDF p.88 ("can take 3 legendary actions") | PARTIAL | Added in EDG-043. The budget is read from the record; one option is spent at the end of each other creature's turn represented in encounter order and saved on the foe as `legendary_spent`; a row without it has the full budget. At each boundary the engine chooses the most expensive option the remaining budget can pay for, if the foe can make it from its band, can act and the hero stands. The book's surprise clause is not modelled. Pinned in `tests/agent/test_monster_legendary.py`. |
+| Legendary option naming one of the creature's own attacks: "makes a tail attack" (Costs 1) | `monster_stats._legendary_option` | MM Ancient Black Dragon Tail Attack, PDF p.88; Sphinx Claw Attack, PDF p.282; Unicorn Hooves, PDF p.295 | MATCH | The option is rolled as the creature's own listed attack (attack roll, damage, damage type), only when exactly one plain attack of that name exists. "makes one attack" (Empyrean), "or uses its ..." (Mummy Lord, Tarrasque, Kraken) and an attack that recharges or is a save action stay declared. |
+| Wing Attack (Costs 2 Actions): DC D Dexterity save or damage, "knocked prone", then flight | `monster_stats._legendary_option`, `graph_combat` (`enemy_save_action`) | MM Ancient Black Dragon, PDF p.88 (15 feet, DC 23, 15 (2d6 + 8) bludgeoning); same wording on every adult and ancient dragon and the dracolich (PDF p.85) | PARTIAL | The hero's Dexterity save and the bludgeoning damage match (none on a success). The prone effect and the flight are declared, not executed. The 10 or 15 foot radius is read as the foe's melee band (within 5 feet), so a hero further away is not hit. |
+| Other legendary options: Detect, Teleport, Move, Eye Ray, Searing Burst, Blinding Gaze, Energy Drain, Frightening Gaze, spellcasting and condition options | `monster_stats.parse_monster_stats` | MM Adult dragons (Detect), PDF p.88; Solar, PDF p.19; Demilich, PDF p.49; Lich, PDF p.203; Mummy Lord, PDF p.230; Sphinx, PDF p.282 | PARTIAL | Declared by name ("Detect: legendary action not executed"), never guessed: they need ability checks, movement, spells, two damage types, hit-point maximum changes or conditions the engine cannot read exactly. |
+| Lair actions: on initiative count 20 (losing ties), one lair action, never the same effect two rounds in a row | not executed (declared: "lair actions: not executed ...") | MM "Lair Actions", PDF p.12; Ancient Black Dragon lair actions, PDF p.90; Ancient Red Dragon, PDF p.100 | PARTIAL | No encounter, scene or manifest field says a creature fights in its lair, so none may be assumed. The options are also unnamed bullet prose placed around the stat block, many with a point, area or duration chosen by the creature (a geyser, a cloud until initiative count 20 next round). Nothing is guessed from that prose; a hook needs an authoring field that states the lair. |
 
 ### Parser results on real Monster Manual stat blocks
 
@@ -220,6 +225,18 @@ No 2024 book is on this machine, so these 2024 claims are not implemented or ver
   fixture in `tests/agent/test_monster_stats.py` now reads its Spit Breath as an executed action.
 - Full suite: 1431 passed, 200 skipped (DB-backed), 2 failed (the same Docker-only Qdrant tests as
   above). `uv run ruff check .` passes.
+
+## EDG-043: legendary actions
+
+- Added rows (section 4): the legendary budget and timing, an option naming the creature's own attack,
+  the Wing Attack, the other options and lair actions. At each other creature's represented turn end,
+  the engine chooses at most one affordable option, most expensive first (ties in record order).
+  A budget of 3 permits Wing Attack (2) at one boundary and Tail Attack (1) at a distinct later
+  creature's turn end; it never permits both at the same boundary. Budget resets at its own turn.
+- Left open: the surprise clause, the Wing Attack's prone effect and flight, lair actions (they need
+  an authored "in its lair" field), and the options listed as declared.
+- Tests: `tests/agent/test_monster_legendary.py` (23 cases, scripted dice). Root's independent focused
+  run including save actions, riders and the supported-scope contract passed 112 tests without skips.
 
 ## EDG-043: spell cases
 

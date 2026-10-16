@@ -203,8 +203,13 @@ simulate (`GET /api/rules/supported-scope`):
   and traits. Each listed attack is rolled by the engine; a stated Multiattack makes one roll per
   listed attack. Regeneration heals at the start of the monster's turn, unless the damage types the
   record names have been taken since its last turn. Resistances, immunities and vulnerabilities apply
-  to player damage by weapon or spell damage type. Speed and movement, legendary, lair and reaction
-  actions, spellcasting, save actions and recharge abilities not read exactly, a Multiattack's
+  to player damage by weapon or spell damage type. A legendary creature can spend at most one
+  legendary action at the end of each other creature's turn represented in encounter order, choosing
+  the most expensive affordable option, and regains them at the start of its own turn; only an option
+  that names one of its own plain attacks and the dragon Wing Attack
+  (damage only: its prone effect and flight are declared) are executed. Speed and movement, lair and
+  reaction actions (no encounter data states that a creature is in its lair), other legendary
+  options, spellcasting, save actions and recharge abilities not read exactly, a Multiattack's
   later-attack disadvantage, other rider wording and unlisted traits are declared in the combat
   start message and have no effect. Regeneration's 0 HP clause is declared too: an exact creature
   at 0 HP is defeated at once. Stat blocks were checked against real Monster Manual layouts (see

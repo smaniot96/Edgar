@@ -13,12 +13,14 @@ type (EDG-043). Also executed: the creature type (its size-and-type line, for hu
 a poisoned rider on a hit whose wording is read exactly (`AttackRider`), a Recharge X-6 attack
 (`MonsterAttack.recharge`), rolled at the start of the creature's turns once spent, and a
 breath-weapon style save action whose wording is read exactly (`AttackSave`): the hero saves
-instead of the action rolling to hit. The engine decides every roll.
+instead of the action rolling to hit. Legendary actions (EDG-043): the budget the record states and
+each option whose body is exactly an attack the creature already lists ("makes a tail attack") or
+the dragon Wing Attack's save (`LegendaryOption`). The engine decides every roll.
 
-Declared, never implied: speed and movement, legendary, lair and reaction actions, spellcasting,
-save actions whose wording is not read exactly, spell attacks, other damage riders and every
-other trait. Each one is listed in `MonsterStats.declared` and shown in the combat start message
-and the roster.
+Declared, never implied: speed and movement, lair and reaction actions, legendary options that are
+not read exactly (Detect, movement, spells, conditions), spellcasting, save actions whose wording
+is not read exactly, spell attacks, other damage riders and every other trait. Each one is listed
+in `MonsterStats.declared` and shown in the combat start message and the roster.
 
 Parsing is conservative: when a clause cannot be read exactly it is declared rather than guessed.
 """
@@ -127,6 +129,24 @@ _NO_EFFECT_SAVE = re.compile(
     rf"{_SAVE_DAMAGE}\.?\s*$",
     re.IGNORECASE,
 )
+# Legendary actions (EDG-043). The budget is stated in the section's lead sentence ("can take 3
+# legendary actions"); an option's cost is in its name ("Wing Attack (Costs 2 Actions)"), 1 when absent.
+_LEGENDARY_BUDGET = re.compile(r"\bcan take (\w+) legendary actions?\b", re.IGNORECASE)
+_LEGENDARY_COST = re.compile(r"\s*\(Costs ([1-9]\d*) Actions?\)\s*$", re.IGNORECASE)
+# An option that only names one of the creature's own attacks: "makes a tail attack", "makes one claw
+# attack" or "makes one attack with its hooves". Anything else ("one attack", "or uses its ...") is not read.
+_LEGENDARY_ATTACK = re.compile(
+    r"^The [^.]+? makes (?:an? |one )(?:(\w+) attack|attack with its (\w+))\.?\s*$", re.IGNORECASE
+)
+# The dragon Wing Attack, exactly as the Monster Manual words it: a save for damage, then the prone
+# and flight clauses, which are declared and not executed.
+_WING_ATTACK = re.compile(
+    rf"^The [^.]+? beats its (?:tattered )?wings\.\s*Each creature within \d+ feet of the [^.]+? must "
+    rf"succeed on a DC (\d+) {_SAVE_ABILITY} saving throw or take {_SAVE_DAMAGE} and be knocked "
+    r"prone\.\s*(?:The [^.]+? can then|After beating its wings this way, the [^.]+? can) fly up to "
+    r"half its flying speed\.?\s*$",
+    re.IGNORECASE,
+)
 # An ability modifier in parentheses: "(+4)", "(-1)", or the PDF text layer's "(- 2)".
 _ABILITY_MOD = r"\(\s*([+\-\u2212\u2013]?)\s*(\d+)\s*\)"
 # Entry names may carry en or em dashes ("Fire Breath (Recharge 5–6)"), which the name pattern needs.
@@ -178,6 +198,15 @@ class MonsterAttack:
 
 
 @dataclass(frozen=True)
+class LegendaryOption:
+    """A legendary action option the engine executes (EDG-043): an attack or save action and its cost."""
+
+    name: str
+    cost: int
+    attack: MonsterAttack
+
+
+@dataclass(frozen=True)
 class DamageRule:
     """A resistance, immunity or vulnerability. `nonmagical_only` is set by "from nonmagical attacks"."""
 
@@ -222,6 +251,8 @@ class MonsterStats:
     immunities: tuple[DamageRule, ...] = ()
     vulnerabilities: tuple[DamageRule, ...] = ()
     declared: tuple[str, ...] = ()  # traits and actions the engine does not execute
+    legendary_actions: int = 0  # the budget per round, 0 for none
+    legendary: tuple[LegendaryOption, ...] = ()  # only the options read exactly
     creature_type: str | None = (
         None  # "humanoid", "beast", ... from the type line; None when unread
     )
@@ -255,6 +286,8 @@ class MonsterStats:
             "immunities": [asdict(r) for r in self.immunities],
             "vulnerabilities": [asdict(r) for r in self.vulnerabilities],
             "declared": list(self.declared),
+            "legendary_actions": self.legendary_actions,
+            "legendary": [asdict(o) for o in self.legendary],
             "creature_type": self.creature_type,
         }
 
@@ -279,6 +312,11 @@ class MonsterStats:
                 immunities=tuple(DamageRule(**r) for r in raw.get("immunities") or ()),
                 vulnerabilities=tuple(DamageRule(**r) for r in raw.get("vulnerabilities") or ()),
                 declared=tuple(str(d) for d in raw.get("declared") or ()),
+                legendary_actions=int(raw.get("legendary_actions") or 0),
+                legendary=tuple(
+                    LegendaryOption(str(o["name"]), int(o["cost"]), _attack_from(o["attack"]))
+                    for o in raw.get("legendary") or ()
+                ),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise MonsterStatsError("stored monster stats are malformed") from exc
@@ -431,6 +469,40 @@ def _attack(body: str, name: str) -> tuple[MonsterAttack | None, str | None]:
     return attack, declared
 
 
+def _legendary_option(
+    entry_name: str, body: str, attacks: tuple[MonsterAttack, ...]
+) -> tuple[LegendaryOption | None, str | None]:
+    """An executable legendary option and the declared note for what it leaves out, else (None, None).
+
+    Read exactly: the dragon Wing Attack, or an option that names one plain attack of the creature
+    ("makes a tail attack"). The attack must exist once among `attacks` and must not recharge or
+    be a save action; otherwise the option stays declared rather than guessed.
+    """
+    cost = _LEGENDARY_COST.search(entry_name)
+    name = entry_name[: cost.start()].strip() if cost else entry_name
+    cost_value = int(cost.group(1)) if cost else 1
+    wing = _WING_ATTACK.match(body)
+    if wing:
+        dc, ability, average, dice_text, damage_type = wing.groups()
+        damage = _exact_damage(average, dice_text, damage_type)
+        if damage is None:
+            return None, None
+        save = AttackSave(ability[:3].upper(), int(dc), half_on_success=False)
+        attack = MonsterAttack(name, 0, *damage, save=save)
+        return LegendaryOption(
+            name, cost_value, attack
+        ), f"{name}: knocked prone and flight not executed"
+    named = _LEGENDARY_ATTACK.match(body)
+    if named:
+        key = _norm(named.group(1) or named.group(2))
+        found = [
+            a for a in attacks if _norm(a.name) == key and a.recharge is None and a.save is None
+        ]
+        if len(found) == 1:
+            return LegendaryOption(name, cost_value, found[0]), None
+    return None, None
+
+
 def _multiattack(
     body: str, attacks: tuple[MonsterAttack, ...]
 ) -> tuple[tuple[str, int], ...] | None:
@@ -491,6 +563,10 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
         heading = _SECTION_HEADINGS.get(line.lower().rstrip(":"))
         if heading is not None:
             section, current = heading, None
+            if heading == "lair":
+                declared.append(
+                    "lair actions: not executed (no encounter data states that the creature is in its lair)"
+                )
             continue
         if _STAT_LINE.match(line):
             current = None
@@ -503,10 +579,23 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
             current[2] += " " + line
 
     attacks: list[MonsterAttack] = []
+    legendary_entries: list[tuple[str, str]] = []
     multiattack_body: str | None = None
     regeneration: Regeneration | None = None
     for entry_section, entry_name, body in entries:
         lowered = entry_name.lower()
+        # Section ownership comes before interpreting the wording. A save or Recharge clause in a
+        # legendary, lair, reaction, bonus or other action is not an ordinary monster action.
+        if entry_section == "legendary":
+            legendary_entries.append((entry_name, body))
+            continue
+        if entry_section in ("lair", "reactions", "bonus"):
+            declared.append(f"{entry_name}: {entry_section} action not executed")
+            continue
+        if entry_section == "other":
+            declared.append(f"{entry_name}: action not executed")
+            continue
+
         recharge = _RECHARGE_NAME.search(entry_name)
         action_name = entry_name[: recharge.start()].strip() if recharge else entry_name
         recharge_on = int(recharge.group(1) or recharge.group(2)) if recharge else None
@@ -533,8 +622,6 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
             attacks.append(save_action)
         elif "recharge" in lowered:
             declared.append(f"{entry_name}: recharge ability not executed")
-        elif entry_section in ("legendary", "lair", "reactions", "bonus"):
-            declared.append(f"{entry_name}: {entry_section} action not executed")
         elif lowered == "multiattack" and multiattack_body is None:
             multiattack_body = body
         elif lowered == "regeneration" and entry_section == "traits":
@@ -569,6 +656,22 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
         if re.search(r"\bdisadvantage\b", multiattack_body or "", re.IGNORECASE):
             declared.append("Multiattack: the disadvantage on a later attack is not executed")
 
+    budget = _LEGENDARY_BUDGET.search(text)
+    legendary_actions = (_count(budget.group(1)) or 0) if budget else 0
+    legendary: list[LegendaryOption] = []
+    for entry_name, body in legendary_entries:
+        option, note = (
+            _legendary_option(entry_name, body, tuple(attacks))
+            if legendary_actions
+            else (None, None)
+        )
+        if option is None:
+            declared.append(f"{entry_name}: legendary action not executed")
+            continue
+        legendary.append(option)
+        if note:
+            declared.append(note)
+
     return MonsterStats(
         name=str(name)[:60],
         hp_max=int(hp.group(1)),
@@ -583,6 +686,8 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
         immunities=immunities,
         vulnerabilities=vulnerabilities,
         declared=tuple(declared),
+        legendary_actions=legendary_actions,
+        legendary=tuple(legendary),
         creature_type=_creature_type(lines),
     )
 
@@ -653,6 +758,15 @@ def attack_plan(stats: MonsterStats, spent: Iterable[str] = ()) -> tuple[Monster
             if by_name[name].recharge is None or name not in spent_set
         )
     return tuple(a for a in stats.attacks if a.recharge is None)[:1]
+
+
+def legendary_plan(stats: MonsterStats, left: int) -> tuple[LegendaryOption, ...]:
+    """The options `left` legendary actions can pay for, in the order the engine tries them.
+
+    The most expensive first, ties in the record's order. The cost is the book's own measure of an
+    option's strength, so the budget goes to the strongest option it covers and the rest to cheaper ones.
+    """
+    return tuple(sorted((o for o in stats.legendary if o.cost <= left), key=lambda o: -o.cost))
 
 
 def recharge_turn_start(combatant: dict) -> list[tuple[str, DiceOutcome, bool]]:
@@ -782,6 +896,12 @@ def narrator_note(combatant: Mapping[str, Any]) -> str:
                 + " damage since its last turn"
             )
         parts.append(text)
+    if stats.legendary:
+        options = ", ".join(f"{o.name} (costs {o.cost})" for o in stats.legendary)
+        parts.append(
+            f"{stats.legendary_actions} legendary actions, at most one option at the end of each "
+            f"other creature's turn, regained at the start of its own: {options}"
+        )
     spent = set(combatant.get("recharge_spent") or ())
     for attack in stats.attacks:
         if (

@@ -26,7 +26,9 @@ list. Monster riders add `poisoned` to a player. They may also carry `expires_af
 round in force) and `save` (`{ability, dc}`: the combatant repeats that save at the end of each of its
 turns, and the effect ends on success). Rows written without those keys read exactly as before.
 A caster's concentration (`concentration` on the player combatant, see `agent.conditions`) is a
-single dict, or absent. Recharge attacks used and not yet recharged are `recharge_spent` names.
+single dict, or absent. Recharge attacks used and not yet recharged are `recharge_spent` names. A
+legendary creature's spent legendary actions are `legendary_spent` (EDG-043): absent reads as none
+spent, so a row written before legendary actions has its full budget.
 
 Legacy rows (written before `disposition` existed) carry only `alive`/`hp_current`. They are
 read honestly: `alive` False means "defeated" (cause unknown). It is not treated as proof of
