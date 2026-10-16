@@ -1,4 +1,4 @@
-"""Engine-applied conditions, concentration and monster riders (EDG-043, slices one and two).
+"""Engine-applied conditions, concentration and monster riders (EDG-043).
 
 Spell conditions from catalog spells (`agent.spells`), always applied by the engine and recorded in
 the target's typed `effects` (`agent.combatants`):
@@ -24,17 +24,29 @@ the spell on failure. The engine rolls every save and sets every number.
 
 Monster riders (`AttackRider`): a foe's exact attack text may poison the hero on a hit. The hero makes
 the stated Constitution save (`rider_save`); failure records `poisoned` (disadvantage on the hero's
-attack rolls). The hero repeats the save at the end of each of its own turns (`hero_end_of_turn_saves`)
-with the sheet's Constitution save modifier, and success ends the effect.
+attack rolls and ability checks). The hero repeats the save at the end of each of its own turns
+(`hero_end_of_turn_saves`) with the sheet's Constitution save modifier, and success ends the effect.
+Monster save actions (`AttackSave`, rolled in `agent.graph_combat`) leave the hero `frightened` or
+`stunned` the same way (`afflict`), for one minute with the repeat save. A rider worded "until the end
+of the attacker's next turn" has no repeat save and ends with that turn (`end_of_source_turn`).
 
-Deliberately absent: other conditions (frightened, stunned and the rest), any condition applied from
-monster text or model prose, poisoned foes, and ability-check penalties of poisoned. The engine rolls
-every save and sets every number; a narrated condition without an applied effect is never recorded.
+Conditions on the hero from monster text (PHB Appendix A, PDF pp.291-293):
+  * `frightened`: disadvantage on attack rolls and ability checks while the source of the fear is in
+    sight, and no willing move closer to it (`fear_refusal`). Line of sight is not modelled: a source
+    that still stands is in sight. When it is defeated, the condition and its save persist, but its
+    attack/check and movement restrictions no longer apply.
+  * `stunned`: incapacitated (the hero's turn passes with no action, move or flight), fails Strength
+    and Dexterity saves automatically (`combatants.save_auto_fails`), and attacks against the hero
+    have advantage.
+
+Deliberately absent: other conditions (charmed, grappled, incapacitated and the rest), any condition
+applied from model prose, and poisoned foes. The engine rolls every save and sets every number; a
+narrated condition without an applied effect is never recorded.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,9 +55,12 @@ from agent.combatants import (
     concentration_of,
     effects_of,
     has_effect,
+    is_standing,
     release_effect,
+    stable_id,
 )
 from agent.monster_stats import AttackRider, stats_of
+from agent.positioning import MELEE
 from agent.resolution import ability_modifier, proficiency_bonus, save_proficiencies
 from tools.dice import DiceOutcome, roll
 
@@ -231,6 +246,107 @@ def save_line(save: SaveRoll) -> str:
     )
 
 
+def afflict(
+    player: dict,
+    kind: str,
+    *,
+    source: str,
+    round_applied: int,
+    ability: str,
+    dc: int,
+    duration_rounds: int = 10,
+    source_id: str | None = None,
+) -> None:
+    """Record a condition from a monster on the hero: it lasts `duration_rounds` (a minute is 10) and
+    the hero repeats the save at the end of each of its turns. It does not stack."""
+    add_effect(
+        player,
+        kind,
+        source=source,
+        round_applied=round_applied,
+        expires_after_round=round_applied + max(1, duration_rounds) - 1,
+        save={"ability": ability, "dc": dc},
+        source_id=source_id,
+        refresh=True,
+    )
+
+
+def end_fear_of_defeated(player: dict, foes: list[dict]) -> str | None:
+    """Stop a defeated fear source's mechanical effects while the condition and save persist.
+
+    Line of sight is not modelled, so a source that still stands counts as in sight.
+    """
+    fear = next((e for e in effects_of(player) if e["kind"] == "frightened"), None)
+    if fear is None or fear.get("source_defeated"):
+        return None
+    source_id = str(fear.get("source_id") or fear["source"] or "")
+    if any(stable_id(f) == source_id and is_standing(f) for f in foes):
+        return None
+    fear["source_defeated"] = True
+    # `effects_of` returns copies to keep reads pure; write the updated entry back explicitly.
+    player["effects"] = [
+        fear if e["kind"] == "frightened" else e for e in effects_of(player)
+    ]
+    return str(fear["source"])
+
+
+def end_of_source_turn(player: dict, source: dict, round_num: int) -> list[str]:
+    """End the hero's conditions that last until the end of `source`'s next turn: called at the end
+    of that creature's turn. A condition it applied this round runs on into its next turn."""
+    ended = [
+        e["kind"]
+        for e in effects_of(player)
+        if e.get("ends_with_turn_of") == stable_id(source)
+        and e["applied_round"] < round_num
+    ]
+    for kind in ended:
+        release_effect(player, kind)
+    return ended
+
+
+def condition_ends_before_turn(
+    player: Mapping[str, Any], kind: str, foes_before: Sequence[dict], round_num: int
+) -> bool:
+    """Whether a persisted, source-turn-timed condition ends before the hero acts this round.
+
+    This prediction lets combat preflight preserve declarations that may become legal after a living
+    foe ahead in initiative finishes its turn. The round resolver still checks the actual condition
+    after that foe's turn, since it may have been reapplied.
+    """
+    return any(
+        effect["kind"] == kind
+        and effect.get("ends_with_turn_of") == stable_id(foe)
+        and int(effect.get("applied_round", round_num)) < round_num
+        and is_standing(foe)
+        for effect in effects_of(player)
+        for foe in foes_before
+    )
+
+
+def stun_ends_before_turn(player: Mapping[str, Any], foes_before: Sequence[dict], round_num: int) -> bool:
+    """Whether a persisted stun ends before the hero acts this round."""
+    return condition_ends_before_turn(player, "stunned", foes_before, round_num)
+
+
+def fear_refusal(
+    hero: str, player: Mapping[str, Any], steps: Sequence[tuple[str, list[dict]]]
+) -> str | None:
+    """The refusal when a frightened hero declares a move closer to the source of its fear (PHB
+    Appendix A, PDF p.291). `steps` are the planned (destination band, foes that change band) moves."""
+    fear = next((e for e in effects_of(player) if e["kind"] == "frightened"), None)
+    if fear is not None and not fear.get("source_defeated") and any(
+        band == MELEE
+        and stable_id(foe) == str(fear.get("source_id") or fear["source"])
+        for band, foes in steps
+        for foe in foes
+    ):
+        return (
+            f"{hero} is frightened of {fear['source']} and cannot willingly move closer to it. "
+            "Choose another move: no roll is made and no turn is spent."
+        )
+    return None
+
+
 def rider_save(
     player: dict,
     rider: AttackRider,
@@ -238,19 +354,34 @@ def rider_save(
     character: Mapping[str, Any] | None,
     source: str,
     round_applied: int,
+    source_id: str | None = None,
 ) -> RiderRoll:
     """The hero's save against a rider on a hit. Failure records the condition with a repeat save."""
     bonus = save_modifier(character, rider.ability)
     outcome = roll(f"1d20{bonus:+d}" if bonus else "1d20")
     failed = outcome.total < rider.dc
-    if failed:
+    if failed and rider.duration_rounds is None:
+        # Until the end of the attacker's next turn; the round's end is the backstop if it never comes.
         add_effect(
             player,
             rider.kind,
             source=source,
             round_applied=round_applied,
-            expires_after_round=round_applied + max(1, rider.duration_rounds) - 1,
-            save={"ability": rider.ability, "dc": rider.dc},
+            expires_after_round=round_applied + 1,
+            ends_with_turn_of=source_id or source,
+            source_id=source_id if rider.kind == "frightened" else None,
+            refresh=True,
+        )
+    elif failed:
+        afflict(
+            player,
+            rider.kind,
+            source=source,
+            round_applied=round_applied,
+            ability=rider.ability,
+            dc=rider.dc,
+            duration_rounds=rider.duration_rounds,
+            source_id=source_id,
         )
     return RiderRoll(rider.kind, rider.ability, rider.dc, outcome.total, failed, outcome)
 
@@ -294,6 +425,13 @@ def drop_concentration(player: dict, foes: list[dict]) -> str | None:
         for kind in {e["kind"] for e in effects_of(foe) if e.get("source") == spell}:
             release_effect(foe, kind)
     return str(spell)
+
+
+def drop_concentration_if_incapacitated(player: dict, foes: list[dict]) -> str | None:
+    """Incapacitation ends concentration immediately, including a persisted stun on load (PHB p.203)."""
+    if not (has_effect(player, "stunned") or has_effect(player, "paralyzed")):
+        return None
+    return drop_concentration(player, foes)
 
 
 def concentration_save(

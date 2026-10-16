@@ -67,11 +67,12 @@ def primary_melee_attack(stats: MonsterStats) -> MonsterAttack | None:
 
 
 def attacks_from_band(plan: Sequence[MonsterAttack], band: str) -> tuple[MonsterAttack, ...]:
-    """The attacks a foe makes from its band: at melee its melee attacks (ranged ones only when it
-    has none); at range only its ranged attacks. A melee-only foe at range has none here."""
+    """The attacks a foe makes from its band: at melee its melee attacks and save actions (ranged
+    attacks only when it has no melee one); at range only its ranged attacks. A melee-only foe at
+    range has none here."""
     if band == RANGED:
         return tuple(a for a in plan if a.ranged)
-    melee = tuple(a for a in plan if not a.ranged)
+    melee = tuple(a for a in plan if not a.ranged or a.save)
     return melee or tuple(plan)
 
 

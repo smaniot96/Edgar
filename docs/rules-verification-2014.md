@@ -13,15 +13,19 @@ No 2024 book is available locally. 2024 numbers are not implemented (see "Unveri
 
 | Verdict | Rows | Meaning |
 |---|---|---|
-| MATCH | 47 | Engine value equals the book value at the cited page |
+| MATCH | 53 | Engine value equals the book value at the cited page |
 | FIXED | 23 | Discrepancy found and corrected (17 in EDG-149, 6 in EDG-152); a regression test pins the book value and fails on the old code |
-| PARTIAL | 10 | Documented subset or known gap; the contract text states it |
+| PARTIAL | 17 | Documented subset or known gap; the contract text states it |
 | NOT-IN-BOOKS | 1 section | The encounter budget (section 6). Artificer data is also NOT-IN-BOOKS and is noted in the class rows |
 
-The rows are the tables below (80 in total). A row may cover several values. EDG-152 turned two
+The rows are the five verdict tables below (93 in total); parser examples and summary tables are
+excluded. A row may cover several values. EDG-152 turned two
 PARTIAL rows (short-rest Hit Dice, prone) into `FIXED (EDG-152)`, split the Rage PARTIAL row into
 two fixed rows and a smaller PARTIAL row, and added rows for Versatile weapons and armor Stealth
-disadvantage. The PARTIAL rows that remain say in their note why the engine cannot execute them.
+disadvantage. Later EDG-043 slices add save actions, legendary options, selected conditions and their
+explicit remaining limits. The PARTIAL rows say which clauses remain outside the supported subset.
+Counts are a direct recount of current verdict cells, not a claim that every rulebook clause is
+implemented.
 
 ## 1. Resolution and character sheet (`apps/agent/src/agent/resolution.py`, `graph_combat.py`)
 
@@ -89,7 +93,7 @@ disadvantage. The PARTIAL rows that remain say in their note why the engine cann
 | Guiding Bolt: 1st, 120 ft, spell attack, 4d6 radiant; next attack against target has advantage until end of your next turn; +1d6 per slot | `spells.CATALOG`, `conditions` | PHB PDF p.249 | MATCH | Mark kept for two rounds, which is "until the end of your next turn". Not concentration. Class cleric (PDF p.208). |
 | Blindness/Deafness: 2nd, 30 ft, CON save, one minute, repeat save at end of each turn, not concentration | `spells.CATALOG`, `conditions` | PHB PDF p.220 | MATCH | Duration 1 minute = 10 rounds. Blindness only, one target: PARTIAL (documented). |
 | Hold Person: 2nd, 60 ft, WIS save, paralyzed for up to one minute (concentration), humanoid only, repeat save at the end of each of its turns; one more humanoid per slot level above 2nd | `spells.CATALOG`, `spells.target_count`, `conditions`, `graph_combat` | PHB PDF p.252 | PARTIAL | Save, duration, humanoid gate, paralysis, repeat saves and the extra targets MATCH; each target rolls its own save and the spell lasts while any one is held. The extra targets are the foes the player names (the parser's target list), then the next humanoids in roster order, and fewer when fewer humanoids stand. The 60-foot range and the 30-foot limit between targets are not modelled: the engine tracks melee and ranged bands, not distances. Pinned in `tests/agent/test_concentration.py`. |
-| Concentration: one spell at a time; ends when another concentration spell is cast, when a damage save fails (DC 10 or half the damage, one save per source), and when the caster is incapacitated or dies | `conditions.concentration_save`, `drop_concentration`, `settle_concentration`, `graph_combat` | PHB p.203, PDF p.204 | PARTIAL | Everything but incapacitation MATCHES (a fall to 0 HP ends it without a save). Nothing the engine applies incapacitates the hero today, so that clause is not reachable and not applied. Of the catalog spells only Hold Person needs concentration: Blindness/Deafness (PDF p.220) lasts one minute and Guiding Bolt (PDF p.249) one round without it, and Cure Wounds, Fire Bolt, Healing Word, Magic Missile and Sacred Flame are instantaneous. Pinned in `tests/agent/test_concentration.py`. |
+| Concentration: one spell at a time; ends when another concentration spell is cast, when a damage save fails (DC 10 or half the damage, one save per source), and when the caster is incapacitated or dies | `conditions.concentration_save`, `drop_concentration_if_incapacitated`, `drop_concentration`, `settle_concentration`, `graph_combat` | PHB p.203, PDF p.204 | MATCH | For supported catalog spells and conditions: a fall to 0 HP ends concentration without a save, and stunned or paralyzed ends it immediately, including persisted effects on load and a stun applied after a successful damage concentration save. Other incapacitating conditions remain outside the supported subset. Only Hold Person in the current catalog needs concentration; the other catalog spells are instantaneous or explicitly not concentration. Pinned in `tests/agent/test_concentration.py` and `tests/agent/test_monster_conditions.py`. |
 | Full caster slot table (wizard, sorcerer, bard, cleric, druid) | `spells.FULL_CASTER_SLOTS` | PHB Wizard table, PDF p.114 | MATCH | All 20 rows read; rows 1, 5, 9, 17, 20 pinned in tests. |
 | Half caster slot table (paladin, ranger) | `spells.HALF_CASTER_SLOTS` | PHB Paladin table, PDF p.84; Ranger table PDF p.91 | MATCH | Paladin: all 20 rows. Ranger: rows 2-9 read, same progression. |
 | Cantrip dice scale at levels 5, 11, 17 | `spells._cantrip_tier` | PDF pp.243, 273 | MATCH | |
@@ -119,10 +123,13 @@ disadvantage. The PARTIAL rows that remain say in their note why the engine cann
 | Wing Attack (Costs 2 Actions): DC D Dexterity save or damage, "knocked prone", then flight | `monster_stats._legendary_option`, `graph_combat` (`enemy_save_action`) | MM Ancient Black Dragon, PDF p.88 (15 feet, DC 23, 15 (2d6 + 8) bludgeoning); same wording on every adult and ancient dragon and the dracolich (PDF p.85) | PARTIAL | The hero's Dexterity save and the bludgeoning damage match (none on a success). The prone effect and the flight are declared, not executed. The 10 or 15 foot radius is read as the foe's melee band (within 5 feet), so a hero further away is not hit. |
 | Other legendary options: Detect, Teleport, Move, Eye Ray, Searing Burst, Blinding Gaze, Energy Drain, Frightening Gaze, spellcasting and condition options | `monster_stats.parse_monster_stats` | MM Adult dragons (Detect), PDF p.88; Solar, PDF p.19; Demilich, PDF p.49; Lich, PDF p.203; Mummy Lord, PDF p.230; Sphinx, PDF p.282 | PARTIAL | Declared by name ("Detect: legendary action not executed"), never guessed: they need ability checks, movement, spells, two damage types, hit-point maximum changes or conditions the engine cannot read exactly. |
 | Lair actions: on initiative count 20 (losing ties), one lair action, never the same effect two rounds in a row | not executed (declared: "lair actions: not executed ...") | MM "Lair Actions", PDF p.12; Ancient Black Dragon lair actions, PDF p.90; Ancient Red Dragon, PDF p.100 | PARTIAL | No encounter, scene or manifest field says a creature fights in its lair, so none may be assumed. The options are also unnamed bullet prose placed around the stat block, many with a point, area or duration chosen by the creature (a geyser, a cloud until initiative count 20 next round). Nothing is guessed from that prose; a hook needs an authoring field that states the lair. |
+| Frightful Presence: Wisdom save, frightened for one minute, repeat save, immunity after a success or ending the effect | `monster_stats._save_action`, `_multiattack`, `conditions`, `graph_combat` | MM adult dragon, PDF pp.98-99 | PARTIAL | Exact wording only; opens the Multiattack when named. Immunity is tracked only for this encounter, not across the full 24 hours. Sight, range and independent simultaneous fear sources retain the limits stated above. Pinned in `tests/agent/test_monster_conditions.py`. |
+| Mind Blast: Intelligence save or psychic damage and stunned for one minute, repeat save, Recharge 5-6 | `monster_stats._save_action`, `conditions`, `graph_combat` | MM mind flayer, PDF p.223 | MATCH | Exact supported wording only; the hero is the sole target. Parsed damage dice, DC, ability, duration and recharge stay engine-owned. Area shape/range are outside the simulated bands. Pinned in `tests/agent/test_monster_conditions.py`. |
+| Hit riders: frightened or stunned until the end of the attacker's next turn, without a repeat save | `monster_stats._attack`, `conditions.rider_save`, `end_of_source_turn`, `graph_combat` | MM Scarecrow Claw, PDF p.269; Empyrean Maul, PDF p.131 | MATCH | Exact supported Wisdom/Constitution wording only. Stable source identity controls the turn-end timer; repeat failed saves renew a same-source duration rather than stacking penalties. Pinned in `tests/agent/test_monster_conditions.py`. |
 
 ### Parser results on real Monster Manual stat blocks
 
-The six entries were read from the page images (Young Red Dragon PDF p.99; Goblin and Goblin Boss
+The seven entries were read from the page images (Young Red Dragon PDF p.99; Goblin and Goblin Boss
 PDF p.167; Troll PDF p.292; Giant Spider PDF p.329; Wolf PDF p.342; Bandit PDF p.344). The text
 layer interleaves the two columns, so each block was transcribed by hand to a scratch file.
 
@@ -153,9 +160,12 @@ check in `db/vector` rejects such mixes, and the parser declares what it cannot 
 | Restrained: speed 0; attacks against it at advantage; its attacks at disadvantage | `combatants` | PHB PDF p.293 | MATCH | Speed 0 is not simulated (movement not modelled). |
 | Restrained: DEX saves at disadvantage | `graph_combat`, `spells` | PHB PDF p.293 | FIXED | See the spells table. |
 | Prone: its attacks at disadvantage; attacks against it at advantage from within 5 ft, otherwise disadvantage | `combatants.attack_roll_mode` | PHB PDF p.293 | FIXED (EDG-152) | Ranged attacks always got disadvantage. The melee band (EDG-044) is the within-5-ft source, so a ranged attack from within 5 ft now has advantage, which the ranged-within-5-ft disadvantage (PHB p.195) cancels. Pinned in `tests/agent/test_combat_effects.py`. |
-| Poisoned, frightened, paralyzed, stunned and the rest | not implemented | PHB Appendix A, PDF pp.291-293 | PARTIAL | Declared unsupported in the contract (unchanged). |
-| Dodge: attacks against the hero have disadvantage until the next turn | `combatants.attack_roll_mode`, `graph_combat` | PHB p.193 ("Dodge"), PDF p.193 | PARTIAL | Engine applies the disadvantage. It does not check visibility or the loss of the benefit at speed 0 (speed is not simulated). Left in EDG-152: the only foe that cannot see the hero is a blinded one, whose own attack disadvantage already gives the same roll, so it does not change an outcome today. |
-| Dodge: Dexterity saving throws with advantage | `combatants.save_roll_mode`, `graph_combat` (`enemy_save_action`) | PHB p.193 ("Dodge"), PDF p.193 | MATCH | Added in EDG-043. The hero's Dexterity save against a monster's save action rolls two d20s and keeps the higher while dodging; other saves are unchanged. Pinned in `tests/agent/test_monster_save_actions.py`. The benefit lost when incapacitated is not reachable (the fight ends), and speed 0 is not simulated. |
+| Poisoned hero: attack rolls and ability checks at disadvantage | `combatants.attack_roll_mode`, `impaired_checks`, `resolution.resolve_check`, `graph_combat` | PHB Appendix A, PDF p.293 | MATCH | Applied only by the exact supported monster rider; end-of-turn repeat saves and the one-minute duration are engine-owned. Pinned in `tests/agent/test_monster_riders.py` and `tests/agent/test_monster_conditions.py`. |
+| Frightened hero: attacks and ability checks at disadvantage while the source is in sight; no willing approach to the source | `combatants`, `conditions.fear_refusal`, `graph_combat` | PHB Appendix A, PDF p.291 | PARTIAL | Stable source IDs distinguish same-name foes. The engine approximates sight by a source that still stands, and ends movement restrictions when the source is down while retaining the condition, duration and repeat save. Exact line of sight and independent simultaneous fear sources are not modelled. A new fear applied ahead of the hero is checked again before movement/action execution. Pinned in `tests/agent/test_monster_conditions.py`. |
+| Stunned hero: no action, movement or flight; automatic failure of Strength and Dexterity saves; attacks against it at advantage; concentration and Dodge benefits end | `combatants.can_act`, `save_auto_fails`, `attack_roll_mode`, `conditions`, `graph_combat` | PHB Appendix A, PDF p.293; concentration PDF p.204; Dodge PDF p.193 | MATCH | Only exact supported monster text applies the condition. An incapacitated turn spends no hero action, slot or item, and a short stun ending before the hero turn permits the available declaration. Pinned in `tests/agent/test_monster_conditions.py`. |
+| Paralyzed and other conditions beyond the supported subset | `conditions`, `supported_rules` | PHB Appendix A, PDF pp.291-293 | PARTIAL | Hold Person applies paralysis to humanoid foes with the supported repeat saves, inability to act, advantage against the foe and melee critical hits. Hero paralysis only auto-fails Strength/Dexterity saves and ends concentration; charmed, grappled and other unsupported conditions remain narrative tags. |
+| Dodge: attacks against the hero have disadvantage until the next turn | `combatants.attack_roll_mode`, `graph_combat` | PHB p.193 ("Dodge"), PDF p.193 | PARTIAL | Engine applies the disadvantage only while the hero is not stunned or paralyzed. It does not check visibility or the loss of the benefit at speed 0 (speed is not simulated). Left in EDG-152: the only foe that cannot see the hero is a blinded one, whose own attack disadvantage already gives the same roll, so it does not change an outcome today. |
+| Dodge: Dexterity saving throws with advantage | `combatants.save_roll_mode`, `graph_combat` (`enemy_save_action`) | PHB p.193 ("Dodge"), PDF p.193 | MATCH | Added in EDG-043. The hero's Dexterity save against a monster's save action rolls two d20s and keeps the higher while dodging; other saves are unchanged. Pinned in `tests/agent/test_monster_save_actions.py`. A stunned or paralyzed hero automatically fails a Dexterity save; Dodge provides no benefit. Speed 0 is not simulated. |
 | One action and one bonus action per turn | `action_economy.refusal_for` | PHB "Bonus Actions", PDF p.190 | MATCH | |
 | Advantage and disadvantage cancel | `resolution.combine_roll_modes` | PHB PDF p.174 | MATCH | |
 
@@ -183,7 +193,7 @@ No 2024 book is on this machine, so these 2024 claims are not implemented or ver
 - Any 2024 spell changes (the catalog follows 2014 descriptions).
 - Artificer (class table, saves, casting ability, hit die): from Eberron and Tasha's material, not in these books.
 
-## Tests and lint
+## Historical EDG-149 tests and lint
 
 - New regression cases: 107 in `tests/agent/test_rules_book_values.py` (new file) and 5 synthetic
   parser cases appended to `tests/agent/test_monster_stats.py`. Run against the pre-EDG-149 source,
@@ -244,6 +254,22 @@ No 2024 book is on this machine, so these 2024 claims are not implemented or ver
   engine cannot express. Hold Person cast with a 3rd-level or higher slot holds one more humanoid per
   level above 2nd; no other catalog spell needs concentration, so none gained it.
 - Left open: further concentration spells (for example Hold Monster, Bless or Hunter's Mark) are not in
-  the catalog and were not added; the concentration of the hero ending when it is incapacitated waits
-  for a condition the engine can apply to the hero.
+  the catalog and were not added. Incapacitation ending concentration was subsequently added by the
+  conditions slice below.
 - Tests: `tests/agent/test_concentration.py` (seven cases added, scripted dice).
+
+
+## EDG-043: exact monster conditions and verification recount
+
+- Added the frightened and stunned hero subset, exact Frightful Presence/Mind Blast/short-rider
+  parsing, same-source duration refresh, stable source identity and engine-owned repeat saves.
+  Poisoned ability-check penalties now match the attack-roll penalty already supported.
+- Incapacitation ends concentration and removes Dodge benefits, including persisted state.
+  Movement and action checks use actual initiative-time conditions.
+- The fixtures use synthetic creatures/numbers and scripted dice; source citations describe the
+  selected 2014 wording, not a new human playtest or a whole-rulebook completeness claim.
+- Full EDG-043 remains unfinished: lair execution needs authored lair state; monster spellcasting
+  remains limited planned work; other condition wordings, 24-hour immunity across encounters,
+  exact sight/ranges, legendary surprise and Wing Attack prone/flight remain unclaimed.
+- Verdict totals are recounted directly from all five current rule tables after the wave's merged
+  slices and this reviewed conditions slice. Historical suite totals above remain dated receipts.

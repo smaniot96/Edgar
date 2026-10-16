@@ -397,12 +397,16 @@ class RollModeSource(StrEnum):
     TARGET_UNCONSCIOUS = "target_unconscious"
     # A Dexterity (Stealth) check made in armor the PHB Armor table marks with Stealth disadvantage.
     ARMOR_STEALTH = "armor_stealth"
+    # An ability check made by a frightened or poisoned creature (PHB Appendix A, PDF pp.291, 293).
+    CHECK_CONDITION = "check_condition"
 
 
 ROLL_MODE_BY_SOURCE: dict[RollModeSource, RollMode] = {
     RollModeSource.TARGET_UNCONSCIOUS: "advantage",
     RollModeSource.ARMOR_STEALTH: "disadvantage",
+    RollModeSource.CHECK_CONDITION: "disadvantage",
 }
+ABILITY_CHECK_KINDS = frozenset({"skill", "ability", "tool"})
 
 
 def validate_roll_mode(mode: Any) -> RollMode:
@@ -725,10 +729,12 @@ def resolve_check(
     hint: str = "",
     rng: random.Random | None = None,
     roll_mode: RollMode = "normal",
+    impaired: bool = False,
 ) -> CheckResult | None:
     """Roll `check` for `character` against a DC (or AC). None when no check is needed.
 
-    `roll_mode` comes from engine-owned sources only (see `roll_mode_for_sources`).
+    `roll_mode` comes from engine-owned sources only (see `roll_mode_for_sources`). `impaired` is
+    set when the character is frightened or poisoned, which gives its ability checks disadvantage.
     """
     spec = check_spec(character, check, hint=hint)
     if spec is None:
@@ -736,6 +742,8 @@ def resolve_check(
     mode = validate_roll_mode(roll_mode)
     if spec.check == "stealth" and armor_hinders_stealth(character):
         mode = combine_roll_modes(mode, ROLL_MODE_BY_SOURCE[RollModeSource.ARMOR_STEALTH])
+    if impaired and spec.kind in ABILITY_CHECK_KINDS:
+        mode = combine_roll_modes(mode, ROLL_MODE_BY_SOURCE[RollModeSource.CHECK_CONDITION])
     target = dc if dc is not None else dc_for(difficulty)
     natural, total, expr, log = _d20_roll(spec, mode, rng)
     faces = [natural] if mode == "normal" else list(log["rolls"])
@@ -912,6 +920,7 @@ def resolve_from_parsed(
     *,
     player_input: str = "",
     rng: random.Random | None = None,
+    impaired: bool = False,
 ) -> tuple[CheckResult | None, list[dict]]:
     """Resolve the check the parser proposed. Returns (check_result, extra_dice_log).
 
@@ -932,7 +941,9 @@ def resolve_from_parsed(
             # of the supported-action boundary (agent.supported_rules). Never a class-die roll.
             log.info("declared_spell_attack_not_resolved")
             return None, []
-        return resolve_check(character, check, difficulty, hint=hint, rng=rng), []
+        return resolve_check(
+            character, check, difficulty, hint=hint, rng=rng, impaired=impaired
+        ), []
 
     legacy = getattr(parsed, "dice_expression", None)
     if not legacy:
@@ -944,7 +955,9 @@ def resolve_from_parsed(
     if outcome.sides == 20 and outcome.count == 1:
         entities = getattr(parsed, "entities", None) or {}
         skill = entities.get("skill") if isinstance(entities, dict) else None
-        return resolve_check(character, skill or "flat", difficulty, hint=hint, rng=rng), []
+        return resolve_check(
+            character, skill or "flat", difficulty, hint=hint, rng=rng, impaired=impaired
+        ), []
     return None, [outcome.to_log("legacy dice_expression")]
 
 

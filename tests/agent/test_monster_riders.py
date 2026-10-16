@@ -148,6 +148,7 @@ async def test_poisoned_rider_on_a_hit_saves_and_the_hero_repeats_it(
             "applied_round": 1,
             "expires_after_round": 10,
             "save": {"ability": "CON", "dc": 12},
+            "source_id": "Spitter",
         }
     ]
     assert (

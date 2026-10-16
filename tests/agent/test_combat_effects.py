@@ -72,7 +72,7 @@ def test_prone_target_grants_advantage_within_five_feet_even_for_a_ranged_attack
 
 @pytest.mark.parametrize(
     "raw",
-    [None, "restrained", 7, {"kind": "restrained"}, [None, "x", {"kind": "stunned"}]],
+    [None, "restrained", 7, {"kind": "restrained"}, [None, "x", {"kind": "charmed"}]],
 )
 def test_malformed_or_legacy_effects_read_as_none(raw) -> None:
     combatant = {"name": "Raider", "hp_current": 5}
@@ -99,7 +99,7 @@ def test_add_release_and_clear_are_explicit_and_idempotent() -> None:
     assert "effects" not in wolf  # clearing a row without effects writes nothing
 
     with pytest.raises(ValueError):
-        add_effect(raider, "stunned", source=None, round_applied=1)
+        add_effect(raider, "charmed", source=None, round_applied=1)
 
 
 def test_defeat_ends_the_effects_of_the_defeated_combatant() -> None:

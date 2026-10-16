@@ -13,9 +13,11 @@ type (EDG-043). Also executed: the creature type (its size-and-type line, for hu
 a poisoned rider on a hit whose wording is read exactly (`AttackRider`), a Recharge X-6 attack
 (`MonsterAttack.recharge`), rolled at the start of the creature's turns once spent, and a
 breath-weapon style save action whose wording is read exactly (`AttackSave`): the hero saves
-instead of the action rolling to hit. Legendary actions (EDG-043): the budget the record states and
-each option whose body is exactly an attack the creature already lists ("makes a tail attack") or
-the dragon Wing Attack's save (`LegendaryOption`). The engine decides every roll.
+instead of the action rolling to hit. A save action may also leave the hero stunned (Mind Blast)
+or frightened (a dragon's Frightful Presence, used once as the Multiattack opener it is named in).
+Legendary actions (EDG-043): the budget the record states and each option whose body is exactly an
+attack the creature already lists ("makes a tail attack") or the dragon Wing Attack's save
+(`LegendaryOption`). The engine decides every roll.
 
 Declared, never implied: speed and movement, lair and reaction actions, legendary options that are
 not read exactly (Detect, movement, spells, conditions), spellcasting, save actions whose wording
@@ -107,15 +109,22 @@ _POISON_RIDER = re.compile(
     r"turns, ending the effect (?:on itself |on the target |on it )?on a success\.?\s*$",
     re.IGNORECASE,
 )
+# A frightened or stunned rider that lasts until the end of the attacker's next turn (Scarecrow Claw,
+# PDF p.269; Empyrean Maul, PDF p.131). It has no repeat save, being that short.
+_TURN_RIDER = re.compile(
+    r"^\.\s*If the target is a creature, it must succeed on a DC (\d+) (Wisdom|Constitution) saving "
+    r"throw or be (frightened|stunned) until the end of (?:the|its) [^.]+?['’]s next turn\.?\s*$",
+    re.IGNORECASE,
+)
 # "Recharge 5-6" (or "Recharge 6") in an ability name. Recharge after a rest is not a d6 recharge.
 _RECHARGE_NAME = re.compile(r"\s*\(Recharge\s*(?:([2-5])\s*[-–]\s*6|(6))\)\s*$", re.IGNORECASE)
 # A breath weapon, exactly as the Monster Manual words it (EDG-043, see AttackSave): one save for
 # each creature in the area, which is the hero alone (an exact-record fight has no other creature on
 # its side). Extra clauses ("provided that ...", a rider after the damage) are not matched, so the
-# action stays declared.
+# action stays declared. The mind flayer's Mind Blast is worded the same way with "magically emits".
 _SAVE_LEAD = (
-    r"^The [^.]+? exhales [^.]+? in an? \d+-foot (?:cone|line that is \d+ feet wide)\.\s*"
-    r"Each creature in that (?:area|line) must "
+    r"^The [^.]+? (?:exhales|magically emits) [^.]+? in an? \d+-foot "
+    r"(?:cone|line that is \d+ feet wide)\.\s*Each creature in that (?:area|line) must "
 )
 _SAVE_ABILITY = r"(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)"
 _SAVE_DAMAGE = r"(\d+) \(([^)]*)\) ([a-z]+) damage"
@@ -124,9 +133,15 @@ _HALF_SAVE = re.compile(
     r"save, or half as much damage on a successful one\.?\s*$",
     re.IGNORECASE,
 )
+_REPEAT_SAVE = (
+    r"A creature can repeat the saving throw at the end of each of its turns, ending the effect on "
+    r"itself on a success\."
+)
+# "... or take N (dice) type damage and be stunned for 1 minute": the failed save's condition lasts a
+# minute with the repeat save (Mind Blast, MM PDF p.223). A success avoids the damage and the condition.
 _NO_EFFECT_SAVE = re.compile(
-    rf"{_SAVE_LEAD}succeed on a DC (\d+) {_SAVE_ABILITY} saving throw or take "
-    rf"{_SAVE_DAMAGE}\.?\s*$",
+    rf"{_SAVE_LEAD}succeed on a DC (\d+) {_SAVE_ABILITY} saving throw or take {_SAVE_DAMAGE}"
+    rf"(?: and be (?P<condition>stunned) for 1 minute\.\s*{_REPEAT_SAVE}|\.?)\s*$",
     re.IGNORECASE,
 )
 # Legendary actions (EDG-043). The budget is stated in the section's lead sentence ("can take 3
@@ -147,6 +162,18 @@ _WING_ATTACK = re.compile(
     r"half its flying speed\.?\s*$",
     re.IGNORECASE,
 )
+# A dragon's Frightful Presence (MM PDF pp.98-99): the hero is the only creature of the dragon's choice
+# in range. The 24-hour immunity after a success or the end of the effect makes it one use per fight.
+_FRIGHTFUL_PRESENCE = re.compile(
+    r"^Each creature of the (?P<who>\w+)['’]s choice that is within 120 feet of the (?P=who) and aware "
+    r"of it must succeed on a DC (?P<dc>\d+) Wisdom saving throw or become frightened for 1 minute\.\s*"
+    rf"{_REPEAT_SAVE}\s*If a creature['’]s saving throw is successful or the effect ends for it, the "
+    r"creature is immune to the (?P=who)['’]s Frightful Presence for the next 24 hours\.?\s*$",
+    re.IGNORECASE,
+)
+# A Multiattack that opens with a once-per-encounter action ("The dragon can use its Frightful Presence.
+# It then makes three attacks"): the opener is made first, as the book words it.
+_MULTI_OPENER = re.compile(r"^The [^.]+? can use its ([A-Z][A-Za-z ]+?)\. It then makes\b")
 # An ability modifier in parentheses: "(+4)", "(-1)", or the PDF text layer's "(- 2)".
 _ABILITY_MOD = r"\(\s*([+\-\u2212\u2013]?)\s*(\d+)\s*\)"
 # Entry names may carry en or em dashes ("Fire Breath (Recharge 5–6)"), which the name pattern needs.
@@ -164,32 +191,40 @@ class AttackRider:
 
     `poisoned`: a Constitution save at `dc`, failure poisons the target for one minute, and the
     target repeats the save at the end of each of its turns (the repeat ends the effect on success).
+    `frightened` or `stunned` with no `duration_rounds`: the condition lasts until the end of the
+    attacker's next turn, with no repeat save.
     """
 
     kind: str
     dc: int
     ability: str
-    duration_rounds: int
+    duration_rounds: int | None
 
 
 @dataclass(frozen=True)
 class AttackSave:
     """The hero's saving throw against a save action (EDG-043), instead of an attack roll.
 
-    A failed save takes the rolled damage. A success takes half of it, rounded down, when
-    `half_on_success`, and none otherwise.
+    A failed save takes the rolled damage (an action without damage dice has none). A success takes
+    half of it, rounded down, when `half_on_success`, and none otherwise. A failed save also leaves
+    the hero in `condition` for one minute, repeating this save at the end of each of its turns.
+    `once` is set when the book makes the hero immune afterwards: the action is made once per fight.
+    Frightful Presence's 24-hour immunity is approximated as fight-local; encounters within that
+    24-hour period are not linked.
     """
 
     ability: str
     dc: int
     half_on_success: bool
+    condition: str | None = None
+    once: bool = False
 
 
 @dataclass(frozen=True)
 class MonsterAttack:
     name: str
     bonus: int  # 0 for a save action, which has no attack roll
-    damage_dice: str
+    damage_dice: str  # empty for a save action that deals no damage
     damage_type: str
     ranged: bool = False  # a save action is made from either band
     recharge: int | None = None  # "Recharge N-6": the d6 result that restores the attack (N)
@@ -437,14 +472,21 @@ def _exact_damage(average: str, dice_text: str, damage_type: str) -> tuple[str, 
 
 def _save_action(body: str, name: str, recharge: int | None) -> MonsterAttack | None:
     """A breath-weapon style action whose text reads exactly: the hero's save, then the damage."""
+    presence = _FRIGHTFUL_PRESENCE.match(body) if recharge is None else None
+    if presence:
+        save = AttackSave("WIS", int(presence["dc"]), False, "frightened", once=True)
+        return MonsterAttack(name, 0, "", "", ranged=True, save=save)
     for half_on_success, pattern in ((True, _HALF_SAVE), (False, _NO_EFFECT_SAVE)):
         match = pattern.match(body)
         if match:
-            dc, ability, average, dice_text, damage_type = match.groups()
+            dc, ability, average, dice_text, damage_type = match.groups()[:5]
             damage = _exact_damage(average, dice_text, damage_type)
             if damage is None:
                 return None
-            save = AttackSave(ability[:3].upper(), int(dc), half_on_success)
+            condition = match.groupdict().get("condition")
+            save = AttackSave(
+                ability[:3].upper(), int(dc), half_on_success, condition and condition.lower()
+            )
             return MonsterAttack(name, 0, *damage, ranged=True, recharge=recharge, save=save)
     return None
 
@@ -458,9 +500,13 @@ def _attack(body: str, name: str) -> tuple[MonsterAttack | None, str | None]:
     if damage is None:
         return None, None
     dice, damage_type = damage
-    poison = _POISON_RIDER.match(rest)
-    if poison:
+    rider: AttackRider | None = None
+    if poison := _POISON_RIDER.match(rest):
         rider = AttackRider("poisoned", int(poison.group(1)), "CON", duration_rounds=10)
+    elif short := _TURN_RIDER.match(rest):
+        dc, ability, condition = short.groups()
+        rider = AttackRider(condition.lower(), int(dc), ability[:3].upper(), duration_rounds=None)
+    if rider:
         return MonsterAttack(
             name, int(bonus), dice, damage_type, kind.lower() == "ranged", None, rider
         ), None
@@ -533,7 +579,10 @@ def _multiattack(
         return None
     if sum(counts.values()) != total:
         return None
-    return tuple(counts.items())
+    opening = _MULTI_OPENER.match(body)
+    opener = next((a for a in attacks if opening and a.name == opening.group(1)), None)
+    first = ((opener.name, 1),) if opener and opener.save and opener.save.once else ()
+    return first + tuple(counts.items())
 
 
 def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
@@ -735,10 +784,11 @@ def combat_fields(stats: MonsterStats) -> dict[str, Any]:
 def attack_plan(stats: MonsterStats, spent: Iterable[str] = ()) -> tuple[MonsterAttack, ...]:
     """Attacks this creature makes in one turn: every listed attack once per multiattack count.
 
-    `spent` names recharge attacks used and not yet recharged: they are left out of the plan. A
-    ready recharge attack that the Multiattack does not name (a breath weapon) replaces the
-    Multiattack, as it is an action of its own; without a multiattack, a ready recharge attack is
-    used first too (its use is then spent), else the first attack that does not recharge.
+    `spent` names recharge attacks used and not yet recharged, and once-per-fight actions used: they
+    are left out of the plan. A ready recharge attack that the Multiattack does not name (a breath
+    weapon) replaces the Multiattack, as it is an action of its own; without a multiattack, a ready
+    recharge attack is used first too (its use is then spent), else the first attack that does not
+    recharge.
     """
     spent_set = set(spent)
     multiattack_names = {name for name, _count in stats.multiattack}
@@ -755,9 +805,9 @@ def attack_plan(stats: MonsterStats, spent: Iterable[str] = ()) -> tuple[Monster
             by_name[name]
             for name, count in stats.multiattack
             for _ in range(count)
-            if by_name[name].recharge is None or name not in spent_set
+            if name not in spent_set
         )
-    return tuple(a for a in stats.attacks if a.recharge is None)[:1]
+    return tuple(a for a in stats.attacks if a.recharge is None and a.name not in spent_set)[:1]
 
 
 def legendary_plan(stats: MonsterStats, left: int) -> tuple[LegendaryOption, ...]:
@@ -773,7 +823,7 @@ def recharge_turn_start(combatant: dict) -> list[tuple[str, DiceOutcome, bool]]:
     """Roll the d6 for each spent recharge attack at the start of this creature's turn (EDG-043).
 
     Returns (attack name, the engine's d6 roll, recharged) for each one rolled. A recharged attack
-    leaves the spent list; one that did not recharge stays spent.
+    leaves the spent list; one that did not recharge stays spent, as does a once-per-fight action.
     """
     stats = stats_of(combatant)
     spent = [str(n) for n in combatant.get("recharge_spent") or ()]
@@ -782,8 +832,11 @@ def recharge_turn_start(combatant: dict) -> list[tuple[str, DiceOutcome, bool]]:
     results: list[tuple[str, DiceOutcome, bool]] = []
     still: list[str] = []
     for name in spent:
-        attack = next((a for a in stats.attacks if a.name == name and a.recharge is not None), None)
-        if attack is None:  # a stored name with no recharge attack behind it: nothing to restore
+        attack = next((a for a in stats.attacks if a.name == name), None)
+        if attack is None:  # a stored name with no attack behind it: nothing to restore
+            continue
+        if attack.recharge is None:  # a once-per-fight action does not recharge
+            still.append(name)
             continue
         outcome = roll("1d6")
         recharged = outcome.total >= attack.recharge
@@ -795,8 +848,9 @@ def recharge_turn_start(combatant: dict) -> list[tuple[str, DiceOutcome, bool]]:
 
 
 def spend_recharge(combatant: dict, attack: MonsterAttack) -> None:
-    """Record that a recharge attack was used, so it waits for its recharge roll."""
-    if attack.recharge is None:
+    """Record that a recharge attack was used, so it waits for its recharge roll (or, for a
+    once-per-fight action, for the end of the encounter)."""
+    if attack.recharge is None and not (attack.save and attack.save.once):
         return
     spent = [str(n) for n in combatant.get("recharge_spent") or ()]
     if attack.name not in spent:
