@@ -6,6 +6,7 @@ from edgar_core.preparation import SafePreparationFailure
 from edgar_core.sources import RulesEdition, SourceEdition
 
 from .preparation_setup import PreparationSetup
+from .readiness import ReadinessRead
 
 AdventureStatus = Literal[
     "processing", "ready", "failed", "missing", "empty", "partial", "unavailable"
@@ -63,6 +64,7 @@ class AdventureRead(BaseModel):
     can_retry: bool = False
     job: AdventureJobRead | None = None
     preparation_setup_required: bool = False
+    readiness: ReadinessRead | None = None
 
 
 class AdventureUpdate(BaseModel):

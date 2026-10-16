@@ -8,8 +8,9 @@ import {
   listCharacters,
   listSessions,
 } from "../../api/client";
-import type { CharacterListItem, SessionRead } from "../../api/types";
+import type { CharacterListItem, ReadinessRead, SessionRead } from "../../api/types";
 import { CharacterForm } from "../../components/CharacterForm";
+import { ReadinessNotice } from "../../components/campaign/ReadinessNotice";
 import { Pill } from "../../components/Pill";
 import { Button } from "../../components/ui/Button";
 import { EmptyState, LoadingText } from "../../components/ui/EmptyState";
@@ -30,10 +31,12 @@ export default function SessionsTab({
   campaignId,
   ended,
   playAllowed = true,
+  readiness,
 }: {
   campaignId: number;
   ended: boolean;
   playAllowed?: boolean;
+  readiness?: ReadinessRead | null;
 }) {
   const navigate = useNavigate();
   const { isDev } = useMode();
@@ -58,7 +61,8 @@ export default function SessionsTab({
     [characters.data],
   );
 
-  const showPicker = !ended && playAllowed && (pickerOpen ?? numbered?.length === 0);
+  const campaignCanPlay = readiness?.play_allowed ?? playAllowed;
+  const showPicker = !ended && campaignCanPlay && (pickerOpen ?? numbered?.length === 0);
 
   function play(id: number) {
     rememberLastSession(id);
@@ -66,7 +70,7 @@ export default function SessionsTab({
   }
 
   async function startSession(character?: Pick<CharacterListItem, "id" | "current_assignment">) {
-    if (!playAllowed) return;
+    if (!campaignCanPlay) return;
     setBusy(true);
     setError(null);
     try {
@@ -102,7 +106,7 @@ export default function SessionsTab({
           A session is one saved playthrough. Pick up where you left off with{" "}
           <strong className="text-ink">Continue</strong>, or start a fresh one.
         </p>
-        {!showPicker && !ended && playAllowed ? (
+        {!showPicker && !ended && campaignCanPlay ? (
           <Button
             onClick={() => {
               setError(null);
@@ -232,7 +236,9 @@ export default function SessionsTab({
               const who =
                 s.active_character_id == null
                   ? "No character"
-                  : ch
+                  : s.character_name
+                    ? `${s.character_name}${ch ? `, ${ch.character_class}` : ""}`
+                    : ch
                     ? `${ch.name}, ${ch.character_class}`
                     : "Character removed";
               return (
@@ -248,6 +254,12 @@ export default function SessionsTab({
                       Session {s.number}
                       {s.ended_at ? <Pill>Finished</Pill> : null}
                     </p>
+                    {s.has_history && s.last_played_at ? (
+                      <p className="text-xs text-ink-subtle">Last played {relativeTime(s.last_played_at)}</p>
+                    ) : <p className="text-xs text-ink-subtle">No story history yet</p>}
+                    {s.readiness?.play_allowed !== true ? (
+                      <ReadinessNotice readiness={s.readiness} onRetry={sessions.refetch} className="mt-2 text-xs" />
+                    ) : null}
                     <p className="text-xs text-ink-muted">
                       {who} · started{" "}
                       <time dateTime={s.started_at} title={dateTime(s.started_at)}>
@@ -263,9 +275,12 @@ export default function SessionsTab({
                     ) : null}
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => play(s.id)}>
-                      <PlayIcon className="h-3 w-3" /> Continue
-                    </Button>
+                    {s.readiness?.play_allowed === true || (s.has_history && s.readiness?.history_allowed !== false) ? (
+                      <Button size="sm" onClick={() => play(s.id)}>
+                        <PlayIcon className="h-3 w-3" />
+                        {s.readiness?.play_allowed === true ? "Continue" : "Read story"}
+                      </Button>
+                    ) : null}
                     <Button
                       variant="danger"
                       size="sm"

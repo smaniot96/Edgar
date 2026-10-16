@@ -37,6 +37,7 @@ def story_source(monkeypatch, api_client):
         text = PUBLIC + "\n" + SECRET
         manifest = AdventureManifest(
             source=slug,
+            rules_edition="2014",
             source_sha256="a" * 64,
             extraction_sha256=Extraction(
                 slug, "a" * 64, 1, [ExtractedPage(1, text, "generated", check_text(text))]

@@ -214,6 +214,7 @@ def fake_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         manifest = AdventureManifest(
             source=slug,
+            rules_edition="2014",
             source_sha256=extraction.source_sha256,
             extraction_sha256=extraction.text_sha256(),
             opening_scene_id="forest_trail",

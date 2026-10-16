@@ -26,7 +26,7 @@ import { ErrorNotice, OfflineState } from "../components/ui/ErrorNotice";
 import { ChevronIcon, PlayIcon, PlusIcon } from "../components/ui/icons";
 import { Page, PageHeader, SectionTitle } from "../components/ui/Page";
 import { campaignDisplayName } from "../lib/campaign";
-import { buildCards, type CardModel } from "../lib/campaignCards";
+import { buildCards, selectResumeSession, type CardModel } from "../lib/campaignCards";
 import { isJobActive } from "../lib/adventureJob";
 import { cn } from "../lib/cn";
 import { forgetLastSession, readLastSessionId, rememberLastSession } from "../lib/lastSession";
@@ -63,14 +63,17 @@ export default function Home() {
     return () => window.clearTimeout(t);
   }, [hasPending, adventuresLoading, refetchAdventures]);
 
-  // "Resume last session" only when that session still exists.
+  // Prefer the newest playable save with history. A recent blocked or empty save must not
+  // displace the last story the player can continue reading or playing.
   const lastSessionId = readLastSessionId();
-  const lastSession =
+  const rememberedSession =
     lastSessionId != null ? sessions.data?.find((s) => s.id === lastSessionId) : undefined;
-  const lastSessionGone = lastSessionId != null && sessions.data !== undefined && !lastSession;
+  const lastSessionGone = lastSessionId != null && sessions.data !== undefined && !rememberedSession;
   useEffect(() => {
     if (lastSessionGone) forgetLastSession();
   }, [lastSessionGone]);
+
+  const resumeSession = selectResumeSession(sessions.data);
 
   const cards = useMemo(
     () =>
@@ -81,12 +84,12 @@ export default function Home() {
   );
 
   const resumeName = useMemo(() => {
-    if (!lastSession) return null;
-    const camp = campaigns.data?.find((c) => c.id === lastSession.campaign_id);
+    if (!resumeSession) return null;
+    const camp = campaigns.data?.find((c) => c.id === resumeSession.campaign_id);
     if (!camp) return null;
     const adv = adventures.data?.find((a) => camp.adventure_collections.includes(a.slug));
     return campaignDisplayName(camp, adv);
-  }, [lastSession, campaigns.data, adventures.data]);
+  }, [resumeSession, campaigns.data, adventures.data]);
 
   async function handlePlay(card: CardModel) {
     setActionError(null);
@@ -166,19 +169,25 @@ export default function Home() {
         description={`Welcome back, ${user.display_name || user.email}. Each campaign can hold many sessions (saves).`}
         actions={
           <>
-            {lastSession ? (
+            {resumeSession ? (
+              <div className="flex min-w-0 flex-col items-start gap-1">
               <Button
+                aria-describedby="resume-save-identity"
                 onClick={() => {
-                  rememberLastSession(lastSession.id);
-                  navigate(`/play/${lastSession.id}`);
+                  rememberLastSession(resumeSession.id);
+                  navigate(`/play/${resumeSession.id}`);
                 }}
-                title={resumeName ? `Resume ${resumeName}` : undefined}
+                title={resumeName ? `${resumeSession.readiness?.play_allowed === true ? "Resume" : "Read"} ${resumeName}` : undefined}
               >
                 <PlayIcon className="h-3.5 w-3.5" />
                 <span className="max-w-[16rem] truncate">
-                  Resume{resumeName ? `: ${resumeName}` : " last session"}
+                  {resumeSession.readiness?.play_allowed === true ? "Resume" : "Read story"}{resumeName ? `: ${resumeName}` : " last session"}
                 </span>
               </Button>
+              <p id="resume-save-identity" className="max-w-full break-words text-xs text-ink-muted">
+                {resumeSession.character_name || "No character"} · Save #{resumeSession.id}
+              </p>
+              </div>
             ) : null}
             <Button
               variant="secondary"

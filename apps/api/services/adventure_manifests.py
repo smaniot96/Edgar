@@ -32,10 +32,15 @@ def _bundle(slug: str):
     kind = ingestion.get("source_kind")
     if kind not in ("pdf", "generated", "text"):
         raise ManifestError("Source kind is unverified. Recover its canonical extraction first.")
-    extraction = load_reviewed_extraction(
-        store.source_pdf_path(slug, meta) if kind == "pdf" else None,
-        _active_extraction_path(slug, meta),
-    )
+    try:
+        extraction = load_reviewed_extraction(
+            store.source_pdf_path(slug, meta) if kind == "pdf" else None,
+            _active_extraction_path(slug, meta),
+        )
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ManifestError(
+            "The retained adventure extraction is missing or changed. Recover the source first."
+        ) from exc
     if (
         ingestion.get("source_sha256") != extraction.source_sha256
         or ingestion.get("extraction_sha256") != extraction.text_sha256()
@@ -57,8 +62,24 @@ def _active_extraction_path(slug: str, meta: dict):
 
 
 def campaign_manifests(slugs: list[str]) -> dict[str, dict]:
-    """Caller already enforces live bound-source guards; load source-pinned review receipts."""
-    return {slug: load_published_manifest(active_metadata(slug)).model_dump() for slug in slugs}
+    """Load source-pinned receipts only after checking the retained canonical extraction.
+
+    A ready vector collection and matching metadata hashes do not prove that the retained
+    extraction can still be read. `_bundle` verifies the source/extraction identity and the
+    published manifest is then checked against that active receipt.
+    """
+    manifests = {}
+    for slug in slugs:
+        meta, _ = _bundle(slug)
+        try:
+            manifests[slug] = load_published_manifest(meta).model_dump()
+        except ManifestError:
+            raise
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ManifestError(
+                "The adventure review is invalid. Review and publish the current adventure first."
+            ) from exc
+    return manifests
 
 
 def inspect_manifest(slug: str) -> dict:

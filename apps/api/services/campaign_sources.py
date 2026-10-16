@@ -392,6 +392,11 @@ def source_read(slug: str) -> SourceRead:
     )
 
 
+def is_private_preparation_source(slug: str) -> bool:
+    """Inspect the internal source kind without inferring it from player-facing copy."""
+    return load_meta(slug).get("private_preparation") is True
+
+
 async def source_reads(slugs: list[str]) -> list[SourceRead]:
     return await run_in_threadpool(lambda: [source_read(s) for s in dict.fromkeys(slugs)])
 
@@ -426,4 +431,9 @@ async def campaign_read(campaign) -> CampaignRead:
         result.source_mode == "module" and not result.sources
     )
     result.play_allowed = result.source_mode == "homebrew" or not result.retrieval_degraded
+    # `play_allowed` keeps its historical index-only meaning for existing API clients.
+    # New callers use the additive full projection, which includes review/version gates.
+    from .campaign_readiness import evaluate_play_readiness
+
+    result.readiness = await evaluate_play_readiness(None, campaign, observed_sources=result.sources)
     return result
