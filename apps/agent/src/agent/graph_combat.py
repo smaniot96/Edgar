@@ -103,6 +103,7 @@ from agent.combatants import (
     is_standing,
     release_effect,
     roster_violations,
+    save_roll_mode,
     stable_id,
     view_fields,
 )
@@ -119,6 +120,7 @@ from agent.conditions import (
     rider_save,
     rider_save_line,
     save_line,
+    save_modifier,
     settle_concentration,
     spell_condition_sentence,
     start_concentration,
@@ -128,6 +130,8 @@ from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.monster_stats import (
     AttackRider,
+    AttackSave,
+    MonsterAttack,
     MonsterStatsError,
     adjust_monster_damage,
     attack_plan,
@@ -1013,6 +1017,11 @@ async def combat_round_node(state: AgentState) -> dict:
     actors: list[dict] = []
     outcomes: list[dict] = []
 
+    def note_actor(e: dict) -> None:
+        round_actors.append(_display(e))
+        if not any(a["id"] == stable_id(e) for a in actors):  # one entry per foe (multiattack)
+            actors.append({"id": stable_id(e), "name": _display(e)})
+
     def enemy_attack(
         e: dict,
         *,
@@ -1031,9 +1040,7 @@ async def combat_round_node(state: AgentState) -> dict:
         `ranged` and `within_five_feet` (EDG-044) give the attack its reach disadvantage; `reaction`
         marks an opportunity attack, which spends the foe's reaction (see `opportunity_attack`).
         """
-        round_actors.append(_display(e))
-        if not any(a["id"] == stable_id(e) for a in actors):  # one entry per foe (multiattack)
-            actors.append({"id": stable_id(e), "name": _display(e)})
+        note_actor(e)
         mode = attack_roll_mode(e, player, ranged=ranged, within_five_feet=within_five_feet)
         round_modes.append(mode)
         atk, draws = _roll_with_mode(f"1d20{bonus:+d}", mode)
@@ -1113,6 +1120,47 @@ async def combat_round_node(state: AgentState) -> dict:
                 }
             )
 
+    def enemy_save_action(e: dict, attack: MonsterAttack, save: AttackSave) -> None:
+        """A breath-weapon style action (EDG-043): the hero's engine-rolled save, then the damage.
+
+        A failed save takes the rolled damage; a success takes half of it (rounded down) or none,
+        as the record states. A dodging hero has advantage on a Dexterity save (PHB, PDF p.193).
+        """
+        note_actor(e)
+        mode = save_roll_mode(player, save.ability)
+        bonus = save_modifier(character, save.ability)
+        saving, draws = _roll_with_mode(f"1d20{bonus:+d}" if bonus else "1d20", mode)
+        purpose = f"{hero} {save.ability} save ({attack.name})"
+        dice_log.append(_mode_log(saving, purpose, mode, draws))
+        dmg_roll = roll(attack.damage_dice)
+        dice_log.append(dmg_roll.to_log(f"{e['name']} {attack.name} damage"))
+        saved = saving.total >= save.dc
+        dmg = dmg_roll.total
+        if saved:
+            dmg = dmg // 2 if save.half_on_success else 0
+        mode_text = "" if mode == "normal" else f" at {mode}"
+        result = "succeeds on" if saved else "fails"
+        damage = f"takes {dmg} {attack.damage_type} damage" if dmg else "takes no damage"
+        log_lines.append(
+            f"{hero} {result} the {save.ability} save against {e['name']}'s {attack.name} "
+            f"(rolled {saving.total}{mode_text} vs DC {save.dc}) and {damage}."
+        )
+        outcomes.append(
+            {
+                "actor": stable_id(e),
+                "action": "save",
+                "attack": attack.name,
+                "ability": save.ability,
+                "dc": save.dc,
+                "roll": saving.total,
+                "roll_mode": mode,
+                "saved": saved,
+                "damage": dmg,
+                "damage_type": attack.damage_type,
+            }
+        )
+        damage_player(dmg)
+
     def foe_attacks(e: dict) -> None:
         stats = stats_of(e)
         if stats is None:
@@ -1144,17 +1192,20 @@ async def combat_round_node(state: AgentState) -> dict:
         for attack in plan:
             if hp <= 0:
                 break
-            enemy_attack(
-                e,
-                label=attack.name,
-                bonus=attack.bonus,
-                expr=attack.damage_dice,
-                damage_type=attack.damage_type,
-                exact=True,
-                rider=attack.rider,
-                ranged=attack.ranged,
-                within_five_feet=band == MELEE and attack.ranged,
-            )
+            if attack.save is not None:
+                enemy_save_action(e, attack, attack.save)
+            else:
+                enemy_attack(
+                    e,
+                    label=attack.name,
+                    bonus=attack.bonus,
+                    expr=attack.damage_dice,
+                    damage_type=attack.damage_type,
+                    exact=True,
+                    rider=attack.rider,
+                    ranged=attack.ranged,
+                    within_five_feet=band == MELEE and attack.ranged,
+                )
             spend_recharge(e, attack)  # a recharge attack waits for its d6 (no-op for the others)
 
     def opportunity_attack(e: dict) -> bool:

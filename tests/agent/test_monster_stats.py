@@ -581,17 +581,18 @@ def test_multiattack_that_names_one_attack_counts_it_and_declares_the_disadvanta
     # fixed: "makes two attacks with its cudgel" was read as no counts at all.
     stats = parse_monster_stats(CAPTAIN_TEXT, name="Gutter Captain")
     assert stats.multiattack == (("Cudgel", 2),)
-    assert [a.name for a in attack_plan(stats)] == ["Cudgel", "Cudgel"]
+    assert [a.name for a in attack_plan(stats, spent=["Spit Breath"])] == ["Cudgel", "Cudgel"]
     assert "Multiattack: the disadvantage on a later attack is not executed" in stats.declared
     assert not any("counts could not be read" in d for d in stats.declared)
 
 
-def test_recharge_with_an_en_dash_is_a_named_declared_trait() -> None:
+def test_recharge_with_an_en_dash_is_read_as_its_own_entry() -> None:
     # fixed: "Spit Breath (Recharge 5–6)" failed the name pattern and was glued onto the previous
-    # entry, so it was never declared.
+    # entry, so it was never declared. Its exact breath text is now executed (EDG-043, see
+    # test_monster_save_actions.py).
     stats = parse_monster_stats(CAPTAIN_TEXT, name="Gutter Captain")
-    assert "Spit Breath (Recharge 5–6): recharge ability not executed" in stats.declared
-    assert len(stats.attacks) == 1  # the breath is not an attack roll
+    assert [(a.name, a.recharge) for a in stats.attacks] == [("Cudgel", None), ("Spit Breath", 5)]
+    assert not any("Spit Breath" in d for d in stats.declared)
 
 
 def test_non_magical_split_by_the_text_layer_still_gives_the_resistance() -> None:

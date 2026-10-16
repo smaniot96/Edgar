@@ -111,8 +111,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "a normal roll. A mode comes only from engine state: an attack against an unconscious target has "
             "advantage, and the restrained or prone effects of a supported combat maneuver set "
             "advantage or disadvantage on attacks (see contested_maneuvers), and a hero who takes the "
-            "Dodge action gives foes disadvantage on attacks until the hero's next turn (see "
-            "action_economy). A Dexterity (Stealth) check made in armor the PHB Armor table marks with "
+            "Dodge action gives foes disadvantage on attacks and rolls Dexterity saving throws with "
+            "advantage until the hero's next turn (see action_economy and monster_save_actions). A "
+            "Dexterity (Stealth) check made in armor the PHB Armor table marks with "
             "Stealth disadvantage (padded, scale mail, half plate and the heavy armors, PDF p.146) has "
             "disadvantage. A player's or the model's claim of advantage is never a source and is not "
             "applied."
@@ -356,10 +357,31 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "An exact record's attack named 'Recharge X-6' (or 'Recharge 6') with an exactly readable attack "
             "text is used once, then waits: at the start of each of the monster's turns it rolls a d6 and "
             "regains the attack on X or higher. A ready recharge attack is used before the creature's other "
-            "attack. Breath and other area or save-based recharge abilities stay declared."
+            "attack, and replaces a Multiattack that does not name it. A recharge ability whose text is "
+            "not read exactly stays declared (see monster_save_actions for breath weapons)."
         ),
         implementation="agent.monster_stats:recharge_turn_start",
         test="tests/agent/test_monster_riders.py::test_recharge_attack_waits_for_its_d6_roll",
+    ),
+    Mechanic(
+        id="monster_save_actions",
+        title="Breath-weapon saves of exact records against the hero",
+        scope=(
+            "An exact record's action that reads exactly as 'The creature exhales ... in a N-foot cone "
+            "(or line). Each creature in that area must make a DC N <ability> saving throw, taking N "
+            "(dice) <type> damage on a failed save, or half as much damage on a successful one' (or, "
+            "worded 'must succeed on a DC N <ability> saving throw or take N (dice) <type> damage', no "
+            "damage on a success) makes no attack roll. The hero rolls an engine d20 plus the sheet's "
+            "save modifier (the ability modifier, plus proficiency when the sheet or the class lists the "
+            "save, PHB, PDF p.46), at advantage on a Dexterity save while dodging (PHB, PDF p.193); the "
+            "engine rolls the record's damage dice and the hero takes it on a failure, half of it "
+            "(rounded down) on a success. With a Recharge N-6 name it uses the recharge ability above. "
+            "The hero is the only creature in the area, so the cone or line geometry and the distance "
+            "are not modelled. Any other wording, a rider after the damage or an unreadable clause stays "
+            "declared and is not executed."
+        ),
+        implementation="agent.monster_stats:parse_monster_stats",
+        test="tests/agent/test_monster_save_actions.py::test_a_failed_save_takes_the_full_damage_then_the_breath_waits",
     ),
     Mechanic(
         id="long_rest",
@@ -448,7 +470,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "the player's AC; a hit rolls the record's damage dice, and a natural 20 doubles them. A "
             "Multiattack trait whose counts are stated in its text makes one attack roll per listed "
             "attack in a round. Without a readable Multiattack, the first listed attack is made and "
-            "the trait is declared. Damage riders, spell attacks, recharge abilities and a "
+            "the trait is declared. Damage riders other than the poisoned rider, spell attacks and a "
             "Multiattack's disadvantage on a later attack are declared, not executed."
         ),
         implementation="agent.monster_stats:attack_plan",
@@ -516,9 +538,10 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "action spell, Dodge, Dash and Disengage use the action; Second Wind and Healing Word use "
             "the bonus action. A second action, or a second bonus action, in the same turn is refused "
             "with no roll and no round. Dodge (PHB, PDF p.193) gives attacks against the hero "
-            "disadvantage until the hero's next turn begins. The book's other two Dodge effects are "
-            "not applied: the attacker must be seen for the disadvantage, and Dexterity saves get "
-            "advantage. No engine effect rolls a save for the hero, and sight is not tracked. Dash "
+            "disadvantage, and the hero's Dexterity saving throws advantage (see "
+            "monster_save_actions), until the hero's next turn begins. The book's conditions are not "
+            "checked: the attacker must be seen for the disadvantage, and the benefit is lost at "
+            "speed 0; neither sight nor speed is tracked. Dash "
             "allows a second move in the turn and Disengage stops the opportunity attacks that moves "
             "would provoke (see positioning). The turn's spending is shown in the combat HUD and the "
             "narration context. Help is not modelled."
@@ -645,13 +668,13 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         id="monster_traits",
         title=(
             "Other monster traits: speed and movement, legendary, lair and reaction actions, "
-            "spellcasting, breath and other save-based recharge abilities, and unlisted traits"
+            "spellcasting, save actions and recharge abilities not read exactly, and unlisted traits"
         ),
         boundary=(
             "Each such trait is declared, not executed, in the combat start message. It has no engine "
-            "effect: a monster never moves, casts, uses a breath or area recharge ability, or takes a "
+            "effect: a monster never moves, casts, uses a save action it cannot read exactly, or takes a "
             "legendary, lair or reaction action, and its passive traits are not applied. An attack-style "
-            "Recharge attack is executed as stated in the supported list."
+            "Recharge attack and a breath weapon are executed as stated in the supported list."
         ),
         owner="EDG-043",
     ),
