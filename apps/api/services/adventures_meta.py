@@ -10,6 +10,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -25,6 +26,10 @@ log = structlog.get_logger()
 DATA_DIR = Path("/data")
 ADVENTURES_DIR = DATA_DIR / "adventures"
 PDF_DIR = DATA_DIR / "pdfs"
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,254}$")
+_PATH_SLUG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,254}$")
+_ATTEMPT_PATTERN = re.compile(r"^(?:[0-9a-f]{32}|upload-[0-9a-f]{32})$")
+_JOB_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 class GenerationCheckpoint(TypedDict):
@@ -40,8 +45,59 @@ class JobCancelled(Exception):
     """Raised at a safe boundary after the owner requests job cancellation."""
 
 
+def valid_adventure_slug(slug: str) -> bool:
+    """Return whether a slug can be used as one safe path component."""
+    return isinstance(slug, str) and _SLUG_PATTERN.fullmatch(slug) is not None
+
+
+def _require_slug(slug: str) -> None:
+    if not isinstance(slug, str) or _PATH_SLUG_PATTERN.fullmatch(slug) is None:
+        raise ValueError("Invalid adventure source binding.")
+
+
+def _confined_path(root: Path, *parts: str) -> Path:
+    """Resolve an adventure artifact and reject traversal and symlink components."""
+    base = Path(root).resolve()
+    candidate = base
+    for part in parts:
+        component_path = Path(part)
+        if component_path.is_absolute() or any(
+            piece in (".", "..") for piece in component_path.parts
+        ):
+            raise ValueError("Adventure artifact path is invalid.")
+        for component in component_path.parts:
+            candidate = candidate / component
+            if candidate.is_symlink():
+                raise ValueError("Adventure artifact path cannot follow a symlink.")
+    candidate = candidate.resolve()
+    try:
+        candidate.relative_to(base)
+    except ValueError as exc:
+        raise ValueError("Adventure artifact path escapes its data directory.") from exc
+    return candidate
+
+
+def adventure_path(slug: str, *parts: str) -> Path:
+    """Return a path beneath one adventure's private directory."""
+    _require_slug(slug)
+    return _confined_path(ADVENTURES_DIR, slug, *parts)
+
+
+def canonical_pdf_path(slug: str) -> Path:
+    """Return the canonical retained PDF path, rejecting an escaping symlink."""
+    _require_slug(slug)
+    return _confined_path(PDF_DIR, f"{slug}.pdf")
+
+
+def recovery_lock_path(slug: str) -> Path:
+    """Return the per-adventure recovery lock beneath the metadata root."""
+    _require_slug(slug)
+    return _confined_path(ADVENTURES_DIR, f"{slug}.recovery.lock")
+
+
 def meta_path(slug: str) -> Path:
-    return ADVENTURES_DIR / f"{slug}.json"
+    _require_slug(slug)
+    return _confined_path(ADVENTURES_DIR, f"{slug}.json")
 
 
 def load_meta(slug: str) -> dict:
@@ -56,6 +112,7 @@ def load_meta(slug: str) -> dict:
 
 def _write_meta(slug: str, data: dict, *, create: bool = False) -> None:
     """Publish complete JSON atomically; `create` must not replace an existing reservation."""
+    target = meta_path(slug)
     ADVENTURES_DIR.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
@@ -69,9 +126,9 @@ def _write_meta(slug: str, data: dict, *, create: bool = False) -> None:
         if create:
             # Linking a completed temporary file claims the name without overwriting it.
             # Competing API processes receive FileExistsError and choose another slug.
-            os.link(temporary, meta_path(slug))
+            os.link(temporary, target)
         else:
-            temporary.replace(meta_path(slug))
+            temporary.replace(target)
         directory_fd = os.open(ADVENTURES_DIR, os.O_RDONLY)
         try:
             os.fsync(directory_fd)
@@ -99,13 +156,25 @@ def reserve_meta(slug: str, data: dict) -> bool:
 def metadata_slugs() -> set[str]:
     if not ADVENTURES_DIR.is_dir():
         return set()
-    return {p.stem for p in ADVENTURES_DIR.glob("*.json")}
+    slugs: set[str] = set()
+    for path in ADVENTURES_DIR.glob("*.json"):
+        slug = path.stem
+        if not isinstance(slug, str) or _PATH_SLUG_PATTERN.fullmatch(slug) is None:
+            continue
+        try:
+            meta_path(slug)
+        except ValueError:
+            continue
+        slugs.add(slug)
+    return slugs
 
 
 @contextmanager
 def lifecycle_lock(slug: str):
+    _require_slug(slug)
     ADVENTURES_DIR.mkdir(parents=True, exist_ok=True)
-    with (ADVENTURES_DIR / f"{slug}.lifecycle.lock").open("a") as handle:
+    lock_path = _confined_path(ADVENTURES_DIR, f"{slug}.lifecycle.lock")
+    with lock_path.open("a") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -222,9 +291,10 @@ def update_job(slug: str, token: str, **updates: Any) -> dict[str, Any]:
 
 
 def job_dir(slug: str, job_id: str) -> Path:
-    if len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id):
+    _require_slug(slug)
+    if not isinstance(job_id, str) or not _JOB_PATTERN.fullmatch(job_id):
         raise ValueError("Invalid adventure job identity.")
-    return ADVENTURES_DIR / slug / ".jobs" / job_id
+    return adventure_path(slug, ".jobs", job_id)
 
 
 def load_generation_checkpoint(
@@ -360,7 +430,10 @@ def attempt_guard(slug: str, token: str):
 
 
 def attempt_dir(slug: str, token: str) -> Path:
-    return ADVENTURES_DIR / slug / ".attempts" / token
+    _require_slug(slug)
+    if not isinstance(token, str) or not _ATTEMPT_PATTERN.fullmatch(token):
+        raise ValueError("Invalid adventure attempt identity.")
+    return adventure_path(slug, ".attempts", token)
 
 
 def candidate_pdf_path(slug: str, token: str) -> Path:
@@ -370,15 +443,20 @@ def candidate_pdf_path(slug: str, token: str) -> Path:
 
 def source_pdf_path(slug: str, meta: dict | None = None) -> Path:
     """Return the PDF matching the active metadata receipt, including pre-finalized receipts."""
+    _require_slug(slug)
     if meta is None:
         meta = load_meta(slug)
     token = meta.get("source_pdf_attempt_id")
     if not isinstance(token, str):
         token = meta.get("artifact_attempt")
-    candidate = candidate_pdf_path(slug, token) if isinstance(token, str) else None
+    candidate = (
+        candidate_pdf_path(slug, token)
+        if isinstance(token, str) and _ATTEMPT_PATTERN.fullmatch(token)
+        else None
+    )
     if candidate is not None and candidate.is_file():
         return candidate
-    return PDF_DIR / f"{slug}.pdf"
+    return canonical_pdf_path(slug)
 
 
 def _publish_candidate_pdf(slug: str, token: str) -> bool:
@@ -387,7 +465,7 @@ def _publish_candidate_pdf(slug: str, token: str) -> bool:
     if not candidate.is_file():
         return False
     PDF_DIR.mkdir(parents=True, exist_ok=True)
-    target = PDF_DIR / f"{slug}.pdf"
+    target = canonical_pdf_path(slug)
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(dir=PDF_DIR, suffix=".pdf.tmp", delete=False) as out:
@@ -465,7 +543,7 @@ def cancel_attempt(slug: str, token: str) -> bool:
                     and (
                         job.get("kind") == "generation"
                         or candidate.is_file()
-                        or (PDF_DIR / f"{slug}.pdf").is_file()
+                        or canonical_pdf_path(slug).is_file()
                     ),
                     updated_at=datetime.now(UTC).isoformat(),
                 )
@@ -641,7 +719,7 @@ def finish_attempt(slug: str, token: str, updates: dict, *, success: bool = Fals
                     and (
                         job.get("kind") == "generation"
                         or candidate_pdf.is_file()
-                        or (PDF_DIR / f"{slug}.pdf").is_file()
+                        or canonical_pdf_path(slug).is_file()
                     ),
                     updated_at=datetime.now(UTC).isoformat(),
                 )
@@ -657,7 +735,7 @@ def finish_attempt(slug: str, token: str, updates: dict, *, success: bool = Fals
                     )
             if success or not previous:
                 staged = attempt_dir(slug, token)
-                destination = ADVENTURES_DIR / slug
+                destination = adventure_path(slug)
                 destination.mkdir(parents=True, exist_ok=True)
                 for path in staged.glob(f"{slug}.*"):
                     if path.suffix.lower() == ".pdf":
@@ -744,7 +822,7 @@ def fail_stale_processing() -> list[str]:
                         and (
                             job.get("kind") == "generation"
                             or (current_candidate is not None and current_candidate.is_file())
-                            or (PDF_DIR / f"{slug}.pdf").is_file()
+                            or canonical_pdf_path(slug).is_file()
                         )
                     ),
                     interruption="server_restart",
@@ -766,7 +844,7 @@ def fail_stale_processing() -> list[str]:
                         and (
                             job.get("kind") == "generation"
                             or (current_candidate is not None and current_candidate.is_file())
-                            or (PDF_DIR / f"{slug}.pdf").is_file()
+                            or canonical_pdf_path(slug).is_file()
                         )
                     ),
                     updated_at=datetime.now(UTC).isoformat(),

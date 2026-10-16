@@ -41,10 +41,14 @@ from ..schemas.adventure import (
 from ..services.adventures_meta import (
     ADVENTURES_DIR as _ADVENTURES_DIR,
     PDF_DIR as _PDF_DIR,
+    adventure_path as _adventure_path,
+    attempt_dir as _attempt_dir,
+    canonical_pdf_path as _canonical_pdf_path,
     load_meta as load_adventure_metadata,
     meta_path as _metadata_path,
     metadata_slugs,
     new_job,
+    recovery_lock_path as _recovery_lock_path,
     reserve_meta,
     save_meta as _save_adventure_metadata,
 )
@@ -82,8 +86,14 @@ def _all_collection_names() -> list[str]:
 
 
 def _adventure_collection_names(all_names: list[str]) -> set[str]:
+    from ..services.adventures_meta import valid_adventure_slug
+
     return {
-        n for n in all_names if not is_rules_collection(n) and not is_campaign_lore_collection(n)
+        n
+        for n in all_names
+        if valid_adventure_slug(n)
+        and not is_rules_collection(n)
+        and not is_campaign_lore_collection(n)
     }
 
 
@@ -153,6 +163,9 @@ def _list_adventures():
 
 
 def _get_adventure(slug: str):
+    from ..services.campaign_sources import validate_binding
+
+    validate_binding(slug)
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
     if slug not in collection_slugs and not _metadata_path(slug).is_file():
@@ -215,7 +228,7 @@ def _extraction_path(slug: str, name: str, *, candidate_attempt_id: str | None =
     meta = active_metadata(slug, raw_meta)
     token = meta.get("artifact_attempt")
     staged = attempt_dir(slug, token) / name if token else None
-    path = staged if staged is not None and staged.is_file() else _ADVENTURES_DIR / slug / name
+    path = staged if staged is not None and staged.is_file() else _adventure_path(slug, name)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="No extraction preview is available yet.")
     return path
@@ -542,7 +555,7 @@ async def upload_adventure(
         _metadata_path(slug).unlink(missing_ok=True)
 
     await run_in_threadpool(_PDF_DIR.mkdir, parents=True, exist_ok=True)
-    pdf_path = _PDF_DIR / f"{slug}.pdf"
+    pdf_path = _canonical_pdf_path(slug)
     try:
         size = await run_in_threadpool(_copy_capped, file.file, pdf_path, _MAX_UPLOAD_BYTES)
     except Exception:
@@ -624,7 +637,7 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
 def _source_lock(slug: str):
     """Serialize source recovery reservations across API processes."""
     _ADVENTURES_DIR.mkdir(parents=True, exist_ok=True)
-    with (_ADVENTURES_DIR / f"{slug}.recovery.lock").open("a") as handle:
+    with _recovery_lock_path(slug).open("a") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
@@ -736,12 +749,15 @@ def _retry_adventure(
     title = meta.get("title") or slug.replace("_", " ").title()
     generation = meta.get("generation") or {}
     retained_candidate = job.get("retained_source_attempt_id")
-    retained_candidate_path = (
-        _ADVENTURES_DIR / slug / ".attempts" / retained_candidate / f"{slug}.pdf"
-        if isinstance(retained_candidate, str)
-        else None
-    )
-    pdf_path = _PDF_DIR / f"{slug}.pdf"
+    try:
+        retained_candidate_path = (
+            _attempt_dir(slug, retained_candidate) / f"{slug}.pdf"
+            if isinstance(retained_candidate, str)
+            else None
+        )
+    except ValueError:
+        retained_candidate_path = None
+    pdf_path = _canonical_pdf_path(slug)
     reviewed_identity = None
     if body is not None and (body.reviewed_source_sha256 or body.reviewed_extraction_sha256):
         if not body.reviewed_source_sha256 or not body.reviewed_extraction_sha256:
@@ -884,6 +900,9 @@ def cancel_adventure(slug: str):
 @router.patch("/adventures/{slug}", response_model=AdventureRead)
 def update_adventure(slug: str, body: AdventureUpdate):
     """Update metadata; changing the edition invalidates any earlier manifest receipt."""
+    from ..services.campaign_sources import validate_binding
+
+    validate_binding(slug)
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
     if slug not in collection_slugs and not _metadata_path(slug).is_file():
@@ -915,6 +934,9 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
             status_code=400,
             detail="Send header X-Confirm-Delete: yes to confirm deletion.",
         )
+    from ..services.campaign_sources import validate_binding
+
+    validate_binding(slug)
     all_names = _all_collection_names()
     collection_slugs = _adventure_collection_names(all_names)
     if slug not in collection_slugs and not _metadata_path(slug).is_file():
@@ -938,11 +960,11 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
     if meta_path.is_file():
         meta_path.unlink()
 
-    pdf_path = _PDF_DIR / f"{slug}.pdf"
+    pdf_path = _canonical_pdf_path(slug)
     if pdf_path.is_file():
         pdf_path.unlink()
 
-    cover_dir = _ADVENTURES_DIR / slug
+    cover_dir = _adventure_path(slug)
     if cover_dir.is_dir():
         shutil.rmtree(cover_dir, ignore_errors=True)
 
@@ -971,7 +993,7 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
                     status_code=409,
                     detail="This source cannot be re-uploaded in its current state.",
                 )
-            upload_dir = _ADVENTURES_DIR / slug / ".attempts" / f"upload-{uuid.uuid4().hex}"
+            upload_dir = _attempt_dir(slug, f"upload-{uuid.uuid4().hex}")
             upload_dir.mkdir(parents=True, exist_ok=True)
             staged_path = upload_dir / "source.pdf"
             try:

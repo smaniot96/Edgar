@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "corpus_id": "edg-054-real-source-fidelity-2014-v1",
+  "evaluation_mode": "offline-deterministic",
+  "provider_calls": 0,
+  "documents": {
+    "phb": {
+      "title": "Player's Handbook (2014 rules)",
+      "source": "player_handbook",
+      "collection": "rules_player_handbook",
+      "source_kind": "pdf",
+      "source_sha256": "3c707344a803f264dd08e1ba0b2c3f8f6b577b167f6758c33d2799f02ec81fcf",
+      "extraction_sha256": "5fc1910ab761cd060408a548a7341509c2af394a7cce20375fd01867eca91bfe",
+      "edition": "2014",
+      "edition_basis": "2014 PHB title page; extraction metadata itself reports unspecified",
+      "extraction_tool": "Edgar ingestion.extract.extract_document, PyMuPDF 1.27.2.3",
+      "pages": [
+        73,
+        258
+      ],
+      "quality": "pass"
+    },
+    "mm": {
+      "title": "Monster Manual (2014 rules)",
+      "source": "monster_manual",
+      "collection": "rules_monster_manual",
+      "source_kind": "pdf",
+      "source_sha256": "51cde09adade4186028088798c9d5bc4bf2b63e1b274080d9a975943b79069f5",
+      "extraction_sha256": "bc8f9679e21f637d54e56aa9a6cec89941a96a2ac6bad36497a5058a135bea9a",
+      "edition": "2014",
+      "edition_basis": "2014 MM title page; extraction metadata itself reports unspecified",
+      "extraction_tool": "Edgar ingestion.extract.extract_document, PyMuPDF 1.27.2.3",
+      "pages": [
+        99,
+        167,
+        292
+      ],
+      "quality": "page 99 and 167 pass; page 292 reports incomplete_stat_fields and interleaved_stat_records"
+    },
+    "lost_mine": {
+      "title": "Lost Mine of Phandelver (2014 rules)",
+      "source": "d_d_5e_lost_mine_of_phandelver",
+      "collection": "lost_mine_of_phandelver",
+      "source_kind": "markdown-extraction",
+      "source_sha256": "a923884ff70861898990aa4531109c71a9ad7aa94198034f4d7c308f176248ed",
+      "extraction_sha256": "a923884ff70861898990aa4531109c71a9ad7aa94198034f4d7c308f176248ed",
+      "edition": "2014",
+      "edition_basis": "2014 module edition; local Markdown has no physical-page markers",
+      "extraction_tool": "Existing local data/markdown artifact; original module PDF not present",
+      "locator": "Wave Echo Cave / Flameskull and adjacent Mage stat block text near byte offset 264707",
+      "quality": "ambiguous mixed-column extraction; only the short Mage DC line is retained for exact identity/DC regression"
+    }
+  },
+  "prompt_provenance": {
+    "model_calls": 0,
+    "prompt_source": "apps/agent/src/agent/prompts.py",
+    "prompt_sha256": "e9de592383d3fc3c44728dccc3fee066bbc48c179733d0b4ab600dd46ce84ac8",
+    "note": "Recorded for change detection only. The offline harness invokes deterministic retrieval and engine code; no prompt or language model is invoked."
+  },
+  "passages": [
+    {
+      "id": "phb-second-wind",
+      "document": "phb",
+      "page": 73,
+      "section": "Second Wind",
+      "text": "Second Wind\nOn your turn, you can use a bonus action to regain hit points equal to 1d10 + your fighter level.\nOnce you use this feature, you must finish a short or long rest before you can use it again.",
+      "gold_facts": [
+        "bonus action",
+        "1d10 + fighter level",
+        "short or long rest restores use"
+      ],
+      "text_sha256": "3ab91ee5e5583d8064b3616e88ee72c4fb1366eecec7ea25b0d2b8e37bc0f721"
+    },
+    {
+      "id": "phb-magic-missile",
+      "document": "phb",
+      "page": 258,
+      "section": "Magic Missile",
+      "text": "Magic Missile\nYou create three glowing darts of magical force. Each dart hits a creature of your choice that you can see within range. A dart deals 1d4 + 1 force damage to its target. The darts all strike simultaneously.",
+      "gold_facts": [
+        "three darts",
+        "1d4 + 1 force damage per dart"
+      ],
+      "text_sha256": "fd49be0a85d597d529d0e3f5f9aac7b1bb4cccb0c56fa33b3609fc5b99e48639"
+    },
+    {
+      "id": "mm-goblin",
+      "document": "mm",
+      "page": 167,
+      "section": "Goblin",
+      "stat_block": true,
+      "text": "Goblin\nSmall humanoid (goblinoid), neutral evil\nArmor Class 15 (leather armor, shield)\nHit Points 7 (2d6)\nSpeed 30 ft.\nNimble Escape. The goblin can take the Disengage or Hide action as a bonus action on each of its turns.\nACTIONS\nScimitar. Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage.",
+      "gold_facts": [
+        "exact identity Goblin",
+        "AC 15",
+        "HP 7",
+        "Nimble Escape",
+        "Scimitar +4, 1d6 + 2 slashing"
+      ],
+      "text_sha256": "88af9b6323da3ba47990255457b3e2665d609d1411cbe994cc6a70364c4254be"
+    },
+    {
+      "id": "mm-troll",
+      "document": "mm",
+      "page": 292,
+      "section": "Troll",
+      "stat_block": true,
+      "manual_source_review": true,
+      "text": "Troll\nLarge giant, chaotic evil\nArmor Class 15 (natural armor)\nHit Points 84 (8d10 + 40)\nSpeed 30 ft.\nRegeneration. The troll regains 10 hit points at the start of its turn. If the troll takes acid or fire damage, this trait doesn't function at the start of the troll's next turn. The troll dies only if it starts its turn with 0 hit points and doesn't regenerate.\nACTIONS\nMultiattack. The troll makes three attacks: one with its bite and two with its claws.\nBite. Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 7 (1d6 + 4) piercing damage.\nClaw. Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 11 (2d6 + 4) slashing damage.",
+      "gold_facts": [
+        "exact identity Troll",
+        "AC 15",
+        "HP 84",
+        "Regeneration 10",
+        "acid or fire suppresses next turn",
+        "three attacks: bite once and claws twice"
+      ],
+      "review_note": "Manually transcribed from the printed stat panel on physical PDF page 292 and checked against a local rendered page. This is a compact evaluation excerpt, not a clean extractor output or an ingestion-ready source bundle.",
+      "text_sha256": "7044de86af8f63025468631c18b457f58a6a8ab6416edf5a2aaea26687f5160e"
+    },
+    {
+      "id": "mm-adult-red-dragon",
+      "document": "mm",
+      "page": 99,
+      "section": "Adult Red Dragon",
+      "stat_block": true,
+      "text": "Adult Red Dragon\nHuge dragon, chaotic evil\nArmor Class 19 (natural armor)\nHit Points 256 (19d12 + 133)\nSpeed 40 ft., climb 40 ft., fly 80 ft.\nACTIONS\nMultiattack. The dragon can use its Frightful Presence. It then makes three attacks: one with its bite and two with its claws.\nFire Breath (Recharge 5-6). Each creature in the area must make a DC 21 Dexterity saving throw, taking 63 (18d6) fire damage on a failed save, or half as much damage on a successful one.",
+      "gold_facts": [
+        "exact identity Adult Red Dragon",
+        "AC 19",
+        "HP 256",
+        "multiattack: bite once, claws twice",
+        "Compact Fire Breath excerpt remains declared because it lacks exact supported breath wording"
+      ],
+      "text_sha256": "02ec7799360c2059d2bce28a7c2ae84bf1e72cb5a55f0c70b9ba6d504cc01d40",
+      "review_note": "This compact excerpt omits the breath area lead-in and uses shortened saving-throw wording. It tests exact dragon identity/AC/HP and conservative declaration of incomplete actions, not the full supported breath-weapon resolution path."
+    },
+    {
+      "id": "module-dc13",
+      "document": "lost_mine",
+      "page": 1,
+      "section": "Mage Spellcasting",
+      "audience": "planner",
+      "text": "Spellcasting. The mage is a 4th-level spellcaster that uses Intelligence as its spellcasting ability (spell save DC 13; +5 to hit with spell attacks).",
+      "gold_facts": [
+        "source line states spell save DC 13"
+      ],
+      "review_note": "The local Markdown has mixed-column text and no page markers; this fixture tests exact DC preservation and fail-closed manifest retrieval, not the printed encounter's physical-page attribution.",
+      "text_sha256": "2567c20e593e22cdb70ea59a0f492830fa90a109f2f690bf2e30e2b69037ee4f"
+    },
+    {
+      "id": "module-opening-context",
+      "document": "lost_mine",
+      "page": 1,
+      "section": "Wave Echo Cave overview",
+      "audience": "player",
+      "text": "Wizards attacked Wave Echo Cave to seize its riches and magic treasures.",
+      "gold_facts": [
+        "short public opening-context passage required by the reviewed-scene contract"
+      ],
+      "review_note": "Quoted from the local Markdown overview; page 1 is a fixture locator because that artifact has no physical-page markers. Not scored as a relevance case.",
+      "text_sha256": "7ab6c50f6d4ea8a602326d616fec9850849dee40b10cadbedf6f57bb3c2f8a53"
+    }
+  ],
+  "retrieval_cases": [
+    {
+      "id": "phb-feature-second-wind",
+      "passage": "phb-second-wind",
+      "query": "Second Wind rules",
+      "reference": "Second Wind",
+      "expected_source": "player_handbook"
+    },
+    {
+      "id": "phb-spell-magic-missile",
+      "passage": "phb-magic-missile",
+      "query": "Magic Missile spell",
+      "reference": "Magic Missile",
+      "expected_source": "player_handbook"
+    },
+    {
+      "id": "monster-goblin-exact",
+      "passage": "mm-goblin",
+      "query": "Goblin",
+      "expected_source": "monster_manual"
+    },
+    {
+      "id": "monster-troll-exact",
+      "passage": "mm-troll",
+      "query": "Troll",
+      "expected_source": "monster_manual"
+    },
+    {
+      "id": "monster-adult-red-dragon-exact",
+      "passage": "mm-adult-red-dragon",
+      "query": "Adult Red Dragon",
+      "expected_source": "monster_manual"
+    },
+    {
+      "id": "module-dc13-exact",
+      "passage": "module-dc13",
+      "query": "Mage spell save DC 13",
+      "expected_source": "d_d_5e_lost_mine_of_phandelver"
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "goblin-does-not-match-hobgoblin",
+      "query": "Hobgoblin",
+      "expected_hits": 0
+    },
+    {
+      "id": "adult-red-dragon-does-not-match-young",
+      "query": "Young Red Dragon",
+      "expected_hits": 0
+    },
+    {
+      "id": "unknown-creature-does-not-match-prose",
+      "query": "Captain Vellum",
+      "expected_hits": 0
+    },
+    {
+      "id": "wrong-source-digest-is-not-identity",
+      "query": "Goblin",
+      "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected_hits": 0
+    },
+    {
+      "id": "missing-bound-module-fails-closed",
+      "collection": "missing_lost_mine_fixture",
+      "expected": "RetrievalError"
+    }
+  ],
+  "retry_case": {
+    "id": "retry-replaces-old-active-version",
+    "source": "monster_manual",
+    "old_source_version": "fidelity-attempt-1",
+    "new_source_version": "fidelity-attempt-2",
+    "expected_before_retry": {
+      "hit_points": 84,
+      "source_version": "fidelity-attempt-1"
+    },
+    "expected_after_retry": {
+      "hit_points": 85,
+      "source_version": "fidelity-attempt-2"
+    },
+    "note": "The 85 HP retry value is an explicit generated sentinel used only to distinguish versions; it is not a source claim."
+  },
+  "ruling_cases": [
+    {
+      "id": "apply-second-wind",
+      "source_passage": "phb-second-wind",
+      "expected": "fighter's declared Second Wind request yields the engine's 1d10 + level heal; resource persistence remains caller-owned"
+    },
+    {
+      "id": "apply-magic-missile",
+      "source_passage": "phb-magic-missile",
+      "expected": "three force darts, each 1d4 + 1"
+    },
+    {
+      "id": "apply-goblin-record",
+      "source_passage": "mm-goblin",
+      "expected": "AC 15, HP 7, one scimitar attack with +4 and 1d6 + 2"
+    },
+    {
+      "id": "apply-troll-record",
+      "source_passage": "mm-troll",
+      "expected": "AC 15, HP 84, Regeneration 10 suppressed by acid/fire, one bite and two claws"
+    },
+    {
+      "id": "adult-dragon-explicit-engine-boundary",
+      "source_passage": "mm-adult-red-dragon",
+      "expected": "AC 19, HP 256; Fire Breath/DC 21 reported as declared and not rolled"
+    },
+    {
+      "id": "preserve-module-dc13",
+      "source_passage": "module-dc13",
+      "expected": "resolve the documented check against DC 13, without substituting a generic tier"
+    }
+  ]
+}

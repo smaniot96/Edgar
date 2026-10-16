@@ -57,7 +57,7 @@ def _active_extraction_path(slug: str, meta: dict):
     return (
         staged
         if staged is not None and staged.is_file()
-        else store.ADVENTURES_DIR / slug / f"{slug}.extraction.json"
+        else store.adventure_path(slug, f"{slug}.extraction.json")
     )
 
 
