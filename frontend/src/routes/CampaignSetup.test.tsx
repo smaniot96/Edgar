@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/client";
@@ -345,4 +345,22 @@ it("allows hero recovery after the server rejects an assignment before save crea
   expect(api.createSession).toHaveBeenCalledTimes(1);
   expect(container.textContent).toContain("No saved playthrough was created. Choose an available hero");
   expect(container.textContent).toContain("Choose who will explore");
+});
+
+it("loads the destination campaign progress when setup route IDs change in place", async () => {
+  writeCampaignSetupProgress({ ...newCampaignSetupProgress(12), stage: "playthrough", characterId: 30, assignedCharacterId: 30,
+    pendingSession: { requestId: "11111111-1111-4111-8111-111111111111", characterId: 30 } });
+  api.getCampaign.mockImplementation(async (id: number) => ({ ...campaign, id }));
+  await act(async () => { root.render(
+    <MemoryRouter initialEntries={["/campaigns/12/setup"]}>
+      <Link to="/campaigns/13/setup">Another campaign</Link>
+      <Routes><Route path="/campaigns/:id/setup" element={<CampaignSetup />} /></Routes>
+    </MemoryRouter>); });
+  await settle();
+  expect(container.textContent).toContain("A saved playthrough request is retained");
+  await act(async () => { container.querySelector<HTMLAnchorElement>('a[href="/campaigns/13/setup"]')!.click(); });
+  await settle();
+  expect(container.textContent).toContain("Choose who will explore");
+  expect(container.textContent).not.toContain("A saved playthrough request is retained");
+  expect(api.createSession).not.toHaveBeenCalled();
 });

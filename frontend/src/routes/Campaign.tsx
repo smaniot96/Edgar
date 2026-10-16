@@ -171,7 +171,7 @@ export default function CampaignView() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="break-words [overflow-wrap:anywhere] font-display text-display-md">{name}</h1>
+              <h1 className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] font-display text-display-md">{name}</h1>
               {ended ? <Pill>Ended</Pill> : <Pill tone="success">Active</Pill>}
             </div>
             <p className="mt-0.5 text-sm text-ink-muted">

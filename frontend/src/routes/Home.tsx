@@ -185,8 +185,9 @@ export default function Home() {
         actions={
           <>
             {resumeSession ? (
-              <div className="flex min-w-0 flex-col items-start gap-1">
+              <div className="flex min-w-0 max-w-full flex-col items-start gap-1">
               <Button
+                className="max-w-full"
                 aria-describedby="resume-save-identity"
                 onClick={() => {
                   rememberLastSession(resumeSession.id);

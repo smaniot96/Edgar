@@ -105,15 +105,21 @@ export function CampaignCard({
   const failureMessage = failure ? safeTurnError(failure).message : null;
 
   return (
-    <article className={cn(cardClasses, "flex flex-col")}>
+    <article className={cn(cardClasses, "flex min-w-0 flex-col")}>
       <div className="[&>div]:h-20 [&>img]:h-20 sm:[&>div]:h-24 sm:[&>img]:h-24 [&>div>span]:text-5xl">
         <AdventureCover coverImage={adventure.cover_image} name={name} />
       </div>
       <div className="flex flex-1 flex-col p-4">
         <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
-          <h3 className="min-w-0 break-words [overflow-wrap:anywhere] font-display text-display-sm leading-tight">{name}</h3>
+          <h3 className="min-w-0 line-clamp-3 break-words [overflow-wrap:anywhere] font-display text-xl leading-tight">{name}</h3>
           <StatusBadge state={state} readiness={card.readiness} />
         </div>
+        {name.length > 80 ? (
+          <details className="mb-1 text-sm">
+            <summary className="inline-flex min-h-11 cursor-pointer items-center text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">Full campaign title</summary>
+            <p className="break-words [overflow-wrap:anywhere] text-ink">{name}</p>
+          </details>
+        ) : null}
         {showAdventureTitle ? (
           <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventure.title}</p>
         ) : null}
