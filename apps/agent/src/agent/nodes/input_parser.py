@@ -26,6 +26,7 @@ from agent.resolution import PENDING_COMPLETION_FLAG, normalise_check
 from agent.resolution_policies import parser_earned_clues, parser_policy_choices
 from agent.state import AgentState
 from edgar_core.config import OPENAI_API_KEY
+from edgar_core.log_safety import error_summary
 
 log = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ async def input_parser_node(state: AgentState) -> dict:
             parsed = ParsedInput.model_validate(parsed)
     except Exception as e:
         # Degrade, don't fail: no check is rolled and retrieval uses the raw input.
-        log.warning("input_parser_fallback", extra={"error": str(e)[:200]})
+        log.warning("input_parser_fallback", extra={"error": error_summary(e)})
         parsed = ParsedInput(intent="exploration")
 
     norm = normalise_check(parsed.check)

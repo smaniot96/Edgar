@@ -14,6 +14,7 @@ from db.vector.collections import effective_adventure_collection_names
 from db.vector.references import normalize_reference
 from db.vector.retrieval import RetrievalError, retrieve_active_scene
 from db.vector.source_status import inspect_source
+from edgar_core.log_safety import error_summary
 from edgar_core.manifests import ManifestError
 from edgar_core.sources import source_citation
 
@@ -209,7 +210,7 @@ async def world_retriever_node(state: AgentState) -> dict:
             # Qdrant blip / embeddings outage: keep the turn playable with empty context.
             log.warning(
                 "retrieval_degraded",
-                extra={"bucket": name, "error": f"{type(res).__name__}: {res}"},
+                extra={"bucket": name, "error": error_summary(res)},
             )
             degraded = True
             if isinstance(res, ManifestError):
