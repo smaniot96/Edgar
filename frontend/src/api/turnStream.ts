@@ -91,6 +91,7 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   readiness_unavailable: { category: "internal", message: "Campaign readiness could not be confirmed. Check the saved campaign status before continuing.", action: "check_existing_result" },
   campaign_ended: { category: "validation", message: "This campaign is complete. You can read its saved history.", action: "read_history" },
   completed: { category: "validation", message: "This campaign is complete. You can read its saved history.", action: "read_history" },
+  turn_identity_conflict: { category: "validation", message: "This action identifier already belongs to a different action. Check its saved result before continuing.", action: "check_existing_result" },
   not_found: { category: "not_found", message: "That saved item could not be found. Refresh and check that it is still available.", action: "fix_input" },
 };
 
