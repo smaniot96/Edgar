@@ -10,12 +10,13 @@ bonuses (a spell's save), the attacks listed under Actions (bonus, damage dice a
 a Multiattack trait whose counts are stated in its text, Regeneration with its stated amount and
 its acid/fire-style suppression clause, and resistances, immunities and vulnerabilities by damage
 type (EDG-043). Also executed: the creature type (its size-and-type line, for humanoid-only spells),
-a poisoned rider on a hit whose wording is read exactly (`AttackRider`), and a Recharge X-6 attack
-(`MonsterAttack.recharge`), rolled at the start of the creature's turns once spent. The engine
-decides every roll.
+a poisoned rider on a hit whose wording is read exactly (`AttackRider`), a Recharge X-6 attack
+(`MonsterAttack.recharge`), rolled at the start of the creature's turns once spent, and a
+breath-weapon style save action whose wording is read exactly (`AttackSave`): the hero saves
+instead of the action rolling to hit. The engine decides every roll.
 
 Declared, never implied: speed and movement, legendary, lair and reaction actions, spellcasting,
-other recharge abilities (breath and area saves), spell attacks, other damage riders and every
+save actions whose wording is not read exactly, spell attacks, other damage riders and every
 other trait. Each one is listed in `MonsterStats.declared` and shown in the combat start message
 and the roster.
 
@@ -106,6 +107,26 @@ _POISON_RIDER = re.compile(
 )
 # "Recharge 5-6" (or "Recharge 6") in an ability name. Recharge after a rest is not a d6 recharge.
 _RECHARGE_NAME = re.compile(r"\s*\(Recharge\s*(?:([2-5])\s*[-–]\s*6|(6))\)\s*$", re.IGNORECASE)
+# A breath weapon, exactly as the Monster Manual words it (EDG-043, see AttackSave): one save for
+# each creature in the area, which is the hero alone (an exact-record fight has no other creature on
+# its side). Extra clauses ("provided that ...", a rider after the damage) are not matched, so the
+# action stays declared.
+_SAVE_LEAD = (
+    r"^The [^.]+? exhales [^.]+? in an? \d+-foot (?:cone|line that is \d+ feet wide)\.\s*"
+    r"Each creature in that (?:area|line) must "
+)
+_SAVE_ABILITY = r"(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)"
+_SAVE_DAMAGE = r"(\d+) \(([^)]*)\) ([a-z]+) damage"
+_HALF_SAVE = re.compile(
+    rf"{_SAVE_LEAD}make a DC (\d+) {_SAVE_ABILITY} saving throw, taking {_SAVE_DAMAGE} on a failed "
+    r"save, or half as much damage on a successful one\.?\s*$",
+    re.IGNORECASE,
+)
+_NO_EFFECT_SAVE = re.compile(
+    rf"{_SAVE_LEAD}succeed on a DC (\d+) {_SAVE_ABILITY} saving throw or take "
+    rf"{_SAVE_DAMAGE}\.?\s*$",
+    re.IGNORECASE,
+)
 # An ability modifier in parentheses: "(+4)", "(-1)", or the PDF text layer's "(- 2)".
 _ABILITY_MOD = r"\(\s*([+\-\u2212\u2013]?)\s*(\d+)\s*\)"
 # Entry names may carry en or em dashes ("Fire Breath (Recharge 5–6)"), which the name pattern needs.
@@ -132,14 +153,28 @@ class AttackRider:
 
 
 @dataclass(frozen=True)
+class AttackSave:
+    """The hero's saving throw against a save action (EDG-043), instead of an attack roll.
+
+    A failed save takes the rolled damage. A success takes half of it, rounded down, when
+    `half_on_success`, and none otherwise.
+    """
+
+    ability: str
+    dc: int
+    half_on_success: bool
+
+
+@dataclass(frozen=True)
 class MonsterAttack:
     name: str
-    bonus: int
+    bonus: int  # 0 for a save action, which has no attack roll
     damage_dice: str
     damage_type: str
-    ranged: bool = False
+    ranged: bool = False  # a save action is made from either band
     recharge: int | None = None  # "Recharge N-6": the d6 result that restores the attack (N)
     rider: AttackRider | None = None
+    save: AttackSave | None = None
 
 
 @dataclass(frozen=True)
@@ -157,8 +192,9 @@ class Regeneration:
 
 
 def _attack_from(raw: Mapping[str, Any]) -> MonsterAttack:
-    """A stored attack. Rows written before riders and recharge existed read with neither."""
+    """A stored attack. Rows written before riders, recharge and save actions read with none."""
     rider = raw.get("rider")
+    save = raw.get("save")
     return MonsterAttack(
         name=str(raw["name"]),
         bonus=int(raw["bonus"]),
@@ -167,6 +203,7 @@ def _attack_from(raw: Mapping[str, Any]) -> MonsterAttack:
         ranged=bool(raw.get("ranged", False)),
         recharge=None if raw.get("recharge") is None else int(raw["recharge"]),
         rider=None if not isinstance(rider, Mapping) else AttackRider(**rider),
+        save=None if not isinstance(save, Mapping) else AttackSave(**save),
     )
 
 
@@ -349,19 +386,40 @@ def _regeneration(body: str) -> Regeneration | None:
     return Regeneration(int(amount.group(1)), suppressed)
 
 
+def _exact_damage(average: str, dice_text: str, damage_type: str) -> tuple[str, str] | None:
+    """(dice, damage type) when the dice are plain, the type is known and the average agrees."""
+    dice = re.sub(r"\s+", "", dice_text)
+    damage_type = damage_type.lower()
+    if not re.fullmatch(r"\d+d\d+(?:[+-]\d+)?", dice) or damage_type not in DAMAGE_TYPES:
+        return None
+    parsed = parse_dice(dice)
+    expected = math.floor(parsed.count * (parsed.sides + 1) / 2 + parsed.modifier)
+    return (dice, damage_type) if expected == int(average) else None
+
+
+def _save_action(body: str, name: str, recharge: int | None) -> MonsterAttack | None:
+    """A breath-weapon style action whose text reads exactly: the hero's save, then the damage."""
+    for half_on_success, pattern in ((True, _HALF_SAVE), (False, _NO_EFFECT_SAVE)):
+        match = pattern.match(body)
+        if match:
+            dc, ability, average, dice_text, damage_type = match.groups()
+            damage = _exact_damage(average, dice_text, damage_type)
+            if damage is None:
+                return None
+            save = AttackSave(ability[:3].upper(), int(dc), half_on_success)
+            return MonsterAttack(name, 0, *damage, ranged=True, recharge=recharge, save=save)
+    return None
+
+
 def _attack(body: str, name: str) -> tuple[MonsterAttack | None, str | None]:
     match = _ATTACK.match(body)
     if not match:
         return None, None
     kind, bonus, average, dice_text, damage_type, rest = match.groups()
-    dice = re.sub(r"\s+", "", dice_text)
-    damage_type = damage_type.lower()
-    if not re.fullmatch(r"\d+d\d+(?:[+-]\d+)?", dice) or damage_type not in DAMAGE_TYPES:
+    damage = _exact_damage(average, dice_text, damage_type)
+    if damage is None:
         return None, None
-    parsed = parse_dice(dice)
-    expected = math.floor(parsed.count * (parsed.sides + 1) / 2 + parsed.modifier)
-    if expected != int(average):
-        return None, None  # the stated average must agree with the stated dice
+    dice, damage_type = damage
     poison = _POISON_RIDER.match(rest)
     if poison:
         rider = AttackRider("poisoned", int(poison.group(1)), "CON", duration_rounds=10)
@@ -450,22 +508,29 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
     for entry_section, entry_name, body in entries:
         lowered = entry_name.lower()
         recharge = _RECHARGE_NAME.search(entry_name)
+        action_name = entry_name[: recharge.start()].strip() if recharge else entry_name
+        recharge_on = int(recharge.group(1) or recharge.group(2)) if recharge else None
         if (
             recharge
             and entry_section == "actions"
             and re.match(r"(?:Melee|Ranged) Weapon Attack:", body)
         ):
             # An attack that recharges (EDG-043): executed once its attack text reads exactly.
-            attack, rider = _attack(body, entry_name[: recharge.start()].strip())
+            attack, rider = _attack(body, action_name)
             if attack is None:
                 declared.append(
                     f"{entry_name}: recharge ability not executed (attack text not exact)"
                 )
             else:
-                n = int(recharge.group(1) or recharge.group(2))
-                attacks.append(replace(attack, recharge=n))
+                attacks.append(replace(attack, recharge=recharge_on))
                 if rider:
                     declared.append(rider)
+        elif (
+            entry_section == "actions"
+            and (recharge or "recharge" not in lowered)
+            and (save_action := _save_action(body, action_name, recharge_on)) is not None
+        ):
+            attacks.append(save_action)
         elif "recharge" in lowered:
             declared.append(f"{entry_name}: recharge ability not executed")
         elif entry_section in ("legendary", "lair", "reactions", "bonus"):
@@ -565,11 +630,20 @@ def combat_fields(stats: MonsterStats) -> dict[str, Any]:
 def attack_plan(stats: MonsterStats, spent: Iterable[str] = ()) -> tuple[MonsterAttack, ...]:
     """Attacks this creature makes in one turn: every listed attack once per multiattack count.
 
-    `spent` names recharge attacks used and not yet recharged: they are left out of the plan. Without
-    a multiattack, a ready recharge attack is used first (its use is then spent), else the first
-    attack that does not recharge.
+    `spent` names recharge attacks used and not yet recharged: they are left out of the plan. A
+    ready recharge attack that the Multiattack does not name (a breath weapon) replaces the
+    Multiattack, as it is an action of its own; without a multiattack, a ready recharge attack is
+    used first too (its use is then spent), else the first attack that does not recharge.
     """
     spent_set = set(spent)
+    multiattack_names = {name for name, _count in stats.multiattack}
+    ready = [
+        a
+        for a in stats.attacks
+        if a.recharge is not None and a.name not in spent_set and a.name not in multiattack_names
+    ]
+    if ready:
+        return (ready[0],)
     if stats.multiattack:
         by_name = {a.name: a for a in stats.attacks}
         return tuple(
@@ -578,9 +652,6 @@ def attack_plan(stats: MonsterStats, spent: Iterable[str] = ()) -> tuple[Monster
             for _ in range(count)
             if by_name[name].recharge is None or name not in spent_set
         )
-    ready = [a for a in stats.attacks if a.recharge is not None and a.name not in spent_set]
-    if ready:
-        return (ready[0],)
     return tuple(a for a in stats.attacks if a.recharge is None)[:1]
 
 
