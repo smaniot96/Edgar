@@ -199,7 +199,11 @@ def build_adjudicator_prompt(
         "Return citation_ids only for the exact supplied references supporting the ruling. Do not cite unrelated excerpts."
     )
 
-    if continuity := fit_continuity(state, "play.consequence_planner", [RULES_ADJUDICATOR, *parts]):
+    # Budget the rendered separators too, including the one introduced by continuity insertion.
+    # Many fixed blocks (such as the supported-mechanics contract) can otherwise overrun the cap.
+    if continuity := fit_continuity(
+        state, "play.consequence_planner", [RULES_ADJUDICATOR, "\n".join(parts) + "\n"]
+    ):
         parts.insert(continuity_slot, continuity)
     return [
         {"role": "system", "content": RULES_ADJUDICATOR},

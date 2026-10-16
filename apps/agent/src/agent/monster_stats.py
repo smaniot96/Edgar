@@ -17,10 +17,12 @@ instead of the action rolling to hit. A save action may also leave the hero stun
 or frightened (a dragon's Frightful Presence, used once as the Multiattack opener it is named in).
 Legendary actions (EDG-043): the budget the record states and each option whose body is exactly an
 attack the creature already lists ("makes a tail attack") or the dragon Wing Attack's save
-(`LegendaryOption`). The engine decides every roll.
+(`LegendaryOption`), including prone and band-level flight. Exact listed catalog spells use
+record-owned casting numbers and slots (`MonsterSpellcasting`). Separately reviewed lair passages
+may supply complete red-dragon magma/tremor options (`LairAction`). The engine decides every roll.
 
-Declared, never implied: speed and movement, lair and reaction actions, legendary options that are
-not read exactly (Detect, movement, spells, conditions), spellcasting, save actions whose wording
+Declared, never implied: exact speed and geometry, unsupported lair and reaction actions, legendary
+options not read exactly (Detect, movement, spells, conditions), noncatalog/innate casting, save actions whose wording
 is not read exactly, spell attacks, other damage riders and every other trait. Each one is listed
 in `MonsterStats.declared` and shown in the combat start message and the roster.
 
@@ -35,6 +37,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
+from agent.spells import SpellSpec, catalog_spell
 from tools.dice import DiceOutcome, parse_dice, roll
 
 ABILITIES = ("STR", "DEX", "CON", "INT", "WIS", "CHA")
@@ -153,8 +156,7 @@ _LEGENDARY_COST = re.compile(r"\s*\(Costs ([1-9]\d*) Actions?\)\s*$", re.IGNOREC
 _LEGENDARY_ATTACK = re.compile(
     r"^The [^.]+? makes (?:an? |one )(?:(\w+) attack|attack with its (\w+))\.?\s*$", re.IGNORECASE
 )
-# The dragon Wing Attack, exactly as the Monster Manual words it: a save for damage, then the prone
-# and flight clauses, which are declared and not executed.
+# The dragon Wing Attack, exactly as the Monster Manual words it: save, prone rider and flight.
 _WING_ATTACK = re.compile(
     rf"^The [^.]+? beats its (?:tattered )?wings\.\s*Each creature within \d+ feet of the [^.]+? must "
     rf"succeed on a DC (\d+) {_SAVE_ABILITY} saving throw or take {_SAVE_DAMAGE} and be knocked "
@@ -239,6 +241,36 @@ class LegendaryOption:
     name: str
     cost: int
     attack: MonsterAttack
+    flight_after: bool = False
+
+
+@dataclass(frozen=True)
+class LairAction:
+    """One exact, supported lair save effect from a separately reviewed passage."""
+
+    name: str
+    ability: str
+    dc: int
+    damage_dice: str = ""
+    damage_type: str = ""
+    half_on_success: bool = False
+    condition: str | None = None
+
+
+@dataclass(frozen=True)
+class MonsterSpellcasting:
+    """Spellcasting facts read from one exact stat-block entry.
+
+    `spells` stores (slot level, catalog spell name) pairs. Unsupported names stay declared and
+    are never silently converted into one of the executable catalog spells.
+    """
+
+    ability: str
+    caster_level: int
+    save_dc: int
+    attack_bonus: int
+    spells: tuple[tuple[int, str], ...] = ()
+    slots: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -288,6 +320,8 @@ class MonsterStats:
     declared: tuple[str, ...] = ()  # traits and actions the engine does not execute
     legendary_actions: int = 0  # the budget per round, 0 for none
     legendary: tuple[LegendaryOption, ...] = ()  # only the options read exactly
+    lair_actions: tuple[LairAction, ...] = ()
+    spellcasting: MonsterSpellcasting | None = None
     creature_type: str | None = (
         None  # "humanoid", "beast", ... from the type line; None when unread
     )
@@ -323,6 +357,8 @@ class MonsterStats:
             "declared": list(self.declared),
             "legendary_actions": self.legendary_actions,
             "legendary": [asdict(o) for o in self.legendary],
+            "lair_actions": [asdict(o) for o in self.lair_actions],
+            "spellcasting": None if self.spellcasting is None else asdict(self.spellcasting),
             "creature_type": self.creature_type,
         }
 
@@ -349,8 +385,34 @@ class MonsterStats:
                 declared=tuple(str(d) for d in raw.get("declared") or ()),
                 legendary_actions=int(raw.get("legendary_actions") or 0),
                 legendary=tuple(
-                    LegendaryOption(str(o["name"]), int(o["cost"]), _attack_from(o["attack"]))
+                    LegendaryOption(
+                        str(o["name"]), int(o["cost"]), _attack_from(o["attack"]),
+                        bool(o.get("flight_after", False)),
+                    )
                     for o in raw.get("legendary") or ()
+                ),
+                lair_actions=tuple(
+                    LairAction(**item)
+                    for item in raw.get("lair_actions") or ()
+                    if isinstance(item, Mapping)
+                ),
+                spellcasting=(
+                    MonsterSpellcasting(
+                        ability=str(raw["spellcasting"]["ability"]),
+                        caster_level=int(raw["spellcasting"].get("caster_level", 1)),
+                        save_dc=int(raw["spellcasting"]["save_dc"]),
+                        attack_bonus=int(raw["spellcasting"]["attack_bonus"]),
+                        spells=tuple(
+                            (int(level), str(spell))
+                            for level, spell in raw["spellcasting"].get("spells") or ()
+                        ),
+                        slots={
+                            str(level): int(count)
+                            for level, count in (raw["spellcasting"].get("slots") or {}).items()
+                        },
+                    )
+                    if isinstance(raw.get("spellcasting"), Mapping)
+                    else None
                 ),
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -533,11 +595,9 @@ def _legendary_option(
         damage = _exact_damage(average, dice_text, damage_type)
         if damage is None:
             return None, None
-        save = AttackSave(ability[:3].upper(), int(dc), half_on_success=False)
+        save = AttackSave(ability[:3].upper(), int(dc), half_on_success=False, condition="prone")
         attack = MonsterAttack(name, 0, *damage, save=save)
-        return LegendaryOption(
-            name, cost_value, attack
-        ), f"{name}: knocked prone and flight not executed"
+        return LegendaryOption(name, cost_value, attack, flight_after=True), None
     named = _LEGENDARY_ATTACK.match(body)
     if named:
         key = _norm(named.group(1) or named.group(2))
@@ -547,6 +607,58 @@ def _legendary_option(
         if len(found) == 1:
             return LegendaryOption(name, cost_value, found[0]), None
     return None, None
+
+
+def parse_lair_actions(text: str) -> tuple[LairAction, ...]:
+    """Read whole MM red-dragon magma/tremor options from a reviewed passage.
+
+    The source lead owns initiative 20, losing ties and no consecutive repetition. A complete
+    bullet must match: a recognized saving-throw substring cannot authorize an action with
+    extra conditions, persistent damage or other clauses. Other lair options stay unsupported.
+    The encounter uses abstract bands, so point placement, radii and grounded terrain are not
+    simulated; the selected option targets the hero in the authored encounter.
+    """
+    raw = str(text or "").replace("’", "'")
+    # Undo soft line-wrap hyphenation in this source's prose, retaining numeric compounds.
+    raw = re.sub(r"(?<=[A-Za-z])-\s*\n\s*(?=[a-z])", "", raw)
+    raw = re.split(r"\bREGIONAL\s+EFFECTS\b", raw, maxsplit=1, flags=re.I)[0]
+    lead = re.search(
+        r"On\s+initiative\s+count\s+20\s*\(losing\s+initiative\s+ties\),\s*"
+        r"the\s+dragon\s+takes\s+a\s+lair\s+action\s+to\s+cause\s+one\s+of\s+the\s+"
+        r"following\s+effects;\s*the\s+dragon\s+can't\s+use\s+the\s+same\s+effect\s+"
+        r"two\s+rounds\s+in\s+a\s+row:",
+        raw,
+        re.I,
+    )
+    if lead is None:
+        return ()
+    options = re.split(r"[•●]|(?:^|\n)\s*[-*]\s+", raw[lead.end():])
+    magma = re.compile(
+        r"Magma erupts from a point on the ground the dragon can see within 120 feet of it, "
+        r"creating a 20-foot-high, 5-foot-radius geyser\. Each creature in the geyser's area "
+        r"must make a DC (\d+) Dexterity saving throw, taking (\d+) \(([^)]*)\) fire damage "
+        r"on a failed save, or half as much damage on a successful one\.", re.I,
+    )
+    tremor = re.compile(
+        r"A tremor shakes the lair in a 60-foot radius around the dragon\. Each creature other "
+        r"than the dragon on the ground in that area must succeed on a DC (\d+) Dexterity "
+        r"saving throw or be knocked prone\.", re.I,
+    )
+    actions: dict[str, LairAction] = {}
+    for option in options:
+        body = " ".join(option.split()).strip()
+        if match := magma.fullmatch(body):
+            damage = _exact_damage(match.group(2), match.group(3), "fire")
+            if damage is not None:
+                actions.setdefault(
+                    "Magma Geyser",
+                    LairAction("Magma Geyser", "DEX", int(match.group(1)), *damage, True),
+                )
+        elif match := tremor.fullmatch(body):
+            actions.setdefault(
+                "Tremor", LairAction("Tremor", "DEX", int(match.group(1)), condition="prone"),
+            )
+    return tuple(actions.values())
 
 
 def _multiattack(
@@ -583,6 +695,71 @@ def _multiattack(
     opener = next((a for a in attacks if opening and a.name == opening.group(1)), None)
     first = ((opener.name, 1),) if opener and opener.save and opener.save.once else ()
     return first + tuple(counts.items())
+
+
+_SPELLCAST_ABILITY = re.compile(
+    r"spellcasting ability is (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)",
+    re.IGNORECASE,
+)
+_SPELLCAST_LEVEL = re.compile(r"\b(\d+)(?:st|nd|rd|th)-level spellcaster\b", re.IGNORECASE)
+_SPELLCAST_DC = re.compile(r"spell save DC\s+(\d+)", re.IGNORECASE)
+_SPELLCAST_ATTACK = re.compile(r"([+-]\d+) to hit with spell attacks?", re.IGNORECASE)
+_SPELL_LIST_HEADING = re.compile(
+    r"\b(Cantrips?)\s*\(at will\)\s*:|"
+    r"\b(\d+)(?:st|nd|rd|th)\s+level\s*\((\d+)\s+slots?\)\s*:",
+    re.IGNORECASE,
+)
+
+
+def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[str, ...]]:
+    """Read only listed spell levels/slots and the explicitly stated casting numbers."""
+    ability = _SPELLCAST_ABILITY.search(body)
+    caster_level_match = _SPELLCAST_LEVEL.search(body)
+    dc = _SPELLCAST_DC.search(body)
+    attack = _SPELLCAST_ATTACK.search(body)
+    headings = list(_SPELL_LIST_HEADING.finditer(body))
+    if ability is None or caster_level_match is None or dc is None or attack is None or not headings:
+        return None, ("spellcasting: incomplete ability, save DC, attack bonus or spell list",)
+
+    slots: dict[str, int] = {}
+    spells: list[tuple[int, str]] = []
+    unsupported: list[str] = []
+    for index, heading in enumerate(headings):
+        listed_level = 0 if heading.group(1) else int(heading.group(2))
+        if listed_level:
+            slots[str(listed_level)] = int(heading.group(3))
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
+        listed = body[heading.end() : end].strip()
+        # A period followed by whitespace ends the spell-list sentence. A few extracted stat
+        # blocks put punctuation immediately before the first spell ("Cantrips (at will):.fire
+        # bolt"); keep that token and strip only its edge punctuation below instead of treating it
+        # as an empty list. This also leaves every comma-delimited unsupported name countable.
+        listed = re.split(r"\.\s+", listed, maxsplit=1)[0]
+        names = [" ".join(part.split()).strip(" .;") for part in listed.split(",")]
+        for spell_name in names:
+            if not spell_name:
+                continue
+            spec: SpellSpec | None = catalog_spell(spell_name)
+            if spec is None or spec.level != listed_level:
+                unsupported.append(spell_name)
+                continue
+            spells.append((listed_level, spec.name))
+    if not spells:
+        unsupported.append("no listed spell is in the engine's action-spell catalog")
+    result = MonsterSpellcasting(
+        ability=ability.group(1).upper()[:3],
+        caster_level=int(caster_level_match.group(1)),
+        save_dc=int(dc.group(1)),
+        attack_bonus=int(attack.group(1)),
+        spells=tuple(dict.fromkeys(spells)),
+        slots=slots,
+    )
+    notes = (
+        (f"spellcasting: {len(unsupported)} unsupported spell list entr{'y' if len(unsupported) == 1 else 'ies'} not executed",)
+        if unsupported
+        else ()
+    )
+    return result, notes
 
 
 def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
@@ -631,6 +808,7 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
     legendary_entries: list[tuple[str, str]] = []
     multiattack_body: str | None = None
     regeneration: Regeneration | None = None
+    spellcasting: MonsterSpellcasting | None = None
     for entry_section, entry_name, body in entries:
         lowered = entry_name.lower()
         # Section ownership comes before interpreting the wording. A save or Recharge clause in a
@@ -690,8 +868,13 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
                 attacks.append(attack)
                 if rider:
                     declared.append(rider)
-        elif lowered == "spellcasting" or "Spell Attack" in body[:80]:
-            declared.append(f"{entry_name}: spellcasting is not executed")
+        elif lowered == "spellcasting" and entry_section == "traits":
+            spellcasting, spell_notes = _spellcasting_entry(body)
+            declared.extend(spell_notes)
+            if spellcasting is None:
+                declared.append(f"{entry_name}: no spellcasting effect is executed")
+            elif not spellcasting.spells:
+                declared.append(f"{entry_name}: no supported spell is executed")
         else:
             declared.append(f"{entry_name}: trait not executed")
 
@@ -737,6 +920,7 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
         declared=tuple(declared),
         legendary_actions=legendary_actions,
         legendary=tuple(legendary),
+        spellcasting=spellcasting,
         creature_type=_creature_type(lines),
     )
 

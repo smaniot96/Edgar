@@ -12,7 +12,7 @@ import random
 import pytest
 
 from agent.action_economy import dash_declared, disengage_declared
-from agent.combatants import attack_roll_mode
+from agent.combatants import add_effect, attack_roll_mode
 from agent.graph_combat import combat_round_node, is_flee
 from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
@@ -367,6 +367,25 @@ async def test_a_ranged_only_foe_at_range_stays_and_shoots(fake_llm_schema, fake
     assert "closes to melee range" not in out["adjudication_result"].mechanical_summary
     assert _entries(out, "Archer Shortbow attack")
     assert "roll_mode" not in _entries(out, "Archer Shortbow attack")[0]
+
+
+@pytest.mark.asyncio
+async def test_standing_up_clears_hero_prone_without_spending_an_action(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    hero = _hero_row(init=20)
+    add_effect(hero, "prone", source="Wing Attack", round_applied=1)
+    out = await _turn(
+        fake_llm_schema,
+        [hero, _brute("Goblin", init=1, band=MELEE)],
+        "I stand up and attack the goblin",
+        seed=6,
+    )
+
+    assert not any(effect["kind"] == "prone" for effect in _hero(out).get("effects", []))
+    assert "Eda stands up and is no longer prone." in out["adjudication_result"].mechanical_summary
+    assert _entries(out, "attack check")[0].get("roll_mode", "normal") == "normal"
+    assert out["combat_state"]["economy"]["action"] == "attack"
 
 
 @pytest.mark.asyncio

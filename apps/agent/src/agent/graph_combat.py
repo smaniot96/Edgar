@@ -54,6 +54,7 @@ import asyncio
 import logging
 import re
 import time
+from dataclasses import replace
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -152,6 +153,7 @@ from agent.monster_stats import (
     combat_fields,
     declared_line,
     legendary_plan,
+    parse_lair_actions,
     parse_monster_stats,
     recharge_turn_start,
     record_damage,
@@ -199,7 +201,16 @@ from agent.resolution import (
     spend_second_wind,
     wears_heavy_armor,
 )
-from agent.spells import CastPlan, SpellSpec, cast_request, narrate, resolve_spell, target_count
+from agent.spells import (
+    CastPlan,
+    SpellSpec,
+    cast_request,
+    catalog_spell,
+    narrate,
+    resolve_monster_spell,
+    resolve_spell,
+    target_count,
+)
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
@@ -506,8 +517,12 @@ def _creature_source_reference(record: dict) -> dict:
         "actor_id",
         "actor_collection",
         "actor_manifest_sha256",
+        "actor_surprise",
         "passage_id",
         "manifest_sha256",
+        "lair_reference",
+        "actor_rules_edition",
+        "actor_source_sha256",
     )
     return {key: record[key] for key in fields if key in record}
 
@@ -521,6 +536,16 @@ def _exact_enemy(identity: dict, *, is_boss: bool = False) -> dict:
     name = str(identity["encounter_name"])
     try:
         stats = parse_monster_stats(str(identity.get("text") or ""), name=name)
+        if identity.get("lair_text"):
+            actions = parse_lair_actions(str(identity["lair_text"]))
+            declared = stats.declared + (
+                "reviewed lair passage: point choice, range, persistent areas, pull, flight, and dismissal effects remain unexecuted",
+            )
+            if not actions:
+                declared += (
+                    "reviewed lair passage: no supported exact save action parsed; its effects are not executed",
+                )
+            stats = replace(stats, lair_actions=actions, declared=declared)
     except MonsterStatsError as exc:
         raise CreatureResolutionError(
             f"Creature record for {name!r} has no parseable stat block ({exc}). "
@@ -533,6 +558,8 @@ def _exact_enemy(identity: dict, *, is_boss: bool = False) -> dict:
         "stat_adaptation": "exact_record",
         **combat_fields(stats),
         "monster_stats": stats.to_dict(),
+        "surprised": identity.get("actor_surprise") == "actor",
+        "hero_surprised": identity.get("actor_surprise") == "hero",
         "is_boss": bool(is_boss),
         "is_player": False,
         "disposition": "active",
@@ -739,6 +766,10 @@ def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | No
 
 # Mirrors the ranged test in resolution.resolve_attack, so the mode matches the weapon used.
 _RANGED_HINT = re.compile(r"\b(?:shoot|shoots|fire|fires|loose|looses)\b", re.IGNORECASE)
+_STAND_UP = re.compile(
+    r"\b(?:stand(?:s|ing)?\s+up|get(?:s|ting)?\s+up|rise(?:s|n)?\s+to\s+(?:my|their|his|her|your)\s+feet)\b",
+    re.IGNORECASE,
+)
 
 
 def _roll_with_mode(expression: str, mode: str) -> tuple[DiceOutcome, list[int]]:
@@ -838,6 +869,7 @@ async def combat_round_node(state: AgentState) -> dict:
             "alive": player_hp > 0,
             # Per-encounter facts live on the player combatant: the table has no column for them.
             "solo_budget": budget_summary,
+            "surprised": any(enemy.get("hero_surprised") for enemy in enemies),
         }
         ordered = roll_initiative([player_combatant] + enemies, character)
         combat_state.update(
@@ -887,8 +919,11 @@ async def combat_round_node(state: AgentState) -> dict:
         player, before, round_num
     )
     flee_after_stun_source = bool(stun_will_end_before_turn and fled)
-    if has_effect(player, "stunned") and not stun_will_end_before_turn:
-        # EDG-043: a stunned hero is incapacitated (PHB, PDF p.291): nothing declared is acted on.
+    if (has_effect(player, "stunned") or has_effect(player, "paralyzed")) and not stun_will_end_before_turn:
+        # Stunned and paralyzed are incapacitated (PHB Appendix A): nothing declared is acted on.
+        player_input, parsed, named, fled = "", ParsedInput(), [], False
+    if player.get("surprised"):
+        # Reviewed encounter setup: surprise lasts through the hero's first turn.
         player_input, parsed, named, fled = "", ParsedInput(), [], False
     # Second Wind uses come from the sheet, never from the encounter: they persist across fights.
     sw_before = second_wind_remaining(character)
@@ -923,6 +958,7 @@ async def combat_round_node(state: AgentState) -> dict:
     dash = not fled and dash_declared(player_input)
     disengage = not fled and disengage_declared(player_input)
     moving = not fled and bool(movement_steps(player_input))
+    standing_up = not fled and bool(_STAND_UP.search(player_input))
     off_hand = not fled and off_hand_declared(player_input)
     # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
     wants_second_wind = (
@@ -939,6 +975,7 @@ async def combat_round_node(state: AgentState) -> dict:
         or dash
         or disengage
         or moving
+        or standing_up
         or wants_second_wind
         or bonus_spell is not None
         or rage_declared
@@ -1092,6 +1129,33 @@ async def combat_round_node(state: AgentState) -> dict:
                 sw_left -= 1
                 log_lines.append(f"{hero} digs deep and uses Second Wind, recovering {sw.amount} HP to stay in the fight!")
 
+    def monster_concentration_damage(caster: dict, amount: int) -> None:
+        """Apply a monster's Constitution concentration save after it takes damage."""
+        if amount <= 0 or not caster.get("concentration"):
+            return
+        if int(caster.get("hp_current") or 0) <= 0:
+            if ended := drop_concentration(caster, [player]):
+                log_lines.append(f"{_display(caster)} falls and loses concentration on {ended}.")
+            return
+        stats = stats_of(caster)
+        bonus = stats.save_bonus("CON") if stats is not None else 0
+        dc = max(10, int(amount) // 2)
+        outcome = roll(f"1d20{bonus:+d}" if bonus else "1d20")
+        dice_log.append(outcome.to_log(f"{_display(caster)} Constitution save (concentration)"))
+        if outcome.total < dc:
+            ended = drop_concentration(caster, [player])
+            if ended:
+                log_lines.append(
+                    f"{_display(caster)} loses concentration on {ended} "
+                    f"(rolled {outcome.total} vs DC {dc})."
+                )
+        else:
+            concentration = caster.get("concentration") or {}
+            log_lines.append(
+                f"{_display(caster)} keeps concentration on {concentration.get('spell')} "
+                f"(rolled {outcome.total} vs DC {dc})."
+            )
+
     round_actors: list[str] = []
     actors: list[dict] = []
     outcomes: list[dict] = []
@@ -1123,6 +1187,7 @@ async def combat_round_node(state: AgentState) -> dict:
         mode = attack_roll_mode(e, player, ranged=ranged, within_five_feet=within_five_feet)
         round_modes.append(mode)
         atk, draws = _roll_with_mode(f"1d20{bonus:+d}", mode)
+        consume_mark(player)  # a Guiding Bolt mark grants advantage to the next attack roll only
         if reaction:
             purpose = f"{e['name']} opportunity attack"
         else:
@@ -1133,8 +1198,11 @@ async def combat_round_node(state: AgentState) -> dict:
         if reaction:
             subject = f"{subject} (opportunity attack)"
         natural = atk.rolls[0]
-        if natural == 20 or (natural != 1 and atk.total >= player_ac):
-            if natural == 20:
+        paralyzed_crit = within_five_feet and has_effect(player, "paralyzed")
+        hit = natural == 20 or (natural != 1 and atk.total >= player_ac)
+        critical = hit and (natural == 20 or paralyzed_crit)
+        if hit:
+            if critical:
                 p = parse_dice(expr)
                 count = p.count * 2 if exact else min(p.count * 2, 8)
                 expr = f"{count}d{p.sides}{p.modifier:+d}" if p.modifier else f"{count}d{p.sides}"
@@ -1147,7 +1215,7 @@ async def combat_round_node(state: AgentState) -> dict:
             if rage_resists(character, damage_type, raging=bool(player.get("raging"))):
                 dmg //= 2
                 resisted = ", halved by Rage resistance"
-            crit = " Critical hit!" if natural == 20 else ""
+            crit = " Critical hit!" if critical else ""
             typed = f" {damage_type}" if damage_type else ""
             log_lines.append(
                 f"{subject} hits {hero} for {dmg}{typed} damage{resisted} (rolled {atk.total}{mode_text} vs AC {player_ac}).{crit}"
@@ -1161,7 +1229,7 @@ async def combat_round_node(state: AgentState) -> dict:
                     "roll": atk.total,
                     "roll_mode": mode,
                     "target_ac": player_ac,
-                    "critical": natural == 20,
+                    "critical": critical,
                     "damage": dmg,
                     "damage_type": damage_type,
                     **({"reaction": "opportunity_attack"} if reaction else {}),
@@ -1260,15 +1328,23 @@ async def combat_round_node(state: AgentState) -> dict:
         # then ends concentration regardless of whether that damage save succeeded.
         damage_player(dmg)
         if save.condition and not saved and hp > 0:
-            afflict(
-                player,
-                save.condition,
-                source=_display(e),
-                round_applied=int(combat_state.get("round", 1) or 1),
-                ability=save.ability,
-                dc=save.dc,
-                source_id=stable_id(e),
-            )
+            if save.condition == "prone":
+                add_effect(
+                    player,
+                    "prone",
+                    source=_display(e),
+                    round_applied=int(combat_state.get("round", 1) or 1),
+                )
+            else:
+                afflict(
+                    player,
+                    save.condition,
+                    source=_display(e),
+                    round_applied=int(combat_state.get("round", 1) or 1),
+                    ability=save.ability,
+                    dc=save.dc,
+                    source_id=stable_id(e),
+                )
             round_effects.append(save.condition)
             if ended_spell := drop_concentration_if_incapacitated(player, enemies):
                 log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
@@ -1287,8 +1363,188 @@ async def combat_round_node(state: AgentState) -> dict:
                 exact=True,
                 rider=attack.rider,
                 ranged=attack.ranged,
-                within_five_feet=band == MELEE and attack.ranged,
+                within_five_feet=band == MELEE,
             )
+
+    def choose_monster_spell(e: dict, action_cost: str) -> tuple[SpellSpec, int] | None:
+        """Choose an available exact catalog spell with the requested action cost."""
+        stats = stats_of(e)
+        casting = None if stats is None else stats.spellcasting
+        if casting is None:
+            return None
+        spent = e.setdefault("monster_spell_slots_expended", {})
+        if not isinstance(spent, dict):
+            spent = e["monster_spell_slots_expended"] = {}
+        candidates: list[tuple[int, int, SpellSpec]] = []
+        for level, name in casting.spells:
+            spec = catalog_spell(name)
+            if spec is None or spec.level != level or spec.action != action_cost:
+                continue
+            if spec.condition and has_effect(player, spec.condition):
+                continue
+            if spec.humanoid_only and not player.get("humanoid", True):
+                continue
+            if spec.kind == "heal" and int(e.get("hp_current") or 0) >= int(e.get("hp_max") or 0):
+                continue
+            if level:
+                available = int(casting.slots.get(str(level), 0) or 0)
+                used = int(spent.get(str(level), 0) or 0)
+                if used >= available:
+                    continue
+            # Prefer a new control effect, then the most powerful remaining spell. The fallback
+            # attack is used once all recorded leveled slots are spent.
+            priority = 2 if spec.kind == "condition" else 1 if spec.level else 0
+            candidates.append((priority, level, spec))
+        if not candidates:
+            return None
+        _priority, level, chosen = max(candidates, key=lambda candidate: (candidate[0], candidate[1]))
+        if level:
+            spent[str(level)] = int(spent.get(str(level), 0) or 0) + 1
+        return chosen, level
+
+    def cast_monster_spell(e: dict, spec: SpellSpec) -> None:
+        """Resolve a catalog spell using the exact record-owned numbers."""
+        stats = stats_of(e)
+        casting = None if stats is None else stats.spellcasting
+        if casting is None:
+            return
+        note_actor(e)
+        source = spec.name
+        source_id = f"{stable_id(e)}:{spec.name.casefold()}"
+        if spec.concentration:
+            if previous := drop_concentration(e, [player]):
+                log_lines.append(f"{_display(e)}'s concentration on {previous} ends.")
+
+        save_bonus = save_modifier(character, spec.save_ability or "DEX")
+        save_mode = save_roll_mode(player, spec.save_ability or "DEX")
+        if spec.save_ability == "DEX" and has_effect(player, "restrained"):
+            save_mode = "normal" if save_mode == "advantage" else "disadvantage"
+        attack_mode = attack_roll_mode(
+            e,
+            player,
+            ranged=True,
+            within_five_feet=band_of(e) == MELEE,
+        )
+        result = resolve_monster_spell(
+            spec,
+            attack_bonus=casting.attack_bonus,
+            save_dc=casting.save_dc,
+            caster_level=casting.caster_level,
+            target_ac=player_ac,
+            target_save_bonus=save_bonus,
+            healing_modifier=stats.abilities.get(casting.ability, 0),
+            save_mode=save_mode,
+            roll_mode=attack_mode,
+            automatic_save_failure=(
+                spec.save_ability is not None and save_auto_fails(player, spec.save_ability)
+            ),
+            critical_on_hit=band_of(e) == MELEE and has_effect(player, "paralyzed"),
+        )
+        if spec.kind == "attack":
+            consume_mark(player)  # the spell attack roll spends a mark against its target
+        dice_log.extend(result.dice_log)
+        if result.healing:
+            before_hp = int(e.get("hp_current") or 0)
+            e["hp_current"] = min(int(e.get("hp_max") or before_hp), before_hp + result.healing)
+            log_lines.append(
+                f"{_display(e)} casts {spec.name} and regains {e['hp_current'] - before_hp} HP."
+            )
+        if result.damage:
+            damage = result.damage
+            if rage_resists(character, spec.damage_type, raging=bool(player.get("raging"))):
+                damage //= 2
+                log_lines.append(f"Rage resistance halves the {spec.damage_type} damage.")
+            damage_player(damage)
+        if result.condition and result.save_success is False and hp > 0:
+            applied = apply_spell_condition(
+                player,
+                result.condition,
+                source=source,
+                round_applied=round_num,
+                duration_rounds=spec.duration_rounds,
+                repeat_save=(
+                    {"ability": spec.save_ability, "dc": casting.save_dc}
+                    if spec.save_ability
+                    else None
+                ),
+                source_id=source_id,
+            )
+            if applied:
+                round_effects.append(result.condition)
+                if spec.concentration:
+                    start_concentration(
+                        e,
+                        source,
+                        round_applied=round_num,
+                        duration_rounds=spec.duration_rounds,
+                        source_id=source_id,
+                    )
+                if ended_spell := drop_concentration_if_incapacitated(player, enemies):
+                    log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
+            log_lines.append(
+                f"{_display(e)} casts {spec.name}. "
+                + spell_condition_sentence(result.condition, hero, applied=applied)
+            )
+        elif result.attack is not None:
+            if spec.kind == "attack":
+                round_modes.append(attack_mode)
+                if result.attack.success:
+                    log_lines.append(
+                        f"{_display(e)} casts {spec.name}: the spell attack hits {hero} for "
+                        f"{result.damage} {spec.damage_type} damage."
+                    )
+                    if result.condition and hp > 0:
+                        applied = apply_spell_condition(
+                            player,
+                            result.condition,
+                            source=source,
+                            round_applied=round_num,
+                            duration_rounds=spec.duration_rounds,
+                            source_id=source_id,
+                        )
+                        if applied:
+                            round_effects.append(result.condition)
+                        log_lines.append(spell_condition_sentence(result.condition, hero, applied=applied))
+                else:
+                    log_lines.append(f"{_display(e)} casts {spec.name}, but the spell attack misses {hero}.")
+            elif result.damage:
+                log_lines.append(f"{_display(e)} casts {spec.name} at {hero} for {result.damage} damage.")
+        elif spec.kind in {"save", "condition"}:
+            outcome = "succeeds" if result.save_success else "fails"
+            rolled = (
+                "automatically fails while incapacitated"
+                if save_auto_fails(player, spec.save_ability or "")
+                else f"rolls against DC {casting.save_dc}"
+            )
+            log_lines.append(
+                f"{_display(e)} casts {spec.name}; {hero} {outcome} the {spec.save_ability} save "
+                f"({rolled})."
+            )
+            if result.damage:
+                log_lines.append(f"{hero} takes {result.damage} {spec.damage_type} damage.")
+        elif result.damage:
+            log_lines.append(
+                f"{_display(e)} casts {spec.name} at {hero} for {result.damage} "
+                f"{spec.damage_type or 'damage'}."
+            )
+        else:
+            log_lines.append(f"{_display(e)} casts {spec.name}.")
+
+    def monster_spell_action(e: dict) -> bool:
+        """Use an action spell, with a legal bonus spell where the catalog allows both."""
+        selected = choose_monster_spell(e, ACTION)
+        if selected is not None:
+            action_spell, _level = selected
+            cast_monster_spell(e, action_spell)
+            # A bonus-action spell permits another spell only when it is a cantrip.
+            if action_spell.level == 0:
+                if bonus := choose_monster_spell(e, BONUS_ACTION):
+                    cast_monster_spell(e, bonus[0])
+            return True
+        if bonus := choose_monster_spell(e, BONUS_ACTION):
+            cast_monster_spell(e, bonus[0])
+        # Bonus actions leave the ordinary action available for the weapon/Multiattack plan.
+        return False
 
     def foe_attacks(e: dict) -> None:
         stats = stats_of(e)
@@ -1305,10 +1561,9 @@ async def combat_round_node(state: AgentState) -> dict:
                 expr=_enemy_damage_expr(e.get("damage_dice", "1d6+1")),
             )
             return
-        # Exact record: regeneration at the start of its turn, then each listed attack in order.
-        _healed, regen_note = regenerate(e)
-        if regen_note:
-            log_lines.append(regen_note)
+        if monster_spell_action(e):
+            return
+        # Exact record: make each listed attack in order after start-of-turn features resolve.
         plan = attack_plan(stats, spent=e.get("recharge_spent") or ())
         band = band_of(e)
         if band == RANGED and not any(a.ranged for a in plan):
@@ -1330,6 +1585,8 @@ async def combat_round_node(state: AgentState) -> dict:
         Uses the record's first melee attack, or the stored numbers of a legacy foe. Returns False
         when the foe has no melee attack to make.
         """
+        if e.get("surprised"):
+            return False
         stats = stats_of(e)
         if stats is None:
             enemy_attack(
@@ -1360,7 +1617,7 @@ async def combat_round_node(state: AgentState) -> dict:
     def legendary_action(e: dict) -> None:
         """Use at most one option at the end of this other creature's turn (MM, PDF p.12)."""
         stats = stats_of(e)
-        if hp <= 0 or stats is None or not stats.legendary or not can_act(e):
+        if hp <= 0 or stats is None or not stats.legendary or not can_act(e) or e.get("surprised"):
             return
         band = band_of(e)
         left = stats.legendary_actions - int(e.get("legendary_spent") or 0)
@@ -1374,6 +1631,48 @@ async def combat_round_node(state: AgentState) -> dict:
             f"{e['name']} uses a legendary action: {option.name} (costs {option.cost})."
         )
         exact_attack(e, option.attack, band)
+        if option.flight_after and is_standing(e):
+            e["band"] = RANGED
+            log_lines.append(f"{e['name']} flies away after its Wing Attack.")
+
+    def lair_action(e: dict) -> None:
+        """Resolve one reviewed lair option at initiative 20, with ties lost."""
+        stats = stats_of(e)
+        if fled or hp <= 0 or stats is None or not stats.lair_actions or not can_act(e) or e.get("surprised"):
+            return
+        previous = e.get("lair_last_action") if int(e.get("lair_last_round") or 0) == round_num - 1 else None
+        option = next((a for a in stats.lair_actions if a.name != previous), None)
+        if option is None:
+            return
+        e["lair_last_action"] = option.name
+        e["lair_last_round"] = round_num
+        note_actor(e)
+        if save_auto_fails(player, option.ability):
+            saved, total, mode = False, None, "automatic failure while incapacitated"
+        else:
+            mode = save_roll_mode(player, option.ability)
+            bonus = save_modifier(character, option.ability)
+            saving, draws = _roll_with_mode(f"1d20{bonus:+d}" if bonus else "1d20", mode)
+            dice_log.append(_mode_log(saving, f"{hero} {option.ability} save ({option.name})", mode, draws))
+            total = saving.total
+            saved = total >= option.dc
+        dealt = 0
+        if option.damage_dice:
+            damage = roll(option.damage_dice)
+            dice_log.append(damage.to_log(f"{e['name']} {option.name} damage"))
+            dealt = damage.total if not saved else damage.total // 2 if option.half_on_success else 0
+        log_lines.append(
+            f"At initiative 20, {e['name']} uses its lair action: {option.name}. "
+            f"{hero} {'succeeds' if saved else 'fails'} the {option.ability} save"
+            f"{'' if total is None else f' (rolled {total} vs DC {option.dc})'}."
+        )
+        if option.condition == "prone" and not saved and hp > 0:
+            add_effect(player, "prone", source=option.name, round_applied=round_num)
+            round_effects.append("prone")
+            log_lines.append(f"{hero} is knocked prone.")
+        if dealt:
+            log_lines.append(f"{hero} takes {dealt} {option.damage_type} damage from {option.name}.")
+            damage_player(dealt)
 
     def another_creature_turn_ended(actor: dict) -> None:
         """Give every other able foe one legendary-action opportunity at this turn boundary."""
@@ -1383,9 +1682,32 @@ async def combat_round_node(state: AgentState) -> dict:
             if e is not actor:
                 legendary_action(e)
 
+    lair_done = False
+
+    def lair_boundary() -> None:
+        nonlocal lair_done
+        if lair_done:
+            return
+        lair_done = True
+        for foe in enemies:
+            lair_action(foe)
+
+    def before_initiative_slot(actor: dict) -> None:
+        if not lair_done and int(actor.get("init", 0) or 0) < 20:
+            lair_boundary()
+
+    def after_initiative_slot(actor: dict) -> None:
+        if lair_done or int(actor.get("init", 0) or 0) < 20:
+            return
+        index = combatants.index(actor)
+        if not any(int(next_actor.get("init", 0) or 0) >= 20 for next_actor in combatants[index + 1 :]):
+            lair_boundary()
+
     def enemy_turn(e: dict) -> None:
         start_turn(e)  # its reaction comes back at the start of its turn (PHB p.190)
         e.pop("legendary_spent", None)  # and its spent legendary actions (MM, PDF p.12)
+        if ended_spell := drop_concentration_if_incapacitated(e, [player]):
+            log_lines.append(f"{_display(e)}'s concentration on {ended_spell} ends while incapacitated.")
         # A foe that is down takes no turn. A paralyzed foe is still in the fight: it has its turn
         # (its recharge and its repeat save) but makes no attack.
         if not is_standing(e) or hp <= 0 or fled:
@@ -1394,7 +1716,12 @@ async def combat_round_node(state: AgentState) -> dict:
             dice_log.append(outcome.to_log(f"{e['name']} {name} recharge"))
             state_word = "recharges" if recharged else "does not recharge yet"
             log_lines.append(f"{e['name']}'s {name} {state_word} (rolled {outcome.total} on the d6).")
-        if can_act(e):
+        # Regeneration is a start-of-turn trait; it still applies if the creature cannot act.
+        if stats_of(e) is not None:
+            _healed, regen_note = regenerate(e)
+            if regen_note:
+                log_lines.append(regen_note)
+        if can_act(e) and not e.get("surprised"):
             foe_attacks(e)
         # EDG-043: a save-ending spell condition is repeated at the end of the foe's own turn.
         for save in end_of_turn_saves(e):
@@ -1403,6 +1730,7 @@ async def combat_round_node(state: AgentState) -> dict:
         # EDG-043: a hero condition that lasts until the end of this foe's next turn ends with it.
         for kind in end_of_source_turn(player, e, int(combat_state.get("round", 1) or 1)):
             log_lines.append(f"{hero} is no longer {kind}.")
+        e["surprised"] = False
 
     # A predicted source-turn expiry lets a stunned hero keep a flee declaration. Resolve foes ahead
     # first; restore the flee state before the player slot so it succeeds only if the stun ends.
@@ -1411,18 +1739,26 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Enemies ahead of the player in initiative ---
     for e in before:
+        before_initiative_slot(e)
         enemy_turn(e)
         another_creature_turn_ended(e)
+        after_initiative_slot(e)
 
     if flee_after_stun_source:
         fled = hp > 0 and not has_effect(player, "stunned")
 
     # --- Player's action ---
+    before_initiative_slot(player)
     check_result: CheckResult | None = None
     dealt = 0
     inventory_used: list[str] = []
     # An enemy ahead in initiative may have stunned the hero just now (EDG-043).
-    player_acted = hp > 0 and not has_effect(player, "stunned")
+    player_acted = (
+        hp > 0
+        and not has_effect(player, "stunned")
+        and not has_effect(player, "paralyzed")
+        and not player.get("surprised")
+    )
     runtime_fear_blocked = False
     extra_outcome = ""
     player_action: dict = {"action": "none", "result": "down"}
@@ -1430,6 +1766,8 @@ async def combat_round_node(state: AgentState) -> dict:
     # EDG-044: a Dodge lasts until the hero's next turn starts, which is here (after the foes that
     # act ahead of the hero in initiative). A Dodge declared this turn applies to the foes after.
     release_effect(player, "dodging")
+    if player_acted and standing_up and release_effect(player, "prone"):
+        log_lines.append(f"{hero} stands up and is no longer prone.")
     # A rage lasts 1 minute (PHB, PDF p.49), counted from the round it began in.
     if player.get("raging") and (
         int(combat_state.get("round", 1) or 1) - int(player.get("rage_round") or 1) >= RAGE_ROUNDS
@@ -1516,6 +1854,7 @@ async def combat_round_node(state: AgentState) -> dict:
                     and not disengage
                     and hp > 0
                     and can_act(foe)
+                    and not foe.get("surprised")
                     and not foe.get("reaction_used")
                 )
                 if provoked:
@@ -1531,9 +1870,18 @@ async def combat_round_node(state: AgentState) -> dict:
             round_effects.append("disengage")
     if not player_acted:
         if hp > 0:
-            player_action = {"action": "none", "result": "stunned"}
-            round_effects.append("stunned")
-            log_lines.append(f"{hero} is stunned and cannot act.")
+            if player.get("surprised"):
+                player_action = {"action": "none", "result": "surprised"}
+                round_effects.append("surprised")
+                log_lines.append(f"{hero} is surprised and cannot act on this first turn.")
+            elif has_effect(player, "paralyzed"):
+                player_action = {"action": "none", "result": "paralyzed"}
+                round_effects.append("paralyzed")
+                log_lines.append(f"{hero} is paralyzed and cannot act.")
+            else:
+                player_action = {"action": "none", "result": "stunned"}
+                round_effects.append("stunned")
+                log_lines.append(f"{hero} is stunned and cannot act.")
         else:
             log_lines.append(f"{hero} is down before they can act.")
     elif fled:
@@ -1621,6 +1969,7 @@ async def combat_round_node(state: AgentState) -> dict:
                     spell_target, spell_result.damage, spell_type, magical=True
                 )
                 status = _strike(spell_target, dealt, parsed, player_input, damage_type=spell_type)
+                monster_concentration_damage(spell_target, dealt)
                 extra_outcome = f"{extra_outcome}{resist_note} {status}"
             if spell_target is not None and spell_result.attack is not None:
                 consume_mark(spell_target)  # the attack roll spends a mark it was made against
@@ -1647,6 +1996,12 @@ async def combat_round_node(state: AgentState) -> dict:
                             spec.name,
                             round_applied=int(combat_state.get("round", 1) or 1),
                             duration_rounds=spec.duration_rounds,
+                        )
+                    if ended_spell := drop_concentration_if_incapacitated(
+                        spell_target, [player]
+                    ):
+                        log_lines.append(
+                            f"{spell_target['name']}'s concentration on {ended_spell} ends while incapacitated."
                         )
                 extra_outcome = " ".join(
                     [
@@ -1816,6 +2171,7 @@ async def combat_round_node(state: AgentState) -> dict:
                 )
                 dealt += swing_dealt
                 status = _strike(target, swing_dealt, parsed, player_input, damage_type=damage_type)
+                monster_concentration_damage(target, swing_dealt)
                 crit = "Critical hit! " if attack.critical else ""
                 swing_text = (
                     f"{crit}{hero} hits {target['name']}{with_text} for {swing_dealt} "
@@ -1837,6 +2193,7 @@ async def combat_round_node(state: AgentState) -> dict:
         dash
         or disengage
         or moving
+        or standing_up
         or wants_second_wind
         or bonus_spell is not None
         or rage_declared
@@ -1847,6 +2204,8 @@ async def combat_round_node(state: AgentState) -> dict:
             player_action = {"action": "dash" if dash else "disengage", "result": "taken"}
         elif moving:
             player_action = {"action": "move", "result": "moved" if moves.steps else "already_there"}
+        elif standing_up:
+            player_action = {"action": "stand_up", "result": "stood_up"}
     else:
         check_result, extra = resolve_from_parsed(
             character, parsed, player_input=player_input, impaired=impaired_checks(player)
@@ -1886,20 +2245,31 @@ async def combat_round_node(state: AgentState) -> dict:
             dice_log.append(save.outcome.to_log(f"{hero} {save.ability} save ({save.kind})"))
             log_lines.append(save_line(save))
 
+    player["surprised"] = False
+
     # --- Legendary actions: one option per other creature's turn, including the hero's ---
     if not fled:
         another_creature_turn_ended(player)
+    after_initiative_slot(player)
 
     # --- Enemies after the player ---
     for e in after:
+        before_initiative_slot(e)
         enemy_turn(e)
         another_creature_turn_ended(e)
+        after_initiative_slot(e)
+    if not lair_done:
+        # The encounter has no actor below initiative 20; the lair acts after the final tie.
+        lair_boundary()
     # EDG-043: a timed spell condition ends after its last round (a mark, the caster's next turn).
     for foe_name, expired in expire_effects(combatants, int(combat_state.get("round", 1) or 1)):
         log_lines.append(f"{foe_name} is no longer {expired}.")
     # EDG-043: concentration ends with its minute, or once no foe still carries its effect.
     if ended_spell := settle_concentration(player, enemies, int(combat_state.get("round", 1) or 1)):
         log_lines.append(f"{hero}'s concentration on {ended_spell} ends.")
+    for foe in enemies:
+        if ended_spell := settle_concentration(foe, [player], int(combat_state.get("round", 1) or 1)):
+            log_lines.append(f"{_display(foe)}'s concentration on {ended_spell} ends.")
 
     player["hp_current"] = hp
     apply_player_disposition(player, subdued=False)
@@ -1936,7 +2306,8 @@ async def combat_round_node(state: AgentState) -> dict:
     if ended:
         # Typed effects end with the encounter (EDG-021): nothing carries into a later fight.
         clear_effects(combatants)
-        player.pop("concentration", None)  # EDG-043: the caster stops concentrating with the fight
+        for combatant in combatants:
+            combatant.pop("concentration", None)  # EDG-043: all casters stop with the fight
         player.pop("raging", None)  # rage, too, lasts only for this encounter (EDG-145)
         player.pop("rage_round", None)
 

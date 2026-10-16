@@ -393,6 +393,8 @@ def test_manifest_binding_receipt_and_old_digest_compatibility():
         entity.pop("stat_reference")
         entity.pop("reveal_on")
         entity.pop("object_id")
+        entity.pop("lair_reference")
+        entity.pop("surprise")
     for key in ("objects", "objectives", "milestones", "promises", "clocks"):
         old_body.pop(key)
     old_digest = text_digest(

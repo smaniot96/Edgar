@@ -36,7 +36,7 @@ from sqlalchemy import select
 
 import db.postgres.session as db_session_module
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
-from agent.combatants import can_act, concentration_of, disposition_of, stable_id
+from agent.combatants import can_act, concentration_of, disposition_of, stable_id, view_fields
 from agent.graph import app, prepare_app, route_after_input_parser
 from agent.llm import message_text
 from agent.nodes.narrator import (
@@ -544,6 +544,30 @@ def combat_round_from_events(events: list[dict] | None) -> dict[str, Any] | None
     return None
 
 
+def _debug_combat_state(combat_state: dict | None) -> dict | None:
+    """Expose observed combat diagnostics without unpublished source or capability data.
+
+    Combatant JSON also stores reviewed actor bindings, uncast spells and unused lair options.
+    These remain private even when a client asks for debug output. Use an explicit projection
+    so a new persisted engine field cannot silently become player-visible.
+    """
+    if not combat_state:
+        return combat_state
+    numeric_fields = {
+        "name", "display_name", "is_player", "hp_current", "hp_max", "ac", "init", "init_bonus",
+        "attack_bonus", "damage_dice", "is_boss", "stat_adaptation", "legendary_spent",
+    }
+    return {
+        **(combat_state_public(combat_state) or {}),
+        "id": combat_state.get("id"),
+        "initiative_order": combat_state.get("initiative_order"),
+        "combatants": [
+            {**{k: v for k, v in c.items() if k in numeric_fields}, **view_fields(c)}
+            for c in combat_state.get("combatants", [])
+        ],
+    }
+
+
 def _debug_payload(
     *,
     parsed: Any,
@@ -568,17 +592,7 @@ def _debug_payload(
         "rules_context_count": len(rules_ctx or []),
         "adventure_context_count": len(adv_ctx or []),
         "world_flags_in": world_flags_in or {},
-        # Source references can identify planner-only module statistics. Keep those private
-        # even in the optional client debug stream; numeric combat diagnostics remain.
-        "combat_state": {
-            **combat_state,
-            "combatants": [
-                {k: v for k, v in c.items() if k not in {"source_reference", "creature_id"}}
-                for c in combat_state.get("combatants", [])
-            ],
-        }
-        if combat_state
-        else combat_state,
+        "combat_state": _debug_combat_state(combat_state),
         "timings_ms": timings,
         # Combat turns only: the round's actors, original dice and outcomes (EDG-031).
         "combat_diagnostics": combat_diagnostics,

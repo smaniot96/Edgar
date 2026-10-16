@@ -229,12 +229,23 @@ simulate (`GET /api/rules/supported-scope`):
   legendary action at the end of each other creature's turn represented in encounter order, choosing
   the most expensive affordable option, and regains them at the start of its own turn; only an option
   that names one of its own plain attacks and the dragon Wing Attack
-  (damage only: its prone effect and flight are declared) are executed. Speed and movement, lair and
-  reaction actions (no encounter data states that a creature is in its lair), other legendary
-  options, spellcasting, save actions and recharge abilities not read exactly, a Multiattack's
-  later-attack disadvantage, other rider wording and unlisted traits are declared in the combat
-  start message and have no effect. Regeneration's 0 HP clause is declared too: an exact creature
-  at 0 HP is defeated at once. Stat blocks were checked against real Monster Manual layouts (see
+  (damage, prone on a failed save, and flight into the ranged band) are executed. Reviewed actor
+  setup may explicitly mark the actor or hero surprised through its first turn; actions, movement,
+  reactions and legendary/lair use obey that flag. An actor's `lair_reference` binds an unlocked
+  private planner passage to the same creature as its `stat_reference`. Exact red-dragon magma
+  and tremor options execute at initiative 20, losing every tie, without consecutive repetition
+  after reload. Persistent gas/clouds, darkness, terrain geometry and other lair options remain
+  unsupported. Listed monster spells resolve
+  only when their exact spell name and level are in the small supported catalog; recorded slots are
+  spent by level, while unsupported list entries are counted generically and never executed. The
+  supported effects include spell attacks and saves, healing, Guiding Bolt's mark, and Hold Person's
+  concentration and repeat saves. Exact speed and movement, unsupported lair and reaction actions,
+  other legendary options, unsupported spells and save actions,
+  recharge abilities not read exactly, a Multiattack's later-attack disadvantage, other rider wording
+  and unlisted traits are declared in the combat start message and have no effect. Standing up from
+  prone clears the condition without an action; the movement-band abstraction does not charge the book's
+  half-speed cost. Regeneration's 0 HP clause is declared too: an exact creature at 0 HP is defeated
+  at once. Stat blocks were checked against real Monster Manual layouts (see
   docs/rules-verification-2014.md).
 - Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales

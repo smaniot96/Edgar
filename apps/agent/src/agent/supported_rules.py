@@ -410,15 +410,83 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "that only names one of the creature's own plain attacks ('makes a tail attack'), rolled as "
             "that attack, and the dragon Wing Attack (Costs 2 Actions), a Dexterity save for bludgeoning "
             "damage and none on a success, made from the melee band (its 10 or 15 foot radius is not "
-            "modelled). The Wing Attack's prone effect and its flight are not executed. Every other "
+            "modelled). A failed save also knocks the hero prone, and flight moves the foe to the ranged "
+            "band; it may close again on its own turn. Exact flight speed is not simulated. Every other "
             "option (Detect, spells, movement, a condition, an attack named with 'or') stays declared, "
-            "never guessed. The book's surprise clause is not modelled."
+            "never guessed. Authored surprise prevents legendary actions until the affected foe's first "
+            "turn has ended (see encounter_surprise)."
         ),
         implementation="agent.monster_stats:legendary_plan",
         test=(
             "tests/agent/test_monster_legendary.py::"
             "test_at_a_turn_boundary_only_one_costliest_affordable_option_is_used"
         ),
+    ),
+    Mechanic(
+        id="monster_spellcasting",
+        title="Listed monster catalog spells, slots and concentration",
+        scope=(
+            "An exact Spellcasting entry must give its caster level, ability, save DC, attack bonus, "
+            "spell list and slot counts. Only names listed at their catalog level execute: "
+            "Fire Bolt, Magic Missile, Sacred Flame, Cure Wounds, Healing Word, Guiding Bolt, "
+            "Blindness/Deafness (blindness only) and Hold Person. The record owns casting numbers; "
+            "cantrips scale by its caster level, and leveled spells spend available slots of their "
+            "listed level without upcasting. Healing targets the caster only; hostile spells target "
+            "the hero. A bonus-action Healing Word may accompany an action cantrip or ordinary "
+            "weapon action, but not a leveled action spell. Marks affect the next attack roll; "
+            "blindness and paralysis have repeat saves. Hero paralysis suppresses actions, bonus "
+            "actions, movement and flight; weapon/spell hits from the melee band critically hit, while "
+            "Strength/Dexterity saves automatically fail. Hold Person concentration is source-owned "
+            "and ends on damage-save failure, incapacitation, defeat, replacement, expiry, the last "
+            "target's successful repeat save or encounter end. Slots and effects survive reload. "
+            "Unsupported spell entries have no effect; public declarations report a count without "
+            "revealing uncast names. Innate casting, other spells, precise ranges and ally targeting "
+            "are not simulated."
+        ),
+        implementation="agent.spells:resolve_monster_spell",
+        test="tests/agent/test_monster_spellcasting.py::test_monster_hold_person_ends_hero_concentration_and_persists_repeat_save",
+    ),
+    Mechanic(
+        id="monster_lair_actions",
+        title="Reviewed magma/tremor lair actions",
+        scope=(
+            "An actor's lair_reference must bind the same creature as its stat_reference to a "
+            "reviewed private planner passage, unlocked in the active scene. Flags or narration "
+            "cannot grant lair actions. Complete 2014 red-dragon magma and tremor wording executes "
+            "at initiative 20 after all tied creatures: magma is a Dexterity save for recorded fire "
+            "dice, half on success; tremor is a Dexterity save or prone. One supported option is "
+            "chosen in source order; the same option cannot repeat in consecutive rounds, including "
+            "after reload. An incapacitated or surprised owner cannot use it. The hero is the target "
+            "in the authored encounter; point placement, terrain, exact radii and grounded/airborne "
+            "geometry are not simulated. Persistent gas/clouds, darkness, pull, dismissal, other "
+            "lair wording and additional clauses remain unsupported."
+        ),
+        implementation="agent.monster_stats:parse_lair_actions",
+        test="tests/agent/test_monster_completion_review.py::test_lair_damage_and_no_consecutive_repetition_survive_round_reload",
+    ),
+    Mechanic(
+        id="encounter_surprise",
+        title="Authored first-turn surprise",
+        scope=(
+            "A reviewed actor's optional surprise field names actor or hero. Surprise is never "
+            "inferred from narration: the affected creature cannot act or move on its first turn, "
+            "or react before that turn ends; legendary and lair actions are also blocked. The "
+            "saved combatant flag clears at its first turn end. Perception/Stealth surprise "
+            "contests and group surprise are not simulated."
+        ),
+        implementation="agent.graph_combat:combat_round_node",
+        test="tests/agent/test_monster_legendary.py::test_surprise_blocks_reactions_first_turn_and_legendary_actions_until_turn_ends",
+    ),
+    Mechanic(
+        id="hero_stand_up",
+        title="Standing from prone (no speed cost)",
+        scope=(
+            "An explicit stand-up declaration clears hero prone at the hero's initiative and may "
+            "accompany an attack. Incapacitation or surprise prevents it. The movement-band "
+            "abstraction does not charge the book's half-speed cost."
+        ),
+        implementation="agent.graph_combat:combat_round_node",
+        test="tests/agent/test_positioning.py::test_standing_up_clears_hero_prone_without_spending_an_action",
     ),
     Mechanic(
         id="monster_conditions",
@@ -504,7 +572,9 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "effects on a player character. The "
             "engine applies blinded, marked and paralyzed to foes from catalog spells (see "
             "condition_effects), and poisoned, frightened and stunned to the hero from exact monster "
-            "text (see monster_riders and monster_conditions)."
+            "text (see monster_riders and monster_conditions). Listed monster catalog spells also "
+            "apply blinded, marked or paralyzed to the hero; Wing Attack and the supported lair "
+            "tremor may knock the hero prone."
         ),
         implementation="agent.resolution:normalise_conditions",
         test="tests/agent/test_supported_rules.py::test_supported_conditions_are_tags_only",
@@ -720,9 +790,9 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         boundary=(
             "Such a condition has no engine effect: it does not penalise rolls, speed, actions or senses, "
             "and no foe is frightened, stunned or charmed by the engine. The hero is frightened or "
-            "stunned only by the exact monster wordings named in monster_conditions. A hero's "
-            "paralysis has no engine effect beyond automatic failure of Strength and Dexterity saves "
-            "and ending concentration; a hero charmed or grappled by a monster has no engine effect."
+            "stunned only by the exact monster wordings named in monster_conditions. Hero paralysis "
+            "is executed for listed catalog Hold Person (see monster_spellcasting); other paralysis "
+            "wording, and a hero charmed or grappled by a monster, has no engine effect."
         ),
         owner="EDG-043",
     ),
@@ -759,14 +829,15 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     UnsupportedMechanic(
         id="monster_traits",
         title=(
-            "Other monster traits: speed and movement, lair and reaction actions, legendary options not "
-            "read exactly, spellcasting, save actions and recharge abilities not read exactly, and "
+            "Other monster traits: exact speed and movement, unsupported lair and reaction actions, legendary options not "
+            "read exactly, noncatalog or innate spellcasting, save actions and recharge abilities not read exactly, and "
             "unlisted traits"
         ),
         boundary=(
             "Each such trait is declared, not executed, in the combat start message. It has no engine "
-            "effect: a monster never moves, casts, uses a save action it cannot read exactly, or takes a "
-            "lair action (no encounter or scene data states that it is in its lair), a reaction action or a "
+            "effect: a monster never casts an unlisted/noncatalog spell, uses a save action it cannot "
+            "read exactly, or takes an unbound/unsupported lair action, a reaction action other than "
+            "an opportunity attack, or a "
             "legendary option that is not read exactly, and its passive traits are not applied. An "
             "attack-style Recharge attack, a breath weapon and the legendary options of the supported "
             "list are executed as stated there."

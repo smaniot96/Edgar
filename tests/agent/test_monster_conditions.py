@@ -860,8 +860,8 @@ async def test_a_stunned_hero_cannot_flee(fake_llm_schema, fake_retrieval) -> No
         "Spitter",
     )
     with use_rng(
-        ScriptedDice([1])
-    ):  # advantage against the stunned hero cancels the crossbow's disadvantage
+        ScriptedDice([1, 1])
+    ):  # The incapacitated hero cannot impose close-range disadvantage; both advantage dice miss.
         out = await combat_round_node(state)
     assert not out["combat_state"]["ended"]
     assert "Dara is stunned and cannot act." in _summary(out)
