@@ -451,8 +451,8 @@ async def test_turn_prompts_cover_full_uncovered_history_after_summary_or_failur
         seen["planner"].append(prompt[1]["content"])
         return prompt
 
-    def capture_narrator(state):
-        prompt = original_narrator(state)
+    def capture_narrator(state, *args):
+        prompt = original_narrator(state, *args)
         seen["narrator"].append(prompt[-1].content)
         return prompt
 

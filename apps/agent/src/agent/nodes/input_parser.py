@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.action_economy import has_attack_words
 from agent.combatants import is_standing
-from agent.history import continuity_context, public_earned_facts
+from agent.history import fit_continuity, public_earned_facts
 from agent.llm import make_chat_model
 from agent.models.parsed_input import ParsedInput
 from agent.prompts import INPUT_PARSER, wrap_player_action
@@ -73,9 +73,7 @@ def _parser_context(state: AgentState) -> str:
             "Session-earned public clues, available only for an explicit reread request; choose the exact fact_id when the player names or refers to that clue: "
             + str(clues)
         )
-    continuity = continuity_context(state)
-    if continuity:
-        parts.append(continuity)
+    continuity_slot = len(parts)
     facts = public_earned_facts(state)
     if facts:
         parts.append(f"Committed player-known story facts and exact source quotations: {json.dumps(facts)}")
@@ -88,6 +86,12 @@ def _parser_context(state: AgentState) -> str:
             "Authoritative resolved combat outcomes (never reopen or contradict): "
             + json.dumps(outcomes)
         )
+    if continuity := fit_continuity(
+        state,
+        "play.parser",
+        [INPUT_PARSER, wrap_player_action(state.get("player_input")), *parts],
+    ):
+        parts.insert(continuity_slot, continuity)
     return "\n".join(parts)
 
 
