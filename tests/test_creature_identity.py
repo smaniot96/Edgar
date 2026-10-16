@@ -386,6 +386,7 @@ def test_manifest_binding_receipt_and_old_digest_compatibility():
     old_body = manifest.model_dump(exclude={"reviewed_sha256", "reviewed_by"})
     old_body.pop("resolution_policies")  # Absent from the historical receipt format.
     old_body.pop("opening_journal")
+    old_body.pop("prepared")  # Absent optional preparation field in the historical format.
     for passage in old_body["passages"]:
         passage.pop("known_scene_ids")
     for entity in old_body["entities"]:
