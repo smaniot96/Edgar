@@ -277,15 +277,15 @@ def _profile_from_mapping(name: Any, settings: Any, *, locked: bool = False) -> 
         raise ModelProfileError(
             f"Profile '{known_name}' is policy-bound to gpt-6.1-sol/high on the Responses API."
         )
-    if effort is not None and not _is_reasoning_model(model):
+    if effort is not None and not is_reasoning_model(model):
         raise ModelProfileError(
             f"Profile '{known_name}' sets reasoning_effort for a model without reasoning support."
         )
-    if temperature is not None and _is_reasoning_model(model):
+    if temperature is not None and is_reasoning_model(model):
         raise ModelProfileError(
             f"Profile '{known_name}' sets temperature for a reasoning model; omit it."
         )
-    if _is_reasoning_model(model) and api != "responses":
+    if is_reasoning_model(model) and api != "responses":
         raise ModelProfileError(
             f"Profile '{known_name}' uses a reasoning model and must select the Responses API."
         )
@@ -372,7 +372,8 @@ def _validate_snapshot_profiles(
             raise ModelProfileError("Image profile snapshot contains invalid effective settings.")
 
 
-def _is_reasoning_model(model: str) -> bool:
+# Model families that reject a non-default `temperature` and take `reasoning_effort` instead.
+def is_reasoning_model(model: str) -> bool:
     return model.startswith(("o1", "o3", "o4", "gpt-5", "gpt-6")) and "chat" not in model
 
 
@@ -437,7 +438,7 @@ def load_model_profiles(
         configured = flattened_profiles.get(name, {})
         selected_model = configured.get("model", env_model)
         base: dict[str, Any] = {"model": selected_model}
-        if _is_reasoning_model(selected_model):
+        if is_reasoning_model(selected_model):
             base["reasoning_effort"] = env_effort
             base["api"] = "responses"
         defaults[name] = base

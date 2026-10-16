@@ -101,10 +101,16 @@ simulate (`GET /api/rules/supported-scope`):
   applied.
 - Action economy in combat: each player turn has one action and one bonus action. Attacks, contested
   maneuvers, item use, catalog action spells, Dodge, Dash and Disengage use the action; Second Wind,
-  Healing Word and Rage use the bonus action. A second action or bonus action in the same turn is
-  refused with no roll and no round. Dodge gives attacks against the hero disadvantage, and the
-  hero's Dexterity saving throws advantage, until the hero's next turn (the book's visibility
-  condition is not applied); the HUD and narration show what the turn spent.
+  Healing Word, Rage and the off-hand attack use the bonus action. A second action or bonus action in
+  the same turn is refused with no roll and no round. Dodge gives attacks against the hero
+  disadvantage, and the hero's Dexterity saving throws advantage, until the hero's next turn (the
+  book's visibility condition is not applied); the HUD and narration show what the turn spent.
+- Two-weapon fighting (PHB p.195): a hero who takes the Attack action with a light melee weapon and
+  has a different light melee weapon on the sheet (two copies of one weapon count) and no shield may
+  declare an off-hand attack. It is a bonus action, refused with no roll when the bonus action is
+  spent or no such pair is carried, and its damage adds no ability modifier unless that is negative
+  (Rage's bonus still applies; Sneak Attack still adds its dice at most once per turn). The sheet
+  does not say which hand holds a weapon, and throwing a weapon is not modelled.
 - Positioning in combat: each foe stands in the melee band (within 5 feet of the hero) or the ranged
   band (beyond it), set from its exact record (a foe whose listed attacks are all ranged starts at
   range). Movement is free and declared in the hero's words ("I close in on the archer", "I back

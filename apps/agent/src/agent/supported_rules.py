@@ -535,8 +535,8 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         scope=(
             "Each player turn has one action and one bonus action. The engine classifies every "
             "declared action from a fixed table: attack, contested maneuver, item use, a catalog "
-            "action spell, Dodge, Dash and Disengage use the action; Second Wind and Healing Word use "
-            "the bonus action. A second action, or a second bonus action, in the same turn is refused "
+            "action spell, Dodge, Dash and Disengage use the action; Second Wind, Healing Word, Rage "
+            "and the off-hand attack use the bonus action. A second action, or a second bonus action, in the same turn is refused "
             "with no roll and no round. Dodge (PHB, PDF p.193) gives attacks against the hero "
             "disadvantage, and the hero's Dexterity saving throws advantage (see "
             "monster_save_actions), until the hero's next turn begins. The book's conditions are not "
@@ -548,6 +548,25 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         ),
         implementation="agent.action_economy:refusal_for",
         test="tests/agent/test_action_economy.py::test_second_action_is_refused_before_any_roll",
+    ),
+    Mechanic(
+        id="two_weapon_fighting",
+        title="Two-weapon fighting: the off-hand attack as a bonus action",
+        scope=(
+            "A hero who takes the Attack action with a light melee weapon (PHB Weapons table, PDF "
+            "p.150) and whose sheet lists a different light melee weapon, two copies of one weapon "
+            "included, and no shield, may declare an off-hand attack (PHB, PDF p.196). It uses the "
+            "bonus action, and is refused with no roll when that is spent, when no melee Attack "
+            "action is taken, or when the sheet has no such pair. It is rolled and logged like any "
+            "attack, with the same advantage, disadvantage and critical hit rules. Its damage does "
+            "not add the ability modifier unless that is negative; Rage's bonus still applies, and "
+            "Sneak Attack still adds its dice at most once per turn across both attacks. The sheet "
+            "lists what the hero carries, not what each hand holds: the main hand is the weapon "
+            "the engine picks for the attack, and the off-hand weapon is the other. Throwing "
+            "either weapon is not modelled."
+        ),
+        implementation="agent.resolution:off_hand_weapon",
+        test="tests/agent/test_two_weapon_fighting.py::test_off_hand_attack_is_a_bonus_action_without_the_modifier",
     ),
     Mechanic(
         id="positioning",
@@ -647,9 +666,9 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         id="action_economy_remainder",
         title="Help, reactions other than opportunity attacks, and other bonus actions",
         boundary=(
-            "Each turn allows one action and one bonus action, and only Second Wind and Healing Word "
-            "use the bonus action. Help, any reaction other than an opportunity attack, and any other "
-            "bonus action have no engine effect."
+            "Each turn allows one action and one bonus action, and only Second Wind, Healing Word, Rage "
+            "and the off-hand attack use the bonus action. Help, any reaction other than an "
+            "opportunity attack, and any other bonus action have no engine effect."
         ),
         owner="EDG-044",
     ),
@@ -1178,16 +1197,16 @@ def _executed_economy_phrase(
 
     A Dodge (`dodge` effect), Dash, Disengage and an opportunity attack are supported, so their
     wording describes a real effect and is neither declared nor stripped. A declared "bonus action"
-    is that executed one only when the player also names Second Wind or Healing Word; "use my bonus
-    action to hide" stays unsupported beside a Second Wind.
+    or "off-hand attack" is that executed one only when the player also names Second Wind, Healing
+    Word or the off hand; "use my bonus action to hide" stays unsupported beside a Second Wind.
     """
     if kind != ACTION_ECONOMY:
         return False
     word = phrase.lower()
     if "dodge" in applied.effects and word.startswith("dodg"):
         return True
-    if "bonus_action" in applied.effects and word.startswith("bonus"):
-        return bool(_EXECUTED_BONUS_SPELL_OR_FEATURE.search(text))
+    if "bonus_action" in applied.effects and word.startswith(("bonus", "off-hand")):
+        return bool(_EXECUTED_BONUS_ACTION.search(text))
     if "dash" in applied.effects and word.startswith("dash"):
         return True
     if "disengage" in applied.effects and word.startswith("disengag"):
@@ -1195,7 +1214,9 @@ def _executed_economy_phrase(
     return "opportunity_attack" in applied.effects and word.startswith("opportunity")
 
 
-_EXECUTED_BONUS_SPELL_OR_FEATURE = re.compile(r"second\s+wind|healing\s+word", re.IGNORECASE)
+_EXECUTED_BONUS_ACTION = re.compile(
+    r"second\s+wind|healing\s+word|off[\s-]?hand|two[\s-]weapon", re.IGNORECASE
+)
 
 
 def actions_for_state(state: dict[str, Any]) -> tuple[UnsupportedAction, ...]:

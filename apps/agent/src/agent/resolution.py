@@ -136,18 +136,21 @@ class Weapon:
     ranged: bool = False
     simple: bool = False  # PHB simple weapon; everything else in the table is martial
     versatile: str | None = None  # melee damage with two hands (PHB Versatile, PDF p.148)
+    light: bool = False  # PHB Light property (PDF p.150): a weapon for two-weapon fighting
 
 
 _WEAPONS = [
     # Simple melee weapons (PHB Weapons table, PDF p.150). "greatclub" is listed so that the
     # shorter "club" does not match it and grant a 1d4.
-    Weapon("dagger", "1d4", finesse=True, simple=True), Weapon("club", "1d4", simple=True),
-    Weapon("greatclub", "1d8", simple=True),
+    Weapon("dagger", "1d4", finesse=True, simple=True, light=True),
+    Weapon("club", "1d4", simple=True, light=True), Weapon("greatclub", "1d8", simple=True),
     Weapon("quarterstaff", "1d6", simple=True, versatile="1d8"), Weapon("mace", "1d6", simple=True),
-    Weapon("spear", "1d6", simple=True, versatile="1d8"), Weapon("handaxe", "1d6", simple=True),
-    Weapon("javelin", "1d6", simple=True), Weapon("light hammer", "1d4", simple=True),
-    Weapon("sickle", "1d4", simple=True),
-    Weapon("shortsword", "1d6", finesse=True), Weapon("scimitar", "1d6", finesse=True),
+    Weapon("spear", "1d6", simple=True, versatile="1d8"),
+    Weapon("handaxe", "1d6", simple=True, light=True), Weapon("javelin", "1d6", simple=True),
+    Weapon("light hammer", "1d4", simple=True, light=True),
+    Weapon("sickle", "1d4", simple=True, light=True),
+    Weapon("shortsword", "1d6", finesse=True, light=True),
+    Weapon("scimitar", "1d6", finesse=True, light=True),
     Weapon("rapier", "1d8", finesse=True), Weapon("whip", "1d4", finesse=True),
     Weapon("longsword", "1d8", versatile="1d10"), Weapon("battleaxe", "1d8", versatile="1d10"),
     Weapon("warhammer", "1d8", versatile="1d10"),
@@ -159,7 +162,8 @@ _WEAPONS = [
     Weapon("longbow", "1d8", ranged=True),
     # Blowgun: martial ranged, 1 piercing damage (PHB Weapons table, PDF p.150).
     Weapon("blowgun", "1d1", ranged=True),
-    Weapon("hand crossbow", "1d6", ranged=True), Weapon("heavy crossbow", "1d10", ranged=True),
+    Weapon("hand crossbow", "1d6", ranged=True, light=True),
+    Weapon("heavy crossbow", "1d10", ranged=True),
     Weapon("light crossbow", "1d8", ranged=True, simple=True),
     Weapon("crossbow", "1d8", ranged=True),
     Weapon("sling", "1d4", ranged=True, simple=True),
@@ -545,7 +549,8 @@ def normalise_check(raw: str | None) -> tuple[str, str, str | None] | None:
     return token[:40], "flat", None
 
 
-def choose_weapon(character: dict | None, hint: str = "", *, prefer_ranged: bool = False) -> Weapon:
+def _carried_weapons(character: dict | None) -> list[Weapon]:
+    """The sheet's weapons that the engine table recognises, in sheet order."""
     inv = (character or {}).get("inventory") or {}
     weapons = inv.get("weapons") if isinstance(inv, dict) else None
     names = (
@@ -560,6 +565,11 @@ def choose_weapon(character: dict | None, hint: str = "", *, prefer_ranged: bool
             if w.name in nl:
                 known.append(w)
                 break
+    return known
+
+
+def choose_weapon(character: dict | None, hint: str = "", *, prefer_ranged: bool = False) -> Weapon:
+    known = _carried_weapons(character)
     hint_l = hint.lower()
     for w in known:
         if w.name in hint_l:
@@ -578,6 +588,21 @@ def carries_shield(character: dict | None) -> bool:
     inv = (character or {}).get("inventory") or {}
     weapons = inv.get("weapons") if isinstance(inv, dict) else None
     return isinstance(weapons, list) and any("shield" in str(w).lower() for w in weapons)
+
+
+def off_hand_weapon(character: dict | None, main: Weapon) -> Weapon | None:
+    """The weapon for the two-weapon fighting bonus attack, or None (PHB, PDF p.196).
+
+    `main` is the light melee weapon of the Attack action, chosen from the sheet. The off-hand
+    weapon is a different light melee weapon on the sheet: two copies of one weapon are two
+    entries. The sheet lists what the hero carries, not what each hand holds, so a listed shield
+    counts as filling the other hand.
+    """
+    if main.ranged or not main.light or carries_shield(character):
+        return None
+    others = _carried_weapons(character)
+    others.remove(main)
+    return next((w for w in others if w.light and not w.ranged), None)
 
 
 # PHB Armor table, PDF p.146: the heavy armors, and the other armor with Stealth "Disadvantage".
@@ -845,18 +870,23 @@ def roll_attack_damage(
     hint: str = "",
     rng: random.Random | None = None,
     bonus: int = 0,
+    off_hand: bool = False,
 ) -> tuple[int, DiceOutcome]:
     """Weapon (or cantrip) damage for a hit; dice doubled on a critical.
 
     `bonus` is a flat engine-owned modifier (a class feature such as Rage); it is not doubled. A
     versatile weapon deals its two-handed damage when the player declares a two-handed grip and no
-    shield is carried (the shield hand would not be free).
+    shield is carried (the shield hand would not be free). An `off_hand` attack adds the ability
+    modifier only when it is negative (PHB Two-Weapon Fighting, PDF p.196); `bonus` still applies.
     """
     if attack.kind == "spell_attack":
         # Spell damage is a catalog effect (agent.spells); a class-die stand-in is never rolled.
         raise ValueError("spell attacks take their damage from agent.spells.resolve_spell")
     weapon = attack.weapon or choose_weapon(character, hint)
-    mod = ability_modifier(character, _attack_ability(character, weapon)) + bonus
+    mod = ability_modifier(character, _attack_ability(character, weapon))
+    if off_hand:
+        mod = min(mod, 0)
+    mod += bonus
     dice = weapon.dice
     if weapon.versatile and _TWO_HANDED.search(hint) and not carries_shield(character):
         dice = weapon.versatile

@@ -32,6 +32,9 @@ class _ProviderSpy:
 
         return _Structured()
 
+    async def ainvoke(self, *_args, **_kwargs) -> AIMessage:
+        return AIMessage(content="The path remains quiet.")
+
     async def astream(self, *_args, **_kwargs) -> AsyncIterator[AIMessage]:
         yield AIMessage(content="The path remains quiet.")
 
@@ -120,6 +123,73 @@ async def test_sse_turn_uses_same_frozen_profiles_for_parser_and_streamed_narrat
     assert provider_calls[1]["max_tokens"] == 202
     assert provider_calls[0]["api_key"] == provider_calls[1]["api_key"] == "test-key-for-edg-141"
     assert any(event.startswith("event: done\n") for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("narrator_settings", "expected_temperature"),
+    [
+        ("model = 'gpt-4.1'\ntemperature = 0.3\nmax_output_tokens = 202\n", 0.3),
+        ("model = 'gpt-6-luna'\nmax_output_tokens = 202\n", None),
+    ],
+)
+async def test_sync_combat_and_streamed_narrators_share_their_stage_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    narrator_settings: str,
+    expected_temperature: float | None,
+) -> None:
+    import agent.llm as llm
+    from agent.nodes import narrator
+    from apps.api.services import turn_runner
+
+    path = tmp_path / "profiles.toml"
+
+    def write_profiles(combat_temperature: float, combat_max_tokens: int) -> None:
+        path.write_text(
+            'profile_version = "narrator"\n'
+            f"[profiles.play.narrator]\n{narrator_settings}"
+            "[profiles.play.combat_narrator]\n"
+            f"model = 'gpt-4.1'\ntemperature = {combat_temperature}\n"
+            f"max_output_tokens = {combat_max_tokens}\n",
+            encoding="utf-8",
+        )
+
+    write_profiles(0.4, 303)
+    monkeypatch.setenv("MODEL_PROFILES_PATH", str(path))
+    monkeypatch.setattr(llm, "OPENAI_API_KEY", "test-key-for-edg-080")
+    provider_calls: list[dict] = []
+    monkeypatch.setattr(llm, "ChatOpenAI", lambda **kwargs: _ProviderSpy(provider_calls, **kwargs))
+
+    class FakePrepareApp:
+        async def astream(self, _initial_state, **_kwargs):
+            yield "values", {"player_input": "I wait.", "adjudication_result": None}
+
+    monkeypatch.setattr(turn_runner, "prepare_app", FakePrepareApp())
+    monkeypatch.setattr(turn_runner, "persist_turn", lambda *_args: _done())
+
+    await narrator.narrator_node({"player_input": "I wait."})
+    await narrator.narrator_node({"player_input": "I wait.", "combat_state": {"round": 1}})
+    async for _frame in turn_runner.stream_session_turn(
+        session_id=17, body_message="I wait.", initial_state={"player_input": "I wait."}
+    ):
+        pass
+    sync_narrator, sync_combat, streamed_narrator = provider_calls
+
+    assert streamed_narrator == sync_narrator
+    assert sync_narrator.get("temperature") == expected_temperature
+    assert ("temperature" in sync_narrator) is (expected_temperature is not None)
+    assert sync_narrator["max_tokens"] == 202
+    assert sync_combat["temperature"] == 0.4
+    assert sync_combat["max_tokens"] == 303
+
+    # Editing the combat stage changes only the combat narrator; the narrator stage is unchanged.
+    write_profiles(0.9, 404)
+    await narrator.narrator_node({"player_input": "I wait."})
+    await narrator.narrator_node({"player_input": "I wait.", "combat_state": {"round": 1}})
+    assert provider_calls[3] == sync_narrator
+    assert provider_calls[4]["temperature"] == 0.9
+    assert provider_calls[4]["max_tokens"] == 404
 
 
 async def _done() -> dict:

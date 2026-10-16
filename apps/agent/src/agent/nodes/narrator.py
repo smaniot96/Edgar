@@ -22,7 +22,7 @@ from agent.action_economy import economy_text
 from agent.combatants import narrator_roster
 from agent.history import fit_continuity, public_earned_facts
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
-from agent.prompts import NARRATOR, wrap_player_action
+from agent.prompts import NARRATOR, wrap_player_action, wrap_retrieved_excerpt
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
@@ -169,10 +169,12 @@ def build_narrator_prompt(
         f"Selected rules edition: {edition}. Reference labels are provenance; do not recite hashes or private IDs."
     )
     if rules_context:
-        block = "\n".join(cited_excerpt(c, edition) for c in rules_context)
+        block = "\n".join(wrap_retrieved_excerpt(cited_excerpt(c, edition)) for c in rules_context)
         context_parts.append(f"Official rules context:\n{block}")
     if adventure_context:
-        block = "\n".join(cited_excerpt(c, edition) for c in adventure_context)
+        block = "\n".join(
+            wrap_retrieved_excerpt(cited_excerpt(c, edition)) for c in adventure_context
+        )
         context_parts.append(f"Adventure module context (story/locations/NPCs):\n{block}")
 
     if continuity := fit_continuity(state, profile, [NARRATOR, *context_parts]):
