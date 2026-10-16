@@ -85,8 +85,11 @@ _register(
     "validation_error", "invalid_request", "preparation_setup_invalid", "stage_validation_failed",
     "unsupported_edition", "unsupported_party", "unsupported_progression", "unsupported_hero_capability",
     "rules_edition_mismatch",
-    "creature_identity_unresolved", "preparation_setup_required", "task_context_limit",
+    "preparation_setup_required", "task_context_limit",
     "visual_input_invalid",
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "creature_identity_unresolved", "Choose an exact verified creature name before starting the encounter.", 409, RecoveryAction.FIX_INPUT),
 )
 _register(
     FailureSpec(ErrorCategory.ASSIGNMENT, "character_not_assigned", "Choose a character assigned to this campaign before continuing.", 409, RecoveryAction.ASSIGN_CHARACTER),

@@ -65,7 +65,7 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   unsupported_party: { category: "validation", message: "Check the party information and correct it before continuing.", action: "fix_input" },
   unsupported_progression: { category: "validation", message: "Check the progression information and correct it before continuing.", action: "fix_input" },
   unsupported_hero_capability: { category: "validation", message: "Check the hero information and correct it before continuing.", action: "fix_input" },
-  creature_identity_unresolved: { category: "validation", message: "Check the highlighted information and correct it before continuing.", action: "fix_input" },
+  creature_identity_unresolved: { category: "validation", message: "Choose an exact verified creature name before starting the encounter.", action: "fix_input" },
   preparation_setup_required: { category: "validation", message: "Choose a hero and preparation budget before continuing.", action: "fix_input" },
   preparation_setup_invalid: { category: "validation", message: "Correct the preparation setup before continuing.", action: "fix_input" },
   preparation_profile_invalid: { category: "provider_configuration", message: "The preparation service needs configuration before it can continue.", action: "configure_provider" },
