@@ -24,7 +24,7 @@ from agent.combatants import (
     impaired_checks,
     save_auto_fails,
 )
-from agent.conditions import end_fear_of_defeated, end_of_source_turn, fear_refusal
+from agent.conditions import afflict, end_fear_of_defeated, end_of_source_turn, fear_refusal
 from agent.graph_combat import combat_round_node
 from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
@@ -339,7 +339,9 @@ def test_fear_restrictions_end_when_its_source_is_down_but_condition_and_save_pe
     )
     second_wyrm = _exact_foe(WYRM_TEXT, "Dread Wyrm 2", hp=115)
     # The stable source ID selects the second same-name foe, not the first.
-    assert end_of_source_turn(hero, second_wyrm, 2) == []  # a minute-long fear has no turn-end timer
+    assert (
+        end_of_source_turn(hero, second_wyrm, 2) == []
+    )  # a minute-long fear has no turn-end timer
     assert "cannot willingly move closer" in fear_refusal("Dara", hero, [(MELEE, [second_wyrm])])
     assert fear_refusal("Dara", hero, [(MELEE, [other]), (RANGED, [second_wyrm])]) is None
     wyrm["hp_current"] = 0
@@ -388,6 +390,53 @@ def test_a_condition_until_the_end_of_a_creatures_next_turn_ends_with_that_turn(
 
 
 # --- frightened in the round -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["frightened", "stunned", "poisoned"])
+def test_same_source_minute_effect_refreshes_through_an_alias_without_stacking(kind: str) -> None:
+    hero = {"name": "player"}
+    afflict(
+        hero,
+        kind,
+        source="Hooded creature",
+        source_id="actor:one",
+        round_applied=1,
+        ability="CON",
+        dc=13,
+    )
+    afflict(
+        hero,
+        kind,
+        source="Revealed creature",
+        source_id="actor:one",
+        round_applied=5,
+        ability="CON",
+        dc=15,
+    )
+    renewed = effects_of(hero)
+    assert len(renewed) == 1
+    assert renewed[0] == {
+        "kind": kind,
+        "source": "Revealed creature",
+        "source_id": "actor:one",
+        "applied_round": 5,
+        "expires_after_round": 14,
+        "save": {"ability": "CON", "dc": 15},
+    }
+    # A minute-long effect has source identity, but no source-turn expiry.
+    assert end_of_source_turn(
+        hero, {"name": "actor:one", "display_name": "Revealed creature"}, 6
+    ) == []
+    afflict(
+        hero,
+        kind,
+        source="Another creature",
+        source_id="actor:two",
+        round_applied=6,
+        ability="WIS",
+        dc=17,
+    )
+    assert effects_of(hero) == renewed  # the declared single-source representation remains explicit
 
 
 @pytest.mark.asyncio
