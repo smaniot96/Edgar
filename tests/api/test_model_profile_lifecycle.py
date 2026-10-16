@@ -68,7 +68,10 @@ async def test_sync_turn_freezes_profile_file_until_graph_finishes(
             return {"ok": True}
 
     monkeypatch.setattr(turn_runner, "app", FakeApp())
-    assert await turn_runner.run_turn({"player_input": "I wait."}) == {"ok": True}
+    result = await turn_runner.run_turn({"player_input": "I wait."})
+    # EDG-053 appends the turn's own diagnostics row; the graph's result is otherwise unchanged.
+    assert {k: v for k, v in result.items() if k != "telemetry_events"} == {"ok": True}
+    assert [e["event_type"] for e in result["telemetry_events"]] == ["turn_diagnostics"]
     assert [call["model"] for call in provider_calls] == ["gpt-4.1", "gpt-4.1"]
     assert provider_calls[0]["api_key"] == "test-key-for-edg-141"
     assert current_model_profiles().profiles["play.parser"].model == "gpt-4o"

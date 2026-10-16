@@ -100,6 +100,7 @@ async def test_sync_and_stream_preserve_failure_attribution_and_uncommitted_outc
 
     class Lock:
         releases = 0
+        acquire_ms = None
 
         async def release(self):
             self.releases += 1
@@ -115,7 +116,7 @@ async def test_sync_and_stream_preserve_failure_attribution_and_uncommitted_outc
     async def initial(*args):
         return {"campaign_id": 2}
 
-    async def crash(*args):
+    async def crash(*args, **kwargs):
         raise error
 
     async def stream_crash(*args, **kwargs):

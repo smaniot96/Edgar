@@ -22,6 +22,7 @@ from agent.history import fit_continuity, public_earned_facts
 from agent.llm import make_chat_model
 from agent.models.parsed_input import ParsedInput
 from agent.prompts import INPUT_PARSER, wrap_player_action
+from agent.provider_trace import traced_call
 from agent.resolution import PENDING_COMPLETION_FLAG, normalise_check
 from agent.resolution_policies import parser_earned_clues, parser_policy_choices
 from agent.state import AgentState
@@ -115,11 +116,15 @@ async def input_parser_node(state: AgentState) -> dict:
         user_content = f"{context}\n\n{user_content}"
 
     try:
-        parsed = await structured_llm.ainvoke(
-            [
-                SystemMessage(content=INPUT_PARSER),
-                HumanMessage(content=user_content),
-            ]
+        parsed = await traced_call(
+            lambda: structured_llm.ainvoke(
+                [
+                    SystemMessage(content=INPUT_PARSER),
+                    HumanMessage(content=user_content),
+                ]
+            ),
+            kind="parse",
+            profile="play.parser",
         )
         if not isinstance(parsed, ParsedInput):
             parsed = ParsedInput.model_validate(parsed)

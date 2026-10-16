@@ -31,6 +31,7 @@ from agent.nodes import (
     world_state_updater_node,
 )
 from agent.state import AgentState
+from agent.turn_diagnostics import timed_node
 
 
 def route_after_input_parser(state: AgentState) -> str:
@@ -63,11 +64,12 @@ def _next_unless_error(next_node: str) -> Callable[[AgentState], str]:
 def build_graph(*, include_narrator: bool = True):
     """Compile the turn graph; `include_narrator=False` ends the linear path before narration."""
     graph = StateGraph(AgentState)
-    graph.add_node("input_parser", input_parser_node)
+    # EDG-053: each node's wall time is charged to its shared stage (no-op without a collector).
+    graph.add_node("input_parser", timed_node("parsing_ms", input_parser_node))
     graph.add_node("combat", build_combat_subgraph())
-    graph.add_node("world_retriever", world_retriever_node)
-    graph.add_node("rules_adjudicator", rules_adjudicator_node)
-    graph.add_node("world_state_updater", world_state_updater_node)
+    graph.add_node("world_retriever", timed_node("retrieving_ms", world_retriever_node))
+    graph.add_node("rules_adjudicator", timed_node("adjudicating_ms", rules_adjudicator_node))
+    graph.add_node("world_state_updater", timed_node("adjudicating_ms", world_state_updater_node))
 
     graph.add_edge(START, "input_parser")
     graph.add_conditional_edges(
@@ -79,7 +81,7 @@ def build_graph(*, include_narrator: bool = True):
 
     chain = ["world_retriever", "rules_adjudicator", "world_state_updater"]
     if include_narrator:
-        graph.add_node("narrator", narrator_node)
+        graph.add_node("narrator", timed_node("narrating_ms", narrator_node))
         chain.append("narrator")
     for node, next_node in zip(chain, chain[1:], strict=False):
         graph.add_conditional_edges(
