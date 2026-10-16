@@ -120,6 +120,34 @@ jobs:
           push: false
           cache-from: type=gha
 
+  stack-smoke:
+    runs-on: ubuntu-latest
+    env:
+      # Unique per run: volumes and networks are project-scoped, so no live data is reused or removed.
+      COMPOSE_PROJECT_NAME: edgar-smoke-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compose needs .env for env_file; the example holds placeholders only, never real keys.
+      - name: Create placeholder env file
+        run: cp .env.example .env
+
+      - name: Validate base and dev Compose configs
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+
+      - name: Build, migrate and smoke-test the stack
+        run: bash tools/smoke_stack.sh
+
+      - name: Dump Compose logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml logs --no-color --tail=200
+
+      - name: Tear down stack and volumes
+        if: always()
+        run: docker compose -f docker-compose.yml down -v --rmi local
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
