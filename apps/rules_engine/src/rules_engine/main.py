@@ -1,11 +1,17 @@
 import argparse
 
+from edgar_core.model_profiles import ModelProfileError, validate_provider_configuration
+
 
 def main() -> None:
     """CLI entry: demo rules-only RAG (optional query from argv)."""
     parser = argparse.ArgumentParser(description="Search installed D&D rules references.")
     parser.add_argument("query", nargs="*", help="Rules question (default: ability check proficiency)")
     args = parser.parse_args()
+    try:
+        validate_provider_configuration()
+    except ModelProfileError as exc:
+        parser.exit(1, f"Configuration error: {exc}\n")
     query = " ".join(args.query) if args.query else "ability check proficiency"
     from rules_engine.rag import retrieve_rules_snippets
 

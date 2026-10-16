@@ -523,3 +523,25 @@ def profile_diagnostics(snapshot: ModelProfileSnapshot | None = None) -> dict[st
             name: item.to_dict() for name, item in sorted(frozen.image_profiles.items())
         },
     }
+
+
+def validate_provider_configuration(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Check local provider settings at an API or CLI boundary without calling a provider.
+
+    Raises ``ModelProfileError`` naming the faulty setting, never its value.
+    """
+    env = environ if environ is not None else _env_mapping()
+    api_key = env.get("OPENAI_API_KEY", "").strip()
+    if not api_key or api_key.startswith("sk-your"):  # .env.example placeholder
+        raise ModelProfileError(
+            "OPENAI_API_KEY is missing or still the .env.example placeholder. "
+            "Set it in .env or the process environment."
+        )
+    embedding_model = env.get("EMBEDDING_MODEL", "text-embedding-3-small")
+    if not _MODEL_RE.fullmatch(embedding_model):
+        raise ModelProfileError("EMBEDDING_MODEL must be a valid model identifier.")
+    return {
+        **profile_diagnostics(load_model_profiles(environ=env)),
+        "embedding_model": embedding_model,
+        "required_credentials": ["OPENAI_API_KEY"],
+    }
