@@ -37,6 +37,10 @@ export const emptyCharacterDraft: CharacterDraft = {
   hpText: null,
 };
 
+// Keep the player's progress alive across in-app navigation when browser storage is blocked
+// (for example, in a private session with storage disabled). A reload still needs localStorage.
+const inMemoryProgress = new Map<number, CampaignSetupProgress>();
+
 export function newCampaignSetupProgress(campaignId: number): CampaignSetupProgress {
   return {
     version: 1,
@@ -59,28 +63,72 @@ function isPositiveId(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0;
 }
 
+function isNullablePositiveId(value: unknown): value is number | null {
+  return value === null || isPositiveId(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRequestId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+}
+
+function isCharacterDraft(value: unknown): value is CharacterDraft {
+  if (!isRecord(value)) return false;
+  return typeof value.name === "string" && value.name.length <= 255 &&
+    (value.presetKey === null || (typeof value.presetKey === "string" && value.presetKey.length <= 255)) &&
+    (value.characterClass === null || (typeof value.characterClass === "string" && value.characterClass.length <= 255)) &&
+    (value.hpText === null || (typeof value.hpText === "string" && value.hpText.length <= 32));
+}
+
+function isCharacterCreateBody(value: unknown): value is CharacterCreateBody {
+  if (!isRecord(value)) return false;
+  return typeof value.name === "string" && value.name.trim().length > 0 && value.name.length <= 255 &&
+    typeof value.character_class === "string" && value.character_class.trim().length > 0 && value.character_class.length <= 255 &&
+    Number.isInteger(value.level) && Number(value.level) >= 1 && Number(value.level) <= 20 &&
+    Number.isInteger(value.hp_max) && Number(value.hp_max) >= 1 &&
+    isRecord(value.base_stats) && isRecord(value.base_inventory);
+}
+
+function isPendingCharacter(value: unknown): value is PendingCharacterCreate | null {
+  return value === null || (isRecord(value) && isRequestId(value.requestId) && isCharacterCreateBody(value.body));
+}
+
+function isPendingSession(value: unknown): value is CampaignSetupProgress["pendingSession"] {
+  return value === null || (isRecord(value) && isRequestId(value.requestId) && isNullablePositiveId(value.characterId));
+}
+
 function isProgress(value: unknown, campaignId: number): value is CampaignSetupProgress {
   if (!value || typeof value !== "object") return false;
   const progress = value as Partial<CampaignSetupProgress>;
   return progress.version === 1 && progress.campaignId === campaignId &&
     ["hero", "assignment", "playthrough", "complete"].includes(progress.stage ?? "") &&
-    (progress.characterId == null || isPositiveId(progress.characterId)) &&
-    (progress.assignedCharacterId == null || isPositiveId(progress.assignedCharacterId)) &&
-    (progress.sessionId == null || isPositiveId(progress.sessionId));
+    isNullablePositiveId(progress.characterId) &&
+    isNullablePositiveId(progress.assignedCharacterId) &&
+    isNullablePositiveId(progress.sessionId) &&
+    isPendingCharacter(progress.pendingCharacter) && isPendingSession(progress.pendingSession) &&
+    isCharacterDraft(progress.characterDraft);
 }
 
 export function readCampaignSetupProgress(campaignId: number): CampaignSetupProgress {
   try {
     const raw = window.localStorage.getItem(campaignSetupStorageKey(campaignId));
-    if (!raw) return newCampaignSetupProgress(campaignId);
+    if (!raw) return inMemoryProgress.get(campaignId) ?? newCampaignSetupProgress(campaignId);
     const value: unknown = JSON.parse(raw);
-    return isProgress(value, campaignId) ? value : newCampaignSetupProgress(campaignId);
+    if (isProgress(value, campaignId)) {
+      inMemoryProgress.set(campaignId, value);
+      return value;
+    }
+    return inMemoryProgress.get(campaignId) ?? newCampaignSetupProgress(campaignId);
   } catch {
-    return newCampaignSetupProgress(campaignId);
+    return inMemoryProgress.get(campaignId) ?? newCampaignSetupProgress(campaignId);
   }
 }
 
 export function writeCampaignSetupProgress(progress: CampaignSetupProgress): void {
+  inMemoryProgress.set(progress.campaignId, progress);
   try {
     window.localStorage.setItem(campaignSetupStorageKey(progress.campaignId), JSON.stringify(progress));
   } catch {
@@ -89,6 +137,7 @@ export function writeCampaignSetupProgress(progress: CampaignSetupProgress): voi
 }
 
 export function clearCampaignSetupProgress(campaignId: number): void {
+  inMemoryProgress.delete(campaignId);
   try {
     window.localStorage.removeItem(campaignSetupStorageKey(campaignId));
   } catch {

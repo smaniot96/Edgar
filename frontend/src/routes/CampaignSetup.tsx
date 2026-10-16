@@ -297,17 +297,26 @@ export default function CampaignSetup() {
         <section className="space-y-4" aria-labelledby="assignment-step-title">
           <div>
             <h2 id="assignment-step-title" className="font-display text-xl">Add this hero to the campaign</h2>
-            <p className="mt-1 break-words text-sm text-ink-muted">{selectedCharacter ? `${selectedCharacter.name} will be assigned to ${title} before the saved playthrough starts.` : "Continue without a hero."}</p>
+            <p className="mt-1 break-words text-sm text-ink-muted">{selectedCharacter ? `${selectedCharacter.name} will be assigned to ${title} before the saved playthrough starts.` : progress.characterId == null ? "Continue without a hero." : "Confirm the selected hero is available before continuing."}</p>
           </div>
           {assignmentMessage ? <p role="status" className="rounded-control border border-warning/40 bg-warning-soft px-3 py-2 text-sm">{assignmentMessage}</p> : null}
           {selectedBusyElsewhere ? <p role="alert" className="rounded-control border border-warning/40 bg-warning-soft px-3 py-2 text-sm">This hero is active in {selectedCharacter?.current_assignment?.campaign_title}. Edgar will not move the hero or change that campaign assignment.</p> : null}
+          {progress.characterId != null && !selectedCharacter ? (
+            characters.pending || characters.loading ? <LoadingText>Loading the selected hero…</LoadingText> : characters.error ? (
+              <p role="status" className="text-sm text-ink-muted">Check your heroes before continuing. The selected hero is still saved in setup.</p>
+            ) : (
+              <p role="alert" className="rounded-control border border-warning/40 bg-warning-soft px-3 py-2 text-sm">The selected hero is no longer in your hero list. Choose another hero or continue without a hero.</p>
+            )
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" disabled={assigning} onClick={() => save({ ...progress, stage: "hero" })}>Back to heroes</Button>
             {selectedCharacter ? (
               <Button loading={assigning} loadingText="Checking assignment…" disabled={!canStart || selectedBusyElsewhere} onClick={() => void assignSelected()}>
                 {alreadyAssigned ? "Continue to saved playthrough" : "Assign hero and continue"}
               </Button>
-            ) : <Button disabled={!canStart} onClick={() => save({ ...progress, stage: "playthrough" })}>Continue</Button>}
+            ) : progress.characterId == null ? <Button disabled={!canStart} onClick={() => save({ ...progress, stage: "playthrough" })}>Continue</Button> : characters.error ? (
+              <Button variant="secondary" onClick={characters.refetch}>Check heroes again</Button>
+            ) : !characters.pending && !characters.loading ? <Button variant="secondary" onClick={() => save({ ...progress, stage: "hero", characterId: null, assignedCharacterId: null, pendingSession: null })}>Continue without a hero</Button> : null}
           </div>
         </section>
       ) : null}

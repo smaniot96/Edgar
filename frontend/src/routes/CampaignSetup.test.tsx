@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/client";
 import type { CampaignRead, CharacterListItem, CharacterPreset, CharacterRead, ReadinessRead, SessionRead } from "../api/types";
+import { clearCampaignSetupProgress, writeCampaignSetupProgress, newCampaignSetupProgress } from "../lib/campaignSetup";
 import CampaignSetup from "./CampaignSetup";
 
 const api = vi.hoisted(() => ({
@@ -70,6 +71,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
   window.localStorage.clear();
+  clearCampaignSetupProgress(campaign.id);
   vi.spyOn(crypto, "randomUUID").mockReturnValue("11111111-1111-4111-8111-111111111111");
   api.getCampaign.mockResolvedValue(campaign);
   api.listCharacters.mockResolvedValue([existingCharacter]);
@@ -158,6 +160,90 @@ it("reuses a playthrough request ID written by another tab after this tab loaded
   await settle();
 
   expect(api.createSession).toHaveBeenCalledWith(campaign.id, existingCharacter.id, "22222222-2222-4222-8222-222222222222");
+});
+
+it("keeps an ambiguous save retry key in memory when browser storage is unavailable", async () => {
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
+  api.createSession.mockRejectedValueOnce(new ApiError(0, "offline"));
+  api.createSession.mockResolvedValueOnce(createdSession);
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  await act(async () => {
+    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Mara Venn"))!.click();
+  });
+  await act(async () => {
+    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Assign hero and continue"))!.click();
+  });
+  await settle();
+  await act(async () => {
+    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click();
+    await Promise.resolve();
+  });
+  await settle();
+
+  const firstRequestId = api.createSession.mock.calls[0]?.[2];
+  await act(async () => { await root.unmount(); });
+  root = createRoot(container);
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  await act(async () => {
+    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click();
+    await Promise.resolve();
+  });
+  await settle();
+
+  expect(api.createSession).toHaveBeenCalledTimes(2);
+  expect(api.createSession.mock.calls[1]?.[2]).toBe(firstRequestId);
+  expect(container.textContent).toContain("Play route");
+});
+
+it("keeps the selected hero while its assignment-stage lookup is still loading", async () => {
+  api.listCharacters.mockReturnValue(new Promise(() => undefined));
+  writeCampaignSetupProgress({
+    ...newCampaignSetupProgress(campaign.id),
+    stage: "assignment",
+    characterId: existingCharacter.id,
+  });
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+
+  expect(container.textContent).toContain("Loading the selected hero…");
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Continue" || button.textContent?.includes("Continue without a hero"))).toBe(false);
+  expect(api.createSession).not.toHaveBeenCalled();
+});
+
+it("keeps the selected hero and offers a retry when its assignment-stage lookup fails", async () => {
+  api.listCharacters.mockRejectedValue(new ApiError(0, "offline"));
+  writeCampaignSetupProgress({
+    ...newCampaignSetupProgress(campaign.id),
+    stage: "assignment",
+    characterId: existingCharacter.id,
+  });
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+
+  expect(container.textContent).toContain("Check your heroes before continuing.");
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Check heroes again"))).toBe(true);
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Continue without a hero"))).toBe(false);
+  expect(JSON.parse(window.localStorage.getItem(`edgar:campaign-setup:v1:${campaign.id}`)!).characterId).toBe(existingCharacter.id);
+});
+
+it("requires an explicit choice before dropping a selected hero missing from the roster", async () => {
+  api.listCharacters.mockResolvedValue([]);
+  writeCampaignSetupProgress({
+    ...newCampaignSetupProgress(campaign.id),
+    stage: "assignment",
+    characterId: existingCharacter.id,
+  });
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+
+  expect(container.textContent).toContain("The selected hero is no longer in your hero list.");
+  const continueWithoutHero = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Continue without a hero"));
+  expect(continueWithoutHero).toBeTruthy();
+  expect(JSON.parse(window.localStorage.getItem(`edgar:campaign-setup:v1:${campaign.id}`)!).characterId).toBe(existingCharacter.id);
+  await act(async () => { continueWithoutHero!.click(); });
+  expect(JSON.parse(window.localStorage.getItem(`edgar:campaign-setup:v1:${campaign.id}`)!).characterId).toBeNull();
 });
 
 it("retries an ambiguous hero creation with the saved request key and original body", async () => {
