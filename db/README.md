@@ -45,3 +45,7 @@ Policy:
 `db.vector` owns the Qdrant client factory, the OpenAI embedding helper (with retries), the canonical collection names, and the rules vs adventure retrieval helpers. See `db/vector/README.md`.
 
 Alembic lives at `db/alembic/`. Run it via `make migrate` (the `migrate` Docker stage), or on the host from `db/`: `uv run --project .. python -m alembic upgrade head` (`make check-migrations` runs `alembic check`).
+
+Concurrent migrations are serialized: `db/alembic/env.py` takes a transaction-scoped Postgres advisory lock (`MIGRATION_LOCK_KEY`) before it reads the revision, so a second `upgrade` or `downgrade` against the same database waits until the first commits or rolls back. It then finds nothing to apply and exits 0. A failed migration rolls back and releases the lock. The wait has no timeout, so a stuck migrator can be stopped by terminating its backend. Run migrations once per deploy before starting replicas; the lock makes overlapping runs safe but does not replace that ordering.
+
+`/ready` reports `schema` as `unavailable` (503) unless `alembic_version` equals the head revision in `db/alembic`, so a replica started against an older schema is taken out of rotation. `/health`, which the Compose healthcheck uses, does not check the schema, and API requests are not gated on it.

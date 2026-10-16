@@ -1,7 +1,7 @@
 """Referential integrity and validation guards (migration 10_integrity + PATCH validators)."""
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from db.postgres.models import (
@@ -220,7 +220,7 @@ async def test_ready_reports_each_component(api_client, monkeypatch) -> None:
     monkeypatch.setattr("apps.api.routers.health._check_qdrant", _qdrant_ok)
     ok = await api_client.get("/ready")
     assert ok.status_code == 200
-    assert ok.json()["checks"] == {"postgres": "ok", "redis": "ok", "qdrant": "ok"}
+    assert ok.json()["checks"] == {"postgres": "ok", "schema": "ok", "redis": "ok", "qdrant": "ok"}
 
     async def _qdrant_down() -> None:
         raise ConnectionError("down")
@@ -229,3 +229,28 @@ async def test_ready_reports_each_component(api_client, monkeypatch) -> None:
     down = await api_client.get("/ready")
     assert down.status_code == 503
     assert down.json()["checks"]["qdrant"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_ready_reports_schema_behind_code_head_as_unavailable(
+    api_client, db_session, monkeypatch
+) -> None:
+    async def _qdrant_ok() -> None:
+        return None
+
+    monkeypatch.setattr("apps.api.routers.health._check_qdrant", _qdrant_ok)
+    # The API shares this session, so the older revision is visible to /ready until rollback.
+    await db_session.execute(
+        text("UPDATE alembic_version SET version_num = '14_session_story_ledger'")
+    )
+    try:
+        behind = await api_client.get("/ready")
+    finally:
+        await db_session.rollback()
+    assert behind.status_code == 503
+    assert behind.json()["checks"] == {
+        "postgres": "ok",
+        "schema": "unavailable",
+        "redis": "ok",
+        "qdrant": "ok",
+    }
