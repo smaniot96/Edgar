@@ -22,6 +22,7 @@ Keep field names stable: changing them silently breaks the LLM's structured outp
 from pydantic import BaseModel, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
+from edgar_core.prepared import PreparedAmendment
 from edgar_core.story import AcceptedStoryEffect, StoryEffect
 
 
@@ -89,6 +90,12 @@ class AdjudicationResult(BaseModel):
 
     story_effects: list[StoryEffect] = Field(default_factory=list)
     accepted_story_effects: SkipJsonSchema[list[AcceptedStoryEffect]] = Field(default_factory=list)
+
+    # A bounded private proposal for a plausible action the prepared backbone did not cover.
+    # The API accepts it only after engine validation against the session's exact source,
+    # current prepared digest, committed facts and world state. It is never a player DTO.
+    proposed_prepared_amendment: PreparedAmendment | None = None
+    accepted_prepared_amendment: SkipJsonSchema[dict | None] = None
 
     # Side effects (see module docstring).
     character_update: CharacterUpdate | None = None

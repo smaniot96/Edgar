@@ -16,6 +16,7 @@ import type {
   NPCListRead,
   SessionRead,
   SessionIntroRead,
+  SessionMapRead,
   UserRead,
   WorldFlagRead,
 } from "./types";
@@ -186,10 +187,11 @@ export function getAdventure(slug: string, signal?: AbortSignal): Promise<Advent
   return getJson(`/api/adventures/${encodeURIComponent(slug)}`, signal);
 }
 
-export async function uploadAdventure(file: File, title?: string, rulesEdition: "2014" | "2024" | "unspecified" = "unspecified"): Promise<AdventureRead> {
+export async function uploadAdventure(file: File, title?: string, rulesEdition: "2014" | "2024" | "unspecified" = "unspecified", preparation?: import("./types").PreparationSetup): Promise<AdventureRead> {
   const form = new FormData();
   form.append("file", file);
   form.append("rules_edition", rulesEdition);
+  if (preparation) form.append("preparation", JSON.stringify(preparation));
   if (title && title.trim()) form.append("title", title.trim());
   return json(await apiFetch("/api/adventures/upload", { method: "POST", body: form }));
 }
@@ -199,6 +201,10 @@ export function generateAdventure(
   body: AdventureGenerateRequest,
 ): Promise<AdventureGenerateResponse> {
   return sendJson("POST", "/api/adventures/generate", body);
+}
+
+export function completePreparationSetup(slug: string, rules_edition: "2014" | "2024", preparation: import("./types").PreparationSetup): Promise<AdventureGenerateResponse> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/preparation/setup`, { rules_edition, preparation });
 }
 
 export async function deleteAdventure(slug: string): Promise<void> {
@@ -374,6 +380,10 @@ export function listSessions(campaignId?: number, signal?: AbortSignal): Promise
 
 export function getSession(id: number | string, signal?: AbortSignal): Promise<SessionRead> {
   return getJson(`/api/sessions/${id}`, signal);
+}
+
+export function getSessionMap(id: number | string, signal?: AbortSignal): Promise<SessionMapRead> {
+  return getJson(`/api/sessions/${id}/map`, signal);
 }
 
 export function listSessionMessages(id: number, signal?: AbortSignal): Promise<ChatMessageRead[]> {

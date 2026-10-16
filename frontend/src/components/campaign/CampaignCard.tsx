@@ -13,6 +13,7 @@ import { ErrorNotice } from "../ui/ErrorNotice";
 import { PlayIcon } from "../ui/icons";
 import { cardClasses } from "../ui/styles";
 import { ExtractionPreview } from "./ExtractionPreview";
+import { PreparationRecovery } from "./PreparationRecovery";
 
 function StatusBadge({ state }: { state: CardModel["state"] }) {
   switch (state) {
@@ -173,6 +174,8 @@ export function CampaignCard({
           </div>
         ) : null}
         {canRetryJob ? <Button variant="secondary" size="sm" loading={retrying} onClick={() => void retry()} className="mb-3">{job?.action_label ?? "Retry retained source"}</Button> : null}
+        {adventure.preparation_setup_required ? <PreparationRecovery slug={adventure.slug}
+          edition={adventure.rules_edition} onStarted={onRetried} /> : null}
         <ErrorNotice error={retryError} />
         {state === "processing" && !job ? (
           <p className="mb-3 text-xs italic text-ink-muted">

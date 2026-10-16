@@ -127,7 +127,14 @@ def public_adjudication(adjudication) -> dict | None:
     if adjudication is None:
         return None
     # Proposals and canonical/private evidence are engine inputs, never client DTOs.
-    value = adjudication.model_dump(exclude={"story_effects", "accepted_story_effects"})
+    value = adjudication.model_dump(
+        exclude={
+            "story_effects",
+            "accepted_story_effects",
+            "proposed_prepared_amendment",
+            "accepted_prepared_amendment",
+        }
+    )
     value["citations"] = public_citations(value.get("citations", []))
     value["citation_ids"] = [r["reference_id"] for r in value["citations"]]
     return value
@@ -264,6 +271,36 @@ async def persist_turn(
             )
             if current_flags != (result.get("world_flags") or {}):
                 raise ValueError("World state changed during generation")
+            from .prepared_amendments import (
+                PreparedAmendmentConflict,
+                append_session_prepared_amendment,
+                load_session_prepared_amendments,
+                revalidate_runtime_amendment,
+            )
+
+            current_overlays, current_amendment_events = await load_session_prepared_amendments(
+                db, session_id, game_session.campaign_id, current_manifests
+            )
+            if current_overlays != (
+                result.get("prepared_campaign_overlays") or {}
+            ) or current_amendment_events != (result.get("prepared_amendment_events") or []):
+                raise ValueError("Session prepared state changed during generation")
+            accepted_amendment = None
+            if adjudication and adjudication.accepted_prepared_amendment:
+                accepted_amendment = revalidate_runtime_amendment(
+                    adjudication.accepted_prepared_amendment,
+                    state={
+                        **result,
+                        "story_state": current_story,
+                        "world_flags": current_flags,
+                        "prepared_campaign_overlays": current_overlays,
+                    },
+                    manifests=current_manifests,
+                )
+            elif result.get("accepted_prepared_amendment"):
+                # LangGraph state is not an authority. Only the hidden engine-owned
+                # adjudication receipt is eligible for persistence.
+                raise PreparedAmendmentConflict("Untrusted prepared amendment state")
             effects = adjudication.accepted_story_effects if adjudication else []
             if effects:
                 from agent.models.adjudication import AdjudicationResult
@@ -341,6 +378,14 @@ async def persist_turn(
             )
             db.add(narration_event)
             await db.flush()
+            if accepted_amendment is not None:
+                await append_session_prepared_amendment(
+                    db,
+                    session_id=session_id,
+                    game_session=game_session,
+                    receipt=accepted_amendment,
+                    turn_id=turn_id,
+                )
             if effects:
                 await persist_story_effects(
                     db,
