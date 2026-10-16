@@ -38,7 +38,7 @@ from agent.turn_diagnostics import (
     normalize_usage,
 )
 
-SECRET = "sk-live-SECRET-0123456789"
+SECRET = "sk-live-SECRET-token connection refused at 10.0.0.7"
 
 
 class _FakeChat(BaseChatModel):

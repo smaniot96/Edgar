@@ -80,7 +80,7 @@ def test_error_category_is_a_closed_vocabulary():
         profile="p",
         requested_model=None,
         latency_ms=1,
-        error_category="sk-live-secret leaked here",
+        error_category="provider said: connection refused at 10.0.0.7",
     )
     call = c.to_event()["payload"]["provider_calls"][0]
     assert call["error_category"] == "unknown"

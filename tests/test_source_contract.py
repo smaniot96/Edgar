@@ -144,7 +144,7 @@ async def test_public_turn_reload_keeps_versions_and_ruling_evidence(
     )
     refs = citations_for([rule, clue, secret], "2024")
 
-    async def run(initial):
+    async def run(initial, **_kwargs):
         assert initial["rules_edition"] == "2024"
         adj = AdjudicationResult(
             success=True, citations=refs, citation_ids=[r["reference_id"] for r in refs]
