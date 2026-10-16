@@ -88,13 +88,20 @@ def error_payload(
     return classify_error(error, outcome=outcome, support_ref=support_ref).to_payload()
 
 
-def http_failure_payload(failure: SafeFailure) -> dict[str, Any]:
+def http_failure_payload(failure: SafeFailure, *, context: object = None) -> dict[str, Any]:
     """Preserve safe historical gate envelopes alongside the shared top-level fields."""
     payload = failure.to_payload()
     if failure.category in {"source", "review"}:
         payload["detail"] = {"code": failure.code, "message": failure.message}
         if failure.code == "campaign_sources_unavailable":
             payload["detail"]["retrieval_degraded"] = True
+        # The review route historically identifies the already-public source binding.
+        # Keep only its validated identifier, never free-form source/error content.
+        source = context.get("source") if isinstance(context, dict) else None
+        if failure.category == "review" and isinstance(source, str) and re.fullmatch(
+            r"[a-z0-9][a-z0-9_\-]{0,254}", source
+        ):
+            payload["detail"]["source"] = source
     return payload
 
 

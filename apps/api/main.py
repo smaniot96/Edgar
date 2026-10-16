@@ -127,7 +127,7 @@ async def player_http_error_handler(request: Request, exc: HTTPException):
         )
     from .services.safe_errors import http_failure_payload
 
-    return JSONResponse(status_code=exc.status_code, content=http_failure_payload(failure))
+    return JSONResponse(status_code=exc.status_code, content=http_failure_payload(failure, context=detail))
 
 
 @app.exception_handler(Exception)
