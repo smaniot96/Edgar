@@ -1,11 +1,22 @@
 """Campaign lifecycle: active vs ended (plan 02)."""
 
+import asyncio
 from datetime import datetime
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 
-from db.postgres.models import CharacterAssignment
+import db.postgres.session as db_session_module
+from agent.models.adjudication import AdjudicationResult
+from apps.api.routers.campaign import reopen_campaign
+from apps.api.routers.campaign_characters import (
+    assign_character_to_campaign,
+    release_character_from_campaign,
+)
+from apps.api.schemas.character import CampaignCharacterAssignBody
+from apps.api.services.campaign_completion import close_campaign, maybe_complete_campaign
+from db.postgres.models import Campaign, Character, CharacterAssignment, Session as SessionModel
 
 
 @pytest.mark.asyncio
@@ -195,3 +206,117 @@ async def test_reopen_restores_only_assignments_closed_by_the_end(api_client) ->
 
     roster_after = {r["character_id"] for r in (await api_client.get(f"/api/campaigns/{cid}/characters")).json()}
     assert roster_after == roster_before
+
+
+async def _owner_id(character_id: int) -> int:
+    async with db_session_module.async_session_factory() as db:
+        return await db.scalar(select(Character.owner_user_id).where(Character.id == character_id))
+
+
+async def _assert_one_closure(campaign_id: int, *, status: str) -> None:
+    """Campaign and every assignment of it agree: one closure timestamp, or none when active."""
+    async with db_session_module.async_session_factory() as db:
+        campaign = await db.get(Campaign, campaign_id)
+        stamps = (
+            await db.scalars(
+                select(CharacterAssignment.ended_at).where(
+                    CharacterAssignment.campaign_id == campaign_id
+                )
+            )
+        ).all()
+    assert campaign.status == status
+    assert stamps and all(stamp == campaign.ended_at for stamp in stamps)
+    assert (campaign.ended_at is None) == (status == "active")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_manual_ends_close_once(api_client) -> None:
+    """Both ends read the campaign as active; the one that waits must no-op, not re-stamp."""
+    cid = (await api_client.post("/api/seed")).json()["campaign_id"]
+    factory = db_session_module.async_session_factory
+    async with factory() as first, factory() as second:
+        assert await close_campaign(first, await first.get(Campaign, cid))
+        loser = asyncio.create_task(close_campaign(second, await second.get(Campaign, cid)))
+        await asyncio.sleep(0.2)
+        assert not loser.done()
+        await first.commit()
+        assert await asyncio.wait_for(loser, timeout=5) is False
+    await _assert_one_closure(cid, status="ended")
+
+
+@pytest.mark.asyncio
+async def test_automatic_completion_and_manual_end_close_once(api_client) -> None:
+    """Turn persistence (session row, then campaign) and a manual end serialize on the campaign."""
+    seed = (await api_client.post("/api/seed")).json()
+    cid = seed["campaign_id"]
+    accepted = AdjudicationResult(success=True, completion_status="accepted")
+    factory = db_session_module.async_session_factory
+    async with factory() as turn, factory() as manual:
+        await turn.execute(
+            select(SessionModel.id)
+            .where(SessionModel.id == seed["session_id"])
+            .with_for_update()
+        )
+        assert await maybe_complete_campaign(turn, cid, accepted)
+        loser = asyncio.create_task(close_campaign(manual, await manual.get(Campaign, cid)))
+        await asyncio.sleep(0.2)
+        assert not loser.done()
+        await turn.commit()
+        assert await asyncio.wait_for(loser, timeout=5) is False
+    await _assert_one_closure(cid, status="ended")
+
+
+@pytest.mark.asyncio
+async def test_reopen_waits_for_in_flight_end(api_client) -> None:
+    cid = (await api_client.post("/api/seed")).json()["campaign_id"]
+    factory = db_session_module.async_session_factory
+    async with factory() as ending, factory() as reopening:
+        assert await close_campaign(ending, await ending.get(Campaign, cid))
+        reopen = asyncio.create_task(reopen_campaign(cid, db=reopening))
+        await asyncio.sleep(0.2)
+        await ending.commit()
+        await asyncio.wait_for(reopen, timeout=5)
+    await _assert_one_closure(cid, status="active")
+
+
+@pytest.mark.asyncio
+async def test_release_waits_for_in_flight_end_and_keeps_closure_stamp(api_client) -> None:
+    cid = (await api_client.post("/api/seed")).json()["campaign_id"]
+    char_id = (await api_client.get(f"/api/campaigns/{cid}/characters")).json()[0]["character_id"]
+    owner = await _owner_id(char_id)
+    factory = db_session_module.async_session_factory
+    async with factory() as ending, factory() as releasing:
+        assert await close_campaign(ending, await ending.get(Campaign, cid))
+        release = asyncio.create_task(
+            release_character_from_campaign(cid, char_id, db=releasing, owner_id=owner)
+        )
+        await asyncio.sleep(0.2)
+        await ending.commit()
+        with pytest.raises(HTTPException) as exc:
+            await asyncio.wait_for(release, timeout=5)
+    assert exc.value.status_code == 404
+    await _assert_one_closure(cid, status="ended")
+
+
+@pytest.mark.asyncio
+async def test_assign_waits_for_in_flight_end_and_is_rejected(api_client) -> None:
+    cid = (await api_client.post("/api/seed")).json()["campaign_id"]
+    new_id = await _create_character(api_client, "Latecomer")
+    owner = await _owner_id(new_id)
+    factory = db_session_module.async_session_factory
+    async with factory() as ending, factory() as assigning:
+        assert await close_campaign(ending, await ending.get(Campaign, cid))
+        assign = asyncio.create_task(
+            assign_character_to_campaign(
+                cid,
+                CampaignCharacterAssignBody(character_id=new_id),
+                db=assigning,
+                owner_id=owner,
+            )
+        )
+        await asyncio.sleep(0.2)
+        await ending.commit()
+        with pytest.raises(HTTPException) as exc:
+            await asyncio.wait_for(assign, timeout=5)
+    assert exc.value.status_code == 409
+    await _assert_one_closure(cid, status="ended")

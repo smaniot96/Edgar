@@ -10,7 +10,7 @@ from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 from ..dependencies import current_user_id, get_session
 from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
-from ..services.campaign_completion import close_campaign
+from ..services.campaign_completion import close_campaign, lock_campaign
 from ..services.campaign_sources import campaign_read, require_sources, validate_binding
 from ._common import Page, get_or_404
 
@@ -165,6 +165,7 @@ async def reopen_campaign(campaign_id: int, db: AsyncSession = Depends(get_sessi
     can only be active in one campaign at a time).
     """
     campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await lock_campaign(db, campaign)
     ended_snapshot = campaign.ended_at
     campaign.status = "active"
     campaign.ended_at = None
