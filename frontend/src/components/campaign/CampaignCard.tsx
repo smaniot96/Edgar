@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { cancelAdventure, retryAdventure } from "../../api/client";
-import type { AdventureRead, ReadinessRead } from "../../api/types";
+import type { ReadinessRead } from "../../api/types";
 import { safeTurnError } from "../../api/turnStream";
 import { AdventureCover } from "./AdventureCover";
 import { ReadinessNotice } from "./ReadinessNotice";

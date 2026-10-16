@@ -126,3 +126,22 @@ it.each([false, true])("never advertises index-only standalone modules as playab
     expect(onRetried).toHaveBeenCalledOnce();
   }
 });
+
+
+it("renders the public cover from a nested UI route and preserves the action after image failure", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "The Bridge", description: null, level_range: null, cover_image: "assets/bridge.svg", status: "ready", readiness: { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] } };
+  vi.stubEnv("BASE_URL", "/ui/");
+  window.history.replaceState({}, "", "/ui/campaigns/17");
+  const onPlay = vi.fn();
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} deleting={false} />));
+  const image = container.querySelector("img")!;
+  expect(image.getAttribute("src")).toBe("/ui/assets/bridge.svg");
+  await act(() => image.dispatchEvent(new Event("error")));
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector('[aria-hidden]')?.textContent).toBe("B");
+  const play = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Play")!;
+  await act(() => play.click());
+  expect(onPlay).toHaveBeenCalledOnce();
+  window.history.replaceState({}, "", "/");
+  vi.unstubAllEnvs();
+});
