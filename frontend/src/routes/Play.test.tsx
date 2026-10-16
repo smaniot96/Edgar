@@ -279,4 +279,6 @@ it("keeps the single polite announcement region outside the inert background whi
   expect(regions[0].getAttribute("role")).toBe("status");
   expect(regions[0].getAttribute("aria-atomic")).toBe("true");
   expect(regions[0].closest("[inert], [aria-hidden='true']")).toBeNull();
+  expect(container.querySelector("h1")?.textContent).toBe("Lost module");
+  expect(container.querySelector('[role="group"][aria-label="Current adventure context"]')).not.toBeNull();
 });
