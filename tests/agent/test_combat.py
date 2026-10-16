@@ -1,11 +1,13 @@
 """Combat subgraph: engine-decided hits, initiative order, HP ownership, targeting, completion."""
 
+import copy
 import logging
 import random
 
 import pytest
 
 from agent.graph_combat import (
+    MAX_COMBAT_ROUNDS,
     EncounterSetup,
     EnemyStat,
     _monster_context,
@@ -389,3 +391,122 @@ async def test_narrator_error_propagates(fake_llm_schema, fake_retrieval, monkey
     assert out["error"] == "provider down"
     assert out["retrieval_degraded"] is False
     assert "source_status" in out
+
+
+# --- round counting on every ending --------------------------------------------------------
+
+TOUGH = {**FIGHTER, "hp_current": 500, "hp_max": 500}
+IDLE = ParsedInput(intent="exploration")  # a turn that declares no attack
+
+
+class _MaxDice:
+    """Every die shows its top face, so each attack hits and crits and no seed is needed."""
+
+    def randint(self, low: int, high: int) -> int:
+        return high
+
+
+async def _fight(
+    fake, combatants: list[dict], character: dict, turns: list[tuple[str, ParsedInput]]
+) -> list[dict]:
+    """Play `turns` of one encounter in order, each fed the combat state the last one persisted."""
+    fake.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    outs: list[dict] = []
+    with use_rng(_MaxDice()):
+        for message, parsed in turns:
+            fake.responses[ParsedInput] = parsed
+            state = _state(None if outs else combatants, message, character=character)
+            if outs:
+                state["combat_state"] = copy.deepcopy(outs[-1]["combat_state"])
+                hero = next(c for c in outs[-1]["combat_state"]["combatants"] if c["is_player"])
+                state["character"] = {**character, "hp_current": hero["hp_current"]}
+            outs.append(await _round(fake, state))
+    return outs
+
+
+def _resolved_rounds(outs: list[dict]) -> list[int]:
+    """The round each turn resolved, as its telemetry row records it."""
+    return [out["telemetry_events"][0]["payload"]["round"] for out in outs]
+
+
+async def play_victory(fake) -> list[dict]:
+    """Round 1 is spent looking around; round 2 kills the goblin."""
+    return await _fight(
+        fake,
+        [_player(init=20, ac=99), _enemy("Goblin", hp=1, ac=1, init=1)],
+        TOUGH,
+        [
+            ("I wait and watch", IDLE),
+            ("I attack the goblin", ParsedInput(intent="combat", check="attack", target="goblin")),
+        ],
+    )
+
+
+async def play_defeat(fake) -> list[dict]:
+    """On max dice each ogre hit is 13, so the hero is knocked out in round 2."""
+    return await _fight(
+        fake,
+        [_player(init=20, ac=99), _enemy("Ogre", hp=500, ac=99, init=1)],
+        {**FIGHTER, "hp_current": 20, "hp_max": 20},
+        [("I wait and watch", IDLE), ("I wait and watch", IDLE)],
+    )
+
+
+async def play_flee(fake) -> list[dict]:
+    """Round 1 is spent looking around; round 2 is the hero leaving the fight."""
+    return await _fight(
+        fake,
+        [_player(init=20, ac=99), _enemy("Ogre", hp=500, ac=99, init=1)],
+        TOUGH,
+        [("I wait and watch", IDLE), ("I flee!", IDLE)],
+    )
+
+
+async def play_round_limit(fake) -> list[dict]:
+    """The ogre outlasts every round the cap allows, so the cap ends the fight."""
+    return await _fight(
+        fake,
+        [_player(init=20, ac=99), _enemy("Ogre", hp=500, ac=99, init=1)],
+        TOUGH,
+        [("I attack the ogre", ParsedInput(intent="combat", check="attack", target="ogre"))]
+        * MAX_COMBAT_ROUNDS,
+    )
+
+
+@pytest.mark.asyncio
+async def test_victory_persists_the_round_it_was_won_in(fake_llm_schema, fake_retrieval) -> None:
+    outs = await play_victory(fake_llm_schema)
+    states = [out["combat_state"] for out in outs]
+    assert [s["round"] for s in states] == [2, 2]
+    assert [s["ended"] for s in states] == [False, True] and states[-1]["outcome"] == "victory"
+    assert _resolved_rounds(outs) == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_defeat_persists_the_round_it_was_lost_in(fake_llm_schema, fake_retrieval) -> None:
+    outs = await play_defeat(fake_llm_schema)
+    states = [out["combat_state"] for out in outs]
+    assert [s["round"] for s in states] == [2, 2]
+    assert [s["ended"] for s in states] == [False, True] and states[-1]["outcome"] == "defeat"
+    assert _resolved_rounds(outs) == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_flee_persists_the_round_it_was_left_in(fake_llm_schema, fake_retrieval) -> None:
+    outs = await play_flee(fake_llm_schema)
+    states = [out["combat_state"] for out in outs]
+    assert [s["round"] for s in states] == [2, 2]
+    assert [s["ended"] for s in states] == [False, True] and states[-1]["outcome"] == "fled"
+    assert _resolved_rounds(outs) == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_round_limit_persists_the_last_round_resolved(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    outs = await play_round_limit(fake_llm_schema)
+    states = [out["combat_state"] for out in outs]
+    assert [s["round"] for s in states] == [*range(2, MAX_COMBAT_ROUNDS + 1), MAX_COMBAT_ROUNDS]
+    assert [s["ended"] for s in states] == [False] * (MAX_COMBAT_ROUNDS - 1) + [True]
+    assert states[-1]["outcome"] == "fled"
+    assert _resolved_rounds(outs) == list(range(1, MAX_COMBAT_ROUNDS + 1))
