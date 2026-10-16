@@ -170,7 +170,9 @@ export default function Home() {
         actions={
           <>
             {resumeSession ? (
+              <div className="flex min-w-0 flex-col items-start gap-1">
               <Button
+                aria-describedby="resume-save-identity"
                 onClick={() => {
                   rememberLastSession(resumeSession.id);
                   navigate(`/play/${resumeSession.id}`);
@@ -182,6 +184,10 @@ export default function Home() {
                   {resumeSession.readiness?.play_allowed === true ? "Resume" : "Read story"}{resumeName ? `: ${resumeName}` : " last session"}
                 </span>
               </Button>
+              <p id="resume-save-identity" className="max-w-full break-words text-xs text-ink-muted">
+                {resumeSession.character_name || "No character"} · Save #{resumeSession.id}
+              </p>
+              </div>
             ) : null}
             <Button
               variant="secondary"
