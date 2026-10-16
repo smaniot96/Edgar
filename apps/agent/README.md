@@ -5,7 +5,7 @@ LangGraph state machine that processes one player turn. Imported in-process by t
 ## Flow
 
 ```
-input_parser -> [combat?] -> combat subgraph (narrates the round itself) -> END
+input_parser -> [combat?] -> combat subgraph (resolves the round, then one narrator call) -> END
                   |
                   +-> world_retriever -> rules_adjudicator -> world_state_updater -> narrator -> END
 ```

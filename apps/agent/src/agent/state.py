@@ -70,6 +70,11 @@ class AgentState(TypedDict, total=False):
     # single transaction (nodes never commit on their own).
     telemetry_events: list[dict]
 
+    # EDG-079: set by the SSE runner. A combat round finalises its mechanics and returns
+    # `pending_round_narration` instead of calling the narrator; the runner streams that call.
+    defer_narration: bool
+    pending_round_narration: Any  # graph_combat.PendingRoundNarration; never persisted
+
     # Test injection
     qdrant_client: Any  # tests inject a fake; production uses get_qdrant_client()
 
