@@ -50,6 +50,7 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   source_review_required: { category: "review", message: "Review the current adventure material before continuing.", action: "review_source" },
   source_review_needed: { category: "review", message: "Review the current adventure material before continuing.", action: "review_source" },
   adventure_review_needed: { category: "review", message: "Review the current adventure material before continuing.", action: "review_source" },
+  saved_version_conflict: { category: "review", message: "The saved adventure version needs review before continuing.", action: "review_source" },
   preparation_in_progress: { category: "busy", message: "Preparation is still running. Check its status before trying again.", action: "wait" },
   preparation_busy: { category: "busy", message: "Preparation is still running. Check its status before trying again.", action: "wait" },
   busy: { category: "busy", message: "This action is still being processed. Check save status before trying again.", action: "wait" },

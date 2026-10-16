@@ -64,8 +64,10 @@ def test_setup_failure_projection_uses_only_explicit_fixed_codes():
     explicit_profile = RuntimeError("opaque failure")
     explicit_profile.code = "preparation_profile_invalid"
 
-    assert runtime._setup_failure_code(private_source_detail) == "preparation_setup_invalid"
-    assert runtime._setup_failure_code(private_profile_detail) == "preparation_setup_invalid"
+    assert runtime._setup_failure_code(private_source_detail) == "turn_failed"
+    assert runtime._setup_failure_code(private_profile_detail) == "turn_failed"
+    assert runtime._setup_failure_code(TypeError("private source payload")) == "turn_failed"
+    assert runtime._setup_failure_code(ValueError("invalid setup")) == "preparation_setup_invalid"
     assert runtime._setup_failure_code(explicit_profile) == "preparation_profile_invalid"
 
 

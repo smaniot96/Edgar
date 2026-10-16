@@ -68,6 +68,7 @@ const READINESS_REJECTION_CODES = new Set([
   "book_version_unavailable", "required_assets_unavailable",
   "adventure_manifest_review_required", "manifest_review_required", "review_required",
   "source_review_required", "source_review_needed", "adventure_review_needed",
+  "saved_version_conflict",
   "character_not_assigned", "assignment_required", "character_assignment_required",
   "assignment_conflict", "choose_character", "character_assignment_conflict",
   "rules_edition_mismatch", "unsupported_edition", "unsupported_party",
@@ -165,7 +166,13 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
         if (alreadyLoaded) optsRef.current.onAcknowledged?.(draftRevision, requestId);
         else notifyCommitted(result, requestId, draftRevision);
       } else if (response.status === 404) {
-        dispatch({ type: "markRetryable", turnId, message: "The server confirms this action was not saved. You can retry it safely." });
+        const failure = parseTurnError(await response.text());
+        if (ctrl.signal.aborted) return;
+        if (failure.code === "turn_not_found" && failure.outcome === "not_committed") {
+          dispatch({ type: "markRetryable", turnId, message: "The server confirms this action was not saved. You can retry it safely." });
+        } else {
+          dispatch({ type: "receiptPending", turnId, message: "Couldn't confirm whether this action was saved. Check again before retrying." });
+        }
       } else if (response.status === 409) {
         dispatch({ type: "receiptPending", turnId, message: "The DM is still finishing this action. Check again before retrying." });
       } else {
@@ -218,8 +225,8 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
     };
     kick();
 
-    const fail = (message: string, code?: string, reason: "error" | "stopped" = "error", uncertain = false) => {
-      dispatch({ type: "fail", turnId, reason, message, code, uncertain });
+    const fail = (message: string, code?: string, reason: "error" | "stopped" = "error", uncertain = false, retryable = false) => {
+      dispatch({ type: "fail", turnId, reason, message, code, uncertain, retryable });
       optsRef.current.onFailed?.(input, draftRevision);
       if (code === "campaign_sources_unavailable") optsRef.current.onSourcesUnavailable?.();
       if (isReadinessRejection(code)) optsRef.current.onReadinessRejected?.();
@@ -249,7 +256,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
         const uncertain = err.outcome
           ? err.outcome !== "not_committed"
           : !deterministic && (res.status === 409 || res.status >= 500);
-        fail(describeTurnFailure(err), err.code ?? "turn_failed", "error", uncertain);
+        fail(describeTurnFailure(err), err.code ?? "turn_failed", "error", uncertain, err.retryable === true);
         return;
       }
 
@@ -278,7 +285,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
           const uncertain = outcome.error.outcome
             ? outcome.error.outcome !== "not_committed"
             : !deterministic;
-          fail(describeTurnFailure(outcome.error), outcome.error.code ?? "turn_failed", "error", uncertain);
+          fail(describeTurnFailure(outcome.error), outcome.error.code ?? "turn_failed", "error", uncertain, outcome.error.retryable === true);
         }
       } else {
         fail(`The connection closed before the DM finished. Check save status before retrying.`, "incomplete", "error", true);
@@ -310,8 +317,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
   const retry = useCallback((turnId: string, input: string, requestId?: string, draftRevision?: number) => {
     if (activeRef.current || checkRef.current) return;
     const line = state.lines.find((item) => item.role === "error" && item.turnId === turnId);
-    if (!requestId || line?.role !== "error" || line.uncertain) return;
-    if (!new Set(["provider_unavailable", "llm_unavailable", "rate_limited", "incomplete", "interrupted", "turn_not_found"]).has(line.code ?? "")) return;
+    if (!requestId || line?.role !== "error" || line.uncertain || line.retryable !== true) return;
     dispatch({ type: "clearTurn", turnId });
     void send(input, draftRevision, requestId);
   }, [send, state.lines]);

@@ -44,3 +44,17 @@ it("offers a read-only check action for uncertain saves", async () => {
   expect(checkAgain).toHaveBeenCalledOnce();
   expect(container.textContent).not.toContain("Your current form entries are still here.");
 });
+
+it("keeps read-only refresh available for internal and source list failures", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  cleanup = () => { root.unmount(); container.remove(); };
+  const refresh = vi.fn();
+  for (const code of ["turn_failed", "campaign_sources_unavailable"]) {
+    await act(() => root.render(<ErrorNotice error={{ code, outcome: "not_committed" }} onRetry={refresh} />));
+    const button = container.querySelector("button");
+    expect(button?.textContent).toBe("Check again");
+    await act(() => button?.click());
+  }
+  expect(refresh).toHaveBeenCalledTimes(2);
+});

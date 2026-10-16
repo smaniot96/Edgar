@@ -99,7 +99,9 @@ def _setup_failure_code(error: BaseException) -> str:
     code = getattr(error, "code", None)
     if code in {"preparation_profile_invalid", "preparation_source_invalid"}:
         return code
-    return "preparation_setup_invalid"
+    if isinstance(error, ValueError):
+        return "preparation_setup_invalid"
+    return classify_error(error).code
 
 
 def make_preparation_supervisor(

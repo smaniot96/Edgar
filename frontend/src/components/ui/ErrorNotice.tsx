@@ -41,9 +41,9 @@ export function ErrorNotice({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p>{safe.message}</p>
-        {onRetry && (safe.retryable || safe.recoveryAction === "check_existing_result") ? (
+        {onRetry ? (
           <Button variant="secondary" size="sm" onClick={onRetry}>
-            {safe.retryable ? "Retry" : "Check again"}
+            Check again
           </Button>
         ) : null}
       </div>
@@ -73,7 +73,7 @@ export function OfflineState({
       <p className="mt-2 text-sm text-ink-muted">{safe.message}</p>
       {offline ? (
         <p className="mt-1 text-xs text-ink-subtle">
-          Start the API (for example with <code className="font-mono">make up</code>) and retry.
+          Check your connection, then check this page again.
         </p>
       ) : null}
       <Button className="mt-4" onClick={onRetry}>

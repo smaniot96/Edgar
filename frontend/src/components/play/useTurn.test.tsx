@@ -77,7 +77,7 @@ it("requires an authoritative receipt check before retrying an ambiguous disconn
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const fetchMock = vi.fn()
     .mockRejectedValueOnce(new TypeError("offline"))
-    .mockResolvedValueOnce(new Response(null, { status: 404 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "turn_not_found", outcome: "not_committed", recovery_action: "retry", retryable: true }), { status: 404 }))
     .mockResolvedValueOnce(new Response(
       `event: done\ndata: ${JSON.stringify({ narration: "The gate opens." })}\n\n`,
       { headers: { "content-type": "text/event-stream" } },

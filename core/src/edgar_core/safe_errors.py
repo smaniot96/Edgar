@@ -78,6 +78,7 @@ _register(
     FailureSpec(ErrorCategory.REVIEW, "adventure_manifest_review_required", "Review the current adventure material before continuing.", 409, RecoveryAction.REVIEW_SOURCE),
     "manifest_review_required", "review_required", "source_review_required",
     "source_review_needed", "adventure_review_needed",
+    "saved_version_conflict",
 )
 _register(
     FailureSpec(ErrorCategory.VALIDATION, "validation_failed", "Check the highlighted information and correct it before continuing.", 422, RecoveryAction.FIX_INPUT),
