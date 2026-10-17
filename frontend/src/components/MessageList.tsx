@@ -7,7 +7,7 @@ import { cn } from "../lib/cn";
 import { Narration } from "./play/Narration";
 import { RollCard } from "./play/RollCard";
 import { Button } from "./ui/Button";
-import type { DmLine, ErrorLine, Line, PendingTurn } from "./play/turnState";
+import type { DmLine, ErrorLine, Line, PendingTurn, TraceState } from "./play/turnState";
 
 const DevPanel = lazy(() => import("../dev/DevPanel").then((m) => ({ default: m.DevPanel })));
 
@@ -37,13 +37,15 @@ const THINKING_LABEL: Record<string, string> = {
 function DevDetails({
   debug,
   adjudication,
+  trace,
 }: {
   debug?: DebugPayload | null;
   adjudication?: AdjudicationResult | null;
+  trace?: TraceState | null;
 }) {
   return (
     <Suspense fallback={<div className="mt-1 text-xs text-ink-subtle">Loading dev panel…</div>}>
-      <DevPanel debug={debug} adjudication={adjudication} />
+      <DevPanel debug={debug} adjudication={adjudication} trace={trace} />
     </Suspense>
   );
 }
@@ -140,7 +142,7 @@ const DmRow = memo(function DmRow({
       ) : null}
       {isDev && (line.isTurn || line.debug || line.adjudication) ? (
         <div className="w-full max-w-[820px]">
-          <DevDetails debug={line.debug} adjudication={line.adjudication} />
+          <DevDetails debug={line.debug} adjudication={line.adjudication} trace={line.trace} />
         </div>
       ) : null}
     </article>

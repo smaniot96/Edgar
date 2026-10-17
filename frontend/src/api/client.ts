@@ -395,6 +395,11 @@ export function listSessionMessages(id: number, signal?: AbortSignal): Promise<C
   return getJson(`/api/sessions/${id}/messages`, signal);
 }
 
+/** Developer only (EDG-138): stored traces of captured DM turns, oldest first. 404 when debug is off. */
+export function listSessionTurnTraces(id: number, signal?: AbortSignal): Promise<import("./types").TurnTraceList> {
+  return getJson(`/api/sessions/${id}/diagnostics/turn-traces`, signal);
+}
+
 export function getSessionCombat(id: number, signal?: AbortSignal): Promise<CombatState | null> {
   return getJson(`/api/sessions/${id}/combat`, signal);
 }

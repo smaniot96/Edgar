@@ -72,6 +72,7 @@ from agent.turn_diagnostics import (
     new_turn_diagnostics,
     turn_diagnostics_public,
 )
+from agent.turn_trace import TRACE_MAX_CHUNKS, TRACE_SNIPPET_WIDTH, turn_trace_event
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.model_profiles import (
     current_model_profiles,
@@ -552,7 +553,9 @@ def _concentration_spell(combat_state: dict[str, Any]) -> str | None:
     return str(concentration["spell"]) if concentration else None
 
 
-def _truncate_ctx(items: Any, n: int = 8, width: int = 320) -> list[dict[str, Any]]:
+def _truncate_ctx(
+    items: Any, n: int = TRACE_MAX_CHUNKS, width: int = TRACE_SNIPPET_WIDTH
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for c in (items or [])[:n]:
         out.append(
@@ -582,6 +585,34 @@ def turn_diagnostics_from_events(events: list[dict] | None) -> dict[str, Any] | 
         if event.get("event_type") == TURN_DIAGNOSTICS_EVENT:
             return turn_diagnostics_public(event.get("payload"))
     return None
+
+
+def stage_turn_trace(result: dict[str, Any], *, debug: bool, delivery: str) -> dict[str, Any]:
+    """Stage this turn's developer trace beside its other telemetry rows (EDG-138).
+
+    Runs only when the request opted into debug. The request schema already forces `debug` off
+    unless `EDGAR_DEBUG` is set, so no trace is written while developer debug is disabled. The row
+    is appended to `telemetry_events` and commits (or rolls back) with the turn in `persist_turn`.
+    """
+    if not debug:
+        return result
+    events = list(result.get("telemetry_events") or [])
+    path = (turn_diagnostics_from_events(events) or {}).get("path") or "normal"
+    event = turn_trace_event(
+        turn_id=result.get("turn_id"),
+        delivery=delivery,
+        path=path,
+        parsed_input=result.get("parsed_input"),
+        rules_context=result.get("rules_context"),
+        adventure_context=result.get("adventure_context"),
+        rules_edition=result.get("rules_edition", "2014"),
+        source_mode=result.get("source_mode", "module"),
+        narrator_profile="play.combat_narrator" if path == "combat" else "play.narrator",
+        model_profiles=profile_diagnostics(current_model_profiles()),
+    )
+    if event is None:
+        return result
+    return {**result, "telemetry_events": [*events, event]}
 
 
 def _debug_combat_state(combat_state: dict | None) -> dict | None:
@@ -925,6 +956,7 @@ async def _stream_session_turn(
     # Built before the commit so the row rides the same transaction. Its total ends just before it.
     telemetry = list(state.get("telemetry_events") or [])
     state["telemetry_events"] = [*telemetry, finalize_turn_diagnostics(diag, telemetry)]
+    state = stage_turn_trace(state, debug=debug, delivery="stream")
     try:
         done_payload = await persist_turn(session_id, body_message, state)
     except TurnError as e:

@@ -10,6 +10,7 @@ import type {
   RollStatus,
   TurnResult,
   SourceCitation,
+  TurnTraceRecord,
 } from "../../api/types";
 import { adjudicationFromRoll } from "./rollText";
 
@@ -44,7 +45,35 @@ export interface DmLine extends BaseLine {
   isTurn?: boolean;
   /** Narration was cut off (stream ended early / stopped) and was not saved. */
   interrupted?: boolean;
+  /** Reloaded DM turns only: the turn_id the server stored this narration under (EDG-138). */
+  storedTurnId?: string;
+  /** Reloaded DM turns only: when the narration was stored (ISO 8601). */
+  storedAt?: string;
+  /**
+   * Developer trace state for this turn. Absent on turns produced in this browser session, where the
+   * live `debug` frame (or its absence) is used instead.
+   */
+  trace?: TraceState | null;
 }
+
+/** What the developer panel can say about a stored trace for one reloaded DM turn (EDG-138). */
+export type TraceState =
+  | { status: "loading" }
+  | { status: "captured"; record: TurnTraceRecord }
+  /** Sent in User mode, or recorded before trace capture (legacy), or without a turn_id. */
+  | { status: "not_captured" }
+  /** The loaded window holds only the newest traces; this turn is older than it. */
+  | { status: "older_than_window" }
+  /** Server developer debug is off, so no trace is stored or served. */
+  | { status: "disabled" }
+  | { status: "failed" };
+
+/** The developer trace list as the reducer receives it (EDG-138). */
+export type TurnTraceLookup =
+  | { status: "loading" }
+  | { status: "disabled" }
+  | { status: "failed" }
+  | { status: "loaded"; records: TurnTraceRecord[]; truncated: boolean };
 
 export interface ErrorLine extends BaseLine {
   retryable?: boolean;
@@ -113,7 +142,9 @@ export type TurnAction =
   | { type: "receiptCommitted"; turnId: string; result: TurnResult }
   | { type: "receiptPending"; turnId: string; message: string }
   /** Remove every line produced by a (failed) turn, e.g. before retrying it. */
-  | { type: "clearTurn"; turnId: string };
+  | { type: "clearTurn"; turnId: string }
+  /** Developer mode: stored traces for the reloaded DM turns (EDG-138). */
+  | { type: "traces"; lookup: TurnTraceLookup };
 
 export const initialTurnState: TurnState = { lines: [], pending: null, announcement: "", historyReady: false };
 
@@ -123,6 +154,7 @@ export function linesFromHistory(msgs: ChatMessageRead[]): Line[] {
     // Reloaded DM turns get their stored ruling back (same card as live); no re-roll happens here.
     // Legacy turns have no stored record: the card is withheld and the line says so.
     const rollStatus: RollStatus = m.roll_status ?? "not_captured";
+    const storedTurnId = m.turn_id ?? undefined;
     return {
       id: `h${i}`,
       role: "dm",
@@ -133,8 +165,46 @@ export function linesFromHistory(msgs: ChatMessageRead[]): Line[] {
       adjudication: m.roll ? adjudicationFromRoll(m.roll) : null,
       rollStatus,
       isTurn: true,
+      storedTurnId,
+      storedAt: m.created_at,
+      // Without a turn_id no trace can be linked, so the turn is reported as not captured.
+      trace: storedTurnId ? { status: "loading" } : { status: "not_captured" },
     };
   });
+}
+
+/**
+ * Attach the developer trace lookup to reloaded DM turns. Live lines and lines without a stored
+ * turn id are left alone: their developer state comes from the live `debug` frame.
+ */
+export function attachTraces(lines: Line[], lookup: TurnTraceLookup): Line[] {
+  const byTurn = new Map<string, TurnTraceRecord>();
+  let oldest: number | null = null;
+  if (lookup.status === "loaded") {
+    for (const record of lookup.records) byTurn.set(record.turn_id, record);
+    const first = lookup.records[0];
+    if (lookup.truncated && first) oldest = Date.parse(first.created_at);
+  }
+  return lines.map((line) => {
+    if (line.role !== "dm" || !line.storedTurnId) return line;
+    return { ...line, trace: traceStateFor(line.storedTurnId, line.storedAt, lookup, byTurn, oldest) };
+  });
+}
+
+function traceStateFor(
+  turnId: string,
+  storedAt: string | undefined,
+  lookup: TurnTraceLookup,
+  byTurn: Map<string, TurnTraceRecord>,
+  oldest: number | null,
+): TraceState {
+  if (lookup.status === "loading") return { status: "loading" };
+  if (lookup.status === "disabled") return { status: "disabled" };
+  if (lookup.status === "failed") return { status: "failed" };
+  const record = byTurn.get(turnId);
+  if (record?.trace) return { status: "captured", record };
+  if (oldest !== null && storedAt && Date.parse(storedAt) < oldest) return { status: "older_than_window" };
+  return { status: "not_captured" };
 }
 
 const CAMPAIGN_ENDED_TEXT = "This campaign has ended. The adventure is complete.";
@@ -155,6 +225,8 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       };
     case "clearTurn":
       return { ...state, lines: state.lines.filter((l) => l.turnId !== action.turnId) };
+    case "traces":
+      return { ...state, lines: attachTraces(state.lines, action.lookup) };
     case "start":
       return {
         ...state,
