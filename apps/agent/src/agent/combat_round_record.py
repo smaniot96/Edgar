@@ -31,8 +31,8 @@ class RoundRecord:
     dice_log: list[dict]
     round_effects: list[str]
     round_modes: list[str]
-    # Typed loosely on purpose: a declared spell rebinds this list to strings (see the player phase).
-    outcomes: list[Any] = field(default_factory=list)
+    # Enemy attack resolutions in initiative order (combat_telemetry). Only the enemy phase appends here.
+    outcomes: list[dict[str, Any]] = field(default_factory=list)
     actors: list[dict] = field(default_factory=list)
     round_actors: list[str] = field(default_factory=list)
     lair_done: bool = False
