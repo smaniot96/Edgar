@@ -171,3 +171,50 @@ async def test_pre_versioning_rulebooks_stop_at_the_source_check_without_provide
     assert state.current_stage.value == "P02"
     assert state.last_safe_error_code == "required_book_phb_unindexed"
     assert author.calls == []
+
+
+def test_terminal_book_failure_is_logged_with_stage_and_support_reference(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from apps.api.services import adventures_meta, preparation_runtime as runtime
+    from edgar_core.preparation import PreparationJobStatus, PreparationStage
+
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    token = "c" * 32
+    adventures_meta.save_meta(
+        "logged",
+        {
+            "private_preparation": True,
+            "status": "processing",
+            "attempt": {"id": token},
+            "job": {"job_id": "d" * 32, "kind": "generation", "state": "running"},
+        },
+    )
+    events = []
+    monkeypatch.setattr(
+        runtime.log, "error", lambda event, **fields: events.append((event, fields))
+    )
+    support_ref = "err-" + "1" * 16
+    state = SimpleNamespace(
+        status=PreparationJobStatus.BLOCKED,
+        current_stage=PreparationStage.P02,
+        last_safe_error_code="required_book_phb_unindexed",
+        last_safe_error_ref=support_ref,
+        artifacts={},
+        binding=SimpleNamespace(source_mode="ai", run_id="prep-" + "d" * 32),
+    )
+    monkeypatch.setattr(
+        runtime.PreparationSupervisor,
+        "status",
+        lambda self, slug, run_id: SimpleNamespace(action="restart"),
+    )
+
+    runtime._sync_terminal_meta("logged", token, state)
+
+    assert events and events[0][0] == "preparation_stage_failed"
+    fields = events[0][1]
+    assert fields["failure_code"] == "required_book_phb_unindexed"
+    assert fields["support_ref"] == support_ref
+    assert fields["stage"] == "Checking sources"
+    saved = adventures_meta.load_meta("logged")
+    assert saved["status"] == "failed" and saved["failure_code"] == "required_book_phb_unindexed"
