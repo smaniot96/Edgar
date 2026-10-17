@@ -33,13 +33,38 @@ _SECRET_FIELDS = frozenset(
         "refresh_token",
     }
 )
+# Prose and provider payload keys. Call sites must never log these (see docs/operational-logging.md);
+# the processor redacts them as defense in depth if a future call site adds one anyway.
+_CONTENT_FIELDS = frozenset(
+    {
+        "narration",
+        "message",
+        "messages",
+        "player_input",
+        "player_text",
+        "prompt",
+        "prompts",
+        "content",
+        "completion",
+        "body",
+        "response_body",
+        "raw_response",
+    }
+)
+# Every key the redaction processor replaces. Ops edge filters must cover the same set; a test
+# compares them with ops/logging/vector.toml.
+FORBIDDEN_LOG_FIELDS = _SECRET_FIELDS | _CONTENT_FIELDS
 _handler: logging.Handler | None = None
 
 
 def _redact(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
-            key: REDACTED if str(key).lower().replace("-", "_") in _SECRET_FIELDS else _redact(item)
+            key: (
+                REDACTED
+                if str(key).lower().replace("-", "_") in FORBIDDEN_LOG_FIELDS
+                else _redact(item)
+            )
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
@@ -52,7 +77,9 @@ def _redact(value: Any) -> Any:
 def redact_sensitive_data(
     _logger: Any, _method_name: str, event_dict: structlog.types.EventDict
 ) -> structlog.types.EventDict:
-    """Redact structured credentials and common credential forms, including tracebacks.
+    """Redact structured credentials, prose/payload keys (FORBIDDEN_LOG_FIELDS) and common
+    credential forms, including tracebacks. Redaction is by exact key name, at any depth, so
+    `request_id`, `support_ref`, `category` and `outcome` pass through unchanged.
 
     This runs after exception formatting. It deliberately keeps stack frames but never
     enables traceback locals; call sites must still avoid logging request bodies/prompts.
