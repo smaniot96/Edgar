@@ -109,3 +109,8 @@ class AdventureGenerateRequest(BaseModel):
     size: CampaignSize = "medium"
     rules_edition: RulesEdition = "2014"
     preparation: PreparationSetup | None = None
+    # Optional client identity (UUID/ULID). A retry with the same identity and body replays the
+    # first accepted module; reusing it with a different body is rejected with 409.
+    request_id: str | None = Field(
+        default=None, min_length=26, max_length=36, pattern=r"^[0-9A-Za-z-]+$"
+    )
