@@ -597,16 +597,17 @@ def stage_turn_trace(result: dict[str, Any], *, debug: bool, delivery: str) -> d
     if not debug:
         return result
     events = list(result.get("telemetry_events") or [])
+    path = (turn_diagnostics_from_events(events) or {}).get("path") or "normal"
     event = turn_trace_event(
         turn_id=result.get("turn_id"),
         delivery=delivery,
-        path=(turn_diagnostics_from_events(events) or {}).get("path") or "normal",
+        path=path,
         parsed_input=result.get("parsed_input"),
         rules_context=result.get("rules_context"),
         adventure_context=result.get("adventure_context"),
         rules_edition=result.get("rules_edition", "2014"),
         source_mode=result.get("source_mode", "module"),
-        narrator_profile="play.narrator",
+        narrator_profile="play.combat_narrator" if path == "combat" else "play.narrator",
         model_profiles=profile_diagnostics(current_model_profiles()),
     )
     if event is None:
