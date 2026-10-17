@@ -1,13 +1,19 @@
 """Explicit JSON review interface; drafts are never implicitly approved by compilation."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from edgar_core.manifests import AdventureManifest
 
+from ..auth import require_admin
 from ..services import adventure_manifests as service
 
-router = APIRouter(prefix="/adventures/{slug}/manifest", tags=["adventures"])
+# Manifest review and publication change the shared adventure catalogue: operator (admin) only.
+router = APIRouter(
+    prefix="/adventures/{slug}/manifest",
+    tags=["adventures"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 class ManifestReview(BaseModel):

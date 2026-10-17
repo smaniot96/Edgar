@@ -58,7 +58,7 @@ async def test_metadata_source_and_attempt_symlinks_cannot_escape(data_dirs, mon
 
     monkeypatch.setattr(adventures, "_all_collection_names", lambda: [])
     with pytest.raises(ValueError, match="symlink"):
-        await adventures.get_adventure("linked")
+        await adventures.get_adventure("linked", None)
     with pytest.raises(ValueError, match="symlink"):
         adventures.update_adventure("linked", AdventureUpdate(title="changed"))
     with pytest.raises(ValueError, match="symlink"):
@@ -107,7 +107,7 @@ async def test_metadata_fallback_handlers_reject_traversal_before_filesystem_acc
     monkeypatch.setattr(adventures, "_all_collection_names", lambda: [])
 
     with pytest.raises(HTTPException) as get_error:
-        await adventures.get_adventure("../../outside")
+        await adventures.get_adventure("../../outside", None)
     assert get_error.value.status_code == 422
 
     with pytest.raises(HTTPException) as patch_error:

@@ -8,21 +8,22 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import Campaign, WorldFlag
+from db.postgres.models import WorldFlag
 
+from ..auth import Auth, owned_campaign
 from ..dependencies import get_session
 from ..schemas.world_flag import WorldFlagCreate, WorldFlagRead, WorldFlagUpdate
 from ..services.world_flags import load_world_flag, upsert_world_flag
-from ._common import Page, get_or_404
+from ._common import Page
 
 router = APIRouter(tags=["world-flags"])
 
 
 @router.get("/campaigns/{campaign_id}/world-flags", response_model=list[WorldFlagRead])
 async def list_world_flags(
-    campaign_id: int, db: AsyncSession = Depends(get_session), page: Page = Depends()
+    campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session), page: Page = Depends()
 ):
-    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await owned_campaign(db, campaign_id, auth)
     result = await db.execute(
         select(WorldFlag)
         .where(WorldFlag.campaign_id == campaign_id)
@@ -35,10 +36,10 @@ async def list_world_flags(
 
 @router.post("/campaigns/{campaign_id}/world-flags", response_model=WorldFlagRead, status_code=201)
 async def create_or_update_world_flag(
-    campaign_id: int, body: WorldFlagCreate, db: AsyncSession = Depends(get_session)
+    campaign_id: int, body: WorldFlagCreate, auth: Auth, db: AsyncSession = Depends(get_session)
 ):
     """Upsert: if the key already exists, update the value; otherwise insert."""
-    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await owned_campaign(db, campaign_id, auth)
     flag = await upsert_world_flag(db, campaign_id, body.key, body.value)
     await db.commit()
     await db.refresh(flag)
@@ -50,9 +51,10 @@ async def update_world_flag(
     campaign_id: int,
     key: str,
     body: WorldFlagUpdate,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
 ):
-    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await owned_campaign(db, campaign_id, auth)
     flag = await load_world_flag(db, campaign_id, key)
     if flag is None:
         raise HTTPException(status_code=404, detail="World flag not found")
@@ -64,9 +66,9 @@ async def update_world_flag(
 
 @router.delete("/campaigns/{campaign_id}/world-flags/{key}", status_code=204)
 async def delete_world_flag(
-    campaign_id: int, key: str, db: AsyncSession = Depends(get_session)
+    campaign_id: int, key: str, auth: Auth, db: AsyncSession = Depends(get_session)
 ):
-    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await owned_campaign(db, campaign_id, auth)
     flag = await load_world_flag(db, campaign_id, key)
     if flag is None:
         raise HTTPException(status_code=404, detail="World flag not found")

@@ -140,7 +140,10 @@ async def test_provider_configuration_failure_emits_one_structured_event(monkeyp
         async with main.lifespan(FastAPI()):
             pass
 
-    assert recorder.events == [
+    # Other startup events (for example the auth mode) may come first; this test is about the
+    # provider failure, which must be exactly one structured event naming only the error class.
+    provider_events = [e for e in recorder.events if "provider_configuration" in e[0]]
+    assert provider_events == [
         ("error:provider_configuration_invalid", {"error_class": "ModelProfileError"})
     ]
     assert "example-not-a-real-key-value" not in repr(recorder.events)

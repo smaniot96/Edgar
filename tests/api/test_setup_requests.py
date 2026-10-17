@@ -135,7 +135,7 @@ async def test_concurrent_save_requests_create_one_row(api_client, fake_retrieva
 
     async def create():
         async with sessions.async_session_factory() as db:
-            return await create_session(body, db)
+            return await create_session(body, None, db)
 
     first, second = await asyncio.gather(create(), create())
     assert first.id == second.id

@@ -7,19 +7,19 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import EventLog, Session as SessionModel
+from db.postgres.models import EventLog
 
+from ..auth import Auth, owned_session
 from ..dependencies import get_session
 from ..schemas.journal import JournalCategory, JournalEntry, JournalRead
 from ..services.journal import filter_player_journal, project_player_journal
 from ..services.story_state import load_story_state
-from ._common import get_or_404
 
 router = APIRouter(tags=["journal"])
 
 
-async def _read_session_journal(session_id: int, db: AsyncSession) -> JournalRead:
-    session = await get_or_404(db, SessionModel, session_id, "Session")
+async def _read_session_journal(session_id: int, db: AsyncSession, auth: Auth) -> JournalRead:
+    session = await owned_session(db, session_id, auth)
     state = await load_story_state(db, session_id, session.campaign_id)
     result = await db.execute(
         select(EventLog)
@@ -43,6 +43,7 @@ def _no_store(response: Response) -> None:
 @router.get("/sessions/{session_id}/journal", response_model=JournalRead)
 async def get_session_journal(
     session_id: int,
+    auth: Auth,
     response: Response,
     category: JournalCategory | None = None,
     q: str | None = Query(default=None, max_length=160),
@@ -50,13 +51,14 @@ async def get_session_journal(
 ) -> JournalRead:
     """Project only this session's earned facts before applying player-facing filters."""
     _no_store(response)
-    journal = await _read_session_journal(session_id, db)
+    journal = await _read_session_journal(session_id, db, auth)
     return filter_player_journal(journal, category=category, query=q)
 
 
 @router.get("/sessions/{session_id}/journal/export")
 async def export_session_journal(
     session_id: int,
+    auth: Auth,
     response: Response,
     category: JournalCategory | None = None,
     q: str | None = Query(default=None, max_length=160),
@@ -65,7 +67,7 @@ async def export_session_journal(
     """Download only the same safe entries available in the selected-session list."""
     _no_store(response)
     journal = filter_player_journal(
-        await _read_session_journal(session_id, db), category=category, query=q
+        await _read_session_journal(session_id, db, auth), category=category, query=q
     )
     data = journal.model_dump(mode="json")
     filename = f"journal-session-{session_id}.json"
@@ -82,12 +84,13 @@ async def export_session_journal(
 async def get_session_journal_entry(
     session_id: int,
     entry_id: str,
+    auth: Auth,
     response: Response,
     db: AsyncSession = Depends(get_session),
 ) -> JournalEntry:
     """Resolve a detail only against the same safe session projection; unknown IDs disclose nothing."""
     _no_store(response)
-    journal = await _read_session_journal(session_id, db)
+    journal = await _read_session_journal(session_id, db, auth)
     entry = next((item for item in journal.entries if item.id == entry_id), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="Not found")

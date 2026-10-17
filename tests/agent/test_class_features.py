@@ -769,7 +769,7 @@ async def test_manual_patch_keeps_class_feature_uses(monkeypatch) -> None:
 
     monkeypatch.setattr(campaign_characters, "load_active_assignment", load)
     body = campaign_schema.CampaignCharacterPatch(stats={"STR": 18, CLASS_FEATURES_KEY: {}})
-    await patch_campaign_character(1, 3, body, db=_Db(), owner_id=1)
+    await patch_campaign_character(1, 3, body, auth=None, db=_Db(), owner_id=1)
     assert assignment.stats["STR"] == 18
     assert assignment.stats[CLASS_FEATURES_KEY] == {RAGE: {"uses_remaining": 0}}
     assert assignment.stats["second_wind"] == {"uses_remaining": 0}

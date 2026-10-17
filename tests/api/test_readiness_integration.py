@@ -27,7 +27,7 @@ async def test_real_session_entrypoints_reject_known_blocker_before_writes(monke
     # All actual admission decisions run; no graph, model or persistence entrypoint is reached.
     with pytest.raises(HTTPException) as rejected:
         if entrypoint == "create":
-            await router.create_session(SessionCreate(campaign_id=7), db)
+            await router.create_session(SessionCreate(campaign_id=7), None, db)
         else:
             await router._load_turn_initial_state(12, "Look", db)
     assert rejected.value.detail["code"] == "campaign_sources_unavailable"

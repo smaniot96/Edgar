@@ -18,18 +18,20 @@ from starlette.concurrency import run_in_threadpool
 from db.postgres.models import Campaign, CharacterAssignment
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
+from ..auth import Auth, campaign_scope, owned_campaign, require_admin
 from ..dependencies import current_user_id, get_redis, get_session
 from ..limits import admit_job
 from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
 from ..services.campaign_completion import close_campaign, lock_campaign
 from ..services.campaign_sources import campaign_read, require_sources, validate_binding
-from ._common import Page, get_or_404
+from ._common import Page
 
 router = APIRouter(tags=["campaigns"])
 
 
 @router.get("/campaigns", response_model=list[CampaignRead])
 async def list_campaigns(
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     status: Literal["active", "ended"] | None = Query(
         default=None,
@@ -38,6 +40,9 @@ async def list_campaigns(
     page: Page = Depends(),
 ):
     stmt = select(Campaign).order_by(Campaign.id).limit(page.limit).offset(page.offset)
+    scope = campaign_scope(auth)
+    if scope is not None:
+        stmt = stmt.where(scope)
     if status is not None:
         stmt = stmt.where(Campaign.status == status)
     result = await db.execute(stmt)
@@ -46,8 +51,8 @@ async def list_campaigns(
 
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignRead)
-async def get_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
-    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+async def get_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
+    campaign = await owned_campaign(db, campaign_id, auth)
     return await campaign_read(campaign)
 
 
@@ -133,9 +138,9 @@ async def create_campaign(
 
 @router.patch("/campaigns/{campaign_id}", response_model=CampaignRead)
 async def update_campaign(
-    campaign_id: int, body: CampaignUpdate, db: AsyncSession = Depends(get_session)
+    campaign_id: int, body: CampaignUpdate, auth: Auth, db: AsyncSession = Depends(get_session)
 ):
-    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    campaign = await owned_campaign(db, campaign_id, auth)
     update_data = body.model_dump(exclude_unset=True)
     from ..services.prepared_play import protect_prepared_campaign_binding, require_prepared_play
 
@@ -162,20 +167,20 @@ async def update_campaign(
 
 
 @router.delete("/campaigns/{campaign_id}", status_code=204)
-async def delete_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
-    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+async def delete_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
+    campaign = await owned_campaign(db, campaign_id, auth)
     await db.delete(campaign)
     await db.commit()
 
 
 @router.post("/campaigns/{campaign_id}/end", response_model=CampaignRead)
-async def end_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
+async def end_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
     """Mark the campaign as ended and close active character assignments (plan 03).
 
     The closed assignments get exactly `campaign.ended_at` as their `ended_at`; that shared
     timestamp is what `reopen` uses to find (only) the assignments this end closed.
     """
-    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    campaign = await owned_campaign(db, campaign_id, auth)
     if not await close_campaign(db, campaign):
         return await campaign_read(campaign)
     await db.commit()
@@ -184,7 +189,7 @@ async def end_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)
 
 
 @router.post("/campaigns/{campaign_id}/reopen", response_model=CampaignRead)
-async def reopen_campaign(campaign_id: int, db: AsyncSession = Depends(get_session)):
+async def reopen_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
     """Undo a premature end; restores the assignments closed by that end.
 
     Deterministic rule: `end` stamps the campaign and every assignment it closes with the same
@@ -193,7 +198,7 @@ async def reopen_campaign(campaign_id: int, db: AsyncSession = Depends(get_sessi
     A character that has since become active in another campaign is left ended (a character
     can only be active in one campaign at a time).
     """
-    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    campaign = await owned_campaign(db, campaign_id, auth)
     await lock_campaign(db, campaign)
     ended_snapshot = campaign.ended_at
     campaign.status = "active"
@@ -216,11 +221,18 @@ async def reopen_campaign(campaign_id: int, db: AsyncSession = Depends(get_sessi
     return await campaign_read(campaign)
 
 
-@router.post("/campaigns/{campaign_id}/sources/{slug}/upload", status_code=202)
+@router.post(
+    "/campaigns/{campaign_id}/sources/{slug}/upload",
+    status_code=202,
+    # Recovery rewrites a shared source-library file, so it is an operator action as well as
+    # an ownership check on the campaign that is bound to it.
+    dependencies=[Depends(require_admin)],
+)
 async def recover_campaign_source(
     campaign_id: int,
     slug: str,
     background: BackgroundTasks,
+    auth: Auth,
     request: Request,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_session),
@@ -236,7 +248,7 @@ async def recover_campaign_source(
 
     admission = await admit_job(request, redis)
     try:
-        campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+        campaign = await owned_campaign(db, campaign_id, auth)
         if slug not in campaign.adventure_collections:
             raise HTTPException(
                 status_code=422, detail="That source is not bound to this campaign."

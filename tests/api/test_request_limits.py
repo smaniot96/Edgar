@@ -550,6 +550,7 @@ async def test_stream_turn_releases_its_lease_when_the_client_disconnects(
     response = await session_routes.session_turn_stream(
         session_id=1,
         body=TurnRequest(message="look"),
+        auth=None,
         request=_request(),
         db=None,
         redis=redis_client,
@@ -766,3 +767,15 @@ async def test_non_empty_non_pdf_content_is_refused_before_any_work():
         await limits.require_pdf_upload(_upload(b"just some text, not a pdf"))
     assert info.value.code == "upload_unsupported"
     await limits.require_pdf_upload(_upload(b"%PDF-1.7 body"))
+
+
+# --- Principal key (EDG-065) ----------------------------------------------------------------------
+
+
+def test_client_principal_keys_on_the_authenticated_user_when_there_is_one():
+    from apps.api.auth import Principal
+
+    request = _request("203.0.113.9")
+    assert limits.client_principal(request) == "ip:203.0.113.9"
+    request.state.principal = Principal(user_id=42, token_id=7, is_admin=False)
+    assert limits.client_principal(request) == "user:42"

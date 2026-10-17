@@ -42,6 +42,7 @@ from db.vector.collections import (
 from edgar_core import config as limit_config
 from edgar_core.sources import SourceEdition
 
+from ..auth import Auth, require_admin
 from ..dependencies import get_redis
 from ..limits import (
     SCOPE_UPLOAD_SIZE,
@@ -76,6 +77,7 @@ from ..services.adventures_meta import (
     reserve_meta,
     save_meta as _save_adventure_metadata,
 )
+from ..services.campaign_sources import is_private_preparation_source
 from ..services.safe_errors import (
     classify_error,
     classify_http_failure,
@@ -225,13 +227,24 @@ async def _with_readiness(adventure: AdventureRead) -> AdventureRead:
 
 
 @router.get("/adventures", response_model=list[AdventureRead])
-async def list_adventures():
+async def list_adventures(auth: Auth):
     adventures = await run_in_threadpool(_list_adventures)
+    if auth is not None and not auth.is_admin:
+        # In-progress private preparations belong to the operator until they are published.
+        adventures = [
+            a
+            for a in adventures
+            if not await run_in_threadpool(is_private_preparation_source, a.slug)
+        ]
     return [await _with_readiness(adventure) for adventure in adventures]
 
 
 @router.get("/adventures/{slug}", response_model=AdventureRead)
-async def get_adventure(slug: str):
+async def get_adventure(slug: str, auth: Auth):
+    if auth is not None and not auth.is_admin and await run_in_threadpool(
+        is_private_preparation_source, slug
+    ):
+        raise HTTPException(status_code=404, detail="Adventure not found")
     return await _with_readiness(await run_in_threadpool(_get_adventure, slug))
 
 
@@ -266,7 +279,7 @@ def _extraction_path(slug: str, name: str, *, candidate_attempt_id: str | None =
     return path
 
 
-@router.get("/adventures/{slug}/extraction")
+@router.get("/adventures/{slug}/extraction", dependencies=[Depends(require_admin)])
 def get_extraction_preview(slug: str):
     """Local diagnostics and bounded representative text/stat/scene candidates."""
     try:
@@ -318,7 +331,7 @@ def get_extraction_preview(slug: str):
         ) from exc
 
 
-@router.get("/adventures/{slug}/extraction/markdown")
+@router.get("/adventures/{slug}/extraction/markdown", dependencies=[Depends(require_admin)])
 def get_extraction_markdown(slug: str):
     current = _preview_source_current(slug, _load_extraction(slug))
     return FileResponse(
@@ -536,7 +549,7 @@ def _reserve_slug(desired: str, meta: dict) -> str:
         taken.add(slug)
 
 
-@router.post("/adventures/upload", response_model=AdventureUploadResponse, status_code=202)
+@router.post("/adventures/upload", response_model=AdventureUploadResponse, status_code=202, dependencies=[Depends(require_admin)])
 async def upload_adventure(
     request: Request,
     background: BackgroundTasks,
@@ -627,7 +640,7 @@ async def _accept_upload(
     return AdventureUploadResponse(slug=slug, title=desired_title, status="processing")
 
 
-@router.post("/adventures/generate", response_model=AdventureUploadResponse, status_code=202)
+@router.post("/adventures/generate", response_model=AdventureUploadResponse, status_code=202, dependencies=[Depends(require_admin)])
 async def generate_adventure(
     body: AdventureGenerateRequest,
     request: Request,
@@ -758,7 +771,7 @@ async def admit_retry_job(
         await admission.settle()
 
 
-@router.post("/adventures/{slug}/retry", response_model=AdventureUploadResponse, status_code=202)
+@router.post("/adventures/{slug}/retry", response_model=AdventureUploadResponse, status_code=202, dependencies=[Depends(require_admin)])
 def retry_adventure(
     slug: str,
     background: BackgroundTasks,
@@ -773,7 +786,8 @@ def retry_adventure(
 
 
 @router.post(
-    "/adventures/{slug}/preparation/setup", response_model=AdventureUploadResponse, status_code=202
+    "/adventures/{slug}/preparation/setup", response_model=AdventureUploadResponse, status_code=202,
+    dependencies=[Depends(require_admin)],
 )
 async def setup_preparation(
     slug: str,
@@ -1006,7 +1020,7 @@ def _retry_adventure(
     return AdventureUploadResponse(slug=slug, title=title, status="processing")
 
 
-@router.post("/adventures/{slug}/cancel", response_model=AdventureJobRead)
+@router.post("/adventures/{slug}/cancel", response_model=AdventureJobRead, dependencies=[Depends(require_admin)])
 def cancel_adventure(slug: str):
     from ..services.adventures_meta import request_job_cancel
     from ..services.campaign_sources import safe_job_read, validate_binding
@@ -1026,7 +1040,7 @@ def cancel_adventure(slug: str):
     return safe_job_read(load_adventure_metadata(slug), slug)
 
 
-@router.patch("/adventures/{slug}", response_model=AdventureRead)
+@router.patch("/adventures/{slug}", response_model=AdventureRead, dependencies=[Depends(require_admin)])
 def update_adventure(slug: str, body: AdventureUpdate):
     """Update metadata; changing the edition invalidates any earlier manifest receipt."""
     from ..services.campaign_sources import validate_binding
@@ -1052,7 +1066,7 @@ def update_adventure(slug: str, body: AdventureUpdate):
     return _read_for_slug(slug, has_collection=slug in collection_slugs)
 
 
-@router.delete("/adventures/{slug}", status_code=204)
+@router.delete("/adventures/{slug}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=None)):
     """Drop the Qdrant collection, its metadata, the uploaded PDF, and any cover dir.
 
