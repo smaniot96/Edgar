@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from structlog.testing import capture_logs
 
 from agent.models.adjudication import AdjudicationResult
 from apps.api.schemas import stream
@@ -24,6 +23,7 @@ from apps.api.schemas.stream import (
     frame_violations,
     render_stream_schema,
 )
+from apps.api.services import turn_runner
 from apps.api.services.combat import resolved_combat_outcomes_public
 from apps.api.services.turn_runner import sse_event
 from tests.api.test_stream_frames import representative_frames
@@ -90,24 +90,41 @@ def test_violation_messages_name_fields_never_values() -> None:
     assert all(secret not in message for message in violations)
 
 
+class _RecordingLog:
+    """Stands in for the runner's structlog logger so the test sees exactly what is logged.
+
+    `capture_logs` cannot be used here: once another test has cached the runner's bound logger,
+    structlog no longer routes its calls through the capture processor.
+    """
+
+    def __init__(self) -> None:
+        self.entries: list[dict[str, Any]] = []
+
+    def error(self, event: str, **fields: Any) -> None:
+        self.entries.append({"event": event, **fields})
+
+
 def test_sse_event_sends_a_violating_frame_unchanged_and_logs_it_without_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    recorder = _RecordingLog()
+    monkeypatch.setattr(turn_runner, "log", recorder)
     bogus = {"stage": "thinking", "note": "player private text"}
-    with capture_logs() as logs:
-        wire = sse_event("status", bogus)
+    wire = sse_event("status", bogus)
     assert wire == 'event: status\ndata: {"stage": "thinking", "note": "player private text"}\n\n'
-    violations = [entry for entry in logs if entry["event"] == "sse_frame_contract_violation"]
-    assert len(violations) == 1
-    assert violations[0]["frame"] == "status"
-    assert "player private text" not in json.dumps(violations[0], default=str)
+    assert len(recorder.entries) == 1
+    entry = recorder.entries[0]
+    assert entry["event"] == "sse_frame_contract_violation"
+    assert entry["frame"] == "status"
+    assert "player private text" not in json.dumps(entry, default=str)
 
 
-def test_conforming_frames_log_nothing() -> None:
-    with capture_logs() as logs:
-        for event, data in representative_frames().values():
-            sse_event(event, data)
-    assert not [entry for entry in logs if entry["event"] == "sse_frame_contract_violation"]
+def test_conforming_frames_log_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _RecordingLog()
+    monkeypatch.setattr(turn_runner, "log", recorder)
+    for event, data in representative_frames().values():
+        sse_event(event, data)
+    assert recorder.entries == []
 
 
 def test_adding_a_backend_field_changes_the_rendered_contract(
