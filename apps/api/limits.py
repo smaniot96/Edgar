@@ -3,9 +3,9 @@
 Every counter lives in Redis so all API replicas agree. Checks run before paid or heavy work
 starts and answer with the shared safe-error payload (429, 413, 415 or 503) plus `Retry-After`.
 
-Principal: the client's direct peer address, until real authentication exists (EDG-065). The
-single-user seam (`current_user_id`) returns the same user for every caller, so keying by it
-would put every client in one bucket. Forwarded headers are deliberately not trusted.
+Principal: the authenticated user in token mode (EDG-065); in local mode the client's direct peer
+address, because the single-user seam (`current_user_id`) returns the same user for every caller
+and would put every client in one bucket. Forwarded headers are deliberately not trusted.
 
 Failure policy when Redis is unavailable:
 - rate windows and concurrency leases fail open and log `limits_backend_unavailable`;
@@ -119,7 +119,13 @@ def limit_rejection_response(exc: LimitRejected) -> JSONResponse:
 
 
 def client_principal(request: Request) -> str:
-    """Key for per-client limits: the direct peer address (see module docstring)."""
+    """Key for per-client limits: the authenticated user in token mode (EDG-065), otherwise the
+    direct peer address (see module docstring)."""
+    from .auth import principal_for
+
+    principal = principal_for(request)
+    if principal is not None:
+        return f"user:{principal.user_id}"
     client = request.client
     return f"ip:{client.host if client is not None else 'unknown'}"
 

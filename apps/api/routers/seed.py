@@ -6,11 +6,14 @@ fresh database is playable immediately without any manual setup.
 The user is the *current* user (the first user, same rule as `current_user_id`): if the setup
 screen already created one, seed attaches everything to it instead of adding a second
 `dm@edgar.local` user, so the current user never flips.
+
+Hosted (token) mode: seed is an operator action. It attaches the demo save to the calling admin's
+own user and never creates a user, so an admin token cannot mint a second identity by seeding.
 """
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.postgres.models import Campaign, Character, CharacterAssignment, Session, User
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
+from ..auth import Auth, require_admin
 from ..dependencies import get_session
 from ..services.character_assignments import seed_assignment_row_payload
 
@@ -33,15 +37,20 @@ class SeedResponse(BaseModel):
     message: str
 
 
-@router.post("/seed", response_model=SeedResponse)
-async def seed(db: AsyncSession = Depends(get_session)):
-    result = await db.execute(select(User).order_by(User.id).limit(1))
-    user = result.scalar_one_or_none()
-    if user is None:
-        user = User(email=_SEED_EMAIL)
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
+@router.post("/seed", response_model=SeedResponse, dependencies=[Depends(require_admin)])
+async def seed(auth: Auth, db: AsyncSession = Depends(get_session)):
+    if auth is not None:
+        user = await db.get(User, auth.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+    else:
+        result = await db.execute(select(User).order_by(User.id).limit(1))
+        user = result.scalar_one_or_none()
+        if user is None:
+            user = User(email=_SEED_EMAIL)
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
 
     result = await db.execute(select(Campaign).where(Campaign.created_by == user.id).order_by(Campaign.id).limit(1))
     campaign = result.scalar_one_or_none()

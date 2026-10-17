@@ -68,6 +68,10 @@ def classify_http_failure(
         fixed_code = "busy"
     elif status_code == 429:
         fixed_code = "rate_limited"
+    elif status_code == 401:
+        fixed_code = "authentication_required"
+    elif status_code == 403:
+        fixed_code = "forbidden"
     elif status_code in (502, 503, 504):
         # Generic HTTP status alone does not prove the provider caused the failure.
         # Treat the result as uncertain and let the route pass a fixed provider code

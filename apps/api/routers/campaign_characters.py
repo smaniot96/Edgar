@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from agent.resolution import ENGINE_STATS_KEYS
 from db.postgres.models import Campaign, Character, CharacterAssignment
 
+from ..auth import Auth, authorize_campaign, owned_campaign
 from ..dependencies import current_user_id, get_session
 from ..schemas.character import (
     CampaignCharacterAssignBody,
@@ -21,7 +22,7 @@ from ..services.character_assignments import (
     load_active_assignment_any_campaign,
     seed_assignment_row_payload,
 )
-from ._common import HTTPErrorWithContext, Page, get_or_404
+from ._common import HTTPErrorWithContext, Page
 
 router = APIRouter(tags=["campaigns"])
 
@@ -43,10 +44,11 @@ def _roster_row(assignment: CharacterAssignment, ch: Character) -> CampaignChara
 @router.get("/campaigns/{campaign_id}/characters", response_model=list[CampaignCharacterRead])
 async def list_campaign_characters(
     campaign_id: int,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     page: Page = Depends(),
 ):
-    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await owned_campaign(db, campaign_id, auth)
     r = await db.execute(
         select(CharacterAssignment)
         .where(
@@ -67,10 +69,11 @@ async def list_campaign_characters(
 async def assign_character_to_campaign(
     campaign_id: int,
     body: CampaignCharacterAssignBody,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
-    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+    campaign = await owned_campaign(db, campaign_id, auth)
     await lock_campaign(db, campaign)
     if campaign.status == "ended":
         raise HTTPException(
@@ -83,7 +86,7 @@ async def assign_character_to_campaign(
     if character is None:
         raise HTTPException(status_code=404, detail="Character not found")
     if character.owner_user_id != owner_id:
-        raise HTTPException(status_code=403, detail="Character does not belong to the current user")
+        raise HTTPException(status_code=404, detail="Character not found")
 
     existing_here = await load_active_assignment(db, body.character_id, campaign_id)
     if existing_here is not None:
@@ -134,15 +137,17 @@ async def patch_campaign_character(
     campaign_id: int,
     character_id: int,
     body: CampaignCharacterPatch,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
+    await authorize_campaign(db, campaign_id, auth)
     cr = await db.execute(select(Character).where(Character.id == character_id))
     character = cr.scalar_one_or_none()
     if character is None:
         raise HTTPException(status_code=404, detail="Character not found")
     if character.owner_user_id != owner_id:
-        raise HTTPException(status_code=403, detail="Character does not belong to the current user")
+        raise HTTPException(status_code=404, detail="Character not found")
 
     assignment = await load_active_assignment(db, character_id, campaign_id)
     if assignment is None:
@@ -174,15 +179,17 @@ async def patch_campaign_character(
 async def release_character_from_campaign(
     campaign_id: int,
     character_id: int,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
+    await authorize_campaign(db, campaign_id, auth)
     cr = await db.execute(select(Character).where(Character.id == character_id))
     character = cr.scalar_one_or_none()
     if character is None:
         raise HTTPException(status_code=404, detail="Character not found")
     if character.owner_user_id != owner_id:
-        raise HTTPException(status_code=403, detail="Character does not belong to the current user")
+        raise HTTPException(status_code=404, detail="Character not found")
 
     # Lock the campaign before reading the assignment so a concurrent end cannot be overwritten.
     await db.execute(select(Campaign.id).where(Campaign.id == campaign_id).with_for_update())

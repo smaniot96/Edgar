@@ -1,0 +1,49 @@
+# OPTIONAL operational log shipper (EDG-063). NOT part of the default stack or the hosting stack.
+#
+# Adds one service, log_shipper, that tails the Docker json-file logs read-only and ships Edgar's
+# structured JSON lines to a protected sink. It publishes no ports. It is started only with its
+# profile, and only after the protected storage checklist in docs/operational-logging.md is met:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.logging.yml --profile logging up -d log_shipper
+#
+# Required host environment (never written into a committed file):
+#   EDGAR_LOG_SINK_URL    HTTPS endpoint inside the protected log storage boundary
+#   EDGAR_LOG_SINK_TOKEN  write-only credential for that endpoint
+#
+# Nothing here is deployed. The image tag is pinned but has not been pulled or run in this repository.
+# Validate offline with: docker compose -f docker-compose.yml -f docker-compose.logging.yml config
+# (run by the operator on a host, not by CI).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  log_shipper:
+    logging: *default-logging
+    profiles: ["logging"]
+    image: timberio/vector:0.46.1-alpine
+    command: ["--config", "/etc/vector/vector.toml"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EDGAR_LOG_SINK_URL: ${EDGAR_LOG_SINK_URL:?set EDGAR_LOG_SINK_URL to the protected sink endpoint}
+      EDGAR_LOG_SINK_TOKEN: ${EDGAR_LOG_SINK_TOKEN:?set EDGAR_LOG_SINK_TOKEN for the protected sink}
+    volumes:
+      # Read-only view of every container's Docker log files on this host. Docker log files are
+      # root-owned, so the process runs as root with all capabilities dropped. It cannot write them.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./ops/logging/vector.toml:/etc/vector/vector.toml:ro
+      - vector_data:/var/lib/vector
+    tmpfs:
+      - /tmp
+    user: "0:0"
+
+volumes:
+  vector_data:

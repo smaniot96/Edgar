@@ -7,16 +7,17 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import NPC, Campaign, EventLog, Session as SessionModel
+from db.postgres.models import NPC, EventLog
 from edgar_core.story import StoryFact
 
+from ..auth import Auth, owned_campaign, owned_npc, owned_session
 from ..dependencies import get_session
 from ..schemas.journal import JournalRead
 from ..schemas.npc import NPCCreate, NPCRead, NPCUpdate
 from ..services.journal import project_player_journal
 from ..services.journal_identity import actor_entry_id
 from ..services.story_state import load_story_state
-from ._common import Page, get_or_404
+from ._common import Page
 
 router = APIRouter(tags=["npcs"])
 
@@ -78,14 +79,15 @@ def _project_session_npcs(
 @router.get("/campaigns/{campaign_id}/npcs", response_model=list[NPCRead])
 async def list_npcs(
     campaign_id: int,
+    auth: Auth,
     response: Response,
     db: AsyncSession = Depends(get_session),
     page: Page = Depends(),
     session_id: int | None = None,
 ):
-    await get_or_404(db, Campaign, campaign_id, "Campaign")
+    await owned_campaign(db, campaign_id, auth)
     if session_id is not None:
-        session = await get_or_404(db, SessionModel, session_id, "Session")
+        session = await owned_session(db, session_id, auth)
         if session.campaign_id != campaign_id:
             raise HTTPException(status_code=404, detail="Session not found for campaign")
         # Use the same player-safe projection as the journal: a private or malformed ledger
@@ -138,8 +140,10 @@ async def list_npcs(
 
 
 @router.post("/campaigns/{campaign_id}/npcs", response_model=NPCRead, status_code=201)
-async def create_npc(campaign_id: int, body: NPCCreate, db: AsyncSession = Depends(get_session)):
-    await get_or_404(db, Campaign, campaign_id, "Campaign")
+async def create_npc(
+    campaign_id: int, body: NPCCreate, auth: Auth, db: AsyncSession = Depends(get_session)
+):
+    await owned_campaign(db, campaign_id, auth)
     npc = NPC(
         campaign_id=campaign_id,
         name=body.name,
@@ -154,13 +158,13 @@ async def create_npc(campaign_id: int, body: NPCCreate, db: AsyncSession = Depen
 
 @router.get("/npcs/{npc_id}", response_model=NPCRead)
 async def get_npc(
-    npc_id: int, db: AsyncSession = Depends(get_session), session_id: int | None = None
+    npc_id: int, auth: Auth, db: AsyncSession = Depends(get_session), session_id: int | None = None
 ):
-    npc = await get_or_404(db, NPC, npc_id, "NPC")
+    npc = await owned_npc(db, npc_id, auth)
     if npc.session_id is not None and npc.session_id != session_id:
         raise HTTPException(status_code=404, detail="NPC not found for session")
     if npc.session_id is not None and session_id is not None:
-        session = await get_or_404(db, SessionModel, session_id, "Session")
+        session = await owned_session(db, session_id, auth)
         if session.campaign_id != npc.campaign_id:
             raise HTTPException(status_code=404, detail="NPC not found for session")
         state = await load_story_state(db, session_id, session.campaign_id)
@@ -179,8 +183,10 @@ async def get_npc(
 
 
 @router.patch("/npcs/{npc_id}", response_model=NPCRead)
-async def update_npc(npc_id: int, body: NPCUpdate, db: AsyncSession = Depends(get_session)):
-    npc = await get_or_404(db, NPC, npc_id, "NPC")
+async def update_npc(
+    npc_id: int, body: NPCUpdate, auth: Auth, db: AsyncSession = Depends(get_session)
+):
+    npc = await owned_npc(db, npc_id, auth)
     if npc.session_id is not None:
         raise HTTPException(
             status_code=409, detail="Encountered NPC state is managed by story effects"
@@ -193,8 +199,8 @@ async def update_npc(npc_id: int, body: NPCUpdate, db: AsyncSession = Depends(ge
 
 
 @router.delete("/npcs/{npc_id}", status_code=204)
-async def delete_npc(npc_id: int, db: AsyncSession = Depends(get_session)):
-    npc = await get_or_404(db, NPC, npc_id, "NPC")
+async def delete_npc(npc_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
+    npc = await owned_npc(db, npc_id, auth)
     if npc.session_id is not None:
         raise HTTPException(
             status_code=409, detail="Encountered NPC state is managed by story effects"

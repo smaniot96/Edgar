@@ -1,0 +1,2662 @@
+{
+  "captive_ruling": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": null,
+      "character_update": null,
+      "check": null,
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": null,
+      "dc": null,
+      "dice_log": [],
+      "dice_result": null,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "You release Bandit. Bandit is no longer your captive and is not an enemy in this fight.",
+      "modifier": null,
+      "natural_roll": null,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": null,
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "captive_outcome": {
+      "action": "release",
+      "combat_id": 7,
+      "combat_round": 4,
+      "combatant_id": "Bandit",
+      "name": "Bandit",
+      "npc_disposition": "released"
+    },
+    "discovery_entities": [],
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "You release Bandit. Bandit is no longer your captive and is not an enemy in this fight.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "You release Bandit. Bandit is no longer your captive and is not an enemy in this fight.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [],
+    "rule_queries": [],
+    "rules_context": [],
+    "source_status": []
+  },
+  "clarification_question": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": null,
+      "character_update": null,
+      "check": null,
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": null,
+      "dc": null,
+      "dice_log": [],
+      "dice_result": null,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "You don't see dragon among your foes. Who do you attack? (Goblin, Wolf)",
+      "modifier": null,
+      "natural_roll": null,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": null,
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 18,
+          "alive": true,
+          "display_name": "Eda",
+          "hp_current": 12,
+          "hp_max": 12,
+          "init": 15,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 9,
+          "hp_max": 9,
+          "init": 5,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Goblin"
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 9,
+          "hp_max": 9,
+          "init": 5,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Wolf"
+        }
+      ],
+      "ended": false,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 18,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 12,
+          "hp_max": 12,
+          "id": "player",
+          "init": 15,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 9,
+          "hp_max": 9,
+          "id": "Goblin",
+          "init": 5,
+          "is_player": false,
+          "name": "Goblin",
+          "reaction_used": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 9,
+          "hp_max": 9,
+          "id": "Wolf",
+          "init": 5,
+          "is_player": false,
+          "name": "Wolf",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Goblin",
+        "Wolf"
+      ],
+      "round": 1
+    },
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "You don't see dragon among your foes. Who do you attack? (Goblin, Wolf)",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "You don't see dragon among your foes. Who do you attack? (Goblin, Wolf)",
+    "retrieval_degraded": false,
+    "source_status": []
+  },
+  "declared_spell": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": "AC",
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": 0,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": null,
+        "spell_slots_expended": null
+      },
+      "check": "spell_attack",
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": null,
+      "dc": 12,
+      "dice_log": [
+        {
+          "expression": "2d20+5",
+          "kept": 2,
+          "modifier": 5,
+          "purpose": "spell_attack check",
+          "roll_mode": "disadvantage",
+          "rolls": [
+            2,
+            3
+          ],
+          "total": 7
+        },
+        {
+          "expression": "1d20+3",
+          "modifier": 3,
+          "purpose": "Goblin attack",
+          "rolls": [
+            3
+          ],
+          "total": 6
+        }
+      ],
+      "dice_result": 7,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "spell attack: 2d20kl1+5 = 7 (disadvantage: d20 rolled 2 and 3, kept the lower 2) vs AC 12 -> failure. Fire Bolt misses Goblin. Goblin misses Ilse (rolled 6 vs AC 14).",
+      "modifier": 5,
+      "natural_roll": 2,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": "2d20kl1+5",
+      "scene_id": null,
+      "story_effects": [],
+      "success": false
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 14,
+          "action_economy": {
+            "action": "Fire Bolt",
+            "bonus_action": null,
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "active",
+          "hp_current": 8,
+          "hp_max": 8,
+          "init": 15,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false,
+          "surprised": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 20,
+          "hp_max": 20,
+          "init": 5,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Goblin",
+          "reaction_used": false,
+          "surprised": false
+        }
+      ],
+      "current_turn": "Eda",
+      "current_turn_index": 0,
+      "economy": {
+        "action": "Fire Bolt",
+        "bonus_action": null,
+        "dodging": false,
+        "round": 1
+      },
+      "ended": false,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 14,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 8,
+          "hp_max": 8,
+          "id": "player",
+          "init": 15,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 20,
+          "hp_max": 20,
+          "id": "Goblin",
+          "init": 5,
+          "is_player": false,
+          "name": "Goblin",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Goblin"
+      ],
+      "outcome": null,
+      "player_ac": 14,
+      "raging": false,
+      "round": 2,
+      "round_actors": [
+        "Goblin"
+      ],
+      "second_wind_used": false,
+      "second_wind_uses_remaining": 0
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "disadvantage",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "rule_queries": [
+      {
+        "query": "Spellcasting rules",
+        "references": [
+          "Spellcasting"
+        ]
+      }
+    ],
+    "rules_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [
+            {
+              "id": "Goblin",
+              "name": "Goblin"
+            }
+          ],
+          "dice_log": [
+            {
+              "expression": "2d20+5",
+              "kept": 2,
+              "modifier": 5,
+              "purpose": "spell_attack check",
+              "roll_mode": "disadvantage",
+              "rolls": [
+                2,
+                3
+              ],
+              "total": 7
+            },
+            {
+              "expression": "1d20+3",
+              "modifier": 3,
+              "purpose": "Goblin attack",
+              "rolls": [
+                3
+              ],
+              "total": 6
+            }
+          ],
+          "dispositions": [
+            {
+              "disposition": "active",
+              "hp_current": 8,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 20,
+              "id": "Goblin",
+              "is_player": false,
+              "name": "Goblin"
+            }
+          ],
+          "ended": false,
+          "outcome": null,
+          "outcomes": [
+            {
+              "action": "attack",
+              "actor": "Goblin",
+              "attack": null,
+              "critical": false,
+              "damage": 0,
+              "damage_type": null,
+              "hit": false,
+              "roll": 6,
+              "roll_mode": "normal",
+              "target_ac": 14
+            }
+          ],
+          "player_action": {
+            "action": "catalog_spell",
+            "condition": null,
+            "damage": 0,
+            "healing": 0,
+            "slot_level": null,
+            "spell": "Fire Bolt",
+            "target": "Goblin"
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  },
+  "encounter_setup_roster": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": "AC",
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": -6,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": null,
+        "spell_slots_expended": null
+      },
+      "check": "attack",
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": 4,
+      "dc": 14,
+      "dice_log": [
+        {
+          "expression": "1d20+5",
+          "modifier": 5,
+          "purpose": "attack check",
+          "rolls": [
+            12
+          ],
+          "total": 17
+        },
+        {
+          "expression": "1d8+3",
+          "modifier": 3,
+          "purpose": "player damage",
+          "rolls": [
+            1
+          ],
+          "total": 4
+        },
+        {
+          "expression": "1d20+6",
+          "modifier": 6,
+          "purpose": "Troll Bite attack",
+          "rolls": [
+            15
+          ],
+          "total": 21
+        },
+        {
+          "expression": "1d6+4",
+          "modifier": 4,
+          "purpose": "Troll Bite damage",
+          "rolls": [
+            2
+          ],
+          "total": 6
+        },
+        {
+          "expression": "1d20+6",
+          "modifier": 6,
+          "purpose": "Troll Claw attack",
+          "rolls": [
+            2
+          ],
+          "total": 8
+        },
+        {
+          "expression": "1d20+6",
+          "modifier": 6,
+          "purpose": "Troll Claw attack",
+          "rolls": [
+            6
+          ],
+          "total": 12
+        }
+      ],
+      "dice_result": 17,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "Combat begins! Initiative: Eda 21, Troll 10. Solo level 1 hero: unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11); unscaled exact creature: Troll keeps its record attack +6 (solo limit +4); unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3). Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero. Declared, not executed for Troll: speed 30 ft.: movement is not simulated; Keen Smell: trait not executed; Regeneration: a creature at 0 HP is defeated at once; its death clause (regeneration at the start of its next turn) is not executed. attack: 1d20+5 = 17 (d20 rolled 12) vs AC 14 -> success. Eda hits Troll for 4 damage (69/73 HP left) Troll regenerates 4 HP. Troll's Bite hits Eda for 6 piercing damage (rolled 21 vs AC 18). Troll's Claw misses Eda (rolled 8 vs AC 18). Troll's Claw misses Eda (rolled 12 vs AC 18).",
+      "modifier": 5,
+      "natural_roll": 12,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": "1d20+5",
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 18,
+          "action_economy": {
+            "action": "attack",
+            "bonus_action": null,
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "active",
+          "hp_current": 34,
+          "hp_max": 40,
+          "init": 21,
+          "init_bonus": 1,
+          "init_roll": 20,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false,
+          "solo_budget": {
+            "adapted": false,
+            "level": 1,
+            "notes": [
+              "unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11)",
+              "unscaled exact creature: Troll keeps its record attack +6 (solo limit +4)",
+              "unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3)"
+            ],
+            "warning": {
+              "text": "Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
+              "tier": "far_above_deadly"
+            },
+            "xp_check": {
+              "adjusted_xp": 1650.0,
+              "deadly_threshold": 100,
+              "difficulty": "deadly",
+              "exact_foes": [
+                {
+                  "cr": "4",
+                  "name": "Troll",
+                  "xp": 1100
+                }
+              ],
+              "foes": 1,
+              "multiplier": 1.5,
+              "raw_xp": 1100,
+              "warning": "far_above_deadly"
+            }
+          },
+          "surprised": false
+        },
+        {
+          "ac": 14,
+          "alive": true,
+          "attack_bonus": 6,
+          "band": "melee",
+          "challenge_cr": "4",
+          "challenge_xp": 1100,
+          "creature_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "damage_dice": "1d6+4",
+          "damage_taken_types": [],
+          "disposition": "active",
+          "hero_surprised": false,
+          "hp_current": 73,
+          "hp_max": 73,
+          "init": 10,
+          "init_bonus": 1,
+          "init_roll": 9,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "monster_stats": {
+            "abilities": {
+              "CHA": -2,
+              "CON": 4,
+              "DEX": 1,
+              "INT": -2,
+              "STR": 2,
+              "WIS": -1
+            },
+            "ac": 14,
+            "attacks": [
+              {
+                "bonus": 6,
+                "damage_dice": "1d6+4",
+                "damage_type": "piercing",
+                "name": "Bite",
+                "ranged": false,
+                "recharge": null,
+                "rider": null,
+                "save": null
+              },
+              {
+                "bonus": 6,
+                "damage_dice": "2d6+4",
+                "damage_type": "slashing",
+                "name": "Claw",
+                "ranged": false,
+                "recharge": null,
+                "rider": null,
+                "save": null
+              }
+            ],
+            "creature_type": "giant",
+            "declared": [
+              "speed 30 ft.: movement is not simulated",
+              "Keen Smell: trait not executed",
+              "Regeneration: a creature at 0 HP is defeated at once; its death clause (regeneration at the start of its next turn) is not executed"
+            ],
+            "hp_max": 73,
+            "immunities": [],
+            "lair_actions": [],
+            "legendary": [],
+            "legendary_actions": 0,
+            "multiattack": [
+              [
+                "Bite",
+                1
+              ],
+              [
+                "Claw",
+                2
+              ]
+            ],
+            "name": "Troll",
+            "regeneration": {
+              "amount": 9,
+              "suppressed_by": [
+                "acid",
+                "fire"
+              ]
+            },
+            "resistances": [],
+            "saves": {
+              "DEX": 3
+            },
+            "speed": "30 ft.",
+            "spellcasting": null,
+            "vulnerabilities": []
+          },
+          "name": "Troll",
+          "reaction_used": false,
+          "source_reference": {
+            "collection": "rules_monster_manual",
+            "creature_key": "troll",
+            "creature_name": "Troll",
+            "extraction_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "index_version": "index1",
+            "page": 167,
+            "rules_edition": "2014",
+            "source": "Synthetic Manual",
+            "source_pages": [
+              167
+            ],
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_version": "version1"
+          },
+          "stat_adaptation": "exact_record",
+          "surprised": false
+        }
+      ],
+      "current_turn": "Eda",
+      "current_turn_index": 0,
+      "economy": {
+        "action": "attack",
+        "bonus_action": null,
+        "dodging": false,
+        "round": 1
+      },
+      "ended": false,
+      "initiative": [
+        {
+          "ac": 18,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 34,
+          "hp_max": 40,
+          "id": "player",
+          "init": 21,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 14,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 73,
+          "hp_max": 73,
+          "id": "Troll",
+          "init": 10,
+          "is_player": false,
+          "name": "Troll",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Troll"
+      ],
+      "outcome": null,
+      "player_ac": 18,
+      "raging": false,
+      "round": 2,
+      "round_actors": [
+        "Troll",
+        "Troll",
+        "Troll"
+      ],
+      "second_wind_used": false,
+      "second_wind_uses_remaining": 1,
+      "solo_budget": {
+        "adapted": false,
+        "level": 1,
+        "notes": [
+          "unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11)",
+          "unscaled exact creature: Troll keeps its record attack +6 (solo limit +4)",
+          "unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3)"
+        ],
+        "warning": {
+          "text": "Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
+          "tier": "far_above_deadly"
+        },
+        "xp_check": {
+          "adjusted_xp": 1650.0,
+          "deadly_threshold": 100,
+          "difficulty": "deadly",
+          "exact_foes": [
+            {
+              "cr": "4",
+              "name": "Troll",
+              "xp": 1100
+            }
+          ],
+          "foes": 1,
+          "multiplier": 1.5,
+          "raw_xp": 1100,
+          "warning": "far_above_deadly"
+        }
+      }
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "normal",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "rule_queries": [
+      {
+        "query": "Making an Attack rules",
+        "references": [
+          "Making an Attack"
+        ]
+      }
+    ],
+    "rules_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [
+            {
+              "id": "Troll",
+              "name": "Troll"
+            }
+          ],
+          "dice_log": [
+            {
+              "expression": "1d20+5",
+              "modifier": 5,
+              "purpose": "attack check",
+              "rolls": [
+                12
+              ],
+              "total": 17
+            },
+            {
+              "expression": "1d8+3",
+              "modifier": 3,
+              "purpose": "player damage",
+              "rolls": [
+                1
+              ],
+              "total": 4
+            },
+            {
+              "expression": "1d20+6",
+              "modifier": 6,
+              "purpose": "Troll Bite attack",
+              "rolls": [
+                15
+              ],
+              "total": 21
+            },
+            {
+              "expression": "1d6+4",
+              "modifier": 4,
+              "purpose": "Troll Bite damage",
+              "rolls": [
+                2
+              ],
+              "total": 6
+            },
+            {
+              "expression": "1d20+6",
+              "modifier": 6,
+              "purpose": "Troll Claw attack",
+              "rolls": [
+                2
+              ],
+              "total": 8
+            },
+            {
+              "expression": "1d20+6",
+              "modifier": 6,
+              "purpose": "Troll Claw attack",
+              "rolls": [
+                6
+              ],
+              "total": 12
+            }
+          ],
+          "dispositions": [
+            {
+              "disposition": "active",
+              "hp_current": 34,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 73,
+              "id": "Troll",
+              "is_player": false,
+              "name": "Troll"
+            }
+          ],
+          "ended": false,
+          "outcome": null,
+          "outcomes": [
+            {
+              "action": "attack",
+              "actor": "Troll",
+              "attack": "Bite",
+              "critical": false,
+              "damage": 6,
+              "damage_type": "piercing",
+              "hit": true,
+              "roll": 21,
+              "roll_mode": "normal",
+              "target_ac": 18
+            },
+            {
+              "action": "attack",
+              "actor": "Troll",
+              "attack": "Claw",
+              "critical": false,
+              "damage": 0,
+              "damage_type": "slashing",
+              "hit": false,
+              "roll": 8,
+              "roll_mode": "normal",
+              "target_ac": 18
+            },
+            {
+              "action": "attack",
+              "actor": "Troll",
+              "attack": "Claw",
+              "critical": false,
+              "damage": 0,
+              "damage_type": "slashing",
+              "hit": false,
+              "roll": 12,
+              "roll_mode": "normal",
+              "target_ac": 18
+            }
+          ],
+          "player_action": {
+            "action": "attack",
+            "damage": 4,
+            "hit": true,
+            "target": "Troll",
+            "target_disposition": "active"
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  },
+  "enemy_defeat_victory_with_suffix": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": "AC",
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": 0,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": null,
+        "spell_slots_expended": null
+      },
+      "check": "attack",
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "pending",
+      "conditions": [],
+      "damage": 10,
+      "dc": 1,
+      "dice_log": [
+        {
+          "expression": "1d20+5",
+          "modifier": 5,
+          "purpose": "attack check",
+          "rolls": [
+            13
+          ],
+          "total": 18
+        },
+        {
+          "expression": "1d8+3",
+          "modifier": 3,
+          "purpose": "player damage",
+          "rolls": [
+            7
+          ],
+          "total": 10
+        }
+      ],
+      "dice_result": 18,
+      "flags_cleared": [],
+      "flags_set": [
+        {
+          "key": "campaign_completion_proposed",
+          "value": "true"
+        }
+      ],
+      "mechanical_summary": "attack: 1d20+5 = 18 (d20 rolled 13) vs AC 1 -> success. Eda hits Goblin for 10 damage and it falls! All enemies are defeated. Victory! [The adventure appears to have reached its conclusion. Ask the player, in character, whether they want to end the campaign here; it only ends if they confirm.]",
+      "modifier": 5,
+      "natural_roll": 13,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": "1d20+5",
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 99,
+          "action_economy": {
+            "action": "attack",
+            "bonus_action": null,
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "active",
+          "hp_current": 500,
+          "hp_max": 500,
+          "init": 20,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false,
+          "surprised": false
+        },
+        {
+          "ac": 1,
+          "alive": false,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "disposition": "defeated",
+          "hp_current": 0,
+          "hp_max": 1,
+          "init": 1,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": true,
+          "is_player": false,
+          "name": "Goblin",
+          "reaction_used": false
+        }
+      ],
+      "current_turn": null,
+      "current_turn_index": 0,
+      "economy": {
+        "action": "attack",
+        "bonus_action": null,
+        "dodging": false,
+        "round": 1
+      },
+      "ended": true,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 99,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 500,
+          "hp_max": 500,
+          "id": "player",
+          "init": 20,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 1,
+          "alive": false,
+          "band": "melee",
+          "can_act": false,
+          "disposition": "defeated",
+          "effects": [],
+          "hp": 0,
+          "hp_max": 1,
+          "id": "Goblin",
+          "init": 1,
+          "is_player": false,
+          "name": "Goblin",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Goblin"
+      ],
+      "outcome": "victory",
+      "player_ac": 99,
+      "raging": false,
+      "round": 1,
+      "round_actors": [],
+      "second_wind_used": false,
+      "second_wind_uses_remaining": 1
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "normal",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.\n\n**Victory!** The way forward is clear.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "rule_queries": [
+      {
+        "query": "Making an Attack rules",
+        "references": [
+          "Making an Attack"
+        ]
+      }
+    ],
+    "rules_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [],
+          "dice_log": [
+            {
+              "expression": "1d20+5",
+              "modifier": 5,
+              "purpose": "attack check",
+              "rolls": [
+                13
+              ],
+              "total": 18
+            },
+            {
+              "expression": "1d8+3",
+              "modifier": 3,
+              "purpose": "player damage",
+              "rolls": [
+                7
+              ],
+              "total": 10
+            }
+          ],
+          "dispositions": [
+            {
+              "disposition": "active",
+              "hp_current": 500,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "defeated",
+              "hp_current": 0,
+              "id": "Goblin",
+              "is_player": false,
+              "name": "Goblin"
+            }
+          ],
+          "ended": true,
+          "outcome": "victory",
+          "outcomes": [],
+          "player_action": {
+            "action": "attack",
+            "damage": 10,
+            "hit": true,
+            "target": "Goblin",
+            "target_disposition": "defeated"
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  },
+  "enemy_turns_in_initiative_order": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": "AC",
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": 0,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": null,
+        "spell_slots_expended": null
+      },
+      "check": "attack",
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": 5,
+      "dc": 12,
+      "dice_log": [
+        {
+          "expression": "1d20+5",
+          "modifier": 5,
+          "purpose": "attack check",
+          "rolls": [
+            10
+          ],
+          "total": 15
+        },
+        {
+          "expression": "1d20+3",
+          "modifier": 3,
+          "purpose": "Wolf attack",
+          "rolls": [
+            8
+          ],
+          "total": 11
+        },
+        {
+          "expression": "1d8+3",
+          "modifier": 3,
+          "purpose": "player damage",
+          "rolls": [
+            2
+          ],
+          "total": 5
+        },
+        {
+          "expression": "1d20+3",
+          "modifier": 3,
+          "purpose": "Ogre attack",
+          "rolls": [
+            13
+          ],
+          "total": 16
+        }
+      ],
+      "dice_result": 15,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "Wolf misses Eda (rolled 11 vs AC 30). attack: 1d20+5 = 15 (d20 rolled 10) vs AC 12 -> success. Eda hits Ogre for 5 damage (25/30 HP left) Ogre misses Eda (rolled 16 vs AC 30).",
+      "modifier": 5,
+      "natural_roll": 10,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": "1d20+5",
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 12,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 9,
+          "hp_max": 9,
+          "init": 18,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Wolf",
+          "reaction_used": false,
+          "surprised": false
+        },
+        {
+          "ac": 30,
+          "action_economy": {
+            "action": "attack",
+            "bonus_action": null,
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "active",
+          "hp_current": 12,
+          "hp_max": 12,
+          "init": 10,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false,
+          "surprised": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 25,
+          "hp_max": 30,
+          "init": 2,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false,
+          "surprised": false
+        }
+      ],
+      "current_turn": "Eda",
+      "current_turn_index": 1,
+      "economy": {
+        "action": "attack",
+        "bonus_action": null,
+        "dodging": false,
+        "round": 1
+      },
+      "ended": false,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 12,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 9,
+          "hp_max": 9,
+          "id": "Wolf",
+          "init": 18,
+          "is_player": false,
+          "name": "Wolf",
+          "reaction_used": false
+        },
+        {
+          "ac": 30,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 12,
+          "hp_max": 12,
+          "id": "player",
+          "init": 10,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 25,
+          "hp_max": 30,
+          "id": "Ogre",
+          "init": 2,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "Wolf",
+        "player",
+        "Ogre"
+      ],
+      "outcome": null,
+      "player_ac": 30,
+      "raging": false,
+      "round": 2,
+      "round_actors": [
+        "Wolf",
+        "Ogre"
+      ],
+      "second_wind_used": false,
+      "second_wind_uses_remaining": 1
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "normal",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "rule_queries": [
+      {
+        "query": "Making an Attack rules",
+        "references": [
+          "Making an Attack"
+        ]
+      }
+    ],
+    "rules_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [
+            {
+              "id": "Wolf",
+              "name": "Wolf"
+            },
+            {
+              "id": "Ogre",
+              "name": "Ogre"
+            }
+          ],
+          "dice_log": [
+            {
+              "expression": "1d20+5",
+              "modifier": 5,
+              "purpose": "attack check",
+              "rolls": [
+                10
+              ],
+              "total": 15
+            },
+            {
+              "expression": "1d20+3",
+              "modifier": 3,
+              "purpose": "Wolf attack",
+              "rolls": [
+                8
+              ],
+              "total": 11
+            },
+            {
+              "expression": "1d8+3",
+              "modifier": 3,
+              "purpose": "player damage",
+              "rolls": [
+                2
+              ],
+              "total": 5
+            },
+            {
+              "expression": "1d20+3",
+              "modifier": 3,
+              "purpose": "Ogre attack",
+              "rolls": [
+                13
+              ],
+              "total": 16
+            }
+          ],
+          "dispositions": [
+            {
+              "disposition": "active",
+              "hp_current": 9,
+              "id": "Wolf",
+              "is_player": false,
+              "name": "Wolf"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 12,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 25,
+              "id": "Ogre",
+              "is_player": false,
+              "name": "Ogre"
+            }
+          ],
+          "ended": false,
+          "outcome": null,
+          "outcomes": [
+            {
+              "action": "attack",
+              "actor": "Wolf",
+              "attack": null,
+              "critical": false,
+              "damage": 0,
+              "damage_type": null,
+              "hit": false,
+              "roll": 11,
+              "roll_mode": "normal",
+              "target_ac": 30
+            },
+            {
+              "action": "attack",
+              "actor": "Ogre",
+              "attack": null,
+              "critical": false,
+              "damage": 0,
+              "damage_type": null,
+              "hit": false,
+              "roll": 16,
+              "roll_mode": "normal",
+              "target_ac": 30
+            }
+          ],
+          "player_action": {
+            "action": "attack",
+            "damage": 5,
+            "hit": true,
+            "target": "Ogre",
+            "target_disposition": "active"
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  },
+  "flee": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": null,
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": 0,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": null,
+        "spell_slots_expended": null
+      },
+      "check": null,
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": null,
+      "dc": null,
+      "dice_log": [],
+      "dice_result": null,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "Eda disengages and flees the fight. You break away from the fight and escape.",
+      "modifier": null,
+      "natural_roll": null,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": null,
+      "scene_id": null,
+      "story_effects": [],
+      "success": false
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 99,
+          "action_economy": {
+            "action": null,
+            "bonus_action": null,
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "active",
+          "hp_current": 500,
+          "hp_max": 500,
+          "init": 20,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false,
+          "surprised": false
+        },
+        {
+          "ac": 99,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 500,
+          "hp_max": 500,
+          "init": 1,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false
+        }
+      ],
+      "current_turn": null,
+      "current_turn_index": 0,
+      "economy": {
+        "action": null,
+        "bonus_action": null,
+        "dodging": false,
+        "round": 1
+      },
+      "ended": true,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 99,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 500,
+          "hp_max": 500,
+          "id": "player",
+          "init": 20,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 99,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 500,
+          "hp_max": 500,
+          "id": "Ogre",
+          "init": 1,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Ogre"
+      ],
+      "outcome": "fled",
+      "player_ac": 99,
+      "raging": false,
+      "round": 1,
+      "round_actors": [],
+      "second_wind_used": false,
+      "second_wind_uses_remaining": 1
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "normal",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.\n\n*(You have left the fight.)*",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [],
+    "rule_queries": [],
+    "rules_context": [],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [],
+          "dice_log": [],
+          "dispositions": [
+            {
+              "disposition": "active",
+              "hp_current": 500,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 500,
+              "id": "Ogre",
+              "is_player": false,
+              "name": "Ogre"
+            }
+          ],
+          "ended": true,
+          "outcome": "fled",
+          "outcomes": [],
+          "player_action": {
+            "action": "flee",
+            "result": "fled"
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  },
+  "plain_attack": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": "AC",
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": -6,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": null,
+        "spell_slots_expended": null
+      },
+      "check": "attack",
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": 6,
+      "dc": 12,
+      "dice_log": [
+        {
+          "expression": "1d20+5",
+          "modifier": 5,
+          "purpose": "attack check",
+          "rolls": [
+            8
+          ],
+          "total": 13
+        },
+        {
+          "expression": "1d8+3",
+          "modifier": 3,
+          "purpose": "player damage",
+          "rolls": [
+            3
+          ],
+          "total": 6
+        },
+        {
+          "expression": "1d20+3",
+          "modifier": 3,
+          "purpose": "Goblin attack",
+          "rolls": [
+            12
+          ],
+          "total": 15
+        },
+        {
+          "expression": "1d6+1",
+          "modifier": 1,
+          "purpose": "Goblin damage",
+          "rolls": [
+            5
+          ],
+          "total": 6
+        }
+      ],
+      "dice_result": 13,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "attack: 1d20+5 = 13 (d20 rolled 8) vs AC 12 -> success. Eda hits Goblin for 6 damage (3/9 HP left) Goblin hits Eda for 6 damage (rolled 15 vs AC 13).",
+      "modifier": 5,
+      "natural_roll": 8,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": "1d20+5",
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 13,
+          "action_economy": {
+            "action": "attack",
+            "bonus_action": null,
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "active",
+          "hp_current": 6,
+          "hp_max": 12,
+          "init": 20,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false,
+          "surprised": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 3,
+          "hp_max": 9,
+          "init": 5,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Goblin",
+          "reaction_used": false,
+          "surprised": false
+        }
+      ],
+      "current_turn": "Eda",
+      "current_turn_index": 0,
+      "economy": {
+        "action": "attack",
+        "bonus_action": null,
+        "dodging": false,
+        "round": 1
+      },
+      "ended": false,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 13,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 6,
+          "hp_max": 12,
+          "id": "player",
+          "init": 20,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 3,
+          "hp_max": 9,
+          "id": "Goblin",
+          "init": 5,
+          "is_player": false,
+          "name": "Goblin",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Goblin"
+      ],
+      "outcome": null,
+      "player_ac": 13,
+      "raging": false,
+      "round": 2,
+      "round_actors": [
+        "Goblin"
+      ],
+      "second_wind_used": false,
+      "second_wind_uses_remaining": 1
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "normal",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "rule_queries": [
+      {
+        "query": "Making an Attack rules",
+        "references": [
+          "Making an Attack"
+        ]
+      }
+    ],
+    "rules_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [
+            {
+              "id": "Goblin",
+              "name": "Goblin"
+            }
+          ],
+          "dice_log": [
+            {
+              "expression": "1d20+5",
+              "modifier": 5,
+              "purpose": "attack check",
+              "rolls": [
+                8
+              ],
+              "total": 13
+            },
+            {
+              "expression": "1d8+3",
+              "modifier": 3,
+              "purpose": "player damage",
+              "rolls": [
+                3
+              ],
+              "total": 6
+            },
+            {
+              "expression": "1d20+3",
+              "modifier": 3,
+              "purpose": "Goblin attack",
+              "rolls": [
+                12
+              ],
+              "total": 15
+            },
+            {
+              "expression": "1d6+1",
+              "modifier": 1,
+              "purpose": "Goblin damage",
+              "rolls": [
+                5
+              ],
+              "total": 6
+            }
+          ],
+          "dispositions": [
+            {
+              "disposition": "active",
+              "hp_current": 6,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 3,
+              "id": "Goblin",
+              "is_player": false,
+              "name": "Goblin"
+            }
+          ],
+          "ended": false,
+          "outcome": null,
+          "outcomes": [
+            {
+              "action": "attack",
+              "actor": "Goblin",
+              "attack": null,
+              "critical": false,
+              "damage": 6,
+              "damage_type": null,
+              "hit": true,
+              "roll": 15,
+              "roll_mode": "normal",
+              "target_ac": 13
+            }
+          ],
+          "player_action": {
+            "action": "attack",
+            "damage": 6,
+            "hit": true,
+            "target": "Goblin",
+            "target_disposition": "active"
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  },
+  "player_defeat": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": null,
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": -2,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": null,
+        "spell_slots_expended": null
+      },
+      "check": null,
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": null,
+      "dc": null,
+      "dice_log": [
+        {
+          "expression": "1d20+3",
+          "modifier": 3,
+          "purpose": "Ogre attack",
+          "rolls": [
+            5
+          ],
+          "total": 8
+        },
+        {
+          "expression": "1d6+1",
+          "modifier": 1,
+          "purpose": "Ogre damage",
+          "rolls": [
+            5
+          ],
+          "total": 6
+        }
+      ],
+      "dice_result": null,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "Ogre hits Eda for 6 damage (rolled 8 vs AC 5). Eda is overwhelmed and falls unconscious, subdued by the enemy.",
+      "modifier": null,
+      "natural_roll": null,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": null,
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 5,
+          "action_economy": {
+            "action": null,
+            "bonus_action": null,
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "unconscious",
+          "hp_current": 1,
+          "hp_max": 12,
+          "init": 20,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": false,
+          "surprised": false
+        },
+        {
+          "ac": 99,
+          "alive": true,
+          "attack_bonus": 3,
+          "damage_dice": "1d6+1",
+          "hp_current": 500,
+          "hp_max": 500,
+          "init": 1,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false,
+          "surprised": false
+        }
+      ],
+      "current_turn": null,
+      "current_turn_index": 0,
+      "economy": {
+        "action": null,
+        "bonus_action": null,
+        "dodging": false,
+        "round": 1
+      },
+      "ended": true,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 5,
+          "alive": true,
+          "band": null,
+          "can_act": false,
+          "disposition": "unconscious",
+          "effects": [],
+          "hp": 1,
+          "hp_max": 12,
+          "id": "player",
+          "init": 20,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 99,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 500,
+          "hp_max": 500,
+          "id": "Ogre",
+          "init": 1,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Ogre"
+      ],
+      "outcome": "defeat",
+      "player_ac": 5,
+      "raging": false,
+      "round": 1,
+      "round_actors": [
+        "Ogre"
+      ],
+      "second_wind_used": false,
+      "second_wind_uses_remaining": 1
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "normal",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.\n\n**Subdued.** You are overwhelmed and knocked unconscious — your story is not over, but you are at the enemy's mercy.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [],
+    "rule_queries": [],
+    "rules_context": [],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [
+            {
+              "id": "Ogre",
+              "name": "Ogre"
+            }
+          ],
+          "dice_log": [
+            {
+              "expression": "1d20+3",
+              "modifier": 3,
+              "purpose": "Ogre attack",
+              "rolls": [
+                5
+              ],
+              "total": 8
+            },
+            {
+              "expression": "1d6+1",
+              "modifier": 1,
+              "purpose": "Ogre damage",
+              "rolls": [
+                5
+              ],
+              "total": 6
+            }
+          ],
+          "dispositions": [
+            {
+              "disposition": "unconscious",
+              "hp_current": 1,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 500,
+              "id": "Ogre",
+              "is_player": false,
+              "name": "Ogre"
+            }
+          ],
+          "ended": true,
+          "outcome": "defeat",
+          "outcomes": [
+            {
+              "action": "attack",
+              "actor": "Ogre",
+              "attack": null,
+              "critical": false,
+              "damage": 6,
+              "damage_type": null,
+              "hit": true,
+              "roll": 8,
+              "roll_mode": "normal",
+              "target_ac": 5
+            }
+          ],
+          "player_action": {
+            "action": "check",
+            "success": null
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  },
+  "second_wind": {
+    "adjudication_result": {
+      "accepted_prepared_amendment": null,
+      "accepted_story_effects": [],
+      "against": null,
+      "character_update": {
+        "add_conditions": [],
+        "class_feature_uses": null,
+        "damage_dice": null,
+        "hit_dice_spent": null,
+        "hp_delta": 5,
+        "inventory_add": [],
+        "inventory_remove": [],
+        "remove_conditions": [],
+        "second_wind_uses_remaining": 0,
+        "spell_slots_expended": null
+      },
+      "check": null,
+      "citation_ids": [],
+      "citations": [],
+      "completion_status": "none",
+      "conditions": [],
+      "damage": null,
+      "dc": null,
+      "dice_log": [
+        {
+          "expression": "1d10+1",
+          "modifier": 1,
+          "purpose": "second wind",
+          "rolls": [
+            4
+          ],
+          "total": 5
+        },
+        {
+          "expression": "1d20-20",
+          "modifier": -20,
+          "purpose": "Ogre attack",
+          "rolls": [
+            10
+          ],
+          "total": -10
+        }
+      ],
+      "dice_result": null,
+      "flags_cleared": [],
+      "flags_set": [],
+      "mechanical_summary": "Eda uses Second Wind and regains 5 HP. Ogre misses Eda (rolled -10 vs AC 30).",
+      "modifier": null,
+      "natural_roll": null,
+      "proposed_prepared_amendment": null,
+      "rest_record": null,
+      "roll_expression": null,
+      "scene_id": null,
+      "story_effects": [],
+      "success": true
+    },
+    "adventure_context": [],
+    "allowed_scene_ids": [],
+    "combat_state": {
+      "combatants": [
+        {
+          "ac": 30,
+          "action_economy": {
+            "action": null,
+            "bonus_action": "Second Wind",
+            "dodging": false,
+            "round": 1
+          },
+          "alive": true,
+          "display_name": "Eda",
+          "disposition": "active",
+          "hp_current": 10,
+          "hp_max": 12,
+          "init": 20,
+          "init_bonus": 1,
+          "is_player": true,
+          "name": "player",
+          "second_wind_used": true,
+          "surprised": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "attack_bonus": -20,
+          "damage_dice": "1d6+1",
+          "hp_current": 30,
+          "hp_max": 30,
+          "init": 1,
+          "init_bonus": 1,
+          "initiative_bonus": 1,
+          "is_boss": false,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false,
+          "surprised": false
+        }
+      ],
+      "current_turn": "Eda",
+      "current_turn_index": 0,
+      "economy": {
+        "action": null,
+        "bonus_action": "Second Wind",
+        "dodging": false,
+        "round": 1
+      },
+      "ended": false,
+      "id": 7,
+      "initiative": [
+        {
+          "ac": 30,
+          "alive": true,
+          "band": null,
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 10,
+          "hp_max": 12,
+          "id": "player",
+          "init": 20,
+          "is_player": true,
+          "name": "Eda",
+          "reaction_used": false
+        },
+        {
+          "ac": 12,
+          "alive": true,
+          "band": "melee",
+          "can_act": true,
+          "disposition": "active",
+          "effects": [],
+          "hp": 30,
+          "hp_max": 30,
+          "id": "Ogre",
+          "init": 1,
+          "is_player": false,
+          "name": "Ogre",
+          "reaction_used": false
+        }
+      ],
+      "initiative_order": [
+        "player",
+        "Ogre"
+      ],
+      "outcome": null,
+      "player_ac": 30,
+      "raging": false,
+      "round": 2,
+      "round_actors": [
+        "Ogre"
+      ],
+      "second_wind_used": true,
+      "second_wind_uses_remaining": 0
+    },
+    "discovery_entities": [],
+    "engine_roll_mode": "normal",
+    "manifest_status": "review_required",
+    "messages": [
+      {
+        "additional_kwargs": {},
+        "content": "Scripted narration.",
+        "id": null,
+        "invalid_tool_calls": [],
+        "name": null,
+        "response_metadata": {},
+        "tool_calls": [],
+        "type": "ai",
+        "usage_metadata": null
+      }
+    ],
+    "narration": "Scripted narration.",
+    "planner_context": [],
+    "retrieval_degraded": false,
+    "retrieved_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "rule_queries": [
+      {
+        "query": "Second Wind rules",
+        "references": [
+          "Second Wind"
+        ]
+      }
+    ],
+    "rules_context": [
+      {
+        "kind": "rules",
+        "page": 1,
+        "source": "PHB",
+        "text": "Stub rule text."
+      }
+    ],
+    "source_status": [],
+    "telemetry_events": [
+      {
+        "event_type": "combat_round",
+        "payload": {
+          "actors": [
+            {
+              "id": "Ogre",
+              "name": "Ogre"
+            }
+          ],
+          "dice_log": [
+            {
+              "expression": "1d10+1",
+              "modifier": 1,
+              "purpose": "second wind",
+              "rolls": [
+                4
+              ],
+              "total": 5
+            },
+            {
+              "expression": "1d20-20",
+              "modifier": -20,
+              "purpose": "Ogre attack",
+              "rolls": [
+                10
+              ],
+              "total": -10
+            }
+          ],
+          "dispositions": [
+            {
+              "disposition": "active",
+              "hp_current": 10,
+              "id": "player",
+              "is_player": true,
+              "name": "Eda"
+            },
+            {
+              "disposition": "active",
+              "hp_current": 30,
+              "id": "Ogre",
+              "is_player": false,
+              "name": "Ogre"
+            }
+          ],
+          "ended": false,
+          "outcome": null,
+          "outcomes": [
+            {
+              "action": "attack",
+              "actor": "Ogre",
+              "attack": null,
+              "critical": false,
+              "damage": 0,
+              "damage_type": null,
+              "hit": false,
+              "roll": -10,
+              "roll_mode": "normal",
+              "target_ac": 30
+            }
+          ],
+          "player_action": {
+            "action": "none",
+            "bonus_action": {
+              "action": "second_wind",
+              "recovered": 5,
+              "result": "used"
+            },
+            "result": "down"
+          },
+          "round": 1,
+          "turn_id": null,
+          "version": 1
+        }
+      }
+    ]
+  }
+}
