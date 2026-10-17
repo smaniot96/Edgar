@@ -66,3 +66,35 @@ def test_alembic_accepts_url_encoded_credentials(monkeypatch) -> None:
     parsed = make_url(configured["url"])
     assert parsed.username == "user@tenant"
     assert parsed.password == "p@ss%word"
+
+
+def _load_config_with(monkeypatch, **env: str) -> dict:
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *_args, **_kwargs: False)
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    monkeypatch.delenv("REDIS_HOST", raising=False)
+    monkeypatch.delenv("REDIS_PORT", raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return runpy.run_path(config.__file__)
+
+
+def test_redis_url_stays_unauthenticated_without_a_password(monkeypatch) -> None:
+    loaded = _load_config_with(monkeypatch, REDIS_HOST="test-redis", REDIS_PORT="6390")
+
+    assert loaded["REDIS_PASSWORD"] == ""
+    assert loaded["REDIS_URL"] == "redis://test-redis:6390"
+
+
+def test_redis_url_carries_an_encoded_password(monkeypatch) -> None:
+    from redis import Redis
+
+    password = "p@ss:/?# word%+"
+    loaded = _load_config_with(
+        monkeypatch, REDIS_HOST="test-redis", REDIS_PORT="6390", REDIS_PASSWORD=password
+    )
+
+    # from_url only parses the URL; it does not open a connection.
+    kwargs = Redis.from_url(loaded["REDIS_URL"]).connection_pool.connection_kwargs
+    assert kwargs["password"] == password
+    assert kwargs["host"] == "test-redis"
+    assert kwargs["port"] == 6390
