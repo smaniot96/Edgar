@@ -1,6 +1,16 @@
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -8,7 +18,8 @@ from starlette.concurrency import run_in_threadpool
 from db.postgres.models import Campaign, CharacterAssignment
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
-from ..dependencies import current_user_id, get_session
+from ..dependencies import current_user_id, get_redis, get_session
+from ..limits import admit_job
 from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
 from ..services.campaign_completion import close_campaign, lock_campaign
 from ..services.campaign_sources import campaign_read, require_sources, validate_binding
@@ -210,17 +221,26 @@ async def recover_campaign_source(
     campaign_id: int,
     slug: str,
     background: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
 ):
     """Recover an unusable bound source at its original slug using the player's PDF.
 
     Bindings and session history stay intact. This does not replace a ready source and never
     synthesizes a lost PDF from old logs or metadata. Ingestion uses the existing pipeline.
+    Rate and job-concurrency limits apply (EDG-066).
     """
     from .adventures import recover_source_upload
 
-    campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
-    if slug not in campaign.adventure_collections:
-        raise HTTPException(status_code=422, detail="That source is not bound to this campaign.")
-    return await recover_source_upload(slug, file, background)
+    admission = await admit_job(request, redis)
+    try:
+        campaign = await get_or_404(db, Campaign, campaign_id, "Campaign")
+        if slug not in campaign.adventure_collections:
+            raise HTTPException(
+                status_code=422, detail="That source is not bound to this campaign."
+            )
+        return await recover_source_upload(slug, file, background, admission)
+    finally:
+        await admission.settle()
