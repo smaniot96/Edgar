@@ -1,0 +1,710 @@
+"""The player's action slot of one combat round (EDG-057 pass 2).
+
+`run_player_turn` resolves what the hero declared, in the order the round has always rolled dice: the
+bonus actions, Action Surge, declared movement (with opportunity attacks), then the action slot. The
+hero's end-of-turn checks run after the adjudication, in `finish_hero_turn`.
+
+The record (`RoundRecord`) is shared with the enemy phase and holds the values both phases write. The
+declaration (`Declaration`) holds what was decided before any die. This module rolls dice only through
+the engine helpers it calls, and decides no rule that is not already decided there.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Collection
+from dataclasses import dataclass, field
+from typing import Any
+
+from agent.action_economy import ACTION, SECOND_WIND, Declared
+from agent.class_features import (
+    ACTION_SURGE,
+    RAGE,
+    RAGE_ROUNDS,
+    SNEAK_ATTACK,
+    rage_damage_bonus,
+    sneak_attack_roll,
+    spend_use,
+)
+from agent.combat_declaration import Declaration
+from agent.combat_dice import _contest, _mode_log
+from agent.combat_enemy_turns import EnemyTurns
+from agent.combat_round_record import RoundRecord
+from agent.combatants import (
+    CombatManeuver,
+    add_effect,
+    apply_defeat,
+    attack_roll_mode,
+    can_act,
+    declared_lethality,
+    disposition_of,
+    has_effect,
+    impaired_checks,
+    is_standing,
+    release_effect,
+    stable_id,
+)
+from agent.conditions import (
+    apply_spell_condition,
+    consume_mark,
+    drop_concentration,
+    drop_concentration_if_incapacitated,
+    fear_refusal,
+    paralyzed_melee_crit,
+    spell_condition_sentence,
+    start_concentration,
+)
+from agent.models.parsed_input import ParsedInput
+from agent.monster_stats import (
+    adjust_monster_damage,
+    record_damage,
+    stats_of,
+    weapon_damage_type,
+)
+from agent.positioning import MELEE, RANGED, band_of
+from agent.resolution import (
+    SECOND_WIND_REFUSAL,
+    CheckResult,
+    check_spec,
+    choose_weapon,
+    heal_from_consumable,
+    resolve_attack,
+    resolve_from_parsed,
+    roll_attack_damage,
+    spend_second_wind,
+    wears_heavy_armor,
+)
+from agent.spells import CastPlan, narrate, resolve_spell
+
+
+@dataclass(frozen=True)
+class PlayerTurnInput:
+    """The hero's slot inputs that the record does not hold. All of them are decided before any die."""
+
+    decl: Declaration
+    player_input: str
+    parsed: ParsedInput
+    hp_max: int
+    cf_requested: Collection[str]  # class features the hero asked for this round (EDG-145)
+    cf_left: dict[str, int]  # class feature uses left; spent uses are written here
+    turns: EnemyTurns
+
+
+@dataclass(frozen=True)
+class PlayerTurnResult:
+    """What the hero's slot produced, read by the adjudication and the round's finalisation."""
+
+    player_acted: bool
+    player_action: dict
+    bonus_record: dict | None
+    check_result: CheckResult | None
+    dealt: int
+    inventory_used: list[str]
+    spell_expended: dict[str, int] | None
+    extra_outcome: str  # the bonus action's text and the action's text, joined as the summary reads them
+    declared: list[Declared]  # the economy slots this turn spent, with a refused one removed
+    later_swing_dice: list[dict]  # Action Surge and off-hand dice, appended unmerged (see the adjudication)
+
+
+@dataclass
+class _Turn:
+    """The slot's mutable working state. It is internal to this module; the result is the public output."""
+
+    rec: RoundRecord
+    inp: PlayerTurnInput
+    player_acted: bool = False
+    player_action: dict = field(default_factory=lambda: {"action": "none", "result": "down"})
+    bonus_text: str = ""
+    bonus_record: dict | None = None
+    extra_outcome: str = ""
+    check_result: CheckResult | None = None
+    dealt: int = 0
+    inventory_used: list[str] = field(default_factory=list)
+    spell_expended: dict[str, int] | None = None
+    declared: list[Declared] = field(default_factory=list)
+    later_swing_dice: list[dict] = field(default_factory=list)
+    sneak_used: bool = False
+    runtime_fear_blocked: bool = False
+    surge_swing: bool = False
+
+
+def _strike(
+    target: dict, amount: int, parsed: Any, player_input: str, damage_type: str | None = None
+) -> str:
+    """Apply an engine-rolled hit to an enemy; returns the status phrase for the round log."""
+    target["hp_current"] = max(0, int(target["hp_current"]) - amount)
+    record_damage(target, damage_type, amount)
+    if target["hp_current"] <= 0:
+        apply_defeat(target, declared_lethality(parsed, player_input))
+        if disposition_of(target) == "unconscious":
+            return "and it is knocked unconscious!"
+        return "and it falls!"
+    return f"({target['hp_current']}/{target['hp_max']} HP left)"
+
+
+def run_player_turn(rec: RoundRecord, inp: PlayerTurnInput) -> PlayerTurnResult:
+    """Resolve the hero's declared slot for this round and return what it produced."""
+    t = _Turn(rec=rec, inp=inp, declared=inp.decl.declared)
+    _start_slot(t)
+    _bonus_actions(t)
+    _action_surge(t)
+    _declared_moves(t)
+    _resolve_action(t)
+    return PlayerTurnResult(
+        player_acted=t.player_acted,
+        player_action=t.player_action,
+        bonus_record=t.bonus_record,
+        check_result=t.check_result,
+        dealt=t.dealt,
+        inventory_used=t.inventory_used,
+        spell_expended=t.spell_expended,
+        extra_outcome=" ".join(part for part in (t.bonus_text, t.extra_outcome) if part),
+        declared=t.declared,
+        later_swing_dice=t.later_swing_dice,
+    )
+
+
+def _start_slot(t: _Turn) -> None:
+    rec, inp = t.rec, t.inp
+    player, hero, combat_state = rec.player, rec.hero, rec.combat_state
+    decl = inp.decl
+    inp.turns.before_initiative_slot(player)
+    # An enemy ahead in initiative may have stunned the hero just now (EDG-043).
+    t.player_acted = (
+        rec.hp > 0
+        and not has_effect(player, "stunned")
+        and not has_effect(player, "paralyzed")
+        and not player.get("surprised")
+    )
+    # EDG-044: a Dodge lasts until the hero's next turn starts, which is here (after the foes that
+    # act ahead of the hero in initiative). A Dodge declared this turn applies to the foes after.
+    release_effect(player, "dodging")
+    if t.player_acted and decl.standing_up and release_effect(player, "prone"):
+        rec.log_lines.append(f"{hero} stands up and is no longer prone.")
+    # A rage lasts 1 minute (PHB, PDF p.49), counted from the round it began in.
+    if player.get("raging") and (
+        int(combat_state.get("round", 1) or 1) - int(player.get("rage_round") or 1) >= RAGE_ROUNDS
+    ):
+        player.pop("raging")
+        rec.log_lines.append(f"{hero}'s rage ends after 1 minute.")
+
+
+def _bonus_actions(t: _Turn) -> None:
+    """Bonus actions first (Second Wind, Healing Word, Rage): they sit beside the turn's action."""
+    rec, inp = t.rec, t.inp
+    player, character, hero = rec.player, rec.character, rec.hero
+    combat_state = rec.combat_state
+    decl = inp.decl
+    dice_log, log_lines = rec.dice_log, rec.log_lines
+    if t.player_acted and decl.wants_second_wind:
+        sw = spend_second_wind(character, remaining=rec.sw_left)
+        if sw is None:
+            # Refused without a roll: no uses left until a short or long rest. No bonus action is spent.
+            t.bonus_text = SECOND_WIND_REFUSAL.format(hero=hero)
+            t.bonus_record = {"action": "second_wind", "result": "already_used"}
+            t.declared = [d for d in t.declared if d is not SECOND_WIND]
+        else:
+            dice_log.append(sw.dice.to_log("second wind"))
+            rec.hp = min(inp.hp_max, rec.hp + sw.amount)
+            rec.sw_left -= 1
+            t.bonus_text = f"{hero} uses Second Wind and regains {sw.amount} HP."
+            t.bonus_record = {"action": "second_wind", "result": "used", "recovered": sw.amount}
+            rec.round_effects.append("bonus_action")
+        log_lines.append(t.bonus_text)
+    if t.player_acted and decl.bonus_spell is not None:
+        heal_result = resolve_spell(character, decl.bonus_spell)
+        dice_log += heal_result.dice_log
+        t.spell_expended = heal_result.expended
+        rec.hp = min(inp.hp_max, rec.hp + heal_result.healing)
+        t.bonus_text = narrate(heal_result, hero=hero, target=None)
+        t.bonus_record = {
+            "action": "catalog_spell",
+            "spell": heal_result.spec.name,
+            "healing": heal_result.healing,
+        }
+        rec.round_effects.append("bonus_action")
+        log_lines.append(t.bonus_text)
+    # Class features (EDG-145). Rage is a bonus action (EDG-044): it sits beside the turn's attack.
+    if t.player_acted and not rec.fled and RAGE in inp.cf_requested and not player.get("raging"):
+        if inp.cf_left.get(RAGE, 0) > 0:
+            inp.cf_left[RAGE] = spend_use(character, RAGE, inp.cf_left[RAGE])
+            player["raging"] = True
+            player["rage_round"] = int(combat_state.get("round", 1) or 1)
+            rec.round_effects.append(RAGE)
+            log_lines.append(
+                f"{hero} flies into a rage!"
+                + (" Heavy armor blocks its benefits." if wears_heavy_armor(character) else "")
+            )
+            t.bonus_record = t.bonus_record or {"action": "rage", "result": "started"}
+
+
+def _action_surge(t: _Turn) -> None:
+    """Action Surge adds a second swing, and only when the player attacks a foe (EDG-145)."""
+    rec, inp = t.rec, t.inp
+    decl = inp.decl
+    hero = rec.hero
+    t.surge_swing = bool(
+        t.player_acted
+        and not rec.fled
+        and decl.is_attack
+        and decl.target is not None
+        and ACTION_SURGE in inp.cf_requested
+        and inp.cf_left.get(ACTION_SURGE, 0) > 0
+    )
+    if t.surge_swing:
+        inp.cf_left[ACTION_SURGE] = spend_use(rec.character, ACTION_SURGE, inp.cf_left[ACTION_SURGE])
+        rec.round_effects.append(ACTION_SURGE)
+        rec.log_lines.append(f"{hero} uses Action Surge and gets one more attack.")
+
+
+def _declared_moves(t: _Turn) -> None:
+    """Declared moves happen before the action. Leaving a foe's melee band provokes one opportunity
+    attack from it, unless the hero took Disengage this turn (PHB p.192, p.195)."""
+    rec, inp = t.rec, t.inp
+    player, hero = rec.player, rec.hero
+    decl = inp.decl
+    moves, disengage, dash = decl.moves, decl.disengage, decl.dash
+    log_lines = rec.log_lines
+    if not (t.player_acted and not rec.fled):
+        return
+    actual_steps: list[tuple[str, list[dict]]] = []
+    for band, foes in moves.steps:
+        allowed: list[dict] = []
+        for foe in foes:
+            refusal_after_enemy_turn = (
+                fear_refusal(hero, player, [(band, [foe])])
+                if band == MELEE and band_of(foe) == RANGED
+                else None
+            )
+            if refusal_after_enemy_turn:
+                t.runtime_fear_blocked = True
+                moves.bands[id(foe)] = band_of(foe)
+                log_lines.append(f"{refusal_after_enemy_turn.split('. ')[0]}; {foe['name']} remains beyond 5 feet.")
+                continue
+            allowed.append(foe)
+            provoked = (
+                band == RANGED
+                and band_of(foe) == MELEE
+                and not disengage
+                and rec.hp > 0
+                and can_act(foe)
+                and not foe.get("surprised")
+                and not foe.get("reaction_used")
+            )
+            if provoked:
+                inp.turns.opportunity_attack(foe)
+            foe["band"] = band
+            moves.bands[id(foe)] = band
+        if allowed:
+            actual_steps.append((band, allowed))
+    moves.steps = actual_steps
+    if dash:
+        rec.round_effects.append("dash")
+    if disengage:
+        rec.round_effects.append("disengage")
+
+
+def _resolve_action(t: _Turn) -> None:
+    """The action slot: one branch per declared kind, the first that applies (the check is the fallback)."""
+    rec, inp = t.rec, t.inp
+    player, hero, character = rec.player, rec.hero, rec.character
+    decl = inp.decl
+    log_lines = rec.log_lines
+    if not t.player_acted:
+        if rec.hp > 0:
+            if player.get("surprised"):
+                t.player_action = {"action": "none", "result": "surprised"}
+                rec.round_effects.append("surprised")
+                log_lines.append(f"{hero} is surprised and cannot act on this first turn.")
+            elif has_effect(player, "paralyzed"):
+                t.player_action = {"action": "none", "result": "paralyzed"}
+                rec.round_effects.append("paralyzed")
+                log_lines.append(f"{hero} is paralyzed and cannot act.")
+            else:
+                t.player_action = {"action": "none", "result": "stunned"}
+                rec.round_effects.append("stunned")
+                log_lines.append(f"{hero} is stunned and cannot act.")
+        else:
+            log_lines.append(f"{hero} is down before they can act.")
+    elif rec.fled:
+        t.player_action = {"action": "flee", "result": "fled"}
+        log_lines.append(f"{hero} disengages and flees the fight.")
+    elif decl.missing_item:
+        wanted = getattr(inp.parsed, "uses_item", None) or "that item"
+        t.extra_outcome = f"{hero} reaches for {wanted}, but does not have it."
+        t.player_action = {"action": "item", "result": "not_carried"}
+        log_lines.append(t.extra_outcome)
+    elif decl.heal_item:
+        _healing_item(t, decl.heal_item)
+    elif decl.dodge:
+        add_effect(player, "dodging", source="dodge", round_applied=int(rec.combat_state.get("round", 1) or 1))
+        rec.round_effects.append("dodge")
+        t.extra_outcome = f"{hero} takes the Dodge action: attacks against {hero} have disadvantage until {hero}'s next turn."
+        log_lines.append(t.extra_outcome)
+    elif decl.spell_plan is not None and decl.spell_plan.spell.action == ACTION:
+        _catalog_spell(t, decl.spell_plan)
+    elif decl.spell_declared:
+        # Narrative ruling only; appended to the round summary below.
+        t.extra_outcome = ""
+        t.player_action = {"action": "declared_action", "result": "narrative_only"}
+    elif decl.combat_action is not None and decl.combat_action.kind == "release":
+        _release(t)
+    elif (
+        t.runtime_fear_blocked
+        and decl.target is not None
+        and not decl.is_spell
+        and not decl.attack_ranged
+        and (decl.is_attack or decl.combat_action is not None)
+        and band_of(decl.target) == RANGED
+    ):
+        target = decl.target
+        action_name = (
+            f"maneuver_{decl.combat_action.kind}" if decl.combat_action is not None else "attack"
+        )
+        t.player_action = {
+            "action": action_name,
+            "target": stable_id(target),
+            "result": "out_of_reach",
+        }
+        t.extra_outcome = (
+            f"{hero} cannot reach {target['name']} with a melee attack from beyond 5 feet."
+        )
+        log_lines.append(t.extra_outcome)
+    elif decl.combat_action is not None and decl.target is not None:
+        _maneuver(t, decl.combat_action, decl.target)
+    elif decl.is_attack and decl.target is not None:
+        _attack(t, decl.target)
+    elif (
+        decl.dash
+        or decl.disengage
+        or decl.moving
+        or decl.standing_up
+        or decl.wants_second_wind
+        or decl.bonus_spell is not None
+        or decl.rage_declared
+    ):
+        # A bonus action, a move, Dash or Disengage was declared and is resolved above (or costs no
+        # roll): the action is that, not a parsed check.
+        if decl.dash or decl.disengage:
+            t.player_action = {"action": "dash" if decl.dash else "disengage", "result": "taken"}
+        elif decl.moving:
+            t.player_action = {
+                "action": "move",
+                "result": "moved" if decl.moves.steps else "already_there",
+            }
+        elif decl.standing_up:
+            t.player_action = {"action": "stand_up", "result": "stood_up"}
+    else:
+        check_result, extra = resolve_from_parsed(
+            character, inp.parsed, player_input=inp.player_input, impaired=impaired_checks(player)
+        )
+        rec.dice_log.extend(extra)
+        t.player_action = {
+            "action": "check",
+            "success": check_result.success if check_result is not None else None,
+        }
+        t.check_result = check_result
+        if check_result is not None:
+            log_lines.append(check_result.describe() + ".")
+
+
+def _healing_item(t: _Turn, heal_item: str) -> None:
+    """A healing consumable that is actually carried; it is then removed from the inventory."""
+    rec = t.rec
+    hero, character = rec.hero, rec.character
+    heal = heal_from_consumable(character, heal_item)
+    if heal is not None:
+        if heal.dice is not None:
+            rec.dice_log.append(heal.dice.to_log(f"healing ({heal_item})"))
+        rec.hp = min(t.inp.hp_max, rec.hp + heal.amount)
+        t.inventory_used.append(heal_item)
+        t.extra_outcome = f"{hero} uses {heal_item} and regains {heal.amount} HP."
+        t.player_action = {"action": "item", "item": heal_item, "result": "healed", "healed": heal.amount}
+        rec.log_lines.append(t.extra_outcome)
+    else:
+        t.player_action = {"action": "item", "item": heal_item, "result": "no_effect"}
+
+
+def _catalog_spell(t: _Turn, spell_plan: CastPlan) -> None:
+    """Catalog spell: the engine rolls it; the slot is spent, and damage (if any) lands on the chosen
+    foe the same way a weapon hit does. An upcast spell reaches its extra foes, each with its own save,
+    from the one slot."""
+    rec, inp = t.rec, t.inp
+    player, hero, character = rec.player, rec.hero, rec.character
+    combat_state, enemies = rec.combat_state, rec.enemies
+    decl = inp.decl
+    spec = spell_plan.spell
+    log_lines = rec.log_lines
+    if spec.concentration:
+        # Casting a concentration spell ends the caster's earlier one (EDG-043).
+        if previous := drop_concentration(player, enemies):
+            log_lines.append(f"{hero}'s concentration on {previous} ends.")
+    applied_condition: str | None = None
+    dealt = t.dealt
+    rec.outcomes: list[str] = []
+    for spell_target in decl.spell_targets:
+        target_stats = stats_of(spell_target) if spell_target else None
+        if target_stats is not None:
+            save_bonus = target_stats.save_bonus(spell_plan.spell.save_ability or "DEX")
+        elif spell_target is not None and spell_plan.spell.save_ability == "DEX":
+            # A legacy foe has only its initiative (DEX) bonus; other saves stay unmodified.
+            save_bonus = int(spell_target.get("initiative_bonus", 0) or 0)
+        else:
+            save_bonus = 0
+        # Spell attacks are ranged: restraint/prone effects set advantage or disadvantage on them.
+        spell_mode = (
+            attack_roll_mode(
+                player,
+                spell_target,
+                ranged=True,
+                within_five_feet=band_of(spell_target) == MELEE,
+            )
+            if spell_target is not None and spell_plan.spell.kind == "attack"
+            else "normal"
+        )
+        rec.round_modes.append(spell_mode)
+        # A restrained foe makes its Dexterity saves at disadvantage (PHB Appendix A, PDF p.293).
+        save_mode = (
+            "disadvantage"
+            if spell_target is not None
+            and spell_plan.spell.save_ability == "DEX"
+            and has_effect(spell_target, "restrained")
+            else "normal"
+        )
+        spell_result = resolve_spell(
+            character,
+            spell_plan,
+            target_ac=int(spell_target.get("ac", 12)) if spell_target else None,
+            target_save_bonus=save_bonus,
+            save_mode=save_mode,
+            roll_mode=spell_mode,
+        )
+        rec.dice_log += spell_result.dice_log
+        t.spell_expended = spell_result.expended
+        target_name = spell_target["name"] if spell_target else None
+        extra_outcome = narrate(spell_result, hero=hero, target=target_name)
+        if spell_result.healing:
+            rec.hp = min(inp.hp_max, rec.hp + spell_result.healing)
+        if spell_result.damage and spell_target is not None:
+            spell_type = spell_plan.spell.damage_type
+            dealt, resist_note = adjust_monster_damage(
+                spell_target, spell_result.damage, spell_type, magical=True
+            )
+            status = _strike(spell_target, dealt, inp.parsed, inp.player_input, damage_type=spell_type)
+            inp.turns.monster_concentration_damage(spell_target, dealt)
+            extra_outcome = f"{extra_outcome}{resist_note} {status}"
+        if spell_target is not None and spell_result.attack is not None:
+            consume_mark(spell_target)  # the attack roll spends a mark it was made against
+        if spell_result.condition and spell_target is not None and is_standing(spell_target):
+            # A foe that the spell defeated keeps no condition (defeat clears effects anyway).
+            applied = apply_spell_condition(
+                spell_target,
+                spell_result.condition,
+                source=spec.name,
+                round_applied=int(combat_state.get("round", 1) or 1),
+                duration_rounds=spec.duration_rounds,
+                repeat_save=(
+                    {"ability": spec.save_ability, "dc": spell_result.save_dc}
+                    if spec.save_ability and spell_result.save_dc is not None
+                    else None
+                ),
+            )
+            if applied:
+                rec.round_effects.append(spell_result.condition)
+                applied_condition = spell_result.condition
+                if spec.concentration:
+                    start_concentration(
+                        player,
+                        spec.name,
+                        round_applied=int(combat_state.get("round", 1) or 1),
+                        duration_rounds=spec.duration_rounds,
+                    )
+                if ended_spell := drop_concentration_if_incapacitated(spell_target, [player]):
+                    log_lines.append(
+                        f"{spell_target['name']}'s concentration on {ended_spell} ends while incapacitated."
+                    )
+            extra_outcome = " ".join(
+                [
+                    extra_outcome,
+                    spell_condition_sentence(
+                        spell_result.condition, spell_target["name"], applied=applied
+                    ),
+                ]
+            )
+        rec.outcomes.append(extra_outcome)
+    extra_outcome = " ".join(rec.outcomes)
+    t.player_action = {
+        "action": "catalog_spell",
+        "spell": spell_result.spec.name,
+        "target": stable_id(decl.spell_targets[0]) if decl.spell_targets[0] else None,
+        "slot_level": spell_result.slot_level,
+        "damage": spell_result.damage,
+        "healing": spell_result.healing,
+        "condition": applied_condition,
+    }
+    if spell_result.attack is not None:
+        t.check_result = spell_result.attack
+        log_lines.append(f"{t.check_result.describe()}. {extra_outcome}")
+    else:
+        log_lines.append(extra_outcome)
+    t.extra_outcome = extra_outcome
+    t.dealt = dealt
+
+
+def _release(t: _Turn) -> None:
+    """Releasing a foe the hero has restrained (EDG-021)."""
+    rec, decl = t.rec, t.inp.decl
+    hero = rec.hero
+    t.player_action = {"action": "release", "result": "nothing_bound"}
+    if decl.release_target is None:
+        t.extra_outcome = f"{hero} has nothing bound to release."
+    else:
+        release_effect(decl.release_target, "restrained")
+        t.player_action = {
+            "action": "release",
+            "target": stable_id(decl.release_target),
+            "result": "released",
+        }
+        t.extra_outcome = f"{hero} releases {decl.release_target['name']}; it is no longer restrained."
+    rec.log_lines.append(t.extra_outcome)
+
+
+def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
+    """A contested Athletics maneuver against the foe's Dexterity (EDG-021). Engine dice decide it."""
+    rec = t.rec
+    player, hero, character = rec.player, rec.hero, rec.character
+    combat_state, log_lines = rec.combat_state, rec.log_lines
+    check_mode = "disadvantage" if impaired_checks(player) else "normal"
+    won, mine, theirs, mine_draws = _contest(
+        check_spec(character, "athletics").modifier,
+        int(target.get("initiative_bonus", 0) or 0),
+        attacker_mode=check_mode,
+    )
+    rec.dice_log.extend(
+        [
+            _mode_log(mine, "athletics contest", check_mode, mine_draws),
+            theirs.to_log(f"{target['name']} contest"),
+        ]
+    )
+    verdict = "success" if won else "failure"
+    contest_line = (
+        f"contest: {hero} athletics{f' at {check_mode}' if check_mode != 'normal' else ''} "
+        f"{mine.expression} = {mine.total} "
+        f"(d20 rolled {mine.rolls[0]}) vs {target['name']} {theirs.expression} = {theirs.total} "
+        f"(d20 rolled {theirs.rolls[0]}) -> {verdict}"
+    )
+    target_name = target["name"]
+    kind = combat_action.kind
+    if not won:
+        extra_outcome = f"{hero} fails to hold {target_name}."
+    elif add_effect(
+        target,
+        kind,
+        source=combat_action.source,
+        round_applied=int(combat_state.get("round", 1) or 1),
+    ):
+        rec.round_effects.append(kind)
+        if kind == "restrained":
+            extra_outcome = f"{hero} restrains {target_name} with {combat_action.source}."
+        else:
+            extra_outcome = f"{hero} shoves {target_name} prone."
+    else:
+        extra_outcome = f"{target_name} is already {'restrained' if kind == 'restrained' else 'prone'}."
+    t.player_action = {
+        "action": f"maneuver_{kind}",
+        "target": stable_id(target),
+        "won": bool(won),
+        "effect_applied": bool(won and kind in rec.round_effects),
+    }
+    log_lines.append(f"{contest_line}. {extra_outcome}")
+    t.extra_outcome = extra_outcome
+
+
+def _attack(t: _Turn, target: dict) -> None:
+    """One swing, or two with Action Surge (EDG-145), then the off-hand attack's bonus action (EDG-044).
+    Each swing rolls its own engine d20."""
+    rec, inp = t.rec, t.inp
+    player, hero, character = rec.player, rec.hero, rec.character
+    decl = inp.decl
+    parsed, player_input = inp.parsed, inp.player_input
+    dice_log, log_lines = rec.dice_log, rec.log_lines
+    ranged = decl.attack_ranged
+    off_weapon = decl.off_weapon
+    is_spell = decl.is_spell
+    any_hit = False
+    swings = [False] * (2 if t.surge_swing else 1) + ([True] if off_weapon else [])
+    for swing, off_hand_swing in enumerate(swings):
+        if off_hand_swing:
+            rec.round_effects.append("bonus_action")
+            t.bonus_record = {"action": "off_hand_attack", "weapon": off_weapon.name}
+        if swing and not is_standing(target):
+            # An earlier swing finished the foe; the later one has nothing to hit.
+            kind = "off-hand" if off_hand_swing else "extra"
+            log_lines.append(f"{hero}'s {kind} attack finds no foe left standing.")
+            break
+        mode = attack_roll_mode(
+            player,
+            target,
+            ranged=ranged,
+            within_five_feet=ranged and band_of(target) == MELEE,
+        )
+        attack = resolve_attack(
+            character,
+            int(target.get("ac", 12)),
+            spell=is_spell,
+            hint=off_weapon.name if off_hand_swing else player_input,
+            roll_mode=mode,
+        )
+        rec.round_modes.append(mode)
+        consume_mark(target)  # the attack roll spends a mark it was made against
+        if attack.success and has_effect(target, "paralyzed"):
+            weapon_name = (attack.weapon or choose_weapon(character, player_input)).name
+            if paralyzed_melee_crit(target, weapon_name=weapon_name, ranged=ranged, spell=is_spell):
+                attack.critical = True  # PHB Appendix A: a paralyzed foe's hit from 5 feet is a crit
+        if t.check_result is None:
+            t.check_result = attack
+        swing_log = dice_log if swing == 0 else t.later_swing_dice
+        if swing:
+            t.later_swing_dice.extend(attack.dice_log)
+        with_text = f" with the off-hand {off_weapon.name}" if off_hand_swing else ""
+        if attack.success:
+            any_hit = True
+            rage_bonus = rage_damage_bonus(character, attack, raging=bool(player.get("raging")))
+            swing_dealt, dmg_roll = roll_attack_damage(
+                character, attack, hint=player_input, bonus=rage_bonus, off_hand=off_hand_swing
+            )
+            swing_log.append(dmg_roll.to_log("player damage"))
+            sneak = sneak_attack_roll(character, attack, mode=mode, used=t.sneak_used)
+            notes = ""
+            if sneak is not None:
+                swing_log.append(sneak.to_log("sneak attack"))
+                swing_dealt += sneak.total
+                t.sneak_used = True
+                rec.round_effects.append(SNEAK_ATTACK)
+                notes += f" Sneak Attack adds {sneak.total}."
+            if rage_bonus:
+                notes += f" Rage adds {rage_bonus}."
+            weapon = attack.weapon or choose_weapon(character, player_input)
+            damage_type = weapon_damage_type(weapon.name)
+            swing_dealt, resist_note = adjust_monster_damage(
+                target, swing_dealt, damage_type, magical=False
+            )
+            t.dealt += swing_dealt
+            status = _strike(target, swing_dealt, parsed, player_input, damage_type=damage_type)
+            inp.turns.monster_concentration_damage(target, swing_dealt)
+            crit = "Critical hit! " if attack.critical else ""
+            swing_text = (
+                f"{crit}{hero} hits {target['name']}{with_text} for {swing_dealt} "
+                f"damage{resist_note} {status}{notes}"
+            )
+        else:
+            swing_text = f"{hero} misses {target['name']}{with_text}."
+        mode_text = "" if mode == "normal" else f" (at {mode})"
+        log_lines.append(f"{attack.describe()}{mode_text}. {swing_text}")
+        t.extra_outcome = " ".join(part for part in (t.extra_outcome, swing_text) if part)
+    t.player_action = {
+        "action": "spell" if is_spell else "attack",
+        "target": stable_id(target),
+        "hit": any_hit,
+        "damage": t.dealt,
+        "target_disposition": disposition_of(target),
+    }
