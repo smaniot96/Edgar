@@ -3,11 +3,15 @@ import type { ReactNode } from "react";
 
 import type {
   AdjudicationResult,
+  CombatRoundDiagnostics,
   CombatState,
   DebugPayload,
   RetrievedChunk,
   TurnDiagnostics,
+  TurnTraceRag,
+  TurnTraceRecord,
 } from "../api/types";
+import type { TraceState } from "../components/play/turnState";
 import { cn } from "../lib/cn";
 import {
   UNKNOWN,
@@ -209,6 +213,148 @@ function TurnDiagnosticsBlock({ diag }: { diag: TurnDiagnostics }) {
   );
 }
 
+/** Why a reloaded or live DM turn has no stored trace. Honest per state, never a guess (EDG-138). */
+function traceReason(trace: TraceState | null | undefined): string {
+  switch (trace?.status) {
+    case "loading":
+      return "Loading the stored developer trace for this turn…";
+    case "not_captured":
+      return "No developer trace was stored for this turn: it was sent in User mode, or it predates trace capture (legacy).";
+    case "older_than_window":
+      return "This turn is older than the loaded trace window, so its trace was not fetched.";
+    case "disabled":
+      return "Developer debug is off on this server, so no trace is stored or available.";
+    case "failed":
+      return "The stored developer trace could not be loaded. Reload the session to retry.";
+    default:
+      return "No debug captured for this turn (sent in User mode).";
+  }
+}
+
+/** A stored chunk: text only where the server kept it (player audience); citations always. */
+function TraceChunkList({ label, side }: { label: string; side: TurnTraceRag }) {
+  const empty = side.count === 0;
+  return (
+    <div className="mt-1">
+      <div
+        className={cn(
+          "mb-1 inline-block rounded px-1.5 py-0.5 text-xs font-semibold",
+          empty ? "bg-red-900/50 text-red-200" : "bg-surface text-ink-muted",
+        )}
+      >
+        {label}: {empty ? "0 retrieved ⚠" : `${side.count} retrieved`}
+        {side.chunks_dropped > 0 ? ` · ${side.chunks_dropped} not stored` : ""}
+      </div>
+      {side.chunks.length === 0 ? null : (
+        <ol className="flex flex-col gap-1.5">
+          {side.chunks.map((c, i) => (
+            <li key={i} className="rounded border border-line bg-surface-sunken p-2 text-xs">
+              <div className="mb-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-ink-subtle">
+                <span>#{i + 1}</span>
+                <span>{c.collection ?? "—"}</span>
+                <span>score {typeof c.score === "number" ? c.score.toFixed(3) : "—"}</span>
+                <span>{c.source ?? "—"}</span>
+                {c.page != null ? <span>p.{c.page}</span> : null}
+                <span>edition {c.citation.rules_edition ?? "—"}</span>
+                <span>{c.citation.edition_status ?? "—"}</span>
+                {c.citation.source_sha256 ? (
+                  <span>source {c.citation.source_sha256.slice(0, 12)}</span>
+                ) : null}
+              </div>
+              {c.text_withheld ? (
+                <div className="italic text-ink-subtle">
+                  Text not stored: planner-only or non-player source.
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap break-words font-mono text-ink/85">{c.text ?? ""}</div>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function CombatRoundSummary({ round }: { round: CombatRoundDiagnostics }) {
+  return (
+    <div className="text-xs">
+      <div className="mb-1 flex flex-wrap gap-x-3 gap-y-0.5">
+        <KV k="round" v={mono(round.round)} />
+        <KV k="ended" v={mono(round.ended)} />
+        <KV k="outcome" v={mono(round.outcome)} />
+        <KV k="dice" v={`${round.dice_log.length} roll(s)`} />
+      </div>
+      <KV k="actors" v={round.actors.map((a) => a.name).join(", ") || "—"} />
+      {round.timings_unavailable.length > 0 ? (
+        <KV k="timings unavailable" v={list(round.timings_unavailable)} />
+      ) : null}
+    </div>
+  );
+}
+
+/** The sections a stored trace reloads into. Companion rows are shown as stored, never recomputed. */
+function StoredTraceSections({ record }: { record: TurnTraceRecord }) {
+  const trace = record.trace;
+  if (!trace) return null;
+  const parsed = trace.parsed_input;
+  const rag = trace.rag;
+  return (
+    <>
+      <Section title="Intent (stored)">
+        {parsed ? (
+          <>
+            <KV k="intent" v={mono(parsed.intent)} />
+            <KV k="check" v={mono(parsed.check)} />
+            <KV k="difficulty" v={mono(parsed.difficulty)} />
+            <KV k="target" v={mono(parsed.target)} />
+            <KV k="retrieval_query" v={mono(parsed.retrieval_query)} />
+            <KV k="uses_item" v={mono(parsed.uses_item)} />
+            <KV k="lethality" v={mono(parsed.lethality)} />
+            <KV k="confirms_ending" v={mono(parsed.confirms_ending)} />
+            <KV k="entities" v={mono(parsed.entities)} />
+          </>
+        ) : (
+          <span className="text-ink-subtle">no parsed_input</span>
+        )}
+      </Section>
+      <Section title="RAG retrieval (stored)" warn={rag.rules.count === 0 || rag.adventure.count === 0}>
+        <TraceChunkList label="Rules" side={rag.rules} />
+        <TraceChunkList label="Adventure" side={rag.adventure} />
+      </Section>
+      <Section title="Model & settings (stored)" defaultOpen={false}>
+        <KV k="narrator profile" v={mono(trace.settings.narrator_profile)} />
+        <KV k="rules edition" v={mono(trace.settings.rules_edition)} />
+        <KV k="source mode" v={mono(trace.settings.source_mode)} />
+        <KV k="profile version" v={mono(trace.settings.profile_version)} />
+        {Object.entries(trace.settings.profiles).map(([name, p]) => (
+          <KV
+            key={name}
+            k={name}
+            v={`${p.model ?? "—"} · effort ${p.reasoning_effort ?? "—"} · ${p.api ?? "—"}`}
+          />
+        ))}
+      </Section>
+      <Section title="Latency, usage & cost (stored)" defaultOpen={false}>
+        {record.turn_diagnostics ? (
+          <TurnDiagnosticsBlock diag={record.turn_diagnostics} />
+        ) : (
+          <span className="text-ink-subtle">{UNKNOWN}: no measurement stored for this turn</span>
+        )}
+      </Section>
+      <Section title="Combat round (stored)" defaultOpen={false}>
+        {record.combat_round ? (
+          <CombatRoundSummary round={record.combat_round} />
+        ) : (
+          <span className="text-ink-subtle">
+            {trace.path === "combat" ? "No combat round row stored for this turn." : "Not a combat turn."}
+          </span>
+        )}
+      </Section>
+    </>
+  );
+}
+
 /**
  * Collapsible developer panel rendered under a DM message in dev mode. Shows
  * everything captured for the turn so correctness can be verified at a glance.
@@ -216,29 +362,42 @@ function TurnDiagnosticsBlock({ diag }: { diag: TurnDiagnostics }) {
 export function DevPanel({
   debug,
   adjudication,
+  trace,
 }: {
   debug?: DebugPayload | null;
   adjudication?: AdjudicationResult | null;
+  /** Stored trace state for a reloaded DM turn (EDG-138); absent for a live turn. */
+  trace?: TraceState | null;
 }) {
-  if (!debug && !adjudication) {
+  const stored = trace?.status === "captured" ? trace.record : null;
+  if (!debug && !adjudication && !stored) {
     return (
       <div className="mr-auto mt-1 max-w-[820px] rounded-md border border-ember-900/60 bg-surface-sunken px-3 py-2 text-xs italic text-ink-subtle">
-        🔧 No debug captured for this turn (sent in User mode).
+        🔧 {traceReason(trace)}
       </div>
     );
   }
 
   const cu = adjudication?.character_update ?? null;
   const timings = debug?.timings_ms ?? {};
+  const storedTrace = stored?.trace ?? null;
+  const storedModel = storedTrace
+    ? storedTrace.settings.profiles[storedTrace.settings.narrator_profile]?.model
+    : undefined;
 
   return (
     <div className="mr-auto mt-1 w-full max-w-[820px] overflow-hidden rounded-md border border-ember-900/60 bg-canvas text-xs">
       <div className="flex items-center gap-2 border-b border-ember-900/60 bg-ember-950/30 px-3 py-1.5 font-semibold text-ember-200">
         <span>🔧 Dev panel</span>
-        {debug?.model ? (
-          <span className="ml-auto font-mono text-ink-muted">{debug.model}</span>
+        {debug?.model || storedModel ? (
+          <span className="ml-auto font-mono text-ink-muted">{debug?.model ?? storedModel}</span>
         ) : null}
       </div>
+
+      {!debug && !stored ? (
+        <div className="border-b border-line px-3 py-1.5 italic text-ink-subtle">{traceReason(trace)}</div>
+      ) : null}
+      {!debug && stored ? <StoredTraceSections record={stored} /> : null}
 
       {debug?.parsed_input !== undefined ? (
         <Section title="Intent">
@@ -344,7 +503,11 @@ export function DevPanel({
         <details>
           <summary className="cursor-pointer text-ink-subtle">Show raw JSON</summary>
           <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-sunken p-2 font-mono text-[11px] text-ink/85">
-            {JSON.stringify({ debug: debug ?? null, adjudication: adjudication ?? null }, null, 2)}
+            {JSON.stringify(
+              { debug: debug ?? null, adjudication: adjudication ?? null, trace: stored ?? null },
+              null,
+              2,
+            )}
           </pre>
         </details>
       </Section>
