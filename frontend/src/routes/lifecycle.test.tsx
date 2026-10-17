@@ -355,8 +355,7 @@ it.fails("a retried generate request carries the same identity as the failed att
   expect((posts[1].body as { request_id?: unknown }).request_id).toBe((posts[0].body as { request_id?: unknown }).request_id);
 });
 
-// Known gap (see report): usePlaySession.refreshReadiness sends no AbortSignal, so unmount cannot cancel it.
-it.fails("unmounting while a readiness refresh is in flight aborts that refresh", async () => {
+it("unmounting while a readiness refresh is in flight aborts that refresh", async () => {
   const { usePlaySession } = await import("../components/play/usePlaySession");
   function ReadinessProbe() {
     const game = usePlaySession(1);
@@ -367,8 +366,10 @@ it.fails("unmounting while a readiness refresh is in flight aborts that refresh"
       </>
     );
   }
+  let sessionReads = 0;
   const { calls } = installFakeApi([
-    [/^GET \/api\/sessions\/1$/, (call) => (call.signal ? json(session({ id: 1, campaign_id: 2 })) : HOLD)],
+    // The boot read is answered; the refresh that follows stays in flight until aborted.
+    [/^GET \/api\/sessions\/1$/, () => (++sessionReads === 1 ? json(session({ id: 1, campaign_id: 2 })) : HOLD)],
     [/^GET \/api\/campaigns\/2$/, () => json(campaign({ id: 2, title: "Lost module" }))],
     [/^GET \/api\/sessions\/1\/messages$/, () => json([])],
     [/^GET \/api\/sessions\/1\/combat$/, noCombat],
