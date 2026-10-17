@@ -191,6 +191,38 @@ from edgar_core.log_safety import error_summary
 from edgar_core.safe_errors import provider_error_code
 from tools.dice import roll
 
+# Public names other modules and tests import from here. Kept explicit so a future import
+# cleanup cannot drop one; each is defined in the combat_* modules above or in this file.
+__all__ = [
+    "ENCOUNTER_BUILDER",
+    "EncounterSetup",
+    "EnemyStat",
+    "MAX_COMBAT_ROUNDS",
+    "PENDING_ROUND_NARRATION_KEY",
+    "PendingRoundNarration",
+    "SECOND_WIND_AUTO_AT_ZERO_HP",
+    "_build_enemy_roster",
+    "_creature_source_reference",
+    "_exact_enemy",
+    "_inert_npc_names",
+    "_monster_context",
+    "_name_matches",
+    "_player_ac",
+    "build_combat_subgraph",
+    "captive_turn_for_state",
+    "classify_disposition",
+    "combat_round_node",
+    "finalize_round_narration",
+    "initiative_view",
+    "is_flee",
+    "narrator_request",
+    "resolve_creature",
+    "roll",
+    "roll_initiative",
+    "select_target",
+    "world_retriever_node",
+]
+
 log = logging.getLogger(__name__)
 
 # Hard cap so a runaway encounter cannot loop forever; reaching it ends combat as a stalemate.
