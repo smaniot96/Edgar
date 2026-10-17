@@ -24,12 +24,16 @@ def _call(action, *args, **kwargs):
     try:
         return action(*args, **kwargs)
     except (ValueError, OSError, KeyError) as exc:
+        # Validation messages are written for the host. I/O and lookup errors can carry file
+        # paths or internal keys, so those get a fixed safe message instead.
+        message = (
+            str(exc)
+            if isinstance(exc, ValueError)
+            else "The adventure review data could not be read. Reload the draft and try again."
+        )
         raise HTTPException(
             status_code=409,
-            detail={
-                "code": "adventure_manifest_review_required",
-                "message": str(exc),
-            },
+            detail={"code": "adventure_manifest_review_required", "message": message},
         ) from exc
 
 
