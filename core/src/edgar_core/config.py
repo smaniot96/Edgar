@@ -57,6 +57,52 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-6-luna")
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "low")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
+# Request, upload, concurrency and spend limits (EDG-066). Non-secret integers only; defaults are
+# documented in docs/request-limits.md. A malformed value fails at import, naming the setting but
+# never echoing its value.
+
+
+def _int_setting(name: str, default: int, *, minimum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return value
+
+
+# Per client (IP until EDG-065 supplies a user id): play turns, intro and sync/stream turns.
+LIMIT_TURNS_PER_MINUTE = _int_setting("LIMIT_TURNS_PER_MINUTE", 30, minimum=1)
+# Per client: starts of paid or heavy background work (upload, recovery, AI generation, preparation).
+LIMIT_JOB_STARTS_PER_HOUR = _int_setting("LIMIT_JOB_STARTS_PER_HOUR", 20, minimum=1)
+# Concurrent turn leases across all replicas, and per client.
+LIMIT_MAX_CONCURRENT_TURNS = _int_setting("LIMIT_MAX_CONCURRENT_TURNS", 8, minimum=1)
+LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT = _int_setting(
+    "LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT", 4, minimum=1
+)
+# Concurrent background jobs (ingestion, generation, preparation) across all replicas.
+LIMIT_MAX_CONCURRENT_JOBS = _int_setting("LIMIT_MAX_CONCURRENT_JOBS", 4, minimum=1)
+# Largest accepted PDF upload, in bytes (64 MiB).
+LIMIT_MAX_UPLOAD_BYTES = _int_setting("LIMIT_MAX_UPLOAD_BYTES", 64 * 1024 * 1024, minimum=1024 * 1024)
+# UTC-day ceiling for provider spend, in USD micro-units (50 USD).
+LIMIT_DAILY_SPEND_MICROUSD = _int_setting("LIMIT_DAILY_SPEND_MICROUSD", 50_000_000, minimum=1)
+# Charged for a provider call whose cost is unknown, and for an intro generation.
+LIMIT_ASSUMED_CALL_COST_MICROUSD = _int_setting(
+    "LIMIT_ASSUMED_CALL_COST_MICROUSD", 100_000, minimum=1
+)
+# Reserved against the daily ceiling for a job that declares no preparation budget.
+LIMIT_UNBUDGETED_JOB_COST_MICROUSD = _int_setting(
+    "LIMIT_UNBUDGETED_JOB_COST_MICROUSD", 500_000, minimum=1
+)
+# Lease lifetimes. A lease whose holder dies is freed after its lifetime; a live holder is never
+# cut short by it, but a slot can be counted free for a moment after a very long job.
+LIMIT_TURN_LEASE_SECONDS = _int_setting("LIMIT_TURN_LEASE_SECONDS", 300, minimum=30)
+LIMIT_JOB_LEASE_SECONDS = _int_setting("LIMIT_JOB_LEASE_SECONDS", 7200, minimum=60)
+
 # Memory-summary jobs allowed to run at once in this API process (each holds a provider call).
 # Excess jobs wait without a database connection; see apps/api/services/session_messages.py.
-MEMORY_SUMMARY_CONCURRENCY = max(1, int(os.getenv("EDGAR_MEMORY_SUMMARY_CONCURRENCY", "2")))
+MEMORY_SUMMARY_CONCURRENCY = _int_setting("EDGAR_MEMORY_SUMMARY_CONCURRENCY", 2, minimum=1)

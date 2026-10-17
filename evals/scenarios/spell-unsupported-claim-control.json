@@ -1,0 +1,27 @@
+{
+  "id": "spell-unsupported-claim-control",
+  "version": "1.0.0",
+  "title": "Negative control: unsupported spell narrated as working",
+  "description": "Negative control. The same unsupported spell is narrated as paralysing the goblin. The narration guard must remove that claim, so fidelity.claimed_effects fails.",
+  "player_input": "I cast Wish on the goblin to stop it.",
+  "character": {"name": "Lyra", "class": "Wizard", "level": 5, "hp_current": 22, "hp_max": 22},
+  "engine": {
+    "roll_mode": "normal",
+    "effects": [],
+    "check_rolled": false,
+    "success": null,
+    "hp_after": {"Lyra": 22, "Goblin": 7}
+  },
+  "combatants": [
+    {"name": "Lyra", "is_player": true, "hp_current": 22, "disposition": "active"},
+    {"name": "Goblin", "hp_current": 7, "disposition": "active"}
+  ],
+  "scripted": {
+    "play.parser": {"intent": "combat", "check": null, "difficulty": null, "target": "goblin", "retrieval_query": "wish spell", "entities": {"spell": "Wish"}},
+    "play.consequence_planner": {"success": true, "mechanical_summary": "Lyra casts Wish on the goblin. The engine has no effect for this spell, so the goblin is unchanged."},
+    "play.narrator": "You speak the word and the air hums. The goblin is paralyzed and cannot move. It glares at you over its bared teeth."
+  },
+  "agency": {"expected_intent": "combat", "must_mention": ["goblin"]},
+  "expect": {"fidelity.roster": true, "fidelity.claimed_effects": false, "fidelity.mechanics_summary": true},
+  "labels": ["spell", "boundary", "negative-control"]
+}

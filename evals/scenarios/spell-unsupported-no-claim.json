@@ -1,0 +1,23 @@
+{
+  "id": "spell-unsupported-no-claim",
+  "version": "1.0.0",
+  "title": "Unsupported spell narrated as attempt only",
+  "description": "The player casts a spell the engine does not resolve. The honest narration describes the attempt and nothing else; the boundary must have nothing to remove.",
+  "player_input": "I cast Wish to bring my brother back.",
+  "character": {"name": "Lyra", "class": "Wizard", "level": 5, "hp_current": 22, "hp_max": 22},
+  "engine": {
+    "roll_mode": "normal",
+    "effects": [],
+    "check_rolled": false,
+    "success": null,
+    "hp_after": {"Lyra": 22}
+  },
+  "scripted": {
+    "play.parser": {"intent": "exploration", "check": null, "difficulty": null, "target": null, "retrieval_query": "wish spell", "entities": {"spell": "Wish"}},
+    "play.consequence_planner": {"success": true, "mechanical_summary": "Lyra attempts to cast Wish. The engine has no effect for this spell, so nothing changes."},
+    "play.narrator": "You begin the words, but nothing answers them and your brother stays where he is. The attempt leaves you tired and empty-handed. What do you do next?"
+  },
+  "agency": {"expected_intent": "exploration", "must_mention": ["brother"]},
+  "expect": {"fidelity.roster": true, "fidelity.claimed_effects": true, "fidelity.mechanics_summary": true},
+  "labels": ["spell", "boundary", "unsupported"]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "exploration-search-chest",
+  "version": "1.0.0",
+  "title": "Searching a chest for traps",
+  "description": "A successful perception check finds no trap. The narration should follow the engine outcome and name the chest; the summary must keep its roll line.",
+  "player_input": "I search the chest for traps, then open it.",
+  "character": {"name": "Lyra", "class": "Fighter", "level": 3, "hp_current": 22, "hp_max": 24},
+  "engine": {
+    "roll_mode": "normal",
+    "effects": [],
+    "check_rolled": true,
+    "success": true,
+    "hp_after": {"Lyra": 22}
+  },
+  "scripted": {
+    "play.parser": {"intent": "exploration", "check": "perception", "difficulty": "easy", "target": "chest", "retrieval_query": "perception check trapped chest", "entities": {}},
+    "play.consequence_planner": {"success": true, "mechanical_summary": "Lyra searches the chest for traps (d20 rolled 14 + 3 = 17 vs DC 12 -> success). No trap is found."},
+    "play.narrator": "You run your fingers along the chest's hinges and find no wire and no needle. The lid lifts with a soft creak, and inside lies a folded cloak. Where do you go next?"
+  },
+  "agency": {"expected_intent": "exploration", "must_mention": ["chest"]},
+  "expect": {"fidelity.roster": true, "fidelity.claimed_effects": true, "fidelity.mechanics_summary": true, "agency.consequence_tied": true},
+  "labels": ["exploration", "mechanics-summary"]
+}

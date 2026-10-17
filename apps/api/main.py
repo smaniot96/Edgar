@@ -20,6 +20,12 @@ from starlette.exceptions import HTTPException
 from edgar_core.config import API_TITLE, API_VERSION
 from edgar_core.model_profiles import validate_provider_configuration
 
+from .limits import (
+    LimitRejected,
+    UploadSizeLimitMiddleware,
+    limit_rejection_response,
+    validate_limit_configuration,
+)
 from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
 from .routers._common import HTTPErrorWithContext
 from .routers.adventure_manifests import router as adventure_manifests_router
@@ -30,6 +36,7 @@ from .routers.character import router as character_router
 from .routers.character_presets import router as character_presets_router
 from .routers.health import router as health_router
 from .routers.journal import router as journal_router
+from .routers.limits import router as limits_router
 from .routers.metrics import router as metrics_router
 from .routers.npc import router as npc_router
 from .routers.rules import router as rules_router
@@ -48,6 +55,7 @@ async def lifespan(app: FastAPI):
     configure_logging()
     # Fail before any background work when local provider settings are unusable.
     log.info("provider_configuration_validated", **validate_provider_configuration())
+    log.info("limits_configured", **validate_limit_configuration())
     # Background ingest/generation tasks die with the process; flag the ones a previous run
     # left in "processing" as failed so the UI can offer a retry instead of spinning forever.
     from .services.adventures_meta import fail_stale_processing
@@ -77,6 +85,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=API_TITLE, version=API_VERSION, lifespan=lifespan)
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(UploadSizeLimitMiddleware)
 
 
 @app.exception_handler(HTTPErrorWithContext)
@@ -97,6 +106,12 @@ async def http_error_with_context_handler(request: Request, exc: HTTPErrorWithCo
         content={**failure.to_payload(), **context},
         headers=exc.headers,
     )
+
+
+@app.exception_handler(LimitRejected)
+async def limit_rejected_handler(request: Request, exc: LimitRejected):
+    """Refused before any paid or heavy work: the shared safe payload with a Retry-After hint."""
+    return limit_rejection_response(exc)
 
 
 @app.exception_handler(RequestValidationError)
@@ -157,6 +172,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(journal_router, prefix="/api")
+app.include_router(limits_router, prefix="/api")
 app.include_router(adventures_router, prefix="/api")
 app.include_router(adventure_manifests_router, prefix="/api")
 app.include_router(campaign_router, prefix="/api")
