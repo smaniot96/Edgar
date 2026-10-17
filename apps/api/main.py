@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -20,6 +20,7 @@ from starlette.exceptions import HTTPException
 from edgar_core.config import API_TITLE, API_VERSION
 from edgar_core.model_profiles import validate_provider_configuration
 
+from .auth import require_authentication, validate_auth_configuration
 from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
 from .routers._common import HTTPErrorWithContext
 from .routers.adventure_manifests import router as adventure_manifests_router
@@ -46,6 +47,8 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    # Fail before any background work when the auth mode or its required settings are unsafe.
+    log.info("auth_configuration_validated", **validate_auth_configuration())
     # Fail before any background work when local provider settings are unusable.
     log.info("provider_configuration_validated", **validate_provider_configuration())
     # Background ingest/generation tasks die with the process; flag the ones a previous run
@@ -154,22 +157,27 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
+# Every /api route is guarded by the same dependency: in token mode it demands a bearer token,
+# in local mode it is a no-op. Health/readiness and the UI are the only public routes (see
+# tests/test_route_auth_matrix.py, which fails when a route is neither guarded nor allow-listed).
+API_AUTH = [Depends(require_authentication)]
+
 app.include_router(health_router)
 app.include_router(metrics_router)
-app.include_router(journal_router, prefix="/api")
-app.include_router(adventures_router, prefix="/api")
-app.include_router(adventure_manifests_router, prefix="/api")
-app.include_router(campaign_router, prefix="/api")
-app.include_router(campaign_characters_router, prefix="/api")
-app.include_router(character_router, prefix="/api")
-app.include_router(character_presets_router, prefix="/api")
-app.include_router(npc_router, prefix="/api")
-app.include_router(rules_router, prefix="/api")
-app.include_router(seed_router, prefix="/api")
-app.include_router(session_router, prefix="/api")
-app.include_router(session_assets_router, prefix="/api")
-app.include_router(user_router, prefix="/api")
-app.include_router(world_flag_router, prefix="/api")
+app.include_router(journal_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(adventures_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(adventure_manifests_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(campaign_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(campaign_characters_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(character_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(character_presets_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(npc_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(rules_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(seed_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(session_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(session_assets_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(user_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(world_flag_router, prefix="/api", dependencies=API_AUTH)
 
 
 def _frontend_dist_dir() -> Path | None:

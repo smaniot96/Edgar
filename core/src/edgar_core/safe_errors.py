@@ -27,6 +27,8 @@ class ErrorCategory(StrEnum):
     INTERRUPTED = "interrupted"
     INTERNAL = "internal"
     NOT_FOUND = "not_found"
+    AUTHENTICATION = "authentication"
+    FORBIDDEN = "forbidden"
 
 
 class RecoveryAction(StrEnum):
@@ -163,6 +165,12 @@ _register(
 )
 _register(
     FailureSpec(ErrorCategory.NOT_FOUND, "not_found", "That saved item could not be found. Refresh and check that it is still available.", 404, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.AUTHENTICATION, "authentication_required", "Sign in with a valid API token to continue.", 401, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.FORBIDDEN, "forbidden", "This action is not available to your account.", 403, RecoveryAction.FIX_INPUT),
 )
 _register(
     FailureSpec(

@@ -12,16 +12,14 @@ import time
 import uuid
 
 import structlog
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from redis.asyncio import Redis
 from redis.exceptions import WatchError
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres import get_session
-from db.postgres.models import User
 from edgar_core.config import REDIS_URL
 
+from .auth import Principal, get_current_principal
 from .services.operational_metrics import observe_turn_lock
 
 log = structlog.get_logger()
@@ -40,20 +38,12 @@ TURN_LOCK_RENEW_INTERVAL = 10
 TURN_LOCK_MAX_HOLD = 300
 
 
-async def current_user_id(db: AsyncSession = Depends(get_session)) -> int:
-    """Single-user seam: returns the first user's id (lowest id, so it is deterministic).
+async def current_user_id(principal: Principal = Depends(get_current_principal)) -> int:
+    """Owner id for a request: the authenticated user in token mode, the first user locally.
 
-    Replace this with a real auth dependency when more than one user exists. Routers should
-    depend on this instead of hard-coding `1` so the swap is local.
+    Routers depend on this (or on `auth.Auth` for ownership checks) rather than hard-coding ids.
     """
-    result = await db.execute(select(User).order_by(User.id).limit(1))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No user found. Open /ui to complete first-run setup.",
-        )
-    return user.id
+    return principal.user_id
 
 
 async def get_redis() -> Redis:
