@@ -102,3 +102,7 @@ LIMIT_UNBUDGETED_JOB_COST_MICROUSD = _int_setting(
 # cut short by it, but a slot can be counted free for a moment after a very long job.
 LIMIT_TURN_LEASE_SECONDS = _int_setting("LIMIT_TURN_LEASE_SECONDS", 300, minimum=30)
 LIMIT_JOB_LEASE_SECONDS = _int_setting("LIMIT_JOB_LEASE_SECONDS", 7200, minimum=60)
+
+# Memory-summary jobs allowed to run at once in this API process (each holds a provider call).
+# Excess jobs wait without a database connection; see apps/api/services/session_messages.py.
+MEMORY_SUMMARY_CONCURRENCY = _int_setting("EDGAR_MEMORY_SUMMARY_CONCURRENCY", 2, minimum=1)
