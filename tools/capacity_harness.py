@@ -120,12 +120,15 @@ class Ledger:
         self.statements = 0
         self.violations = 0
         self.waits_ms: list[float] = []
+        self.queued = 0  # acquisitions that found every pool slot taken and had to wait
 
     async def acquire(self, unit: Unit | None) -> None:
         self.demand += 1
         self.peak_demand = max(self.peak_demand, self.demand)
         started = time.perf_counter()
         if self._slots is not None:
+            if self._slots.locked():
+                self.queued += 1
             await self._slots.acquire()
         self.waits_ms.append((time.perf_counter() - started) * 1000)
         self.held += 1
@@ -643,7 +646,7 @@ async def _run_level(scenario: str, n: int, run: Run, seed: int) -> dict[str, An
         "max_connections_held_per_unit": max((u.max_held for u in unit_list), default=0),
         "connection_wait_ms": _dist(ledger.waits_ms),
         "connection_acquires": len(ledger.waits_ms),
-        "connection_acquires_queued": sum(1 for wait in ledger.waits_ms if wait > 0.0),
+        "connection_acquires_queued": ledger.queued,
         "pool_cap": ledger.pool_cap,
         "held_across_provider_violations": ledger.violations,
         "peak_open_sessions": ledger.peak_open_sessions,
