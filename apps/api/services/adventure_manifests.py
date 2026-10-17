@@ -140,6 +140,14 @@ def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
     meta, extraction = _bundle(slug)
     draft = meta.get("manifest_draft")
     if draft is None:
+        # A repeated submission (double click or a retry after a lost response) for the exact
+        # digest that is already published is a success, not a second publication.
+        published = meta.get("manifest") or {}
+        if (
+            meta.get("status") == "ready"
+            and published.get("reviewed_sha256") == reviewed_digest
+        ):
+            return {"status": "ready", "manifest_sha256": reviewed_digest, "chunks": meta.get("chunks")}
         raise ManifestError("No editable manifest draft is awaiting review.")
     manifest = review_manifest(
         extraction, draft, reviewed_digest=reviewed_digest, reviewer=reviewer

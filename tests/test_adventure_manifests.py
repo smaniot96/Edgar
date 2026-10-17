@@ -436,6 +436,36 @@ def test_generated_manuscript_review_uses_existing_bundle_without_pdf(
         service.inspect_manifest("authored")
 
 
+def test_publishing_the_same_reviewed_draft_twice_is_idempotent(tmp_path, monkeypatch, isolated_index):
+    """A double-submitted publish for the same inspected digest must not corrupt the active review."""
+    from apps.api.services import adventure_manifests as service, adventures_meta as store
+    from ingestion.extract import ExtractedPage, Extraction
+    from ingestion.quality import check_text
+
+    monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
+    text = "The old forest road leads to a quiet village where a friendly guide waits beside the well."
+    extraction = Extraction("twice", "", 1, [ExtractedPage(1, text, "generated", check_text(text))])
+    extraction.source_sha256 = extraction.text_sha256()
+    report = prepare_report(
+        extraction, source_kind="generated", chunks=[{"text": text, "page": 1, "source_pages": [1]}]
+    )
+    save_extraction(extraction, store.ADVENTURES_DIR / "twice", readiness=report)
+    store.save_meta("twice", {"status": "ready", "ingestion": report_summary(report)})
+    draft = AdventureManifest.model_validate(service.compile_draft("twice")["manifest"])
+    draft.opening_scene_id = draft.scenes[0].scene_id
+    for passage in draft.passages:
+        passage.audience = "player"
+    inspected = service.edit_draft("twice", draft)
+
+    first = service.publish_manifest("twice", reviewed_digest=inspected["reviewed_digest"], reviewer="Host")
+    second = service.publish_manifest("twice", reviewed_digest=inspected["reviewed_digest"], reviewer="Host")
+
+    assert first["status"] == second["status"] == "ready"
+    assert first["manifest_sha256"] == second["manifest_sha256"]
+    assert service.campaign_manifests(["twice"])["twice"]["reviewed_sha256"] == inspected["reviewed_digest"]
+
+
 def test_failed_publication_retains_reviewable_draft_without_certifying_index(
     source_bundle, monkeypatch
 ):
