@@ -1,3 +1,4 @@
+from db.postgres.models.api_tokens import ApiToken
 from db.postgres.models.campaigns import Campaign
 from db.postgres.models.character_assignments import CharacterAssignment
 from db.postgres.models.characters import Character
@@ -10,6 +11,7 @@ from db.postgres.models.users import User
 from db.postgres.models.world_flags import WorldFlag
 
 __all__ = [
+    "ApiToken",
     "User",
     "Campaign",
     "Session",
