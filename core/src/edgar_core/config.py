@@ -56,3 +56,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-6-luna")
 # (narration measured ~2s with zero reasoning tokens); ignored for non-reasoning models.
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "low")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+
+# Memory-summary jobs allowed to run at once in this API process (each holds a provider call).
+# Excess jobs wait without a database connection; see apps/api/services/session_messages.py.
+MEMORY_SUMMARY_CONCURRENCY = max(1, int(os.getenv("EDGAR_MEMORY_SUMMARY_CONCURRENCY", "2")))
