@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
 from edgar_core.config import API_TITLE, API_VERSION
-from edgar_core.model_profiles import validate_provider_configuration
+from edgar_core.model_profiles import ModelProfileError, validate_provider_configuration
 
 from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
 from .routers._common import HTTPErrorWithContext
@@ -47,7 +47,14 @@ log = structlog.get_logger()
 async def lifespan(app: FastAPI):
     configure_logging()
     # Fail before any background work when local provider settings are unusable.
-    log.info("provider_configuration_validated", **validate_provider_configuration())
+    try:
+        provider_settings = validate_provider_configuration()
+    except ModelProfileError as exc:
+        # Startup aborts; this event is the structured alert signal. The message names the faulty
+        # setting but never its value, and the error class is the only field logged.
+        log.error("provider_configuration_invalid", error_class=type(exc).__name__)
+        raise
+    log.info("provider_configuration_validated", **provider_settings)
     # Background ingest/generation tasks die with the process; flag the ones a previous run
     # left in "processing" as failed so the UI can offer a retry instead of spinning forever.
     from .services.adventures_meta import fail_stale_processing

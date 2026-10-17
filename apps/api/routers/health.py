@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import db as db_package
 from edgar_core.config import VECTOR_DB_API_KEY, VECTOR_DB_URL
+from edgar_core.log_safety import error_summary
 
 from ..dependencies import get_redis, get_session
 from ..services.operational_metrics import observe_readiness, observe_readiness_check
@@ -70,7 +71,7 @@ async def _probe(name: str, coro) -> tuple[str, str]:
         await asyncio.wait_for(coro, timeout=READY_TIMEOUT_SEC)
     except Exception as exc:  # noqa: BLE001 - any failure means "not ready"
         observe_readiness_check(name, ok=False, seconds=time.monotonic() - started)
-        log.warning("readiness_check_failed", component=name, error=repr(exc))
+        log.warning("readiness_check_failed", component=name, error=error_summary(exc))
         return name, "unavailable"
     observe_readiness_check(name, ok=True, seconds=time.monotonic() - started)
     return name, "ok"
