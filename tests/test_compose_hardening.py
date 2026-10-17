@@ -36,6 +36,20 @@ PROVIDER = {
     "MODEL_PROFILES_PATH",
 }
 RETRIEVAL = {"QDRANT_PORT"}
+LIMIT_SETTINGS = (
+    "LIMIT_TURNS_PER_MINUTE",
+    "LIMIT_JOB_STARTS_PER_HOUR",
+    "LIMIT_MAX_CONCURRENT_TURNS",
+    "LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT",
+    "LIMIT_MAX_CONCURRENT_JOBS",
+    "LIMIT_MAX_UPLOAD_BYTES",
+    "LIMIT_DAILY_SPEND_MICROUSD",
+    "LIMIT_ASSUMED_CALL_COST_MICROUSD",
+    "LIMIT_UNBUDGETED_JOB_COST_MICROUSD",
+    "LIMIT_TURN_LEASE_SECONDS",
+    "LIMIT_JOB_LEASE_SECONDS",
+)
+
 API_ONLY = {
     "ENV",
     "REDIS_PORT",
@@ -45,6 +59,7 @@ API_ONLY = {
     "EDGAR_TRUSTED_IMAGE_PRICE_RECORD",
     "EDGAR_VISUAL_REVIEW_PUBLIC_KEY",
     "EDGAR_VISUAL_REVIEW_PRIVATE_KEY",
+    *LIMIT_SETTINGS,
 }
 
 # The exact set of names each service receives from the default (base) file. Changing one is a
@@ -102,6 +117,8 @@ EMPTY_DEFAULT_OK = {
     "EDGAR_TRUSTED_IMAGE_PRICE_RECORD",
     "EDGAR_VISUAL_REVIEW_PUBLIC_KEY",
     "EDGAR_VISUAL_REVIEW_PRIVATE_KEY",
+    # `_int_setting` treats an empty value as unset and falls back to its code default.
+    *LIMIT_SETTINGS,
 }
 
 # EDGAR_DEBUG has no code default: the code reads "" as off, and "0" is off as well.
@@ -111,6 +128,8 @@ INTERPOLATION = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)(:-|:\?)([^}]*)\}$")
 ENV_READ_PATTERNS = (
     re.compile(r"""(?:getenv\(|environ\.get\(|environ\[|env\.get\()\s*["']([A-Z][A-Z0-9_]*)["']"""),
     re.compile(r"""^[A-Z][A-Z_]*_ENV\s*=\s*["']([A-Z][A-Z0-9_]*)["']""", re.MULTILINE),
+    # Typed helpers in edgar_core.config (`_int_setting("NAME", ...)`), added with EDG-066.
+    re.compile(r"""_(?:int|bool|str|float)_setting\(\s*["']([A-Z][A-Z0-9_]*)["']"""),
 )
 
 
