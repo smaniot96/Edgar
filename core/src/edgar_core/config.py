@@ -102,3 +102,9 @@ LIMIT_UNBUDGETED_JOB_COST_MICROUSD = _int_setting(
 # cut short by it, but a slot can be counted free for a moment after a very long job.
 LIMIT_TURN_LEASE_SECONDS = _int_setting("LIMIT_TURN_LEASE_SECONDS", 300, minimum=30)
 LIMIT_JOB_LEASE_SECONDS = _int_setting("LIMIT_JOB_LEASE_SECONDS", 7200, minimum=60)
+
+# Cross-origin policy (EDG-052). Raw strings: apps/api/origin_policy.py validates them at import and
+# names only the setting in any error, never its value. Empty origins = same-origin only (no CORS).
+EDGAR_ALLOWED_ORIGINS = os.getenv("EDGAR_ALLOWED_ORIGINS", "")
+EDGAR_ALLOW_CREDENTIALS = os.getenv("EDGAR_ALLOW_CREDENTIALS", "")
+EDGAR_TRUSTED_HOSTS = os.getenv("EDGAR_TRUSTED_HOSTS", "")
