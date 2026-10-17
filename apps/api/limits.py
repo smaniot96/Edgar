@@ -420,7 +420,9 @@ async def require_pdf_upload(file: UploadFile) -> None:
         raise reject(SCOPE_UPLOAD_TYPE, "upload_unsupported")
     head = await file.read(_PDF_HEADER_SEARCH_BYTES)
     await file.seek(0)
-    if _PDF_HEADER not in head:
+    # An empty file is left to the route's existing empty-file validation (400), so that public
+    # status code does not change; non-empty content that is not a PDF is refused here.
+    if head and _PDF_HEADER not in head:
         raise reject(SCOPE_UPLOAD_TYPE, "upload_unsupported")
 
 

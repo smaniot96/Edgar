@@ -739,3 +739,32 @@ async def test_retry_is_rate_limited_before_its_work(limits_client, redis_client
     assert second.status_code == 429
     assert second.json()["code"] == "rate_limited"
     assert await redis_client.zcard(JOB_GLOBAL) == 0
+
+
+# --- PDF upload content check ---------------------------------------------------------------------
+
+
+def _upload(data: bytes, content_type: str = "application/pdf"):
+    import io
+
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+
+    return UploadFile(
+        io.BytesIO(data), filename="x.pdf", headers=Headers({"content-type": content_type})
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_upload_is_left_to_the_routes_own_empty_file_validation():
+    await limits.require_pdf_upload(_upload(b""))
+
+
+@pytest.mark.asyncio
+async def test_non_empty_non_pdf_content_is_refused_before_any_work():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as info:
+        await limits.require_pdf_upload(_upload(b"just some text, not a pdf"))
+    assert info.value.status_code == 415
+    await limits.require_pdf_upload(_upload(b"%PDF-1.7 body"))
