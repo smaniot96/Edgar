@@ -130,9 +130,16 @@ async def test_sync_and_stream_preserve_failure_attribution_and_uncommitted_outc
     monkeypatch.setattr(turn_runner, "prepare_app", SimpleNamespace(astream=stream_crash))
     from apps.api.schemas.turn import TurnRequest
 
+    async def no_admission(request, redis):
+        return SimpleNamespace(release=_noop)
+
+    async def _noop():
+        return None
+
+    monkeypatch.setattr(router, "admit_turn", no_admission)
     with capture_logs() as logs:
         response = await router.session_turn(
-            1, TurnRequest(message="Look."), BackgroundTasks(), None, None
+            1, TurnRequest(message="Look."), BackgroundTasks(), None, None, None
         )
         frames = [
             frame

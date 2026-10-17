@@ -162,6 +162,21 @@ _register(
     FailureSpec(ErrorCategory.INTERRUPTED, "turn_not_found", "The server confirms this action was not saved. You can retry it safely.", 404, RecoveryAction.CHECK_EXISTING_RESULT, True),
 )
 _register(
+    FailureSpec(ErrorCategory.VALIDATION, "upload_too_large", "That file is larger than the upload limit. Choose a smaller PDF.", 413, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "upload_unsupported", "Only PDF files can be uploaded. Choose a PDF and try again.", 415, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.RATE_LIMITED, "concurrency_limited", "Too many actions are being processed right now. Try again shortly.", 429, RecoveryAction.CHECK_EXISTING_RESULT, True),
+)
+_register(
+    FailureSpec(ErrorCategory.QUOTA_EXCEEDED, "daily_budget_exhausted", "The daily usage allowance has been used up. Try again after it resets.", 429, RecoveryAction.WAIT),
+)
+_register(
+    FailureSpec(ErrorCategory.INTERNAL, "limits_unavailable", "Usage limits could not be confirmed, so this action was not started. Try again shortly.", 503, RecoveryAction.WAIT),
+)
+_register(
     FailureSpec(ErrorCategory.NOT_FOUND, "not_found", "That saved item could not be found. Refresh and check that it is still available.", 404, RecoveryAction.FIX_INPUT),
 )
 _register(

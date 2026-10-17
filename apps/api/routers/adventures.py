@@ -11,15 +11,27 @@ import json
 import re
 import shutil
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import Annotated, BinaryIO
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from qdrant_client.http.exceptions import UnexpectedResponse
+from redis.asyncio import Redis
 from starlette.concurrency import run_in_threadpool
 
 from db.vector.client import get_qdrant_client
@@ -27,8 +39,20 @@ from db.vector.collections import (
     is_campaign_lore_collection,
     is_rules_collection,
 )
+from edgar_core import config as limit_config
 from edgar_core.sources import SourceEdition
 
+from ..dependencies import get_redis
+from ..limits import (
+    SCOPE_UPLOAD_SIZE,
+    Admission,
+    admit_job,
+    declared_budget_microusd,
+    job_budget_microusd,
+    reject,
+    require_pdf_upload,
+    schedule_job,
+)
 from ..schemas.adventure import (
     AdventureGenerateRequest,
     AdventureJobRead,
@@ -62,7 +86,7 @@ from ..services.safe_errors import (
 log = structlog.get_logger()
 router = APIRouter(tags=["adventures"])
 
-_MAX_UPLOAD_BYTES = 64 * 1024 * 1024  # 64 MB
+_MAX_UPLOAD_BYTES = limit_config.LIMIT_MAX_UPLOAD_BYTES  # EDG-066: set by LIMIT_MAX_UPLOAD_BYTES
 _COPY_CHUNK_BYTES = 1024 * 1024
 
 
@@ -514,17 +538,34 @@ def _reserve_slug(desired: str, meta: dict) -> str:
 
 @router.post("/adventures/upload", response_model=AdventureUploadResponse, status_code=202)
 async def upload_adventure(
+    request: Request,
     background: BackgroundTasks,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     rules_edition: SourceEdition = Form(default="unspecified"),
     preparation: str | None = Form(default=None, max_length=16000),
+    redis: Redis = Depends(get_redis),
 ):
     """Upload a campaign PDF; it embeds in the background and becomes a playable adventure.
 
     Returns 202 immediately with status "processing"; poll GET /adventures for the slug to see
-    it flip to "ready" (or "failed").
+    it flip to "ready" (or "failed"). Rate and job-concurrency limits apply (EDG-066).
     """
+    admission = await admit_job(request, redis)
+    try:
+        return await _accept_upload(background, file, title, rules_edition, preparation, admission)
+    finally:
+        await admission.settle()
+
+
+async def _accept_upload(
+    background: BackgroundTasks,
+    file: UploadFile,
+    title: str | None,
+    rules_edition: SourceEdition,
+    preparation: str | None,
+    admission: Admission,
+) -> AdventureUploadResponse:
     from ..schemas.preparation_setup import PreparationSetup
     from ..services.preparation_commission import capture_setup
 
@@ -538,6 +579,8 @@ async def upload_adventure(
     filename = file.filename or "adventure.pdf"
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    await require_pdf_upload(file)
+    await admission.reserve_daily_spend(job_budget_microusd(None))
 
     desired_title = (title or Path(filename).stem.replace("_", " ").strip()) or "Untitled Adventure"
     # All blocking work (Qdrant HTTP call, metadata + PDF file IO) runs in the threadpool so
@@ -574,27 +617,40 @@ async def upload_adventure(
         if size == 0:
             await run_in_threadpool(pdf_path.unlink, missing_ok=True)
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-        raise HTTPException(
-            status_code=413,
-            detail=f"PDF too large (max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
-        )
+        raise reject(SCOPE_UPLOAD_SIZE, "upload_too_large")
 
     from ..services.adventures_meta import begin_attempt
 
     token = begin_attempt(slug, job_attempt=True, job_kind="ingestion")
-    background.add_task(_ingest_adventure, slug, str(pdf_path), attempt_id=token)
+    schedule_job(background, admission, _ingest_adventure, slug, str(pdf_path), attempt_id=token)
     log.info("adventure_upload_accepted", slug=slug, filename=filename, bytes=size)
     return AdventureUploadResponse(slug=slug, title=desired_title, status="processing")
 
 
 @router.post("/adventures/generate", response_model=AdventureUploadResponse, status_code=202)
-async def generate_adventure(body: AdventureGenerateRequest, background: BackgroundTasks):
+async def generate_adventure(
+    body: AdventureGenerateRequest,
+    request: Request,
+    background: BackgroundTasks,
+    redis: Redis = Depends(get_redis),
+):
     """Have the AI author a full campaign in the background; it becomes a playable module.
 
     `size` (small | medium | large | gigantic) scales length/complexity. Returns 202 with
     status "processing"; poll GET /adventures for the slug. Large/gigantic take longer (many
-    chapters are generated), so the card stays "processing" for a while.
+    chapters are generated), so the card stays "processing" for a while. The declared
+    preparation budget is reserved against the daily spend ceiling before any work starts (EDG-066).
     """
+    admission = await admit_job(request, redis)
+    try:
+        return await _accept_generation(body, background, admission)
+    finally:
+        await admission.settle()
+
+
+async def _accept_generation(
+    body: AdventureGenerateRequest, background: BackgroundTasks, admission: Admission
+) -> AdventureUploadResponse:
     from ..services import generation_requests
     from ..services.campaign_generator import build_generated_campaign
     from ..services.preparation_commission import capture_setup
@@ -606,6 +662,7 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
         if replay is not None:
             return _generate_response(*replay)
     captured = await capture_setup(body.preparation)
+    await admission.reserve_daily_spend(job_budget_microusd(declared_budget_microusd(captured)))
     title_hint = (body.title or "").strip()
     base = _slugify(title_hint or body.theme or "ai campaign")
     meta = {
@@ -641,8 +698,15 @@ async def generate_adventure(body: AdventureGenerateRequest, background: Backgro
     from ..services.adventures_meta import begin_attempt
 
     token = begin_attempt(slug, job_attempt=True, job_kind="generation")
-    background.add_task(
-        build_generated_campaign, slug, title_hint, body.theme or "", body.size, attempt_id=token
+    schedule_job(
+        background,
+        admission,
+        build_generated_campaign,
+        slug,
+        title_hint,
+        body.theme or "",
+        body.size,
+        attempt_id=token,
     )
     log.info("adventure_generate_accepted", slug=slug, size=body.size)
     return _generate_response(slug, stored)
@@ -673,24 +737,62 @@ def _source_lock(slug: str):
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+async def admit_retry_job(
+    slug: str,
+    request: Request,
+    redis: Redis = Depends(get_redis),
+) -> AsyncIterator[Admission]:
+    """Admit a retry before any work: per-client starts, a job lease and its declared budget.
+
+    The retry route is synchronous, so admission runs here on the event loop. Whatever the route
+    did not hand to a background job is undone when the request ends (EDG-066).
+    """
+    admission = await admit_job(request, redis)
+    try:
+        saved = await run_in_threadpool(load_adventure_metadata, slug)
+        await admission.reserve_daily_spend(
+            job_budget_microusd(declared_budget_microusd((saved or {}).get("preparation_setup")))
+        )
+        yield admission
+    finally:
+        await admission.settle()
+
+
 @router.post("/adventures/{slug}/retry", response_model=AdventureUploadResponse, status_code=202)
 def retry_adventure(
-    slug: str, background: BackgroundTasks, body: AdventureRetryRequest | None = None
+    slug: str,
+    background: BackgroundTasks,
+    body: AdventureRetryRequest | None = None,
+    admission: Annotated[Admission | None, Depends(admit_retry_job)] = None,
 ):
     from ..services.campaign_sources import validate_binding
 
     validate_binding(slug)
     with _source_lock(slug):
-        return _retry_adventure(slug, background, body)
+        return _retry_adventure(slug, background, body, admission)
 
 
 @router.post(
     "/adventures/{slug}/preparation/setup", response_model=AdventureUploadResponse, status_code=202
 )
 async def setup_preparation(
-    slug: str, body: AdventurePreparationRequest, background: BackgroundTasks
+    slug: str,
+    body: AdventurePreparationRequest,
+    background: BackgroundTasks,
+    request: Request,
+    redis: Redis = Depends(get_redis),
 ):
     """Complete only missing non-spoiler setup before the first frozen run exists."""
+    admission = await admit_job(request, redis)
+    try:
+        return await _setup_preparation(slug, body, background, admission)
+    finally:
+        await admission.settle()
+
+
+async def _setup_preparation(
+    slug: str, body: AdventurePreparationRequest, background: BackgroundTasks, admission: Admission
+) -> AdventureUploadResponse:
     from ..services import adventures_meta as store
     from ..services.campaign_sources import validate_binding
     from ..services.preparation_commission import capture_setup
@@ -698,6 +800,7 @@ async def setup_preparation(
 
     validate_binding(slug)
     captured = await capture_setup(body.preparation)
+    await admission.reserve_daily_spend(job_budget_microusd(declared_budget_microusd(captured)))
     with _source_lock(slug):
         with store.lifecycle_lock(slug):
             meta = store.load_meta(slug)
@@ -719,14 +822,17 @@ async def setup_preparation(
             if (meta.get("generation") or {}).get("kind") == "ai"
             else "ingestion",
         )
-    background.add_task(prepare_adventure, slug, attempt_token=token)
+    schedule_job(background, admission, prepare_adventure, slug, attempt_token=token)
     return AdventureUploadResponse(
         slug=slug, title=meta.get("title") or "Adventure", status="processing"
     )
 
 
 def _retry_adventure(
-    slug: str, background: BackgroundTasks, body: AdventureRetryRequest | None = None
+    slug: str,
+    background: BackgroundTasks,
+    body: AdventureRetryRequest | None = None,
+    admission: Admission | None = None,
 ):
     """Re-run ingestion (uploads) or generation (AI campaigns) for a failed adventure.
 
@@ -748,7 +854,7 @@ def _retry_adventure(
                 status_code=409,
                 detail="Saved preparation cannot be retried. Check its setup or start a new adventure.",
             ) from exc
-        background.add_task(prepare_adventure, slug, attempt_token=token)
+        schedule_job(background, admission, prepare_adventure, slug, attempt_token=token)
         return AdventureUploadResponse(
             slug=slug, title=meta.get("title") or "Adventure", status="processing"
         )
@@ -895,7 +1001,7 @@ def _retry_adventure(
                 else ()
             ),
         )
-    background.add_task(*task_args, attempt_id=token)
+    schedule_job(background, admission, task_args[0], *task_args[1:], attempt_id=token)
     log.info("adventure_retry_accepted", slug=slug)
     return AdventureUploadResponse(slug=slug, title=title, status="processing")
 
@@ -992,7 +1098,12 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
         shutil.rmtree(cover_dir, ignore_errors=True)
 
 
-async def recover_source_upload(slug: str, file: UploadFile, background: BackgroundTasks):
+async def recover_source_upload(
+    slug: str,
+    file: UploadFile,
+    background: BackgroundTasks,
+    admission: Admission | None = None,
+):
     """Serialize recovery reservations and restore the intended slug, never a suffixed copy."""
     from ..services.campaign_sources import source_read, validate_binding
 
@@ -1000,6 +1111,9 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
     filename = file.filename or "adventure.pdf"
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    await require_pdf_upload(file)
+    if admission is not None:
+        await admission.reserve_daily_spend(job_budget_microusd(None))
 
     def accept():
         _ADVENTURES_DIR.mkdir(parents=True, exist_ok=True)
@@ -1044,7 +1158,9 @@ async def recover_source_upload(slug: str, file: UploadFile, background: Backgro
                 shutil.rmtree(upload_dir, ignore_errors=True)
 
     candidate_path, title, token = await run_in_threadpool(accept)
-    background.add_task(
+    schedule_job(
+        background,
+        admission,
         _ingest_adventure,
         slug,
         str(candidate_path),

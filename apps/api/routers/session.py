@@ -12,7 +12,16 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+)
 from fastapi.responses import JSONResponse, StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import func, select
@@ -29,6 +38,7 @@ from db.postgres.models import Campaign, Character, EventLog, Session as Session
 from edgar_core.sources import public_citations
 
 from ..dependencies import acquire_turn_lock, get_redis, get_session
+from ..limits import admit_turn, record_assumed_call, record_turn_spend
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
 from ..services.campaign_sources import source_reads
@@ -412,6 +422,7 @@ async def list_turn_traces(
 @router.post("/sessions/{session_id}/intro")
 async def session_intro(
     session_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
@@ -421,6 +432,14 @@ async def session_intro(
     instead of a blank chat. Returns `{started: true, narration, character, current_scene_id}`
     when it created the opening, or `{started: false}` if the session already has narration.
     """
+    admission = await admit_turn(request, redis)
+    try:
+        return await _session_intro(session_id, db, redis)
+    finally:
+        await admission.release()
+
+
+async def _session_intro(session_id: int, db: AsyncSession, redis: Redis):
     # Reuse the per-session turn lock so an intro can't race a first turn (or another intro).
     # Taken before reading the session so the intro acts on current state.
     lock = await acquire_turn_lock(session_id, redis)
@@ -444,7 +463,11 @@ async def session_intro(
         if existing_intro.scalar_one_or_none() is not None:
             return {"started": False}
 
-        payload = await generate_session_intro(db, session)
+        try:
+            payload = await generate_session_intro(db, session)
+        finally:
+            # The intro's usage is not measured here, so it is charged the assumed call cost.
+            await record_assumed_call(redis)
         if payload is not None:
             await db.commit()
     finally:
@@ -608,6 +631,7 @@ async def session_turn(
     session_id: int,
     body: TurnRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
@@ -618,6 +642,20 @@ async def session_turn(
     summary in the background. Failures return `{"code", "message", "detail"}` with a generic
     message (409 missing assignment, 503 agent/LLM failure, 500 otherwise); details are logged.
     """
+    admission = await admit_turn(request, redis)
+    try:
+        return await _session_turn(session_id, body, background_tasks, db, redis)
+    finally:
+        await admission.release()
+
+
+async def _session_turn(
+    session_id: int,
+    body: TurnRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession,
+    redis: Redis,
+):
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
         return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
@@ -677,6 +715,7 @@ async def session_turn(
         return _turn_error_response(failure)
     finally:
         structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
+        await record_turn_spend(redis, diagnostics)
         observe_uncommitted_turn(diagnostics)
         await lock.release()
 
@@ -685,6 +724,7 @@ async def session_turn(
 async def session_turn_stream(
     session_id: int,
     body: TurnRequest,
+    request: Request,
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
@@ -695,14 +735,21 @@ async def session_turn_stream(
     closes and the lock is released in the generator's `finally`. A client that disconnects
     before the body starts never runs that `finally`, so the background task releases it too.
     """
-    lock = await acquire_turn_lock(session_id, redis)
+    admission = await admit_turn(request, redis)
+    try:
+        lock = await acquire_turn_lock(session_id, redis)
+    except BaseException:
+        await admission.release()
+        raise
     if lock is None:
+        await admission.release()
         return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
     try:
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
             await db.commit()
             await lock.release()
+            await admission.release()
             return StreamingResponse(
                 iter([sse_event("done", replay.model_dump())]),
                 media_type="text/event-stream",
@@ -713,9 +760,11 @@ async def session_turn_stream(
             initial_state["turn_id"] = body.request_id
     except HTTPException as exc:
         await lock.release()
+        await admission.release()
         return _turn_http_error_response(exc)
     except BaseException:
         await lock.release()
+        await admission.release()
         raise
 
     diagnostics = new_turn_diagnostics(
@@ -742,12 +791,15 @@ async def session_turn_stream(
                     yield chunk
         finally:
             structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
+            await record_turn_spend(redis, diagnostics)
             observe_uncommitted_turn(diagnostics)
             await lock.release()
+            await admission.release()
 
     background = BackgroundTasks()
     # Idempotent, so it is a no-op after the generator's `finally` already released the lock.
     background.add_task(lock.release)
+    background.add_task(admission.release)
     # Runs after the stream closes (and the lock is released); never fails the turn.
     background.add_task(maybe_update_memory_summary, session_id)
     return StreamingResponse(
