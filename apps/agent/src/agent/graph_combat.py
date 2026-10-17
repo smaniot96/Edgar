@@ -53,10 +53,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.action_economy import (
     ACTION,
@@ -76,7 +75,6 @@ from agent.action_economy import (
     off_hand_refusal,
     refusal_for,
 )
-from agent.captives import CaptiveTurn, captive_turn, is_attack_text
 from agent.class_features import (
     ACTION_SURGE,
     RAGE,
@@ -89,6 +87,7 @@ from agent.class_features import (
     sneak_attack_roll,
     spend_use,
 )
+from agent.combat_captives import _captive_result, captive_turn_for_state
 from agent.combat_intent import (
     _RANGED_HINT,
     _STAND_UP,
@@ -96,6 +95,11 @@ from agent.combat_intent import (
     _name_matches,
     _named_targets,
     is_flee,
+)
+from agent.combat_narration import (
+    PENDING_ROUND_NARRATION_KEY,
+    PendingRoundNarration,
+    finalize_round_narration,
 )
 from agent.combat_setup import (
     ENCOUNTER_BUILDER,
@@ -110,7 +114,7 @@ from agent.combat_setup import (
     classify_disposition as classify_disposition,
 )
 from agent.combat_targeting import _release_target, additional_spell_targets, select_target
-from agent.combat_telemetry import combat_round_event
+from agent.combat_view import _ask_player, _display, initiative_view, sort_by_initiative
 from agent.combatants import (
     add_effect,
     apply_defeat,
@@ -126,11 +130,9 @@ from agent.combatants import (
     impaired_checks,
     is_standing,
     release_effect,
-    roster_violations,
     save_auto_fails,
     save_roll_mode,
     stable_id,
-    view_fields,
 )
 from agent.conditions import (
     afflict,
@@ -180,7 +182,6 @@ from agent.nodes import world_retriever_node
 from agent.nodes.narrator import (
     NARRATION_FAILED_MESSAGE,
     deterministic_narration,
-    narration_profile,
     narrator_request,
 )
 from agent.nodes.rules_adjudicator import adjudicate
@@ -210,7 +211,6 @@ from agent.resolution import (
     heal_from_consumable,
     initiative_bonus,
     mentions_item_use,
-    normalise_check,
     off_hand_weapon,
     resolve_attack,
     resolve_from_parsed,
@@ -233,8 +233,6 @@ from agent.spells import (
 from agent.state import AgentState
 from agent.supported_rules import (
     actions_for_state,
-    apply_narration_boundary,
-    engine_applied_for_state,
     has_declared_spell,
     parsed_feature_name,
     ruling_lines,
@@ -262,47 +260,6 @@ _MONSTER_LOOKUP_TIMEOUT_S = 8.0
 # --------------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------------
-
-
-def captive_turn_for_state(state: AgentState) -> CaptiveTurn | None:
-    """EDG-146: the engine ruling for a captive the player names outside an active fight."""
-    combat = state.get("combat_state") or {}
-    if combat.get("combatants") and not combat.get("ended"):
-        return None
-    captives = [
-        c
-        for c in state.get("combat_captives") or []
-        if isinstance(c, dict) and c.get("name") and c.get("combat_id") is not None
-    ]
-    if not captives:
-        return None
-    parsed = state.get("parsed_input")
-    norm = normalise_check(getattr(parsed, "check", None)) if parsed is not None else None
-    attack_intent = bool(
-        (norm is not None and norm[1] in ("attack", "spell_attack"))
-        or getattr(parsed, "intent", None) == "combat"
-        or is_attack_text(state.get("player_input"))
-    )
-    return captive_turn(
-        state.get("player_input", ""), _named_targets(state), captives, attack_intent=attack_intent
-    )
-
-
-def _captive_result(state: AgentState, turn: CaptiveTurn) -> dict:
-    """A deterministic engine ruling: no dice, no round, no model narration."""
-    adj = AdjudicationResult(success=True, mechanical_summary=turn.text, completion_status="none")
-    messages = list(state.get("messages", []))
-    messages.append(AIMessage(content=turn.text))
-    out: dict[str, Any] = {
-        "narration": turn.text,
-        "adjudication_result": adj,
-        "messages": messages,
-        "source_status": state.get("source_status", []),
-        "retrieval_degraded": bool(state.get("retrieval_degraded")),
-    }
-    if turn.outcome:
-        out["captive_outcome"] = turn.outcome
-    return out
 
 
 async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
@@ -444,33 +401,6 @@ def roll_initiative(combatants: list[dict], character: dict | None) -> list[dict
     return sort_by_initiative(combatants)
 
 
-def sort_by_initiative(combatants: list[dict]) -> list[dict]:
-    return sorted(
-        combatants,
-        key=lambda c: (int(c.get("init", 0)), int(c.get("init_bonus", 0)), bool(c.get("is_player"))),
-        reverse=True,
-    )
-
-
-def _display(c: dict) -> str:
-    return c.get("display_name") or c.get("name", "?")
-
-
-def initiative_view(combatants: list[dict]) -> list[dict]:
-    return [
-        {
-            "name": _display(c),
-            "init": c.get("init"),
-            "is_player": bool(c.get("is_player")),
-            "hp": c.get("hp_current"),
-            "hp_max": c.get("hp_max"),
-            "ac": c.get("ac"),
-            **view_fields(c),
-        }
-        for c in sort_by_initiative(combatants)
-    ]
-
-
 def _strike(
     target: dict, amount: int, parsed: Any, player_input: str, damage_type: str | None = None
 ) -> str:
@@ -527,79 +457,6 @@ def _contest(
 # --------------------------------------------------------------------------------------------
 # Node
 # --------------------------------------------------------------------------------------------
-
-
-PENDING_ROUND_NARRATION_KEY = "pending_round_narration"
-
-
-@dataclass(frozen=True)
-class PendingRoundNarration:
-    """A combat round whose mechanics are final and whose one narrator call has not run (EDG-079).
-
-    Dice, HP, dispositions, the adjudication, completion and the round's telemetry inputs are all
-    decided before this exists. `narr_state` is the exact state the narrator prompt and the
-    boundary are built from, so the streamed call and the sync call see identical input.
-    """
-
-    narr_state: dict[str, Any]
-    combatants: list[dict]
-    adjudication: AdjudicationResult
-    outcome: str | None
-    base_update: dict[str, Any]  # round state to persist, without narration/messages/telemetry
-    round_event: dict[str, Any]  # combat_round_event kwargs, except the stage timings
-    stage_ms: dict[str, int]  # stages measured before narration
-
-    @property
-    def profile(self) -> str:
-        return narration_profile(self.narr_state)
-
-
-def finalize_round_narration(
-    pending: PendingRoundNarration, narration: str, *, bound: bool, narrating_ms: int
-) -> dict[str, Any]:
-    """The one finalisation of a combat round's narration, shared by the sync node and the stream.
-
-    `narration` is the complete narrator text (or the deterministic text when `bound` is False).
-    Streamed tokens are provisional and never reach this function; the text decided here is the
-    authoritative `done.narration`. It applies, in order:
-      1. the narration boundary to model text (the engine owns effects: a claimed effect the
-         engine did not apply is dropped, and the ruling stated),
-      2. the roster check: prose that revives an inactive foe or invents an attacker is replaced
-         by the engine's mechanical summary,
-      3. the victory/defeat/fled suffix,
-      4. the AIMessage history, and
-      5. the round telemetry row, with the measured narrating stage.
-    """
-    text = narration
-    if bound:
-        text = apply_narration_boundary(
-            text,
-            actions_for_state(pending.narr_state),
-            applied=engine_applied_for_state(pending.narr_state),
-        )
-    messages = [*(pending.narr_state.get("messages") or []), AIMessage(content=text)]
-    problems = roster_violations(text, pending.combatants)
-    if problems:
-        # Prose that revives an inactive foe or invents an attacker is replaced by the engine's log.
-        log.warning("narration_roster_violation", extra={"problems": problems[:4]})
-        text = pending.adjudication.mechanical_summary or ""
-        messages = [*messages[:-1], AIMessage(content=text)]
-    if pending.outcome == "victory":
-        text += "\n\n**Victory!** The way forward is clear."
-    elif pending.outcome == "defeat":
-        text += "\n\n**Subdued.** You are overwhelmed and knocked unconscious — your story is not over, but you are at the enemy's mercy."
-    elif pending.outcome == "fled":
-        text += "\n\n*(You have left the fight.)*"
-
-    stage_ms = {**pending.stage_ms, "narrating_ms": int(narrating_ms)}
-    round_event = combat_round_event(**pending.round_event, stage_ms=stage_ms)
-    return {
-        **pending.base_update,
-        "messages": messages,
-        "narration": text,
-        # Written in the turn transaction by persist_turn (EDG-031); never committed here.
-        "telemetry_events": [round_event],
-    }
 
 
 async def combat_round_node(state: AgentState) -> dict:
@@ -2238,20 +2095,6 @@ async def combat_round_node(state: AgentState) -> dict:
             }
     narrating_ms = int((time.monotonic() - t_stage) * 1000)
     return finalize_round_narration(pending, text, bound=bound, narrating_ms=narrating_ms)
-
-def _ask_player(state: AgentState, question: str, *, combat_state: dict | None = None) -> dict:
-    """No dice rolled, no round consumed: ask the player to clarify their target."""
-    adj = AdjudicationResult(success=True, mechanical_summary=question, completion_status="none")
-    messages = list(state.get("messages", []))
-    messages.append(AIMessage(content=question))
-    out: dict[str, Any] = {"narration": question, "adjudication_result": adj, "messages": messages}
-    out["source_status"] = state.get("source_status", [])
-    out["retrieval_degraded"] = bool(state.get("retrieval_degraded"))
-    if combat_state:
-        combat_state = dict(combat_state)
-        combat_state["initiative"] = initiative_view(combat_state.get("combatants") or [])
-        out["combat_state"] = combat_state
-    return out
 
 
 def build_combat_subgraph():
