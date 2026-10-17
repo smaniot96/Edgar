@@ -69,9 +69,11 @@ together, which is the worst case for overlap.
 - Turn latency at N=32 (p95): runner 214 ms, route 268 ms. Time to first text (runner, p95): 133 ms
   at N=1, 174 ms at N=32, with 40 ms per provider call. First text is roughly three provider waits
   (parse, adjudication, first chunk), so it is bounded by provider time, not by pool state.
-- Event-loop lag p95 is about 4 to 6 ms at N=32 for turns and mixed load. The summary N=32 row
-  showed one 44 ms lag sample in the final run and 0.66 ms in an earlier run; treat that as scheduler
-  noise, not a characterised result.
+- Event-loop lag p95 is about 3 to 7 ms at N=32 for turns and mixed load. Lag spikes of 44 to 52 ms
+  appeared in three of five full runs, at summary N=16 or N=32. A standalone probe measured a 44 ms
+  longest garbage-collection pause in the same process, but it did not reproduce the loop lag at that
+  level, so the cause is unattributed. Treat these spikes as an open question to check on staging, not
+  as a characterised result.
 - Demand does not grow with provider delay. The test suite runs the same N at 2 ms and 60 ms
   provider delay and checks that demand is unchanged within one connection.
 
@@ -225,6 +227,7 @@ What would change the numbers:
 - Real database statement latency and the real loader and persist queries (the harness uses stand-ins
   with the same statement counts).
 - Real provider latency, rate limits and cost.
+- The cause of the intermittent 44 to 52 ms event-loop lag spikes at summary N=16 or N=32.
 - Redis and Qdrant behaviour under load, and the effect of the proposed client timeouts.
 - Multi-worker behaviour and any effect of a shared PostgreSQL `max_connections` limit.
 - Full-scale corpus behaviour.
