@@ -119,6 +119,11 @@ whether retained work is retryable, and a short recovery action/explanation. The
 never includes an outline, chapter text or manuscript content. Stage information is not an
 overall percentage or an ETA.
 
+`POST /api/adventures/generate` accepts an optional `request_id` (26–36 ASCII letters, digits or
+`-`, such as a UUID). Repeating the same identity with the same body replays the stored module
+(same slug, current status) and starts no second generation; reusing it with a different body
+returns 409 `validation_failed`. Omitting it keeps the original behaviour.
+
 Generation checkpoints persist the outline before chapter expansion and persist each completed
 chapter before reporting it as saved. `POST /api/adventures/{slug}/retry` resumes missing
 chapters; when the complete manuscript is already saved, it rebuilds the index without another
