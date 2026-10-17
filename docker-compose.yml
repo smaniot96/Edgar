@@ -1,5 +1,6 @@
-# Uses .env via env_file. Only overrides host names so containers use the Docker network.
-# No URL construction or credential duplication here.
+# Settings come from .env, interpolated by Compose into a per-service allow-list (no service gets
+# the whole file). Only host names are overridden so containers use the Docker network.
+# No URL construction or credential duplication here. Hosting profile: docker-compose.hosting.yml.
 #
 # `docker compose up -d` starts the runtime stack only: api + db + redis + qdrant.
 # One-off jobs live behind profiles and are run explicitly (the Makefile wraps them):
@@ -25,9 +26,17 @@ services:
       context: .
       dockerfile: Dockerfile
       target: migrate
-    env_file: .env
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Database coordinates only: migrations read no provider, Redis or Qdrant settings.
     environment:
       - DB_HOST=db
+      - "DB_PORT=${DB_PORT:-5432}"
+      - "POSTGRES_USER=${POSTGRES_USER:-user}"
+      - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}"
+      - "POSTGRES_DB=${POSTGRES_DB:-dnd}"
     depends_on:
       db:
         condition: service_healthy
@@ -40,12 +49,59 @@ services:
       dockerfile: Dockerfile
       target: api
     container_name: dnd-api
-    env_file: .env
+    # Runs as the image's non-root `edgar` user on port 8000 and needs no Linux capability.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Per-service allow-list: every value is interpolated from the host's .env (or shell) at
+    # `compose` time, and only the names below reach this container. Each default equals the
+    # default in edgar_core.config / model_profiles, so an absent .env behaves as before.
     environment:
       - DB_HOST=db
       - REDIS_HOST=redis
       - QDRANT_HOST=qdrant
       - EDGAR_INDEX_LOCK_DIR=/index-locks
+      - "ENV=${ENV:-local}"
+      - "DB_PORT=${DB_PORT:-5432}"
+      - "POSTGRES_USER=${POSTGRES_USER:-user}"
+      - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}"
+      - "POSTGRES_DB=${POSTGRES_DB:-dnd}"
+      - "REDIS_PORT=${REDIS_PORT:-6379}"
+      - "QDRANT_PORT=${QDRANT_PORT:-6333}"
+      # The API validates the provider key at startup and calls the model and embedding APIs.
+      - "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
+      - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:-}"
+      - "LLM_MODEL=${LLM_MODEL:-gpt-6-luna}"
+      - "LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-low}"
+      - "EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}"
+      - "MODEL_PROFILES_PATH=${MODEL_PROFILES_PATH:-}"
+      - "EDGAR_DEBUG=${EDGAR_DEBUG:-0}"
+      - "EDGAR_METRICS_ENABLED=${EDGAR_METRICS_ENABLED:-}"
+      - "EDGAR_METRICS_TOKEN=${EDGAR_METRICS_TOKEN:-}"
+      # Summary bound (EDG-158), origin policy (EDG-052) and auth mode (EDG-065); empty means the code default.
+      - "EDGAR_MEMORY_SUMMARY_CONCURRENCY=${EDGAR_MEMORY_SUMMARY_CONCURRENCY:-}"
+      - "EDGAR_ALLOWED_ORIGINS=${EDGAR_ALLOWED_ORIGINS:-}"
+      - "EDGAR_ALLOW_CREDENTIALS=${EDGAR_ALLOW_CREDENTIALS:-}"
+      - "EDGAR_TRUSTED_HOSTS=${EDGAR_TRUSTED_HOSTS:-}"
+      - "EDGAR_AUTH_MODE=${EDGAR_AUTH_MODE:-}"
+      - "EDGAR_ADMIN_USER_IDS=${EDGAR_ADMIN_USER_IDS:-}"
+      - "EDGAR_ALLOW_DEBUG_IN_TOKEN_MODE=${EDGAR_ALLOW_DEBUG_IN_TOKEN_MODE:-}"
+      # Request, upload and spend limits (EDG-066); empty means the code default.
+      - "LIMIT_TURNS_PER_MINUTE=${LIMIT_TURNS_PER_MINUTE:-}"
+      - "LIMIT_JOB_STARTS_PER_HOUR=${LIMIT_JOB_STARTS_PER_HOUR:-}"
+      - "LIMIT_MAX_CONCURRENT_TURNS=${LIMIT_MAX_CONCURRENT_TURNS:-}"
+      - "LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT=${LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT:-}"
+      - "LIMIT_MAX_CONCURRENT_JOBS=${LIMIT_MAX_CONCURRENT_JOBS:-}"
+      - "LIMIT_MAX_UPLOAD_BYTES=${LIMIT_MAX_UPLOAD_BYTES:-}"
+      - "LIMIT_DAILY_SPEND_MICROUSD=${LIMIT_DAILY_SPEND_MICROUSD:-}"
+      - "LIMIT_ASSUMED_CALL_COST_MICROUSD=${LIMIT_ASSUMED_CALL_COST_MICROUSD:-}"
+      - "LIMIT_UNBUDGETED_JOB_COST_MICROUSD=${LIMIT_UNBUDGETED_JOB_COST_MICROUSD:-}"
+      - "LIMIT_TURN_LEASE_SECONDS=${LIMIT_TURN_LEASE_SECONDS:-}"
+      - "LIMIT_JOB_LEASE_SECONDS=${LIMIT_JOB_LEASE_SECONDS:-}"
+      - "EDGAR_TRUSTED_IMAGE_PRICE_RECORD=${EDGAR_TRUSTED_IMAGE_PRICE_RECORD:-}"
+      - "EDGAR_VISUAL_REVIEW_PUBLIC_KEY=${EDGAR_VISUAL_REVIEW_PUBLIC_KEY:-}"
+      - "EDGAR_VISUAL_REVIEW_PRIVATE_KEY=${EDGAR_VISUAL_REVIEW_PRIVATE_KEY:-}"
     # Localhost only: the API has no authentication yet, so don't expose it to the network.
     ports:
       - "127.0.0.1:8000:8000"
@@ -83,11 +139,22 @@ services:
       dockerfile: Dockerfile
       target: ingestion
     container_name: dnd-ingestion
-    env_file: .env
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Embeddings need the provider key; no Postgres credentials (the ingest path never opens the DB).
     environment:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
       - EDGAR_INDEX_LOCK_DIR=/index-locks
+      - "QDRANT_PORT=${QDRANT_PORT:-6333}"
+      - "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
+      - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:-}"
+      - "LLM_MODEL=${LLM_MODEL:-gpt-6-luna}"
+      - "LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-low}"
+      - "EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}"
+      - "MODEL_PROFILES_PATH=${MODEL_PROFILES_PATH:-}"
     volumes:
       - ./data/pdfs:/data
       - ./data/markdown:/output/markdown
@@ -107,13 +174,24 @@ services:
       dockerfile: Dockerfile
       target: rules_engine
     container_name: dnd-rules-engine
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     volumes:
       - ./data/.index-locks:/index-locks
-    env_file: .env
+    # Rules retrieval embeds the query (provider key) and reads Qdrant; no Postgres credentials.
     environment:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
       - EDGAR_INDEX_LOCK_DIR=/index-locks
+      - "QDRANT_PORT=${QDRANT_PORT:-6333}"
+      - "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
+      - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:-}"
+      - "LLM_MODEL=${LLM_MODEL:-gpt-6-luna}"
+      - "LLM_REASONING_EFFORT=${LLM_REASONING_EFFORT:-low}"
+      - "EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}"
+      - "MODEL_PROFILES_PATH=${MODEL_PROFILES_PATH:-}"
     depends_on:
       db:
         condition: service_healthy
@@ -125,7 +203,7 @@ services:
     logging: *default-logging
     image: postgres:16
     container_name: dnd-db
-    env_file: .env
+    # Interpolated from .env by Compose; the database container receives no provider secrets.
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dnd}
       POSTGRES_USER: ${POSTGRES_USER:-user}

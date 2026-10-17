@@ -28,6 +28,8 @@ POSTGRES_DB = os.getenv("POSTGRES_DB", "dnd")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
+# Empty (the default) means no AUTH, as in the local stack. The hosting profile sets it.
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = os.getenv("QDRANT_PORT", "6333")
@@ -38,7 +40,11 @@ DATABASE_URL = (
     f"postgresql+asyncpg://{quote(POSTGRES_USER, safe='')}:{quote(POSTGRES_PASSWORD, safe='')}"
     f"@{DB_HOST}:{DB_PORT}/{POSTGRES_DB}"
 )
-REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
+REDIS_URL = (
+    f"redis://:{quote(REDIS_PASSWORD, safe='')}@{REDIS_HOST}:{REDIS_PORT}"
+    if REDIS_PASSWORD
+    else f"redis://{REDIS_HOST}:{REDIS_PORT}"
+)
 VECTOR_DB_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
 
 # Secrets live only in .env; never duplicate them into docker-compose or source.
