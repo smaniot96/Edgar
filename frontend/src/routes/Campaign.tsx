@@ -19,6 +19,7 @@ import {
 } from "../api/client";
 import { SourceRecovery } from "../components/campaign/SourceRecovery";
 import { ReadinessNotice } from "../components/campaign/ReadinessNotice";
+import { AdventureReview } from "../components/campaign/AdventureReview";
 import { Pill } from "../components/Pill";
 import { Button, ButtonLink } from "../components/ui/Button";
 import { Field } from "../components/ui/Field";
@@ -224,6 +225,9 @@ export default function CampaignView() {
         </div>
         <SavedPlaythroughContext session={savedSession} />
         {c.readiness && !c.readiness.play_allowed ? <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} className="mt-3" /> : null}
+        {c.readiness?.blockers.some((blocker) => blocker.action === "review_adventure") ? (
+          <AdventureReview campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
+        ) : null}
       </section>
 
       <details className="rounded-card border border-line bg-surface-sunken px-4 py-3">

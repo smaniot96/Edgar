@@ -37,6 +37,7 @@ from .routers.character_presets import router as character_presets_router
 from .routers.health import router as health_router
 from .routers.journal import router as journal_router
 from .routers.limits import router as limits_router
+from .routers.metrics import router as metrics_router
 from .routers.npc import router as npc_router
 from .routers.rules import router as rules_router
 from .routers.seed import router as seed_router
@@ -169,6 +170,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(health_router)
+app.include_router(metrics_router)
 app.include_router(journal_router, prefix="/api")
 app.include_router(limits_router, prefix="/api")
 app.include_router(adventures_router, prefix="/api")

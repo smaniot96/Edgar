@@ -651,41 +651,50 @@ async def generate_adventure(
 async def _accept_generation(
     body: AdventureGenerateRequest, background: BackgroundTasks, admission: Admission
 ) -> AdventureUploadResponse:
+    from ..services import generation_requests
     from ..services.campaign_generator import build_generated_campaign
     from ..services.preparation_commission import capture_setup
 
+    identity = generation_requests.identity_for(body)
+    if identity is not None:
+        # Replay before capturing setup, so a retry never depends on current hero state.
+        replay = await run_in_threadpool(generation_requests.find_existing, identity)
+        if replay is not None:
+            return _generate_response(*replay)
     captured = await capture_setup(body.preparation)
     await admission.reserve_daily_spend(job_budget_microusd(declared_budget_microusd(captured)))
     title_hint = (body.title or "").strip()
     base = _slugify(title_hint or body.theme or "ai campaign")
-    slug = await run_in_threadpool(
-        _reserve_slug,
-        base,
-        {
-            "title": title_hint or "AI campaign (generating…)",
-            "rules_edition": body.rules_edition,
-            "status": "processing",
-            "chunks": None,
-            "error": None,
-            "source_filename": None,
-            "private_preparation": True,
-            "preparation_setup": captured,
-            "created_at": datetime.now(UTC).isoformat(),
-            "generation": {
-                "kind": "ai",
-                "size": body.size,
-                "theme": body.theme,
-                "title_hint": title_hint,
-            },
-            "job": new_job(
-                "generation",
-                "queued",
-                total_chapters={"small": 3, "medium": 6, "large": 12, "gigantic": 24}.get(
-                    body.size, 6
-                ),
-            ),
+    meta = {
+        "title": title_hint or "AI campaign (generating…)",
+        "rules_edition": body.rules_edition,
+        "status": "processing",
+        "chunks": None,
+        "error": None,
+        "source_filename": None,
+        "private_preparation": True,
+        "preparation_setup": captured,
+        "created_at": datetime.now(UTC).isoformat(),
+        "generation": {
+            "kind": "ai",
+            "size": body.size,
+            "theme": body.theme,
+            "title_hint": title_hint,
         },
+        "job": new_job(
+            "generation",
+            "queued",
+            total_chapters={"small": 3, "medium": 6, "large": 12, "gigantic": 24}.get(
+                body.size, 6
+            ),
+        ),
+    }
+    slug, stored, created = await run_in_threadpool(
+        generation_requests.claim, identity, base, meta, _reserve_slug
     )
+    if not created:
+        # Same identity and body as an earlier accept: no second module and no second dispatch.
+        return _generate_response(slug, stored)
     from ..services.adventures_meta import begin_attempt
 
     token = begin_attempt(slug, job_attempt=True, job_kind="generation")
@@ -700,8 +709,14 @@ async def _accept_generation(
         attempt_id=token,
     )
     log.info("adventure_generate_accepted", slug=slug, size=body.size)
+    return _generate_response(slug, stored)
+
+
+def _generate_response(slug: str, meta: dict) -> AdventureUploadResponse:
+    """Accepted-generation response; a replay reports the stored state of the same module."""
+    title_hint = (meta.get("generation") or {}).get("title_hint") or ""
     return AdventureUploadResponse(
-        slug=slug, title=title_hint or "AI campaign", status="processing"
+        slug=slug, title=title_hint or "AI campaign", status=meta.get("status") or "processing"
     )
 
 

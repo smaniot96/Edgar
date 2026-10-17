@@ -3,6 +3,13 @@ from db.vector.client import get_qdrant_client
 from db.vector.versions import active_index_read
 from edgar_core.grounding import BookBinding
 
+BOOK_LABELS = {"phb": "Player's Handbook", "dmg": "DM's Guide", "mm": "Monster Manual"}
+BOOK_UNINDEXED_CODES = {
+    "phb": "required_book_phb_unindexed",
+    "dmg": "required_book_dmg_unindexed",
+    "mm": "required_book_mm_unindexed",
+}
+
 
 def discover_book_bindings(edition: str, *, client=None) -> tuple[BookBinding, ...]:
     from .preparation_grounding import GroundingUnavailable
@@ -34,6 +41,12 @@ def discover_book_bindings(edition: str, *, client=None) -> tuple[BookBinding, .
             if candidates:
                 break  # Canonical collection takes precedence over its legacy alias.
         if len(candidates) != 1:
-            raise GroundingUnavailable("required_books_unavailable", "An exact required rulebook version is unavailable or ambiguous.")
+            # Pre-versioning rulebooks, or ones ingested without this edition, have no exact
+            # active receipt. The book is named so the operator can re-ingest exactly that source.
+            raise GroundingUnavailable(
+                BOOK_UNINDEXED_CODES[role],
+                f"The {BOOK_LABELS[role]} has no exact indexed version for {edition} rules. "
+                "Re-ingest that rulebook for this edition, then start a new campaign.",
+            )
         result.append(candidates[0])
     return tuple(result)

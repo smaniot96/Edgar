@@ -1,0 +1,70 @@
+# EXAMPLE Prometheus alert rules for the Edgar API (EDG-139). Not deployed. Not wired to any pager.
+#
+# Every threshold below is an UNTUNED placeholder chosen to show the shape of each rule. Tune them
+# against a real traffic baseline (see docs/operational-metrics.md) before relying on any of them.
+# Load with: rule_files: ["ops/alerts.example.yml"] in prometheus.yml, once the scrape is enabled.
+groups:
+  - name: edgar-operational-example
+    rules:
+      # Scrape health: the exposition is reachable. Pairs with the rules below, which only see data
+      # the scrape delivered. Requires EDGAR_METRICS_ENABLED on the API.
+      - alert: EdgarMetricsScrapeDown
+        expr: up{job="edgar-api"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Edgar API metrics scrape has been failing for 5 minutes"
+
+      # Provider failure rate: failed provider calls over all provider calls (failed-turn calls included).
+      - alert: EdgarProviderFailureRateHigh
+        expr: |
+          sum(rate(edgar_provider_failures_total[10m]))
+            / clamp_min(sum(rate(edgar_provider_calls_total[10m])), 1e-9) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of provider calls are failing (threshold untuned)"
+
+      # Turn latency: p95 of committed DM-turn wall time. Health-probe latency is a separate family.
+      - alert: EdgarTurnP95LatencyHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(edgar_turn_duration_seconds_bucket[15m]))) > 30
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 committed-turn latency above 30s (threshold untuned)"
+
+      # Lock contention: share of turn-lock attempts that were rejected with 409.
+      - alert: EdgarTurnLockContentionHigh
+        expr: |
+          sum(rate(edgar_turn_lock_acquisitions_total{result="contended"}[15m]))
+            / clamp_min(sum(rate(edgar_turn_lock_acquisitions_total[15m])), 1e-9) > 0.02
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "More than 2% of turn-lock attempts are rejected (threshold untuned)"
+
+      # Readiness failures: any /ready probe that reported unavailable. Fires only when something polls
+      # /ready; a /health-only check never increments these series.
+      - alert: EdgarReadinessFailing
+        expr: sum(increase(edgar_readiness_probes_total{result="unavailable"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "/ready reported unavailable in the last 10 minutes; see the per-component checks"
+
+      # Degraded retrieval: share of turns whose retrieval degraded (sources unavailable for that turn).
+      - alert: EdgarRetrievalDegradedHigh
+        expr: |
+          sum(rate(edgar_retrieval_total{result="degraded"}[15m]))
+            / clamp_min(sum(rate(edgar_retrieval_total[15m])), 1e-9) > 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10% of turn retrievals are degraded (threshold untuned)"

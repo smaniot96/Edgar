@@ -35,7 +35,7 @@ curl -N -X POST "http://localhost:8000/api/sessions/1/turn/stream" \
 
 The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session and writes everything in a single commit: adjudication side effects (`apply_adjudication`), combat state, telemetry, the narration `event_log` row and campaign completion. Any save failure rolls back and surfaces as an error (an `error` SSE event when streaming). After the commit, a background task may fold older turns into a stored `memory_summary` event; its failures are logged, never raised.
 
-`GET /api/sessions/{id}/combat` returns the active encounter in the same public shape as `done.combat_state` (roster HP and AC, initiative order, whose turn it is, and for each foe its distance `band` (`melee` or `ranged`) and whether its `reaction_used` is spent; the hero's band is `null`), or `null`, so the UI can restore its combat HUD after a reload. Setting `EDGAR_DEBUG=1` enables the per-stage `debug` frames that the UI's Developer mode shows. Each combat round also stores one `combat_round` event_log row in the turn transaction (actors, original dice, outcomes, dispositions, and only the stage timings the round measured; unmeasured stages are listed in `timings_unavailable`). With `debug` and `EDGAR_DEBUG=1` the `debug` frame and sync response carry it as `combat_diagnostics`; `GET /api/sessions/{id}/diagnostics/combat` returns stored rounds for reload (404 when `EDGAR_DEBUG` is off). A turn with no stored row was not captured; it is never reported as zero.
+`GET /api/sessions/{id}/combat` returns the active encounter in the same public shape as `done.combat_state` (roster HP and AC, initiative order, whose turn it is, and for each foe its distance `band` (`melee` or `ranged`) and whether its `reaction_used` is spent; the hero's band is `null`), or `null`, so the UI can restore its combat HUD after a reload. Setting `EDGAR_DEBUG=1` enables the per-stage `debug` frames that the UI's Developer mode shows. Each combat round also stores one `combat_round` event_log row in the turn transaction (actors, original dice, outcomes, dispositions, and only the stage timings the round measured; unmeasured stages are listed in `timings_unavailable`). With `debug` and `EDGAR_DEBUG=1` the `debug` frame and sync response carry it as `combat_diagnostics`; `GET /api/sessions/{id}/diagnostics/combat` returns stored rounds for reload (404 when `EDGAR_DEBUG` is off). A turn with no stored row was not captured; it is never reported as zero. `GET /api/sessions/{id}/diagnostics/turn-traces` returns, for each captured DM turn, its `turn_trace` (parsed intent without reviewed selectors, retrieval citations with player-audience snippets only, model profile names) composed with the `turn_diagnostics` and `combat_round` rows that share its `turn_id`. A debug request writes the trace in the turn transaction only while `EDGAR_DEBUG=1`; the endpoint is 404 otherwise. Legacy and Player-mode turns are absent from the list and must be shown as not captured.
 
 `current_user_id()` looks up the seeded `dm@edgar.local` user; this is the single-user seam for solo play and is replaced by real auth when there is more than one user.
 
@@ -118,6 +118,11 @@ safe `job` projection: job kind and state, the actual stage, saved/total generat
 whether retained work is retryable, and a short recovery action/explanation. The projection
 never includes an outline, chapter text or manuscript content. Stage information is not an
 overall percentage or an ETA.
+
+`POST /api/adventures/generate` accepts an optional `request_id` (26–36 ASCII letters, digits or
+`-`, such as a UUID). Repeating the same identity with the same body replays the stored module
+(same slug, current status) and starts no second generation; reusing it with a different body
+returns 409 `validation_failed`. Omitting it keeps the original behaviour.
 
 Generation checkpoints persist the outline before chapter expansion and persist each completed
 chapter before reporting it as saved. `POST /api/adventures/{slug}/retry` resumes missing

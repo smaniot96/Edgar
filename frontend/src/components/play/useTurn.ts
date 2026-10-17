@@ -65,6 +65,7 @@ const READINESS_REJECTION_CODES = new Set([
   "campaign_sources_unavailable", "source_unavailable", "campaign_source_unavailable",
   "source_missing", "preparation_source_invalid",
   "required_books_unavailable", "required_book_unavailable", "required_books_missing",
+  "required_book_phb_unindexed", "required_book_dmg_unindexed", "required_book_mm_unindexed",
   "book_version_unavailable", "required_assets_unavailable",
   "adventure_manifest_review_required", "manifest_review_required", "review_required",
   "source_review_required", "source_review_needed", "adventure_review_needed",

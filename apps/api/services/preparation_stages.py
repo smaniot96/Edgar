@@ -858,6 +858,9 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             "required_book_unavailable",
             "required_books_missing",
             "book_version_unavailable",
+            "required_book_phb_unindexed",
+            "required_book_dmg_unindexed",
+            "required_book_mm_unindexed",
         }:
             code = "stage_evidence_invalid"
         raise PreparationTaskFailure(

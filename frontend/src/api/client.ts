@@ -6,6 +6,7 @@ import type {
   AdventureRead,
   AdventureJobRead,
   ExtractionPreview,
+  ManifestInspection,
   CampaignCharacterRead,
   CampaignRead,
   CharacterAssignmentHistoryRead,
@@ -252,6 +253,23 @@ export function retryAdventure(slug: string, reviewed?: { reviewed_source_sha256
   return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/retry`, reviewed);
 }
 
+/** Host review of a legacy adventure: inspect the current draft (409 when none is compiled). */
+export function inspectAdventureManifest(slug: string, signal?: AbortSignal): Promise<ManifestInspection> {
+  return getJson<ManifestInspection>(`/api/adventures/${encodeURIComponent(slug)}/manifest`, signal);
+}
+
+export function compileAdventureManifest(slug: string): Promise<ManifestInspection> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/manifest/compile`);
+}
+
+export function saveAdventureManifest(slug: string, manifest: Record<string, unknown>): Promise<ManifestInspection> {
+  return sendJson("PUT", `/api/adventures/${encodeURIComponent(slug)}/manifest`, manifest);
+}
+
+export function publishAdventureManifest(slug: string, reviewed_digest: string, reviewer: string): Promise<{ status: string; chunks: number }> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/manifest/publish`, { reviewed_digest, reviewer });
+}
+
 export function cancelAdventure(slug: string): Promise<AdventureJobRead> {
   return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/cancel`);
 }
@@ -393,6 +411,11 @@ export function getSessionMap(id: number | string, signal?: AbortSignal): Promis
 
 export function listSessionMessages(id: number, signal?: AbortSignal): Promise<ChatMessageRead[]> {
   return getJson(`/api/sessions/${id}/messages`, signal);
+}
+
+/** Developer only (EDG-138): stored traces of captured DM turns, oldest first. 404 when debug is off. */
+export function listSessionTurnTraces(id: number, signal?: AbortSignal): Promise<import("./types").TurnTraceList> {
+  return getJson(`/api/sessions/${id}/diagnostics/turn-traces`, signal);
 }
 
 export function getSessionCombat(id: number, signal?: AbortSignal): Promise<CombatState | null> {

@@ -1,6 +1,15 @@
 import { readSse } from "./sse";
 import type { AdjudicationResult, DebugPayload, TurnResult } from "./types";
 
+/**
+ * Every SSE event name the turn stream carries. `stream.schema.json` (generated from the backend
+ * contract) must list the same names, and `stream.contract.test.ts` fails when they drift.
+ */
+export const TURN_STREAM_EVENTS = ["status", "token", "adjudication", "debug", "done", "error"] as const;
+
+/** The pipeline stages a `status` frame may name, in the order the runner emits them. */
+export const TURN_STATUS_STAGES = ["parsing", "retrieving", "adjudicating", "narrating", "saving"] as const;
+
 export interface TurnStreamHandlers {
   onStatus?: (stage: string) => void;
   onToken?: (text: string) => void;
@@ -39,6 +48,9 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   campaign_source_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   required_books_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   required_book_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
+  required_book_phb_unindexed: { category: "source", message: "The Player's Handbook has no exact indexed version for this rules edition. Re-ingest that rulebook for this edition, then start a new campaign.", action: "restart_preparation" },
+  required_book_dmg_unindexed: { category: "source", message: "The DM's Guide has no exact indexed version for this rules edition. Re-ingest that rulebook for this edition, then start a new campaign.", action: "restart_preparation" },
+  required_book_mm_unindexed: { category: "source", message: "The Monster Manual has no exact indexed version for this rules edition. Re-ingest that rulebook for this edition, then start a new campaign.", action: "restart_preparation" },
   required_books_missing: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   book_version_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   required_assets_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },

@@ -74,6 +74,22 @@ _register(
     "required_books_unavailable", "required_book_unavailable", "required_books_missing",
     "book_version_unavailable", "required_assets_unavailable",
 )
+# One exact, actionable code per required rulebook: the message names the book that has no
+# exact indexed version for the campaign's edition. Pre-versioning data needs re-ingestion.
+for _book_code, _book_label in (
+    ("required_book_phb_unindexed", "Player's Handbook"),
+    ("required_book_dmg_unindexed", "DM's Guide"),
+    ("required_book_mm_unindexed", "Monster Manual"),
+):
+    _register(
+        FailureSpec(
+            ErrorCategory.SOURCE,
+            _book_code,
+            f"The {_book_label} has no exact indexed version for this rules edition. Re-ingest that rulebook for this edition, then start a new campaign.",
+            409,
+            RecoveryAction.RESTART_PREPARATION,
+        )
+    )
 _register(
     FailureSpec(ErrorCategory.REVIEW, "adventure_manifest_review_required", "Review the current adventure material before continuing.", 409, RecoveryAction.REVIEW_SOURCE),
     "manifest_review_required", "review_required", "source_review_required",

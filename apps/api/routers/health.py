@@ -7,6 +7,7 @@ not this code's Alembic head, so a replica started against an older schema stays
 """
 
 import asyncio
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +24,7 @@ import db as db_package
 from edgar_core.config import VECTOR_DB_API_KEY, VECTOR_DB_URL
 
 from ..dependencies import get_redis, get_session
+from ..services.operational_metrics import observe_readiness, observe_readiness_check
 
 log = structlog.get_logger()
 router = APIRouter(tags=["health"])
@@ -63,11 +65,14 @@ async def _check_qdrant() -> None:
 
 
 async def _probe(name: str, coro) -> tuple[str, str]:
+    started = time.monotonic()
     try:
         await asyncio.wait_for(coro, timeout=READY_TIMEOUT_SEC)
     except Exception as exc:  # noqa: BLE001 - any failure means "not ready"
+        observe_readiness_check(name, ok=False, seconds=time.monotonic() - started)
         log.warning("readiness_check_failed", component=name, error=repr(exc))
         return name, "unavailable"
+    observe_readiness_check(name, ok=True, seconds=time.monotonic() - started)
     return name, "ok"
 
 
@@ -90,5 +95,7 @@ async def ready(
         )
     )
     if all(v == "ok" for v in results.values()):
+        observe_readiness(ready=True)
         return {"status": "ready", "checks": results}
+    observe_readiness(ready=False)
     return JSONResponse(status_code=503, content={"status": "unavailable", "checks": results})
