@@ -9,8 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
+from fakeredis import FakeAsyncRedis
 from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from apps.api.routers import adventures
 from apps.api.schemas.adventure import AdventureGenerateRequest
@@ -39,9 +41,24 @@ def _body(**overrides) -> AdventureGenerateRequest:
     return AdventureGenerateRequest(**fields)
 
 
+def _request() -> Request:
+    return Request(
+        {"type": "http", "method": "POST", "path": "/", "headers": [], "client": ("203.0.113.7", 1)}
+    )
+
+
+async def _call(body: AdventureGenerateRequest, background: BackgroundTasks):
+    """Call the route as FastAPI does: with the request and a (fake) Redis for admission."""
+    redis = FakeAsyncRedis(decode_responses=True)
+    try:
+        return await adventures.generate_adventure(body, _request(), background, redis)
+    finally:
+        await redis.aclose()
+
+
 async def _generate(body: AdventureGenerateRequest) -> tuple[dict, list]:
     background = BackgroundTasks()
-    response = await adventures.generate_adventure(body, background)
+    response = await _call(body, background)
     return response.model_dump(), background.tasks
 
 
@@ -168,7 +185,7 @@ async def test_concurrent_route_duplicates_dispatch_once(data_dir):
 
     async def run():
         background = BackgroundTasks()
-        response = await adventures.generate_adventure(body, background)
+        response = await _call(body, background)
         background_runs.append(len(background.tasks))
         return response.slug
 
