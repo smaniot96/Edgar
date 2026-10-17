@@ -123,10 +123,14 @@ def parsed_intent_evidence(parsed: Any) -> dict[str, Any] | None:
         elif key == "confirms_ending":
             out[key] = bool(value)
     entities = data.get("entities") if isinstance(data.get("entities"), Mapping) else {}
+    # Nested structures are planner detail, not intent: only plain scalars are kept.
+    scalars = [
+        (key, value)
+        for key, value in entities.items()
+        if isinstance(key, str) and not isinstance(value, Mapping | list | tuple | set)
+    ]
     out["entities"] = {
-        _text(k, 40) or "": _scalar(v)
-        for k, v in list(entities.items())[:_MAX_ENTITIES]
-        if isinstance(k, str)
+        key[:40]: _scalar(value) for key, value in scalars[:_MAX_ENTITIES] if key.strip()
     }
     return out
 
