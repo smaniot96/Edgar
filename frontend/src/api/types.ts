@@ -9,6 +9,14 @@ export interface UserRead {
 
 export type AdventureStatus = "processing" | "ready" | "failed" | "missing" | "empty" | "partial" | "unavailable";
 
+/** Host-only review draft for a legacy (non-private) adventure; text is the host's own source. */
+export interface ManifestInspection {
+  manifest: Record<string, unknown> & { passages: Array<{ passage_id: string; audience: string }>; opening_scene_id: string | null };
+  reviewed_digest: string;
+  passages: Array<{ passage_id: string; text: string }>;
+  review_note: string;
+}
+
 export interface SourceRead {
   slug: string;
   title: string;

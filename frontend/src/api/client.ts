@@ -6,6 +6,7 @@ import type {
   AdventureRead,
   AdventureJobRead,
   ExtractionPreview,
+  ManifestInspection,
   CampaignCharacterRead,
   CampaignRead,
   CharacterAssignmentHistoryRead,
@@ -250,6 +251,23 @@ export async function recoverCampaignSource(id: number, slug: string, file: File
 
 export function retryAdventure(slug: string, reviewed?: { reviewed_source_sha256: string; reviewed_extraction_sha256: string }): Promise<AdventureRead> {
   return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/retry`, reviewed);
+}
+
+/** Host review of a legacy adventure: inspect the current draft (409 when none is compiled). */
+export function inspectAdventureManifest(slug: string, signal?: AbortSignal): Promise<ManifestInspection> {
+  return getJson<ManifestInspection>(`/api/adventures/${encodeURIComponent(slug)}/manifest`, signal);
+}
+
+export function compileAdventureManifest(slug: string): Promise<ManifestInspection> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/manifest/compile`);
+}
+
+export function saveAdventureManifest(slug: string, manifest: Record<string, unknown>): Promise<ManifestInspection> {
+  return sendJson("PUT", `/api/adventures/${encodeURIComponent(slug)}/manifest`, manifest);
+}
+
+export function publishAdventureManifest(slug: string, reviewed_digest: string, reviewer: string): Promise<{ status: string; chunks: number }> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/manifest/publish`, { reviewed_digest, reviewer });
 }
 
 export function cancelAdventure(slug: string): Promise<AdventureJobRead> {
