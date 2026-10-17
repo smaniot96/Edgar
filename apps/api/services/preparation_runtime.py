@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from edgar_core.preparation import (
     PreparationBudget,
     PreparationJobStatus,
@@ -37,11 +39,16 @@ from .preparation import PreparationError, PreparationSupervisor
 from .preparation_store import PreparationStore, PreparationStoreError, preparation_path
 from .safe_errors import classify_error, new_support_ref, safe_failure_metadata
 
+log = structlog.get_logger()
+
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 _RECOVERY_TASKS: set[asyncio.Task] = set()
 _RESTART_PREPARATION_CODES = {
+    "required_book_phb_unindexed",
+    "required_book_dmg_unindexed",
+    "required_book_mm_unindexed",
     "required_books_unavailable",
     "required_book_unavailable",
     "required_books_missing",
@@ -59,6 +66,9 @@ _RESTART_PREPARATION_CODES = {
     "required_assets_unavailable",
 }
 _PREPARATION_FAILURE_MESSAGES = {
+    "required_book_phb_unindexed": "The Player's Handbook has no exact indexed version for this rules edition. Re-ingest that rulebook for this edition, then start a new campaign.",
+    "required_book_dmg_unindexed": "The DM's Guide has no exact indexed version for this rules edition. Re-ingest that rulebook for this edition, then start a new campaign.",
+    "required_book_mm_unindexed": "The Monster Manual has no exact indexed version for this rules edition. Re-ingest that rulebook for this edition, then start a new campaign.",
     "required_books_unavailable": "Required sourcebooks are unavailable for this edition. Choose an available edition or sourcebook and start a new preparation.",
     "required_book_unavailable": "A required sourcebook is unavailable for this edition. Choose an available edition or sourcebook and start a new preparation.",
     "required_books_missing": "Required sourcebooks are missing. Choose an available edition or sourcebook and start a new preparation.",
@@ -1126,6 +1136,16 @@ def _sync_terminal_meta(slug: str, token: str, state: PreparationRunState) -> No
             adapters={}, validators={}, store=PreparationStore()
         ).status(slug, state.binding.run_id)
         restart_required = _needs_new_commission(error_code)
+        if error_code:
+            # Safe, correlated stage failure: the code and support reference only, no provider text.
+            log.error(
+                "preparation_stage_failed",
+                stage=public_stage,
+                failure_code=safe_failure["failure_code"],
+                support_ref=safe_failure["support_ref"],
+                run_id=state.binding.run_id,
+                slug=slug,
+            )
         meta.update(
             status="failed",
             **safe_failure,
