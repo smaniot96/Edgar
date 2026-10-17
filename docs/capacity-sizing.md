@@ -62,6 +62,11 @@ together, which is the worst case for overlap.
 | generation | 1 | 0 | 0 | 0 | 0 | 0.0 | 6 (6 per generation) | 0 | 0 |
 | generation | 32 | 0 | 0 | 0 | 0 | 0.0 | 192 (6 per generation) | 0 | 0 |
 
+Run-to-run variance: the table is one run on the pre-rebase branch. A re-run after rebasing onto
+current main matched the violation count (zero), the per-unit maximum (1) and the failure count (zero).
+Demand moved by at most one connection, and latencies by a few milliseconds. Queued-acquisition counts
+at the top level varied more (summary N=32 ranged from 17 to 32 across runs), so read them as ranges.
+
 - `viol.` counts connections held while a provider call of the same unit was pending. It is zero at
   every level in every scenario, and a negative control in the test suite shows the detector fires.
 - `per unit` is the largest number of connections any single turn, summary job or generation held
