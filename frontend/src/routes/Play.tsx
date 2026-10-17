@@ -26,6 +26,7 @@ import { ButtonLink } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
 import { OfflineState } from "../components/ui/ErrorNotice";
 import { useMode } from "../dev/ModeContext";
+import { useDeveloperTraces } from "../components/play/useDeveloperTraces";
 
 function journalSnapshot(data: import("../components/journal/types").JournalRead) {
   return new Map(data.entries.map((entry) => [
@@ -222,6 +223,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   useEffect(() => {
     if (boot) dispatch({ type: "reset", lines: linesFromHistory(boot.history) });
   }, [boot, dispatch]);
+  // Developer mode reloads the stored traces of the seeded DM turns (EDG-138); Player mode never asks.
+  useDeveloperTraces(sessionId, isDev, boot, dispatch);
 
   // A browser can close after the server commits but before the stream acknowledges it.
   // Resume by checking the durable receipt before offering a retry or another action.
