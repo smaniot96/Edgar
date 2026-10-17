@@ -550,6 +550,7 @@ async def test_stream_turn_releases_its_lease_when_the_client_disconnects(
     response = await session_routes.session_turn_stream(
         session_id=1,
         body=TurnRequest(message="look"),
+        auth=None,
         request=_request(),
         db=None,
         redis=redis_client,
