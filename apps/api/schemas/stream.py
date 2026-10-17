@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Pipeline stages the runner announces, in the order it announces them.
 StreamStage = Literal["parsing", "retrieving", "adjudicating", "narrating", "saving"]
@@ -81,6 +81,49 @@ class CombatOutcomeEntryPublic(_Frame):
     outcome: CombatOutcomeLabel | None
     round: int | None
     combatants: list[dict[str, Any]]
+
+
+class UsesPublic(_Frame):
+    """A resource counted in uses: Second Wind, or a class feature such as Rage."""
+
+    uses_remaining: int
+    uses_max: int
+
+
+class HitDicePublic(_Frame):
+    """The Hit Dice ledger view every class has (`hit_dice_status`)."""
+
+    remaining: int
+    total: int
+    die: str
+
+
+class SpellSlotPublic(_Frame):
+    """Spell slots at one level (`spell_slots_status`); remaining never exceeds total."""
+
+    total: int
+    remaining: int
+
+
+class CharacterPublic(_Frame):
+    """The hero on a committed turn (`character_play_state`) with its read-only resource views.
+
+    `class` is a Python keyword, so the field is named `character_class` and validated by alias.
+    The optional resources are present only for classes that hold them.
+    """
+
+    id: int
+    name: str
+    character_class: str = Field(alias="class")
+    level: int
+    hp_current: int
+    hp_max: int
+    stats: dict[str, Any] | None
+    inventory: list[Any] | dict[str, Any] | None
+    second_wind: UsesPublic | None = None
+    hit_dice: HitDicePublic | None = None
+    spell_slots: dict[str, SpellSlotPublic] | None = None
+    class_features: dict[str, UsesPublic] | None = None
 
 
 # --- Frames -------------------------------------------------------------------------------------
@@ -150,7 +193,7 @@ class DoneFrame(_Frame):
     citations: list[dict[str, Any]]
     ruling_citation_ids: list[str]
     rules_edition: str | None
-    character: dict[str, Any] | None
+    character: CharacterPublic | None
     current_scene_id: str | None
     combat_state: CombatStatePublic | None
     campaign_complete: bool
@@ -197,6 +240,7 @@ PUBLIC_MODELS: dict[str, type[_Frame]] = {
     "CombatantPublic": CombatantPublic,
     "CombatStatePublic": CombatStatePublic,
     "CombatOutcomeEntryPublic": CombatOutcomeEntryPublic,
+    "CharacterPublic": CharacterPublic,
 }
 
 

@@ -18,6 +18,7 @@ from apps.api.schemas.stream import (
     STREAM_EVENTS,
     STREAM_STAGES,
     AdjudicationFrame,
+    CharacterPublic,
     CombatOutcomeEntryPublic,
     CombatStatePublic,
     frame_violations,
@@ -181,3 +182,14 @@ def test_resolved_outcome_entries_conform_to_the_public_model() -> None:
     public = resolved_combat_outcomes_public(engine_row)
     CombatOutcomeEntryPublic.model_validate(public[0])
     assert "source_reference" not in public[0]["combatants"][0]
+
+
+def test_character_resource_views_conform_to_the_public_model() -> None:
+    from apps.api.services.character_assignments import resource_view
+
+    fighter = {"id": 3, "name": "Edgar", "class": "fighter", "level": 3, "hp_current": 20,
+               "hp_max": 24, "stats": {"str": 16}, "inventory": []}
+    wizard = {"id": 4, "name": "Mira", "class": "wizard", "level": 3, "hp_current": 9,
+              "hp_max": 12, "stats": {"int": 16}, "inventory": []}
+    for character in (fighter, wizard):
+        CharacterPublic.model_validate({**character, **resource_view(character)})

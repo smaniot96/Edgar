@@ -351,6 +351,128 @@
     },
     "done": {
       "$defs": {
+        "CharacterPublic": {
+          "additionalProperties": false,
+          "description": "The hero on a committed turn (`character_play_state`) with its read-only resource views.\n\n`class` is a Python keyword, so the field is named `character_class` and validated by alias.\nThe optional resources are present only for classes that hold them.",
+          "properties": {
+            "class": {
+              "title": "Class",
+              "type": "string"
+            },
+            "class_features": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/UsesPublic"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Class Features"
+            },
+            "hit_dice": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HitDicePublic"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "hp_current": {
+              "title": "Hp Current",
+              "type": "integer"
+            },
+            "hp_max": {
+              "title": "Hp Max",
+              "type": "integer"
+            },
+            "id": {
+              "title": "Id",
+              "type": "integer"
+            },
+            "inventory": {
+              "anyOf": [
+                {
+                  "items": {},
+                  "type": "array"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Inventory"
+            },
+            "level": {
+              "title": "Level",
+              "type": "integer"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "second_wind": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UsesPublic"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "spell_slots": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/SpellSlotPublic"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Spell Slots"
+            },
+            "stats": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stats"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "class",
+            "level",
+            "hp_current",
+            "hp_max",
+            "stats",
+            "inventory"
+          ],
+          "title": "CharacterPublic",
+          "type": "object"
+        },
         "CombatStatePublic": {
           "additionalProperties": false,
           "description": "The encounter view attached to `done` (`combat_state_public`).",
@@ -619,6 +741,71 @@
           ],
           "title": "CombatantPublic",
           "type": "object"
+        },
+        "HitDicePublic": {
+          "additionalProperties": false,
+          "description": "The Hit Dice ledger view every class has (`hit_dice_status`).",
+          "properties": {
+            "die": {
+              "title": "Die",
+              "type": "string"
+            },
+            "remaining": {
+              "title": "Remaining",
+              "type": "integer"
+            },
+            "total": {
+              "title": "Total",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "remaining",
+            "total",
+            "die"
+          ],
+          "title": "HitDicePublic",
+          "type": "object"
+        },
+        "SpellSlotPublic": {
+          "additionalProperties": false,
+          "description": "Spell slots at one level (`spell_slots_status`); remaining never exceeds total.",
+          "properties": {
+            "remaining": {
+              "title": "Remaining",
+              "type": "integer"
+            },
+            "total": {
+              "title": "Total",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "total",
+            "remaining"
+          ],
+          "title": "SpellSlotPublic",
+          "type": "object"
+        },
+        "UsesPublic": {
+          "additionalProperties": false,
+          "description": "A resource counted in uses: Second Wind, or a class feature such as Rage.",
+          "properties": {
+            "uses_max": {
+              "title": "Uses Max",
+              "type": "integer"
+            },
+            "uses_remaining": {
+              "title": "Uses Remaining",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "uses_remaining",
+            "uses_max"
+          ],
+          "title": "UsesPublic",
+          "type": "object"
         }
       },
       "additionalProperties": false,
@@ -631,14 +818,12 @@
         "character": {
           "anyOf": [
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/CharacterPublic"
             },
             {
               "type": "null"
             }
-          ],
-          "title": "Character"
+          ]
         },
         "citations": {
           "items": {
@@ -867,6 +1052,195 @@
     }
   },
   "publicModels": {
+    "CharacterPublic": {
+      "$defs": {
+        "HitDicePublic": {
+          "additionalProperties": false,
+          "description": "The Hit Dice ledger view every class has (`hit_dice_status`).",
+          "properties": {
+            "die": {
+              "title": "Die",
+              "type": "string"
+            },
+            "remaining": {
+              "title": "Remaining",
+              "type": "integer"
+            },
+            "total": {
+              "title": "Total",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "remaining",
+            "total",
+            "die"
+          ],
+          "title": "HitDicePublic",
+          "type": "object"
+        },
+        "SpellSlotPublic": {
+          "additionalProperties": false,
+          "description": "Spell slots at one level (`spell_slots_status`); remaining never exceeds total.",
+          "properties": {
+            "remaining": {
+              "title": "Remaining",
+              "type": "integer"
+            },
+            "total": {
+              "title": "Total",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "total",
+            "remaining"
+          ],
+          "title": "SpellSlotPublic",
+          "type": "object"
+        },
+        "UsesPublic": {
+          "additionalProperties": false,
+          "description": "A resource counted in uses: Second Wind, or a class feature such as Rage.",
+          "properties": {
+            "uses_max": {
+              "title": "Uses Max",
+              "type": "integer"
+            },
+            "uses_remaining": {
+              "title": "Uses Remaining",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "uses_remaining",
+            "uses_max"
+          ],
+          "title": "UsesPublic",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The hero on a committed turn (`character_play_state`) with its read-only resource views.\n\n`class` is a Python keyword, so the field is named `character_class` and validated by alias.\nThe optional resources are present only for classes that hold them.",
+      "properties": {
+        "class": {
+          "title": "Class",
+          "type": "string"
+        },
+        "class_features": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/UsesPublic"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Class Features"
+        },
+        "hit_dice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HitDicePublic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hp_current": {
+          "title": "Hp Current",
+          "type": "integer"
+        },
+        "hp_max": {
+          "title": "Hp Max",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "integer"
+        },
+        "inventory": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Inventory"
+        },
+        "level": {
+          "title": "Level",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "second_wind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UsesPublic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spell_slots": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/SpellSlotPublic"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Spell Slots"
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stats"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "class",
+        "level",
+        "hp_current",
+        "hp_max",
+        "stats",
+        "inventory"
+      ],
+      "title": "CharacterPublic",
+      "type": "object"
+    },
     "CombatOutcomeEntryPublic": {
       "additionalProperties": false,
       "description": "A finished encounter as the player may see it (`resolved_combat_outcomes_public`).",
