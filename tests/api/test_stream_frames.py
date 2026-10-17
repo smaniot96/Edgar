@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from agent.models.adjudication import AdjudicationResult
+from apps.api.schemas.stream import frame_violations
 from apps.api.services import turn_runner
 from apps.api.services.turn_runner import (
     _debug_payload,
@@ -158,16 +159,30 @@ def _wire(event: str, data: Any) -> str:
     return sse_event(event, data)
 
 
-def test_golden_wire_format_matches_for_every_frame(stable_support_refs) -> None:
+def _golden() -> dict[str, str]:
+    return json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+
+
+def test_golden_file_has_every_frame_label(stable_support_refs) -> None:
+    """Keep the regeneration path honest: the file on disk is the full, sorted set of labels."""
     frames = representative_frames()
-    wire = {label: _wire(event, data) for label, (event, data) in frames.items()}
-    if os.environ.get("EDGAR_REGEN_STREAM_GOLDEN") == "1":
-        GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        GOLDEN_PATH.write_text(json.dumps(wire, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
-    assert golden.keys() == wire.keys()
-    for label in wire:
-        assert wire[label] == golden[label], label
+    golden = _golden()
+    assert sorted(golden) == sorted(frames)
+
+
+@pytest.mark.parametrize("label", sorted(representative_frames()))
+def test_golden_wire_format_per_frame(label: str, stable_support_refs) -> None:
+    event, data = representative_frames()[label]
+    assert frame_violations(event, data) == []
+    assert _wire(event, data) == _golden()[label]
+
+
+def test_regenerate_golden_when_requested(stable_support_refs) -> None:
+    if os.environ.get("EDGAR_REGEN_STREAM_GOLDEN") != "1":
+        pytest.skip("set EDGAR_REGEN_STREAM_GOLDEN=1 to rewrite the golden file")
+    wire = {label: _wire(event, data) for label, (event, data) in representative_frames().items()}
+    GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    GOLDEN_PATH.write_text(json.dumps(wire, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def test_every_frame_type_is_covered_by_a_golden_frame(stable_support_refs) -> None:

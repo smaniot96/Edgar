@@ -72,6 +72,7 @@ from agent.turn_diagnostics import (
     new_turn_diagnostics,
     turn_diagnostics_public,
 )
+from apps.api.schemas.stream import frame_violations
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.model_profiles import (
     current_model_profiles,
@@ -136,7 +137,15 @@ def error_body(
 
 
 def sse_event(event: str, data: Any) -> str:
-    """Format one Server-Sent Events frame. Two newlines terminate a frame."""
+    """Format one Server-Sent Events frame. Two newlines terminate a frame.
+
+    The frame is checked against the stream contract (`apps.api.schemas.stream`) but always sent
+    unchanged: a violation is logged by field path only, never by value, so a protocol drift
+    shows in logs and tests without ever cutting a committed turn's `done` frame short.
+    """
+    violations = frame_violations(event, data)
+    if violations:
+        log.error("sse_frame_contract_violation", frame=event, fields=violations)
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
