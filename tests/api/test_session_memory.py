@@ -625,3 +625,48 @@ async def test_summarizer_batch_is_bounded_by_its_input_budget(memory_db, monkey
     assert seen == [3]
     (summary,) = await _rows(factory, sid)
     assert summary.payload["turns_summarized"] == 3
+
+
+async def test_bounded_queue_publishes_one_row_per_job_and_skips_duplicate_triggers(
+    memory_db, monkeypatch
+):
+    engine, factory, (sid, _) = memory_db
+    monkeypatch.setattr(memory, "_summary_slots", asyncio.Semaphore(1))
+    monkeypatch.setattr(memory, "_waiting_sessions", set())
+    first_ids = await _narrations(factory, sid, 1, 26)  # 25 turns: first job folds 15
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def summarize(previous, messages):
+        calls.append(len(messages))
+        if len(calls) == 1:
+            entered.set()
+            await _wait(release)
+        return _fold(previous, messages)
+
+    monkeypatch.setattr(memory, "summarize_story", summarize)
+    running = asyncio.create_task(memory.maybe_update_memory_summary(sid))
+    queued = skipped = None
+    try:
+        await _wait(entered)
+        assert memory._summary_slots._value == 0
+        assert engine.pool.checkedout() == 0
+        # Turns committed while the first job runs; the queued job reads them after its slot opens.
+        later_ids = await _narrations(factory, sid, 26, 36)
+        queued = asyncio.create_task(memory.maybe_update_memory_summary(sid))
+        await asyncio.sleep(0)
+        skipped = asyncio.create_task(memory.maybe_update_memory_summary(sid))
+        await asyncio.wait_for(skipped, timeout=5)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(running, queued), timeout=5)
+        rows = await _rows(factory, sid)
+        assert [r.payload["through_event_id"] for r in rows] == [first_ids[14], first_ids[24]]
+        assert len(calls) == 2
+        assert await _selected(factory, sid) == " ".join(f"n{i}" for i in range(1, 26))
+        assert later_ids[-1] > first_ids[-1]
+    finally:
+        for task in (running, queued, skipped):
+            if task is not None and not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task

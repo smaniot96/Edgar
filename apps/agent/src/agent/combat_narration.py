@@ -13,7 +13,7 @@ from typing import Any
 from langchain_core.messages import AIMessage
 
 from agent.combat_telemetry import combat_round_event
-from agent.combatants import roster_violations
+from agent.combatants import display_name, roster_violations
 from agent.models.adjudication import AdjudicationResult
 from agent.nodes.narrator import narration_profile
 from agent.supported_rules import (
@@ -51,6 +51,17 @@ class PendingRoundNarration:
         return narration_profile(self.narr_state)
 
 
+def _roster_problem_labels(problems: list[str], combatants: list[dict]) -> list[str]:
+    """Labels safe to log: roster display names only.
+
+    `roster_violations` returns a foe's name for a revived foe, but for an invented attacker it
+    returns the first two words of the narration itself. Those words are player-visible prose, so
+    anything that is not a roster name is logged as a fixed label (EDG-063).
+    """
+    names = {display_name(c).lower() for c in combatants if not c.get("is_player")}
+    return [p if p.lower() in names else "unnamed_attacker" for p in problems[:4]]
+
+
 def finalize_round_narration(
     pending: PendingRoundNarration, narration: str, *, bound: bool, narrating_ms: int
 ) -> dict[str, Any]:
@@ -78,7 +89,10 @@ def finalize_round_narration(
     problems = roster_violations(text, pending.combatants)
     if problems:
         # Prose that revives an inactive foe or invents an attacker is replaced by the engine's log.
-        log.warning("narration_roster_violation", extra={"problems": problems[:4]})
+        log.warning(
+            "narration_roster_violation",
+            extra={"problems": _roster_problem_labels(problems, pending.combatants)},
+        )
         text = pending.adjudication.mechanical_summary or ""
         messages = [*messages[:-1], AIMessage(content=text)]
     if pending.outcome == "victory":

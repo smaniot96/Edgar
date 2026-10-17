@@ -9,6 +9,7 @@ pressure alone summarizes immediately, and one job folds in only what fits the s
 `max_input_tokens`; any remainder waits for the next job.
 """
 
+import asyncio
 from dataclasses import dataclass
 from typing import Literal
 
@@ -22,6 +23,7 @@ import db.postgres.session as db_session_module
 from agent.history import history_token_budget
 from agent.nodes.memory_summarizer import MEMORY_SUMMARY_PROMPT, summarize_story
 from db.postgres.models import EventLog, Session as SessionModel
+from edgar_core.config import MEMORY_SUMMARY_CONCURRENCY
 from edgar_core.model_profiles import effective_profile
 from edgar_core.token_budget import estimate_tokens, fit_count
 
@@ -31,6 +33,15 @@ RECENT_TURNS = 10
 SUMMARY_EVERY_N_TURNS = 5
 MEMORY_SUMMARY_EVENT = "memory_summary"
 MAX_GENERATION_ATTEMPTS = 3
+
+# Process-wide bound on summary jobs running at once (EDGAR_MEMORY_SUMMARY_CONCURRENCY). A job
+# holds its slot across its provider calls, so this caps provider and connection pressure when
+# many sessions finish turns together. A job waits for its slot before it takes any snapshot.
+_summary_slots = asyncio.Semaphore(MEMORY_SUMMARY_CONCURRENCY)
+# Sessions with a job waiting for a slot. A trigger for such a session returns at once: the
+# waiting job takes its snapshot only after it gets a slot, which is after that trigger's turn
+# committed, so the queued job covers that turn. Nothing is dropped and no older base is reused.
+_waiting_sessions: set[int] = set()
 
 
 def _events_to_messages(events: list[EventLog]) -> list[HumanMessage | AIMessage]:
@@ -257,6 +268,28 @@ async def _publish_memory_summary(
 
 
 async def maybe_update_memory_summary(session_id: int) -> None:
+    """Run one summary job once a process-wide slot is free.
+
+    Excess jobs queue without holding a DB connection. At most MEMORY_SUMMARY_CONCURRENCY jobs run at once. While a job for this session waits, a
+    further trigger for the same session is skipped (see `_waiting_sessions`), so each session
+    has at most one waiter. Cancellation while waiting or running releases the slot.
+    """
+    if session_id in _waiting_sessions:
+        return
+    _waiting_sessions.add(session_id)
+    try:
+        await _summary_slots.acquire()
+    except BaseException:
+        _waiting_sessions.discard(session_id)
+        raise
+    _waiting_sessions.discard(session_id)
+    try:
+        await _run_memory_summary(session_id)
+    finally:
+        _summary_slots.release()
+
+
+async def _run_memory_summary(session_id: int) -> None:
     """Generate outside DB transactions and publish only against the current summary base.
 
     Overlapping equal/older jobs are no-ops. A changed base retries from fresh immutable

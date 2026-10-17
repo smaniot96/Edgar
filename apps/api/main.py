@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
 from edgar_core.config import API_TITLE, API_VERSION
-from edgar_core.model_profiles import validate_provider_configuration
+from edgar_core.model_profiles import ModelProfileError, validate_provider_configuration
 
 from .auth import require_authentication, validate_auth_configuration
 from .limits import (
@@ -28,6 +28,11 @@ from .limits import (
     validate_limit_configuration,
 )
 from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
+from .origin_policy import (
+    apply_origin_policy,
+    origin_policy_from_config,
+    origin_policy_summary,
+)
 from .routers._common import HTTPErrorWithContext
 from .routers.adventure_manifests import router as adventure_manifests_router
 from .routers.adventures import router as adventures_router
@@ -57,8 +62,16 @@ async def lifespan(app: FastAPI):
     # Fail before any background work when the auth mode or its required settings are unsafe.
     log.info("auth_configuration_validated", **validate_auth_configuration())
     # Fail before any background work when local provider settings are unusable.
-    log.info("provider_configuration_validated", **validate_provider_configuration())
+    try:
+        provider_settings = validate_provider_configuration()
+    except ModelProfileError as exc:
+        # Startup aborts; this event is the structured alert signal. The message names the faulty
+        # setting but never its value, and the error class is the only field logged.
+        log.error("provider_configuration_invalid", error_class=type(exc).__name__)
+        raise
+    log.info("provider_configuration_validated", **provider_settings)
     log.info("limits_configured", **validate_limit_configuration())
+    log.info("origin_policy_configured", **origin_policy_summary(_ORIGIN_POLICY))
     # Background ingest/generation tasks die with the process; flag the ones a previous run
     # left in "processing" as failed so the UI can offer a retry instead of spinning forever.
     from .services.adventures_meta import fail_stale_processing
@@ -89,6 +102,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=API_TITLE, version=API_VERSION, lifespan=lifespan)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(UploadSizeLimitMiddleware)
+# EDG-052: fail closed at import on a malformed origin policy. Added last so CORS and the
+# trusted-host check are the outermost layers. Same-origin default installs nothing.
+_ORIGIN_POLICY = origin_policy_from_config()
+apply_origin_policy(app, _ORIGIN_POLICY)
 
 
 @app.exception_handler(HTTPErrorWithContext)
