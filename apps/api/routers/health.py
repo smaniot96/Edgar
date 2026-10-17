@@ -88,6 +88,9 @@ async def ready(
             await _probe("schema", _check_schema(db)),
         ]
     )
+    # The session's first statement checked out a pooled connection and holds it until the
+    # transaction ends. Release it now, so a slow Redis or Qdrant cannot pin it for the probe.
+    await db.close()
     results.update(
         await asyncio.gather(
             _probe("redis", _check_redis(redis)),
