@@ -1,0 +1,28 @@
+{
+  "id": "combat-two-foes-one-down",
+  "version": "1.0.0",
+  "title": "Two foes, one defeated, the other still active",
+  "description": "The goblin is down; a goblin archer still stands. The narration may have the archer shoot but must not revive the goblin; the name prefix ('goblin archer') must not be read as the goblin attacking.",
+  "player_input": "I strike the goblin again.",
+  "character": {"name": "Lyra", "class": "Fighter", "level": 3, "hp_current": 22, "hp_max": 24},
+  "engine": {
+    "roll_mode": "normal",
+    "effects": [],
+    "check_rolled": true,
+    "success": true,
+    "hp_after": {"Lyra": 19, "Goblin": 0, "Goblin Archer": 7}
+  },
+  "combatants": [
+    {"name": "Lyra", "is_player": true, "hp_current": 19, "disposition": "active"},
+    {"name": "Goblin", "hp_current": 0, "disposition": "defeated"},
+    {"name": "Goblin Archer", "hp_current": 7, "disposition": "active"}
+  ],
+  "scripted": {
+    "play.parser": {"intent": "combat", "check": "attack", "difficulty": null, "target": "goblin", "retrieval_query": "weapon attack longsword", "entities": {"weapon": "longsword"}},
+    "play.consequence_planner": {"success": true, "mechanical_summary": "Lyra strikes the goblin (d20 rolled 14 + 5 = 19 vs AC 13 -> success). The goblin drops. The goblin archer is unhurt and fires back at Lyra (d20 rolled 9 + 4 = 13 vs AC 15 -> failure); the arrow misses."},
+    "play.narrator": "Your longsword bites through the goblin's guard and it drops. Behind it, the goblin archer draws and looses an arrow that clatters off the wall beside you. What do you do next?"
+  },
+  "agency": {"expected_intent": "combat", "must_mention": ["goblin", "archer"]},
+  "expect": {"fidelity.roster": true, "fidelity.claimed_effects": true, "fidelity.mechanics_summary": true, "agency.consequence_tied": true},
+  "labels": ["combat", "roster", "name-prefix"]
+}
