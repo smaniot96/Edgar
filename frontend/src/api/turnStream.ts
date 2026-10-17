@@ -1,6 +1,15 @@
 import { readSse } from "./sse";
 import type { AdjudicationResult, DebugPayload, TurnResult } from "./types";
 
+/**
+ * Every SSE event name the turn stream carries. `stream.schema.json` (generated from the backend
+ * contract) must list the same names, and `stream.contract.test.ts` fails when they drift.
+ */
+export const TURN_STREAM_EVENTS = ["status", "token", "adjudication", "debug", "done", "error"] as const;
+
+/** The pipeline stages a `status` frame may name, in the order the runner emits them. */
+export const TURN_STATUS_STAGES = ["parsing", "retrieving", "adjudicating", "narrating", "saving"] as const;
+
 export interface TurnStreamHandlers {
   onStatus?: (stage: string) => void;
   onToken?: (text: string) => void;

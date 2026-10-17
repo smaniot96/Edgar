@@ -73,6 +73,7 @@ from agent.turn_diagnostics import (
     turn_diagnostics_public,
 )
 from agent.turn_trace import TRACE_MAX_CHUNKS, TRACE_SNIPPET_WIDTH, turn_trace_event
+from apps.api.schemas.stream import frame_violations
 from db.postgres.models import Campaign, CharacterAssignment, EventLog, Session as SessionModel
 from edgar_core.model_profiles import (
     current_model_profiles,
@@ -86,6 +87,7 @@ from edgar_core.sources import citations_for, public_citations
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
+from .operational_metrics import observe_committed_turn
 from .roll_record import build_roll_record, roll_status_for
 from .safe_errors import classify_error, log_failure
 from .world_writes import (
@@ -137,7 +139,15 @@ def error_body(
 
 
 def sse_event(event: str, data: Any) -> str:
-    """Format one Server-Sent Events frame. Two newlines terminate a frame."""
+    """Format one Server-Sent Events frame. Two newlines terminate a frame.
+
+    The frame is checked against the stream contract (`apps.api.schemas.stream`) but always sent
+    unchanged: a violation is logged by field path only, never by value, so a protocol drift
+    shows in logs and tests without ever cutting a committed turn's `done` frame short.
+    """
+    violations = frame_violations(event, data)
+    if violations:
+        log.error("sse_frame_contract_violation", frame=event, fields=violations)
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
@@ -975,6 +985,7 @@ async def _stream_session_turn(
             ),
         )
         return
+    observe_committed_turn(state.get("telemetry_events"), diag)
     lap("saving_ms")
 
     if debug:
