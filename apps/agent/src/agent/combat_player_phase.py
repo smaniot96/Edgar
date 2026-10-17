@@ -443,7 +443,8 @@ def _catalog_spell(t: _Turn, spell_plan: CastPlan) -> None:
             log_lines.append(f"{hero}'s concentration on {previous} ends.")
     applied_condition: str | None = None
     dealt = t.dealt
-    rec.outcomes: list[str] = []
+    # The spell's narrative lines. `rec.outcomes` holds only enemy attack resolutions (EDG-159).
+    spell_lines: list[str] = []
     for spell_target in decl.spell_targets:
         target_stats = stats_of(spell_target) if spell_target else None
         if target_stats is not None:
@@ -533,8 +534,8 @@ def _catalog_spell(t: _Turn, spell_plan: CastPlan) -> None:
                     ),
                 ]
             )
-        rec.outcomes.append(extra_outcome)
-    extra_outcome = " ".join(rec.outcomes)
+        spell_lines.append(extra_outcome)
+    extra_outcome = " ".join(spell_lines)
     t.player_action = {
         "action": "catalog_spell",
         "spell": spell_result.spec.name,

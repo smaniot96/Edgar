@@ -13,6 +13,7 @@ from agent.combat_telemetry import COMBAT_ROUND_EVENT
 from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
 from tests.agent.test_combat import _enemy, _player, _round, _state
+from tests.agent.test_combat_round_golden import WIZARD
 from tools.dice import use_rng
 
 
@@ -160,3 +161,34 @@ async def test_turn_without_a_round_stages_no_round_telemetry(
     state = _state([_player(init=20, ac=13), _enemy("Goblin", init=1)], "I attack the ogre")
     out = await _round(fake_llm_schema, state)
     assert "telemetry_events" not in out
+
+
+@pytest.mark.asyncio
+async def test_declared_spell_keeps_enemy_attacks_before_and_after_it(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    """EDG-159: a declared catalog spell must not drop the enemy attacks recorded earlier in the round.
+
+    The wolf (initiative 18) acts before the wizard's Fire Bolt, and the goblin (5) after it. The
+    telemetry row lists the enemy attack resolutions in initiative order; the spell's narrative
+    lines stay out of that list, since the spell is the player's own action.
+    """
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    state = _state(
+        [
+            _player(init=15, ac=14),
+            _enemy("Wolf", hp=40, ac=12, init=18),
+            _enemy("Goblin", hp=60, ac=12, init=5),
+        ],
+        "I cast Fire Bolt at the goblin",
+    )
+    state["parsed_input"] = ParsedInput(intent="combat", check="spell_attack", target="goblin")
+    state["character"] = {**WIZARD, "hp_current": 40, "hp_max": 40}
+    with use_rng(random.Random(2)):
+        out = await _round(fake_llm_schema, state)
+    payload = _round_event(out)
+
+    assert payload["player_action"]["action"] == "catalog_spell"
+    assert all(isinstance(o, dict) for o in payload["outcomes"])
+    assert [o["actor"] for o in payload["outcomes"]] == ["Wolf", "Goblin"]
+

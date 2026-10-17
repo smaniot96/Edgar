@@ -455,7 +455,6 @@
           "ended": false,
           "outcome": null,
           "outcomes": [
-            "Fire Bolt misses Goblin.",
             {
               "action": "attack",
               "actor": "Goblin",
