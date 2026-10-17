@@ -1,0 +1,78 @@
+# Hosting profile (opt-in), layered on the base file only:
+#   docker compose -f docker-compose.yml -f docker-compose.hosting.yml up -d
+# The default stack and docker-compose.dev.yml are unchanged by this file.
+#
+# What it does on top of the base stack:
+#   - publishes no host ports for Postgres, Redis or Qdrant (the API stays on 127.0.0.1:8000)
+#   - requires AUTH on Redis (requirepass) and an API key on Qdrant, and gives the clients that
+#     use them the same values
+#   - requires POSTGRES_PASSWORD; there is no password default in this profile
+#   - puts the datastores on an internal network with no route out; the services that call the
+#     provider API (api, ingestion, rules_engine) also join an egress network
+#
+# Every credential is required (`${VAR:?...}`), so Compose refuses to start without it. Set them
+# in .env (never commit it) or export them from the deployment's secret store.
+# Requires Docker Compose 2.24.4 or newer for the `!reset` tag. See docs/hosting-hardening.md.
+
+services:
+  api:
+    networks:
+      - egress
+      - datastore
+    environment:
+      - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD for the hosting profile}"
+      - "REDIS_PASSWORD=${REDIS_PASSWORD:?set REDIS_PASSWORD for the hosting profile}"
+      - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:?set VECTOR_DB_API_KEY for the hosting profile}"
+
+  migrate:
+    networks:
+      - datastore
+    environment:
+      - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD for the hosting profile}"
+
+  ingestion:
+    networks:
+      - egress
+      - datastore
+    environment:
+      - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:?set VECTOR_DB_API_KEY for the hosting profile}"
+
+  rules_engine:
+    networks:
+      - egress
+      - datastore
+    environment:
+      - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:?set VECTOR_DB_API_KEY for the hosting profile}"
+
+  db:
+    networks:
+      - datastore
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD for the hosting profile}
+    ports: !reset []
+
+  redis:
+    networks:
+      - datastore
+    # The password reaches redis-server as an argument (no shell), so it is visible to anyone
+    # who can inspect this container; keep the Docker host itself restricted.
+    command:
+      - redis-server
+      - --requirepass
+      - "${REDIS_PASSWORD:?set REDIS_PASSWORD for the hosting profile}"
+    # redis-cli reads REDISCLI_AUTH, so the existing healthcheck keeps working with AUTH on.
+    environment:
+      - "REDISCLI_AUTH=${REDIS_PASSWORD:?set REDIS_PASSWORD for the hosting profile}"
+    ports: !reset []
+
+  qdrant:
+    networks:
+      - datastore
+    environment:
+      - "QDRANT__SERVICE__API_KEY=${VECTOR_DB_API_KEY:?set VECTOR_DB_API_KEY for the hosting profile}"
+    ports: !reset []
+
+networks:
+  egress: {}
+  datastore:
+    internal: true
