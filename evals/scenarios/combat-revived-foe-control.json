@@ -1,0 +1,27 @@
+{
+  "id": "combat-revived-foe-control",
+  "version": "1.0.0",
+  "title": "Negative control: narration revives a dead goblin",
+  "description": "Negative control. The goblin is defeated, but the narration has it stab the player. The roster check must fail; this proves the fidelity.roster checker bites.",
+  "player_input": "I attack the goblin with my shortsword.",
+  "character": {"name": "Lyra", "class": "Fighter", "level": 3, "hp_current": 22, "hp_max": 24},
+  "engine": {
+    "roll_mode": "normal",
+    "effects": [],
+    "check_rolled": true,
+    "success": true,
+    "hp_after": {"Lyra": 22, "Goblin": 0}
+  },
+  "combatants": [
+    {"name": "Lyra", "is_player": true, "hp_current": 22, "disposition": "active"},
+    {"name": "Goblin", "hp_current": 0, "disposition": "defeated"}
+  ],
+  "scripted": {
+    "play.parser": {"intent": "combat", "check": "attack", "difficulty": null, "target": "goblin", "retrieval_query": "weapon attack shortsword", "entities": {"weapon": "shortsword"}},
+    "play.consequence_planner": {"success": true, "mechanical_summary": "Lyra attacks the goblin with a shortsword (d20 rolled 15 + 5 = 20 vs AC 13 -> success). The hit deals 6 damage and the goblin drops."},
+    "play.narrator": "Your shortsword finds the goblin's ribs. The goblin rises and stabs at you with a rusted dagger before you can step back. What do you do next?"
+  },
+  "agency": {"expected_intent": "combat", "must_mention": ["goblin"]},
+  "expect": {"fidelity.roster": false, "fidelity.claimed_effects": true, "fidelity.mechanics_summary": true, "agency.consequence_tied": true},
+  "labels": ["combat", "roster", "negative-control"]
+}

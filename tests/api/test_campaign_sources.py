@@ -170,7 +170,7 @@ async def test_reupload_restores_exact_bound_slug_and_preserves_history(
         assert pending["status"] == "processing"
         candidate = adventures_meta.candidate_pdf_path(target, attempt_id)
         assert str(candidate) == path
-        assert candidate.read_bytes() == b"%PDF supplied source"
+        assert candidate.read_bytes() == b"%PDF-1.4 supplied source"
         assert not adventures._PDF_DIR.joinpath(f"{target}.pdf").exists()
         assert source_filename == "Original adventure.pdf"
         ingests.append((target, path))
@@ -185,7 +185,7 @@ async def test_reupload_restores_exact_bound_slug_and_preserves_history(
     monkeypatch.setattr(adventures, "_ingest_adventure", ingest)
     uploaded = await api_client.post(
         f"/api/campaigns/{cid}/sources/{slug}/upload",
-        files={"file": ("Original adventure.pdf", b"%PDF supplied source", "application/pdf")},
+        files={"file": ("Original adventure.pdf", b"%PDF-1.4 supplied source", "application/pdf")},
     )
     assert uploaded.status_code == 202 and uploaded.json()["slug"] == slug
     assert len(ingests) == 1
@@ -193,18 +193,18 @@ async def test_reupload_restores_exact_bound_slug_and_preserves_history(
     assert restored["adventure_collections"] == old["adventure_collections"]
     assert restored["source_mode"] == "module" and restored["play_allowed"]
     assert restored["sources"][0]["source_pdf_available"]
-    assert adventures._PDF_DIR.joinpath(f"{slug}.pdf").read_bytes() == b"%PDF supplied source"
+    assert adventures._PDF_DIR.joinpath(f"{slug}.pdf").read_bytes() == b"%PDF-1.4 supplied source"
     assert adventures_meta.load_meta(slug)["source_filename"] == "Original adventure.pdf"
     assert await db_session.scalar(select(func.count(EventLog.id))) == before
     assert source_corpus.scroll("unrelated", with_vectors=True)[0] == unrelated
     assert (
         await api_client.post(
-            f"/api/campaigns/{cid}/sources/unbound/upload", files={"file": ("x.pdf", b"%PDF x")}
+            f"/api/campaigns/{cid}/sources/unbound/upload", files={"file": ("x.pdf", b"%PDF-1.4 x")}
         )
     ).status_code == 422
     assert (
         await api_client.post(
-            f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"%PDF x")}
+            f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"%PDF-1.4 x")}
         )
     ).status_code == 409
 
@@ -219,19 +219,19 @@ async def test_rejected_reupload_keeps_retained_pdf_and_retry_never_invents_miss
     assert (await api_client.post(f"/api/adventures/{slug}/retry")).status_code == 410
     adventures._PDF_DIR.mkdir(parents=True)
     retained = adventures._PDF_DIR / f"{slug}.pdf"
-    retained.write_bytes(b"%PDF retained")
+    retained.write_bytes(b"%PDF-1.4 retained")
     rejected = await api_client.post(
         f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"")}
     )
     assert rejected.status_code == 400
-    assert retained.read_bytes() == b"%PDF retained"
+    assert retained.read_bytes() == b"%PDF-1.4 retained"
     assert adventures_meta.load_meta(slug)["status"] == "ready"
     monkeypatch.setattr(adventures, "_ingest_adventure", lambda *_, **_kw: None)
     assert (await api_client.post(f"/api/adventures/{slug}/retry")).status_code == 202
     assert adventures_meta.load_meta(slug)["status"] == "processing"
     assert (
         await api_client.post(
-            f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"%PDF x")}
+            f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"%PDF-1.4 x")}
         )
     ).status_code == 409
 
