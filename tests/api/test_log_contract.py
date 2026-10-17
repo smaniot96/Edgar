@@ -162,7 +162,7 @@ async def test_readiness_failure_logs_error_class_not_exception_text(monkeypatch
 
 
 def test_narration_roster_log_labels_never_include_prose() -> None:
-    from agent.graph_combat import _roster_problem_labels
+    from agent.combat_narration import _roster_problem_labels
 
     combatants = [
         {"display_name": "Raider", "is_player": False},
