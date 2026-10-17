@@ -762,9 +762,7 @@ async def test_empty_upload_is_left_to_the_routes_own_empty_file_validation():
 
 @pytest.mark.asyncio
 async def test_non_empty_non_pdf_content_is_refused_before_any_work():
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException) as info:
+    with pytest.raises(limits.LimitRejected) as info:
         await limits.require_pdf_upload(_upload(b"just some text, not a pdf"))
-    assert info.value.status_code == 415
+    assert info.value.code == "upload_unsupported"
     await limits.require_pdf_upload(_upload(b"%PDF-1.7 body"))
