@@ -36,6 +36,16 @@ PROVIDER = {
     "MODEL_PROFILES_PATH",
 }
 RETRIEVAL = {"QDRANT_PORT"}
+NEW_API_SETTINGS = (
+    "EDGAR_MEMORY_SUMMARY_CONCURRENCY",
+    "EDGAR_ALLOWED_ORIGINS",
+    "EDGAR_ALLOW_CREDENTIALS",
+    "EDGAR_TRUSTED_HOSTS",
+    "EDGAR_AUTH_MODE",
+    "EDGAR_ADMIN_USER_IDS",
+    "EDGAR_ALLOW_DEBUG_IN_TOKEN_MODE",
+)
+
 LIMIT_SETTINGS = (
     "LIMIT_TURNS_PER_MINUTE",
     "LIMIT_JOB_STARTS_PER_HOUR",
@@ -60,6 +70,7 @@ API_ONLY = {
     "EDGAR_VISUAL_REVIEW_PUBLIC_KEY",
     "EDGAR_VISUAL_REVIEW_PRIVATE_KEY",
     *LIMIT_SETTINGS,
+    *NEW_API_SETTINGS,
 }
 
 # The exact set of names each service receives from the default (base) file. Changing one is a
@@ -119,6 +130,7 @@ EMPTY_DEFAULT_OK = {
     "EDGAR_VISUAL_REVIEW_PRIVATE_KEY",
     # `_int_setting` treats an empty value as unset and falls back to its code default.
     *LIMIT_SETTINGS,
+    *NEW_API_SETTINGS,
 }
 
 # EDGAR_DEBUG has no code default: the code reads "" as off, and "0" is off as well.
