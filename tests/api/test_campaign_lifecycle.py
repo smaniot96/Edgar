@@ -272,7 +272,7 @@ async def test_reopen_waits_for_in_flight_end(api_client) -> None:
     factory = db_session_module.async_session_factory
     async with factory() as ending, factory() as reopening:
         assert await close_campaign(ending, await ending.get(Campaign, cid))
-        reopen = asyncio.create_task(reopen_campaign(cid, db=reopening))
+        reopen = asyncio.create_task(reopen_campaign(cid, None, db=reopening))
         await asyncio.sleep(0.2)
         await ending.commit()
         await asyncio.wait_for(reopen, timeout=5)
@@ -288,7 +288,7 @@ async def test_release_waits_for_in_flight_end_and_keeps_closure_stamp(api_clien
     async with factory() as ending, factory() as releasing:
         assert await close_campaign(ending, await ending.get(Campaign, cid))
         release = asyncio.create_task(
-            release_character_from_campaign(cid, char_id, db=releasing, owner_id=owner)
+            release_character_from_campaign(cid, char_id, None, db=releasing, owner_id=owner)
         )
         await asyncio.sleep(0.2)
         await ending.commit()
