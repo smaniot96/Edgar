@@ -54,7 +54,9 @@ def _split_entries(setting: str, raw: str) -> list[str]:
         return []
     entries = [entry.strip() for entry in raw.split(",")]
     if any(not entry for entry in entries):
-        raise OriginConfigurationError(f"{setting} contains an empty entry; remove the extra comma.")
+        raise OriginConfigurationError(
+            f"{setting} contains an empty entry; remove the extra comma."
+        )
     return entries
 
 

@@ -163,7 +163,9 @@ async def test_preflight_from_allowed_origin_lists_only_the_policy_methods_and_h
     assert delete.headers["access-control-allow-origin"] == ALLOWED
     assert "DELETE" in delete.headers["access-control-allow-methods"]
     assert delete.headers["access-control-max-age"] == "600"
-    allowed_headers = {h.strip().lower() for h in delete.headers["access-control-allow-headers"].split(",")}
+    allowed_headers = {
+        h.strip().lower() for h in delete.headers["access-control-allow-headers"].split(",")
+    }
     assert {"authorization", "content-type", "accept", "x-request-id"} <= allowed_headers
     assert "x-evil-header" not in allowed_headers
 
@@ -179,7 +181,9 @@ async def test_request_id_is_exposed_and_retry_after_is_not(load_app) -> None:
     async with _client(app) as client:
         response = await client.get("/health", headers={"Origin": ALLOWED, "X-Request-ID": "req-1"})
     assert response.headers["x-request-id"] == "req-1"
-    exposed = {h.strip().lower() for h in response.headers["access-control-expose-headers"].split(",")}
+    exposed = {
+        h.strip().lower() for h in response.headers["access-control-expose-headers"].split(",")
+    }
     assert exposed == {"x-request-id"}
 
 
@@ -296,7 +300,9 @@ def test_credentials_without_origins_fails_startup(load_app) -> None:
 async def test_trusted_hosts_reject_unknown_host_header(load_app) -> None:
     app = load_app(origins=ALLOWED, hosts="edgar.example.com")
     async with _client(app) as client:
-        known = await client.get("/health", headers={"Host": "edgar.example.com", "Origin": ALLOWED})
+        known = await client.get(
+            "/health", headers={"Host": "edgar.example.com", "Origin": ALLOWED}
+        )
         unknown = await client.get("/health", headers={"Host": "attacker.example.net"})
     assert known.status_code == 200
     assert known.headers["access-control-allow-origin"] == ALLOWED
