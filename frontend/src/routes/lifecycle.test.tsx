@@ -39,6 +39,11 @@ function flush(ms = 0) {
   });
 }
 
+/** Let response bodies and chained fetches finish: they settle on real I/O ticks, not one timer. */
+async function settle() {
+  for (let i = 0; i < 25; i += 1) await flush(5);
+}
+
 const ready: ReadinessRead = { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] };
 
 function campaign(overrides: Partial<CampaignRead> & Pick<CampaignRead, "id" | "title">): CampaignRead {
@@ -118,8 +123,11 @@ it("changing sessions in place aborts the first boot and never shows its late re
   expect(sessionOne.signal?.aborted).toBe(true);
 
   // A transport that ignores the abort delivers the old save late; it must not replace session two.
-  await act(async () => { releaseFirst(json(session({ id: 1, campaign_id: 2 }))); });
-  await flush();
+  // Keep the act scope open while the late chain finishes, so its state updates are flushed here.
+  await act(async () => {
+    releaseFirst(json(session({ id: 1, campaign_id: 2 })));
+    for (let i = 0; i < 25; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  });
   expect(container.textContent).toContain("Harbour saga");
   expect(container.textContent).not.toContain("Lost module");
 });
@@ -400,4 +408,35 @@ it("renders only the public chat fields of a saved message, never extra planner-
   await flush();
   expect(container.textContent).toContain("The bell tolls once.");
   expect(container.innerHTML).not.toContain(SENTINEL);
+});
+
+it("a mounted boot hook that changes session ignores the old session's late response", async () => {
+  // Play keys its screen by session, so routes never reach this case; the hook must still
+  // guard it, because a caller without that key would otherwise show the old save.
+  const { usePlaySession } = await import("../components/play/usePlaySession");
+  function BootProbe({ id }: { id: number }) {
+    const game = usePlaySession(id);
+    return <p>{game.loading ? "loading" : game.title}</p>;
+  }
+  let releaseFirst!: (response: Response) => void;
+  const firstSession = new Promise<Response>((resolve) => { releaseFirst = resolve; });
+  const { calls } = installFakeApi([
+    [/^GET \/api\/sessions\/1$/, () => firstSession],
+    [/^GET \/api\/sessions\/2$/, () => json(session({ id: 2, campaign_id: 3 }))],
+    [/^GET \/api\/campaigns\/3$/, () => json(campaign({ id: 3, title: "Harbour saga" }))],
+    [/^GET \/api\/campaigns\/2$/, () => json(campaign({ id: 2, title: "Lost module" }))],
+    [/^GET \/api\/sessions\/[12]\/messages$/, () => json([])],
+    [/^GET \/api\/sessions\/[12]\/combat$/, noCombat],
+  ]);
+  await act(() => root.render(<ModeProvider><MemoryRouter initialEntries={["/"]}><BootProbe id={1} /></MemoryRouter></ModeProvider>));
+  await act(() => root.render(<ModeProvider><MemoryRouter initialEntries={["/"]}><BootProbe id={2} /></MemoryRouter></ModeProvider>));
+  await flush();
+  expect(container.textContent).toBe("Harbour saga");
+
+  await act(async () => {
+    releaseFirst(json(session({ id: 1, campaign_id: 2 })));
+    for (let i = 0; i < 25; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  });
+  expect(calls.find((c) => c.path === "/api/sessions/1")?.signal?.aborted).toBe(true);
+  expect(container.textContent).toBe("Harbour saga");
 });
