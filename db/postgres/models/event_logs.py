@@ -24,6 +24,7 @@ EVENT_RETENTION: dict[str, RetentionClass] = {
     "prepared_amendment": "durable",
     "combat_round": "diagnostic",
     "turn_diagnostics": "diagnostic",
+    "turn_trace": "diagnostic",
 }
 
 

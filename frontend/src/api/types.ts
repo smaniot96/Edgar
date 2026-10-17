@@ -9,6 +9,14 @@ export interface UserRead {
 
 export type AdventureStatus = "processing" | "ready" | "failed" | "missing" | "empty" | "partial" | "unavailable";
 
+/** Host-only review draft for a legacy (non-private) adventure; text is the host's own source. */
+export interface ManifestInspection {
+  manifest: Record<string, unknown> & { passages: Array<{ passage_id: string; audience: string }>; opening_scene_id: string | null };
+  reviewed_digest: string;
+  passages: Array<{ passage_id: string; text: string }>;
+  review_note: string;
+}
+
 export interface SourceRead {
   slug: string;
   title: string;
@@ -641,6 +649,80 @@ export interface TurnDiagnostics {
     calls_unknown_cost: number;
     complete: boolean;
   };
+}
+
+/** One retrieved chunk in a stored developer trace (EDG-138). Text only where the audience allows it. */
+export interface TurnTraceChunk {
+  collection: string | null;
+  source: string | null;
+  page: number | null;
+  score: number | null;
+  /** Present only for player-audience chunks; absent when `text_withheld` is true. */
+  text?: string;
+  text_withheld: boolean;
+  citation: {
+    reference_id?: string;
+    rules_edition?: string;
+    edition_status?: string;
+    source_sha256?: string | null;
+    extraction_sha256?: string | null;
+    page?: number | null;
+    page_end?: number | null;
+    source_pages?: number[];
+    audience?: string;
+  };
+}
+
+export interface TurnTraceRag {
+  count: number;
+  chunks: TurnTraceChunk[];
+  chunks_dropped: number;
+}
+
+/** Developer trace of one DM turn, persisted across reload (EDG-138). Whitelisted server-side. */
+export interface TurnTrace {
+  version: number;
+  scope: "dm_turn";
+  turn_id: string;
+  delivery: "sync" | "stream";
+  path: "normal" | "combat";
+  parsed_input: {
+    intent: string | null;
+    check: string | null;
+    difficulty: string | null;
+    target: string | null;
+    retrieval_query: string | null;
+    uses_item: string | null;
+    lethality: string | null;
+    confirms_ending: boolean | null;
+    entities: Record<string, string | number | boolean | null>;
+  } | null;
+  rag: { rules: TurnTraceRag; adventure: TurnTraceRag };
+  settings: {
+    rules_edition: string;
+    source_mode: string;
+    narrator_profile: string;
+    profile_version: number | null;
+    profiles: Record<string, { model: string | null; reasoning_effort: string | null; api: string | null }>;
+  };
+  /** Companion rows matched by turn_id at read time, not copied into the trace. */
+  composed_with: string[];
+}
+
+/** One DM turn of the developer trace list. `trace` is null only for a row this build cannot read. */
+export interface TurnTraceRecord {
+  turn_id: string;
+  created_at: string;
+  trace: TurnTrace | null;
+  turn_diagnostics: TurnDiagnostics | null;
+  combat_round: CombatRoundDiagnostics | null;
+}
+
+/** GET /sessions/{id}/diagnostics/turn-traces (developer only). Turns absent here were not captured. */
+export interface TurnTraceList {
+  scope: "dm_turns";
+  truncated: boolean;
+  turns: TurnTraceRecord[];
 }
 
 /** Payload of the optional `debug` SSE event, emitted only when debug=true. */

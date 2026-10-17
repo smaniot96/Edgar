@@ -58,8 +58,10 @@ from ..services.turn_runner import (
     public_adjudication,
     run_turn,
     sse_event,
+    stage_turn_trace,
     stream_session_turn,
 )
+from ..services.turn_traces import load_turn_traces
 from ..services.world_flags import load_world_flags
 from ._common import get_or_404
 
@@ -389,6 +391,23 @@ async def list_turn_diagnostics(
     }
 
 
+@router.get("/sessions/{session_id}/diagnostics/turn-traces")
+async def list_turn_traces(
+    session_id: int,
+    limit: int = Query(200, ge=1, le=500),
+    db: AsyncSession = Depends(get_session),
+):
+    """Captured developer traces of DM turns for reload (developer only, EDG-138).
+
+    A trace exists only for a turn whose request asked for debug while EDGAR_DEBUG was on. A DM turn
+    without an entry was not captured (Player mode or a legacy turn) and must be shown as such.
+    """
+    if not debug_turns_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+    await get_or_404(db, SessionModel, session_id, "Session")
+    return await load_turn_traces(db, session_id, limit)
+
+
 @router.post("/sessions/{session_id}/intro")
 async def session_intro(
     session_id: int,
@@ -617,6 +636,7 @@ async def session_turn(
             turn_id=initial_state.get("turn_id"), delivery="sync", lock_wait_ms=lock.acquire_ms
         )
         result = {**initial_state, **await run_turn(initial_state, diagnostics=diagnostics)}
+        result = stage_turn_trace(result, debug=body.debug, delivery="sync")
         outcome = "unknown"
         done = await persist_turn(session_id, body.message, result)
         outcome = "committed"
