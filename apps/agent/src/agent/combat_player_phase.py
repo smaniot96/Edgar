@@ -48,8 +48,11 @@ from agent.conditions import (
     consume_mark,
     drop_concentration,
     drop_concentration_if_incapacitated,
+    end_fear_of_defeated,
     fear_refusal,
+    hero_end_of_turn_saves,
     paralyzed_melee_crit,
+    save_line,
     spell_condition_sentence,
     start_concentration,
 )
@@ -708,3 +711,23 @@ def _attack(t: _Turn, target: dict) -> None:
         "damage": t.dealt,
         "target_disposition": disposition_of(target),
     }
+
+
+def finish_hero_turn(rec: RoundRecord, turns: EnemyTurns) -> None:
+    """The hero's own turn ends, after the adjudication (EDG-043, EDG-044): the end-of-turn checks,
+    then the hero's slot in the legendary and initiative sequence."""
+    player, enemies, character, hero = rec.player, rec.enemies, rec.character, rec.hero
+    if not rec.fled:
+        if feared := end_fear_of_defeated(player, enemies):
+            rec.log_lines.append(
+                f"{feared} is down; {hero}'s fear no longer imposes its attack, check or movement "
+                "restrictions, but the condition and its repeat save remain."
+            )
+        for save in hero_end_of_turn_saves(player, character):
+            rec.dice_log.append(save.outcome.to_log(f"{hero} {save.ability} save ({save.kind})"))
+            rec.log_lines.append(save_line(save))
+    player["surprised"] = False
+    # Legendary actions: one option per other creature's turn, including the hero's.
+    if not rec.fled:
+        turns.another_creature_turn_ended(player)
+    turns.after_initiative_slot(player)

@@ -56,9 +56,6 @@ import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agent.action_economy import (
-    economy_record,
-)
 from agent.class_features import (
     requested_features,
     resource_uses,
@@ -66,6 +63,13 @@ from agent.class_features import (
 from agent.combat_captives import _captive_result, captive_turn_for_state
 from agent.combat_declaration import declare_action
 from agent.combat_enemy_turns import EnemyTurns
+from agent.combat_finalise import (
+    SettlementInput,
+    build_pending_narration,
+    close_round_effects,
+    settle_adjudication,
+    settle_round,
+)
 from agent.combat_intent import (
     _name_matches,
     _named_targets,
@@ -76,7 +80,7 @@ from agent.combat_narration import (
     PendingRoundNarration,
     finalize_round_narration,
 )
-from agent.combat_player_phase import PlayerTurnInput, run_player_turn
+from agent.combat_player_phase import PlayerTurnInput, finish_hero_turn, run_player_turn
 from agent.combat_round_record import RoundRecord
 from agent.combat_setup import (
     ENCOUNTER_BUILDER,
@@ -92,26 +96,15 @@ from agent.combat_setup import (
 from agent.combat_targeting import select_target as select_target  # re-exported (tests)
 from agent.combat_view import _ask_player, _display, initiative_view, sort_by_initiative
 from agent.combatants import (
-    apply_player_disposition,
-    clear_effects,
-    disposition_of,
-    finish_victory,
     has_effect,
-    is_standing,
-    stable_id,
 )
 from agent.conditions import (
     drop_concentration_if_incapacitated,
-    end_fear_of_defeated,
-    expire_effects,
-    hero_end_of_turn_saves,
-    save_line,
-    settle_concentration,
     stun_ends_before_turn,
 )
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model, message_text
-from agent.models.adjudication import AdjudicationResult, CharacterUpdate
+from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
 from agent.monster_stats import (
     declared_line,
@@ -130,16 +123,12 @@ from agent.positioning import (
 from agent.prompts import wrap_player_action
 from agent.provider_trace import traced_call
 from agent.resolution import (
-    decide_completion,
     initiative_bonus,
     second_wind_remaining,
-    second_wind_status,
 )
 from agent.state import AgentState
 from agent.supported_rules import (
-    actions_for_state,
     parsed_feature_name,
-    ruling_lines,
 )
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference
@@ -354,6 +343,80 @@ def roll_initiative(combatants: list[dict], character: dict | None) -> list[dict
 # --------------------------------------------------------------------------------------------
 
 
+def _enemy_slot(turns: EnemyTurns, e: dict) -> None:
+    """A foe's slot in initiative: its turn, the other creatures' legendary options, then its close."""
+    turns.before_initiative_slot(e)
+    turns.enemy_turn(e)
+    turns.another_creature_turn_ended(e)
+    turns.after_initiative_slot(e)
+
+
+async def _open_encounter(
+    state: AgentState,
+    retr: dict,
+    combat_state: dict,
+    named: list[str],
+    character: dict,
+    hero: str,
+    player_hp: int,
+    player_hp_max: int,
+    log_lines: list[str],
+) -> dict | None:
+    """First entry: build the roster, roll initiative and open the encounter (EDG-044, EDG-057).
+
+    Returns the reply when the round cannot start (an unresolved foe, or no foe named), else None.
+    """
+    budget_summary: dict = {}
+    try:
+        enemies = await _build_enemy_roster(state, named, budget_summary=budget_summary)
+    except CreatureResolutionError as exc:
+        return {**retr, "error": str(exc), "error_code": "creature_identity_unresolved"}
+    if not enemies:
+        return _ask_player(state, "Who are you fighting? Name the foe you attack.")
+    for e in enemies:  # EDG-044: where each foe starts (its record decides; see agent.positioning)
+        e["band"] = initial_band(stats_of(e))
+    player_combatant = {
+        "name": "player",
+        "display_name": hero,
+        "is_player": True,
+        "hp_current": player_hp,
+        "hp_max": player_hp_max,
+        "ac": _player_ac(character),
+        "disposition": "active" if player_hp > 0 else "unconscious",
+        "alive": player_hp > 0,
+        # Per-encounter facts live on the player combatant: the table has no column for them.
+        "solo_budget": budget_summary,
+        "surprised": any(enemy.get("hero_surprised") for enemy in enemies),
+    }
+    ordered = roll_initiative([player_combatant] + enemies, character)
+    combat_state.update(
+        {
+            "combatants": ordered,
+            "initiative_order": [c["name"] for c in ordered],
+            "round": 1,
+            "current_turn_index": 0,
+            "ended": False,
+            "outcome": None,
+            "solo_budget": budget_summary,
+        }
+    )
+    log_lines.append(
+        "Combat begins! Initiative: "
+        + ", ".join(f"{_display(c)} {c['init']}" for c in ordered)
+        + "."
+    )
+    if adaptation := adaptation_sentence(budget_summary):
+        log_lines.append(adaptation)
+    # What each exact record declares but the engine does not run is stated, never implied.
+    log_lines += [line for e in enemies if (line := declared_line(e))]
+    return None
+
+
+# --------------------------------------------------------------------------------------------
+# Node
+# --------------------------------------------------------------------------------------------
+
+
 async def combat_round_node(state: AgentState) -> dict:
     """Initialise the encounter if needed, then resolve exactly one round."""
     combat_state = dict(state.get("combat_state") or {})
@@ -388,50 +451,11 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Initialise on first entry ---
     if not combat_state.get("combatants"):
-        budget_summary: dict = {}
-        try:
-            enemies = await _build_enemy_roster(state, named, budget_summary=budget_summary)
-        except CreatureResolutionError as exc:
-            return {**retr, "error": str(exc), "error_code": "creature_identity_unresolved"}
-        if not enemies:
-            return _ask_player(state, "Who are you fighting? Name the foe you attack.")
-        for e in enemies:  # EDG-044: where each foe starts (its record decides; see agent.positioning)
-            e["band"] = initial_band(stats_of(e))
-        player_ac = _player_ac(character)
-        player_combatant = {
-            "name": "player",
-            "display_name": hero,
-            "is_player": True,
-            "hp_current": player_hp,
-            "hp_max": player_hp_max,
-            "ac": player_ac,
-            "disposition": "active" if player_hp > 0 else "unconscious",
-            "alive": player_hp > 0,
-            # Per-encounter facts live on the player combatant: the table has no column for them.
-            "solo_budget": budget_summary,
-            "surprised": any(enemy.get("hero_surprised") for enemy in enemies),
-        }
-        ordered = roll_initiative([player_combatant] + enemies, character)
-        combat_state.update(
-            {
-                "combatants": ordered,
-                "initiative_order": [c["name"] for c in ordered],
-                "round": 1,
-                "current_turn_index": 0,
-                "ended": False,
-                "outcome": None,
-                "solo_budget": budget_summary,
-            }
+        opened = await _open_encounter(
+            state, retr, combat_state, named, character, hero, player_hp, player_hp_max, log_lines
         )
-        log_lines.append(
-            "Combat begins! Initiative: "
-            + ", ".join(f"{_display(c)} {c['init']}" for c in ordered)
-            + "."
-        )
-        if adaptation := adaptation_sentence(budget_summary):
-            log_lines.append(adaptation)
-        # What each exact record declares but the engine does not run is stated, never implied.
-        log_lines += [line for e in enemies if (line := declared_line(e))]
+        if opened is not None:
+            return opened
     elif any("init" not in c for c in combat_state["combatants"]):
         # Encounter persisted before initiative was tracked: roll it now.
         combat_state["combatants"] = roll_initiative(list(combat_state["combatants"]), character)
@@ -467,7 +491,6 @@ async def combat_round_node(state: AgentState) -> dict:
         player_input, parsed, named, fled = "", ParsedInput(), [], False
     # Second Wind uses come from the sheet, never from the encounter: they persist across fights.
     sw_before = second_wind_remaining(character)
-    sw_left = sw_before
     # Class feature uses (EDG-145) come from the sheet as well; a sheet without them is full.
     cf_before = resource_uses(character)
     cf_left = dict(cf_before)
@@ -492,11 +515,11 @@ async def combat_round_node(state: AgentState) -> dict:
     )
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
+
+    # --- Round record and enemy phases (agent.combat_enemy_turns, EDG-057) ---
     # Typed effects this round's engine applied; the boundary and narrator read them.
     round_effects: list[str] = []
     round_modes: list[str] = []  # d20 mode of every attack rolled this round
-
-    # --- Round record and enemy phase (agent.combat_enemy_turns, EDG-057) ---
     rec = RoundRecord(
         hero=hero,
         character=character,
@@ -507,7 +530,7 @@ async def combat_round_node(state: AgentState) -> dict:
         round_num=round_num,
         combat_state=combat_state,
         hp=player_hp,
-        sw_left=sw_left,
+        sw_left=sw_before,
         fled=fled,
         log_lines=log_lines,
         dice_log=dice_log,
@@ -524,15 +547,12 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- Enemies ahead of the player in initiative ---
     for e in before:
-        turns.before_initiative_slot(e)
-        turns.enemy_turn(e)
-        turns.another_creature_turn_ended(e)
-        turns.after_initiative_slot(e)
+        _enemy_slot(turns, e)
 
     if flee_after_stun_source:
         rec.fled = rec.hp > 0 and not has_effect(player, "stunned")
 
-    # --- Player's action (agent.combat_player_phase, EDG-057 pass 2) ---
+    # --- The hero's slot (agent.combat_player_phase, EDG-044, EDG-145) ---
     turn = run_player_turn(
         rec,
         PlayerTurnInput(
@@ -545,230 +565,75 @@ async def combat_round_node(state: AgentState) -> dict:
             turns=turns,
         ),
     )
-    player_acted, player_action, bonus_record = turn.player_acted, turn.player_action, turn.bonus_record
-    check_result, dealt, inventory_used = turn.check_result, turn.dealt, turn.inventory_used
-    spell_expended, extra_outcome, declared = turn.spell_expended, turn.extra_outcome, turn.declared
-    later_swing_dice = turn.later_swing_dice
 
     # --- Adjudicator: describes consequences of the known outcome (flags/scene/items) ---
-    if player_acted and not rec.fled:
+    if turn.player_acted and not rec.fled:
         t_stage = time.monotonic()
         adj = await adjudicate(
             {**state, "engine_effects": tuple(round_effects)},
-            engine_check=check_result,
+            engine_check=turn.check_result,
             in_combat=True,
-            extra_outcome=extra_outcome or None,
+            extra_outcome=turn.extra_outcome or None,
         )
         stage_ms["adjudicating_ms"] = int((time.monotonic() - t_stage) * 1000)
-        if adj.mechanical_summary and check_result is None:
+        if adj.mechanical_summary and turn.check_result is None:
             log_lines.append(adj.mechanical_summary)
     else:
-        adj = AdjudicationResult(success=not rec.fled and player_acted, mechanical_summary="")
+        adj = AdjudicationResult(success=not rec.fled and turn.player_acted, mechanical_summary="")
 
-    # EDG-043: the hero's own turn ends: a rider's condition is repeated with the sheet's save.
-    if not rec.fled:
-        if feared := end_fear_of_defeated(player, enemies):
-            log_lines.append(
-                f"{feared} is down; {hero}'s fear no longer imposes its attack, check or movement "
-                "restrictions, but the condition and its repeat save remain."
-            )
-        for save in hero_end_of_turn_saves(player, character):
-            dice_log.append(save.outcome.to_log(f"{hero} {save.ability} save ({save.kind})"))
-            log_lines.append(save_line(save))
-
-    player["surprised"] = False
-
-    # --- Legendary actions: one option per other creature's turn, including the hero's ---
-    if not rec.fled:
-        turns.another_creature_turn_ended(player)
-    turns.after_initiative_slot(player)
-
-    # --- Enemies after the player ---
+    # --- The hero's turn ends, then the foes after the hero act (agent.combat_player_phase) ---
+    finish_hero_turn(rec, turns)
     for e in after:
-        turns.before_initiative_slot(e)
-        turns.enemy_turn(e)
-        turns.another_creature_turn_ended(e)
-        turns.after_initiative_slot(e)
+        _enemy_slot(turns, e)
     if not rec.lair_done:
         # The encounter has no actor below initiative 20; the lair acts after the final tie.
         turns.lair_boundary()
-    # EDG-043: a timed spell condition ends after its last round (a mark, the caster's next turn).
-    for foe_name, expired in expire_effects(combatants, int(combat_state.get("round", 1) or 1)):
-        log_lines.append(f"{foe_name} is no longer {expired}.")
-    # EDG-043: concentration ends with its minute, or once no foe still carries its effect.
-    if ended_spell := settle_concentration(player, enemies, int(combat_state.get("round", 1) or 1)):
-        log_lines.append(f"{hero}'s concentration on {ended_spell} ends.")
-    for foe in enemies:
-        if ended_spell := settle_concentration(foe, [player], int(combat_state.get("round", 1) or 1)):
-            log_lines.append(f"{_display(foe)}'s concentration on {ended_spell} ends.")
-
-    player["hp_current"] = rec.hp
-    apply_player_disposition(player, subdued=False)
-    # Derived mirror for the HUD only; the sheet resource above is the authority.
-    second_wind_used = bool(second_wind_status(character)) and rec.sw_left <= 0
-    player["second_wind_used"] = second_wind_used
-    active_enemies = [e for e in enemies if is_standing(e)]
-
-    # --- End conditions ---
-    rec.round_num = int(combat_state.get("round", 1) or 1)
-    ended, outcome = False, None
-    if rec.fled:
-        ended, outcome = True, "fled"
-        log_lines.append("You break away from the fight and escape.")
-    elif not active_enemies:
-        ended, outcome = True, "victory"
-        log_lines.append("All enemies are defeated. Victory!")
-    elif rec.hp <= 0:
-        ended, outcome = True, "defeat"
-        log_lines.append(f"{hero} is overwhelmed and falls unconscious, subdued by the enemy.")
-    elif rec.round_num >= MAX_COMBAT_ROUNDS:
-        ended, outcome = True, "fled"
-        log_lines.append("The fight drags on; you disengage to regroup.")
-
-    if outcome == "defeat":
-        # Solo campaigns have no human GM to adjudicate death, so a "defeat" means the player
-        # is subdued / knocked unconscious (and the story continues — often captured), rather
-        # than a permanent dead-end. Leave them at 1 HP.
-        rec.hp = 1
-        player["hp_current"] = 1
-        apply_player_disposition(player, subdued=True)
-    if outcome == "victory":
-        finish_victory(combatants)
-    if ended:
-        # Typed effects end with the encounter (EDG-021): nothing carries into a later fight.
-        clear_effects(combatants)
-        for combatant in combatants:
-            combatant.pop("concentration", None)  # EDG-043: all casters stop with the fight
-        player.pop("raging", None)  # rage, too, lasts only for this encounter (EDG-145)
-        player.pop("rage_round", None)
-
-    # EDG-044: what this turn spent, kept on the player row (persisted with the combatants).
-    spent = declared if player_acted and not rec.fled else []
-    player["action_economy"] = economy_record(rec.round_num, spent, dodging=has_effect(player, "dodging"))
-    view = initiative_view(combatants)
-    player_view_index = next((i for i, c in enumerate(view) if c["is_player"]), 0)
-    combat_state.update(
-        {
-            "combatants": combatants,
-            "initiative_order": [c["name"] for c in combatants],
-            "initiative": view,
-            "economy": player["action_economy"],
-            "round": rec.round_num if ended else rec.round_num + 1,
-            "ended": ended,
-            "outcome": outcome,
-            "player_ac": player_ac,
-            "second_wind_used": second_wind_used,
-            "second_wind_uses_remaining": rec.sw_left,
-            "raging": bool(player.get("raging")),
-            "current_turn_index": player_view_index,
-            "current_turn": None if ended else _display(player),
-        }
+    close_round_effects(rec)
+    end = settle_round(
+        rec, declared=turn.declared, player_acted=turn.player_acted, max_rounds=MAX_COMBAT_ROUNDS
     )
 
-    # --- The adjudication the API persists: engine HP + validated flags/scene/items ---
-    cu = adj.character_update or CharacterUpdate()
-    cu.hp_delta = rec.hp - player_hp
-    cu.damage_dice = None
-    if rec.sw_left != sw_before:
-        # Only a spent use is written; a sheet without the key keeps deriving its full uses.
-        cu.second_wind_uses_remaining = rec.sw_left
-    cf_changed = {f: left for f, left in cf_left.items() if left != cf_before.get(f)}
-    if cf_changed:
-        # Class feature uses (EDG-145): only the spent features are written, as for Second Wind.
-        cu.class_feature_uses = cf_changed
-    cu.spell_slots_expended = spell_expended
-    for item in inventory_used:
-        if item not in cu.inventory_remove:
-            cu.inventory_remove.append(item)
-    adj.character_update = cu
-    adj.damage = dealt or None
-    adj.dice_log = [
-        *adj.dice_log,
-        *[d for d in dice_log if d not in adj.dice_log],
-        *later_swing_dice,
-    ]
-    # Declared unsupported mechanics are ruled on in the round summary (no engine effect).
-    summary_text = " ".join(line for line in log_lines if line)
-    engine_effects = tuple(round_effects)
-    round_roll_mode = (
-        "advantage"
-        if "advantage" in round_modes
-        else "disadvantage"
-        if "disadvantage" in round_modes
-        else "normal"
-    )
-    actions = actions_for_state(
-        {**state, "engine_effects": engine_effects, "engine_roll_mode": round_roll_mode}
-    )
-    for ruling in ruling_lines(actions):
-        if ruling not in summary_text:
-            log_lines.append(ruling)
-    adj.mechanical_summary = " ".join(line for line in log_lines if line)
-
-    boss_victory = outcome == "victory" and any(e.get("is_boss") for e in enemies)
-    decide_completion(
-        adj,
-        world_flags=state.get("world_flags"),
-        parsed=parsed,
-        player_input=player_input,
-        combat_active=outcome != "victory",
-        boss_victory=boss_victory,
+    # --- The adjudication the API persists: engine HP + validated flags/scene/items (agent.combat_finalise) ---
+    settlement = settle_adjudication(
+        rec,
+        SettlementInput(
+            adjudication=adj,
+            state=state,
+            parsed=parsed,
+            player_input=player_input,
+            player_hp_start=player_hp,
+            sw_before=sw_before,
+            cf_before=cf_before,
+            cf_left=cf_left,
+            spell_expended=turn.spell_expended,
+            inventory_used=turn.inventory_used,
+            dealt=turn.dealt,
+            later_swing_dice=turn.later_swing_dice,
+            outcome=end.outcome,
+        ),
     )
 
     # --- Finalise the mechanics, then narrate the whole round in one call (EDG-079) ---
     # Everything the narrator is given and everything persisted is decided above. The narrator
     # text is the only thing left to produce, so it is the only thing that can be deferred.
-    combat_state["round_actors"] = rec.round_actors
-    narr_state = {
-        **state,
-        "adjudication_result": adj,
-        "combat_state": combat_state,
-        "engine_effects": engine_effects,
-        "engine_roll_mode": round_roll_mode,
-    }
-    pending = PendingRoundNarration(
-        narr_state=narr_state,
-        combatants=combatants,
-        adjudication=adj,
-        outcome=outcome,
-        base_update={
-            **retr,
-            "combat_state": combat_state,
-            "adjudication_result": adj,
-            "engine_roll_mode": round_roll_mode,
-            "rules_context": state.get("rules_context", []),
-            "adventure_context": state.get("adventure_context", []),
-        },
-        round_event={
-            "turn_id": state.get("turn_id"),
-            "round_num": rec.round_num,
-            "ended": ended,
-            "outcome": outcome,
-            "actors": rec.actors,
-            "player_action": {**player_action, **({"bonus_action": bonus_record} if bonus_record else {})},
-            "outcomes": rec.outcomes,
-            "dispositions": [
-                {
-                    "id": stable_id(c),
-                    "name": _display(c),
-                    "is_player": bool(c.get("is_player")),
-                    "disposition": disposition_of(c),
-                    "hp_current": c.get("hp_current"),
-                }
-                for c in combatants
-            ],
-            "dice_log": adj.dice_log,
-        },
-        stage_ms=dict(stage_ms),
+    pending = build_pending_narration(
+        rec,
+        state=state,
+        retr=retr,
+        settlement=settlement,
+        end=end,
+        player_action=turn.player_action,
+        bonus_record=turn.bonus_record,
+        stage_ms=stage_ms,
     )
-    text = deterministic_narration(narr_state)
+    text = deterministic_narration(pending.narr_state)
     if text is None and state.get("defer_narration"):
         # The SSE runner streams the one narrator call, then calls finalize_round_narration.
         return {**pending.base_update, PENDING_ROUND_NARRATION_KEY: pending}
     bound = text is None
     t_stage = time.monotonic()
     if text is None:
-        llm, prompt = narrator_request(narr_state, pending.profile)
+        llm, prompt = narrator_request(pending.narr_state, pending.profile)
         try:
             text = message_text(
                 await traced_call(lambda: llm.ainvoke(prompt), kind="narrate", profile=pending.profile)
