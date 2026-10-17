@@ -1,0 +1,132 @@
+# EXAMPLE edge shipper for Edgar operational logs (EDG-063). NOT deployed; no sink exists yet.
+#
+# Tails the Docker json-file logs of every container on the host, keeps only Edgar's structured JSON
+# lines, removes the forbidden prose and payload keys again, and ships the rest to one protected
+# sink. Chosen tool and rationale: docs/operational-logging.md. Run it only through the optional
+# override docker-compose.logging.yml.
+#
+# Check the syntax offline with:  vector validate --no-environment ops/logging/vector.toml
+# (the environment variables below must exist at run time; the sink fails closed without them).
+#
+# The `del(...)` list mirrors apps/api/logging_config.py FORBIDDEN_LOG_FIELDS. The app-side processor is
+# the primary control; this is defense in depth at the edge. tests/api/test_logging_ops_config.py fails
+# when the two lists drift apart. Keys are matched by exact name at the top level and under `extra` and
+# `loguru_extra`. Nested keys elsewhere are not removed here.
+
+data_dir = "/var/lib/vector"
+
+[sources.docker_json_logs]
+type = "file"
+# Docker writes one JSON envelope per line: {"log": "<line>", "stream": "stdout", "time": "..."}.
+# The container name is not in the file; see the scope note in docs/operational-logging.md.
+include = ["/var/lib/docker/containers/*/*-json.log"]
+
+[transforms.edgar_lines]
+type = "remap"
+inputs = ["docker_json_logs"]
+drop_on_abort = true
+drop_on_error = true
+source = '''
+# Non-JSON lines (PostgreSQL, Redis, Qdrant, migrate output) are dropped here, not shipped as text.
+envelope = parse_json!(.message)
+line = parse_json!(string!(envelope.log))
+if !is_object(line) || !exists(line.logger) || !exists(line.event) {
+  abort
+}
+. = line
+.docker_stream = string(envelope.stream) ?? "unknown"
+
+# Defense in depth: remove forbidden keys even if an application call site added one.
+del(.access_token)
+del(.api_key)
+del(.authorization)
+del(.body)
+del(.client_secret)
+del(.completion)
+del(.content)
+del(.cookie)
+del(.message)
+del(.messages)
+del(.narration)
+del(.openai_api_key)
+del(.password)
+del(.player_input)
+del(.player_text)
+del(.prompt)
+del(.prompts)
+del(.raw_response)
+del(.refresh_token)
+del(.response_body)
+del(.secret)
+del(.set_cookie)
+del(.token)
+del(.x_api_key)
+del(.extra.access_token)
+del(.extra.api_key)
+del(.extra.authorization)
+del(.extra.body)
+del(.extra.client_secret)
+del(.extra.completion)
+del(.extra.content)
+del(.extra.cookie)
+del(.extra.message)
+del(.extra.messages)
+del(.extra.narration)
+del(.extra.openai_api_key)
+del(.extra.password)
+del(.extra.player_input)
+del(.extra.player_text)
+del(.extra.prompt)
+del(.extra.prompts)
+del(.extra.raw_response)
+del(.extra.refresh_token)
+del(.extra.response_body)
+del(.extra.secret)
+del(.extra.set_cookie)
+del(.extra.token)
+del(.extra.x_api_key)
+del(.loguru_extra.access_token)
+del(.loguru_extra.api_key)
+del(.loguru_extra.authorization)
+del(.loguru_extra.body)
+del(.loguru_extra.client_secret)
+del(.loguru_extra.completion)
+del(.loguru_extra.content)
+del(.loguru_extra.cookie)
+del(.loguru_extra.message)
+del(.loguru_extra.messages)
+del(.loguru_extra.narration)
+del(.loguru_extra.openai_api_key)
+del(.loguru_extra.password)
+del(.loguru_extra.player_input)
+del(.loguru_extra.player_text)
+del(.loguru_extra.prompt)
+del(.loguru_extra.prompts)
+del(.loguru_extra.raw_response)
+del(.loguru_extra.refresh_token)
+del(.loguru_extra.response_body)
+del(.loguru_extra.secret)
+del(.loguru_extra.set_cookie)
+del(.loguru_extra.token)
+del(.loguru_extra.x_api_key)
+'''
+
+[sinks.protected_archive]
+type = "http"
+inputs = ["edgar_lines"]
+# Placeholder. Set EDGAR_LOG_SINK_URL to an HTTPS endpoint inside the operator's protected storage
+# boundary (see docs/operational-logging.md). Never commit a real endpoint or token to this file.
+uri = "${EDGAR_LOG_SINK_URL}"
+method = "post"
+compression = "gzip"
+encoding.codec = "json"
+auth.strategy = "bearer"
+auth.token = "${EDGAR_LOG_SINK_TOKEN}"
+
+# A disk buffer keeps events across a sink outage. "block" applies backpressure to the file reader,
+# so unread Docker log files rotate away only after the shipper falls behind by the rotation window
+# (3 x 10 MB per container in docker-compose.yml). Size this buffer for the outage you accept.
+[sinks.protected_archive.buffer]
+type = "disk"
+max_size = 1073741824
+when_full = "block"
