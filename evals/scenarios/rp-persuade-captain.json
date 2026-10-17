@@ -1,0 +1,23 @@
+{
+  "id": "rp-persuade-captain",
+  "version": "1.0.0",
+  "title": "Social check that fails and is not softened",
+  "description": "The player tries to persuade the guard captain with evidence. The engine rolled a failure. The reply must acknowledge the captain and the attempt, and must not turn the failure into a win.",
+  "player_input": "I tell the guard captain the smuggler's ledger proves her clerk is lying.",
+  "character": {"name": "Lyra", "class": "Fighter", "level": 3, "hp_current": 22, "hp_max": 24},
+  "engine": {
+    "roll_mode": "normal",
+    "effects": [],
+    "check_rolled": true,
+    "success": false,
+    "hp_after": {"Lyra": 22}
+  },
+  "scripted": {
+    "play.parser": {"intent": "rp", "check": "persuasion", "difficulty": "medium", "target": "guard captain", "retrieval_query": "persuasion check social", "entities": {}},
+    "play.consequence_planner": {"success": false, "mechanical_summary": "Lyra tries to persuade the guard captain with the ledger (d20 rolled 8 + 2 = 10 vs DC 13 -> failure). The captain is not convinced."},
+    "play.narrator": "The captain reads the ledger's first page, then closes it with two fingers. She is not convinced, and her hand stays near her belt. Her clerk watches you from the doorway. What do you do next?"
+  },
+  "agency": {"expected_intent": "rp", "must_mention": ["captain"]},
+  "expect": {"fidelity.roster": true, "fidelity.claimed_effects": true, "fidelity.mechanics_summary": true, "agency.consequence_tied": true},
+  "labels": ["social", "agency", "failed-check"]
+}
