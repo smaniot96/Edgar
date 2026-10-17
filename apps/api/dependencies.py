@@ -22,6 +22,8 @@ from db.postgres import get_session
 from db.postgres.models import User
 from edgar_core.config import REDIS_URL
 
+from .services.operational_metrics import observe_turn_lock
+
 log = structlog.get_logger()
 
 # Process-wide Redis connection. We do not pool per-request because the lock workload is
@@ -173,9 +175,9 @@ async def acquire_turn_lock(session_id: int, redis: Redis) -> TurnLock | None:
     Always `await lock.release()` from a `finally`.
     """
     lock = TurnLock(redis, session_id)
-    if await lock.acquire():
-        return lock
-    return None
+    acquired = await lock.acquire()
+    observe_turn_lock(acquired=acquired, wait_ms=lock.acquire_ms)
+    return lock if acquired else None
 
 
 __all__ = [

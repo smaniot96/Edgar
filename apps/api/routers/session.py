@@ -39,6 +39,7 @@ from ..services.combat import (
     load_resolved_combat_outcomes,
 )
 from ..services.npcs import load_npcs, model_context_npcs
+from ..services.operational_metrics import observe_committed_turn, observe_uncommitted_turn
 from ..services.roll_record import stored_roll
 from ..services.safe_errors import classify_error, classify_http_failure, log_failure
 from ..services.session_intro import generate_session_intro
@@ -623,6 +624,7 @@ async def session_turn(
 
     structlog.contextvars.bind_contextvars(session_id=session_id)
     outcome = "not_committed"
+    diagnostics = None
     try:
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
@@ -640,6 +642,7 @@ async def session_turn(
         outcome = "unknown"
         done = await persist_turn(session_id, body.message, result)
         outcome = "committed"
+        observe_committed_turn(result.get("telemetry_events"), diagnostics)
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 
         adjudication = result.get("adjudication_result")
@@ -674,6 +677,7 @@ async def session_turn(
         return _turn_error_response(failure)
     finally:
         structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
+        observe_uncommitted_turn(diagnostics)
         await lock.release()
 
 
@@ -738,6 +742,7 @@ async def session_turn_stream(
                     yield chunk
         finally:
             structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
+            observe_uncommitted_turn(diagnostics)
             await lock.release()
 
     background = BackgroundTasks()

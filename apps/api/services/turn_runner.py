@@ -86,6 +86,7 @@ from edgar_core.sources import citations_for, public_citations
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
+from .operational_metrics import observe_committed_turn
 from .roll_record import build_roll_record, roll_status_for
 from .safe_errors import classify_error, log_failure
 from .world_writes import (
@@ -975,6 +976,7 @@ async def _stream_session_turn(
             ),
         )
         return
+    observe_committed_turn(state.get("telemetry_events"), diag)
     lap("saving_ms")
 
     if debug:
