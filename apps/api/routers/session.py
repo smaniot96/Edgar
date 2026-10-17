@@ -28,6 +28,13 @@ from agent.turn_diagnostics import (
 from db.postgres.models import Campaign, Character, EventLog, Session as SessionModel
 from edgar_core.sources import public_citations
 
+from ..auth import (
+    Auth,
+    authorize_session,
+    owned_campaign,
+    owned_session,
+    require_admin,
+)
 from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
@@ -249,11 +256,16 @@ async def _load_turn_initial_state(
 
 @router.get("/sessions", response_model=list[SessionRead])
 async def list_sessions(
+    auth: Auth,
     campaign_id: int | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    """List sessions. Optional ?campaign_id= filter."""
+    """List sessions of the caller's campaigns. Optional ?campaign_id= filter."""
     q = select(SessionModel)
+    if auth is not None:
+        q = q.join(Campaign, Campaign.id == SessionModel.campaign_id).where(
+            Campaign.created_by == auth.user_id
+        )
     if campaign_id is not None:
         q = q.where(SessionModel.campaign_id == campaign_id)
     result = await db.execute(q)
@@ -262,25 +274,31 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}", response_model=SessionRead)
-async def get_session_by_id(session_id: int, db: AsyncSession = Depends(get_session)):
-    session = await get_or_404(db, SessionModel, session_id, "Session")
+async def get_session_by_id(
+    session_id: int, auth: Auth, db: AsyncSession = Depends(get_session)
+):
+    session = await owned_session(db, session_id, auth)
     return await _session_read(session, db)
 
 
 @router.get("/sessions/{session_id}/combat")
-async def get_session_combat(session_id: int, db: AsyncSession = Depends(get_session)):
+async def get_session_combat(
+    session_id: int, auth: Auth, db: AsyncSession = Depends(get_session)
+):
     """Active encounter in the same public shape as the stream's `done.combat_state`, or null.
 
     Lets the client restore the combat HUD after a reload.
     """
-    await get_or_404(db, SessionModel, session_id, "Session")
+    await owned_session(db, session_id, auth)
     return combat_state_public(await load_active_combat(db, session_id))
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageRead])
-async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_session)):
+async def list_session_messages(
+    session_id: int, auth: Auth, db: AsyncSession = Depends(get_session)
+):
     """Hydrate chat UI from narration rows in event_log (oldest first)."""
-    await get_or_404(db, SessionModel, session_id, "Session")
+    await owned_session(db, session_id, auth)
 
     ev_result = await db.execute(
         select(EventLog)
@@ -325,7 +343,7 @@ async def list_session_messages(session_id: int, db: AsyncSession = Depends(get_
     return out
 
 
-@router.get("/sessions/{session_id}/diagnostics/combat")
+@router.get("/sessions/{session_id}/diagnostics/combat", dependencies=[Depends(require_admin)])
 async def list_combat_diagnostics(session_id: int, db: AsyncSession = Depends(get_session)):
     """Stored combat-round diagnostics for reload, oldest first (developer only, EDG-031).
 
@@ -351,7 +369,7 @@ async def list_combat_diagnostics(session_id: int, db: AsyncSession = Depends(ge
     ]
 
 
-@router.get("/sessions/{session_id}/diagnostics/turns")
+@router.get("/sessions/{session_id}/diagnostics/turns", dependencies=[Depends(require_admin)])
 async def list_turn_diagnostics(
     session_id: int,
     limit: int = Query(200, ge=1, le=500),
@@ -392,7 +410,9 @@ async def list_turn_diagnostics(
     }
 
 
-@router.get("/sessions/{session_id}/diagnostics/turn-traces")
+@router.get(
+    "/sessions/{session_id}/diagnostics/turn-traces", dependencies=[Depends(require_admin)]
+)
 async def list_turn_traces(
     session_id: int,
     limit: int = Query(200, ge=1, le=500),
@@ -412,6 +432,7 @@ async def list_turn_traces(
 @router.post("/sessions/{session_id}/intro")
 async def session_intro(
     session_id: int,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
@@ -423,11 +444,12 @@ async def session_intro(
     """
     # Reuse the per-session turn lock so an intro can't race a first turn (or another intro).
     # Taken before reading the session so the intro acts on current state.
+    await authorize_session(db, session_id, auth)
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
         raise HTTPException(status_code=409, detail="Session is busy; please retry.")
     try:
-        session = await get_or_404(db, SessionModel, session_id, "Session")
+        session = await owned_session(db, session_id, auth)
 
         camp_res = await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
         campaign = camp_res.scalar_one_or_none()
@@ -456,7 +478,12 @@ async def session_intro(
 
 
 @router.post("/sessions", response_model=SessionRead)
-async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_session)):
+async def create_session(
+    body: SessionCreate, auth: Auth, db: AsyncSession = Depends(get_session)
+):
+    if auth is not None:
+        # Ownership first in hosted mode: a replay must never reveal another user's save.
+        await owned_campaign(db, body.campaign_id, auth)
     existing = await creation_replay(db, SessionModel, body.campaign_id, body)
     if existing is not None:
         return await _session_read(existing, db)
@@ -496,9 +523,9 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_ses
 
 @router.patch("/sessions/{session_id}", response_model=SessionRead)
 async def update_session(
-    session_id: int, body: SessionUpdate, db: AsyncSession = Depends(get_session)
+    session_id: int, body: SessionUpdate, auth: Auth, db: AsyncSession = Depends(get_session)
 ):
-    session = await get_or_404(db, SessionModel, session_id, "Session")
+    session = await owned_session(db, session_id, auth)
     update_data = body.model_dump(exclude_unset=True)
     # Same invariant create enforces: the active character must be playing in this campaign.
     new_character_id = update_data.get("active_character_id")
@@ -527,8 +554,8 @@ async def update_session(
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(session_id: int, db: AsyncSession = Depends(get_session)):
-    session = await get_or_404(db, SessionModel, session_id, "Session")
+async def delete_session(session_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
+    session = await owned_session(db, session_id, auth)
     await db.delete(session)
     await db.commit()
 
@@ -577,6 +604,7 @@ async def _replayed_turn(
 async def get_turn_receipt(
     session_id: int,
     response: Response,
+    auth: Auth,
     request_id: str = Path(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"),
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
@@ -587,11 +615,12 @@ async def get_turn_receipt(
     reported as final while that writer is active. Clients retry only by explicit action.
     """
     response.headers["Cache-Control"] = "private, no-store"
+    await authorize_session(db, session_id, auth)
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
         raise HTTPException(status_code=409, detail=classify_error("session_busy").to_payload())
     try:
-        await get_or_404(db, SessionModel, session_id, "Session")
+        await owned_session(db, session_id, auth)
         receipt = await load_turn_receipt(db, session_id, request_id)
         if receipt is None:
             raise HTTPException(
@@ -608,6 +637,7 @@ async def session_turn(
     session_id: int,
     body: TurnRequest,
     background_tasks: BackgroundTasks,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
@@ -618,6 +648,7 @@ async def session_turn(
     summary in the background. Failures return `{"code", "message", "detail"}` with a generic
     message (409 missing assignment, 503 agent/LLM failure, 500 otherwise); details are logged.
     """
+    await authorize_session(db, session_id, auth)
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
         return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
@@ -685,6 +716,7 @@ async def session_turn(
 async def session_turn_stream(
     session_id: int,
     body: TurnRequest,
+    auth: Auth,
     db: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
 ):
@@ -695,6 +727,7 @@ async def session_turn_stream(
     closes and the lock is released in the generator's `finally`. A client that disconnects
     before the body starts never runs that `finally`, so the background task releases it too.
     """
+    await authorize_session(db, session_id, auth)
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
         return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))

@@ -11,11 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from db.postgres.models import Campaign, EventLog, Session as SessionModel
+from db.postgres.models import Campaign, EventLog
 from edgar_core.assets import PlayerMapProjection, project_player_map, render_player_map_svg
 from edgar_core.manifests import AdventureManifest
 from edgar_core.story import StoryFact
 
+from ..auth import Auth, owned_session
 from ..dependencies import get_session
 from ..services import adventure_assets
 from ..services.adventure_manifests import campaign_manifests
@@ -28,8 +29,8 @@ from ._common import get_or_404
 router = APIRouter(tags=["session-assets"])
 
 
-async def _session_map_context(session_id: int, db: AsyncSession) -> dict[str, Any]:
-    session = await get_or_404(db, SessionModel, session_id, "Session")
+async def _session_map_context(session_id: int, db: AsyncSession, auth: Auth) -> dict[str, Any]:
+    session = await owned_session(db, session_id, auth)
     campaign = await get_or_404(db, Campaign, session.campaign_id, "Campaign")
     state = await load_story_state(db, session_id, session.campaign_id)
     facts = [StoryFact.model_validate(raw) for raw in state.get("facts", [])]
@@ -114,12 +115,13 @@ def _known_place_entries(journal: Any) -> list[dict[str, Any]]:
 @router.get("/sessions/{session_id}/map")
 async def get_session_map(
     session_id: int,
+    auth: Auth,
     response: Response,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Return a map built only from the selected session's committed place knowledge."""
     response.headers["Cache-Control"] = "private, no-store"
-    context = await _session_map_context(session_id, db)
+    context = await _session_map_context(session_id, db, auth)
     selected = _select_manifest(context)
     session = context["session"]
     journal = context["journal"]
@@ -190,13 +192,14 @@ async def get_session_map(
 @router.get("/sessions/{session_id}/map.svg")
 async def get_session_map_svg(
     session_id: int,
+    auth: Auth,
     response: Response,
     db: AsyncSession = Depends(get_session),
     v: str | None = None,
 ) -> BinaryResponse:
     """Render the already-filtered map projection; this endpoint never loads private SVGs."""
     response.headers["Cache-Control"] = "private, no-store"
-    context = await _session_map_context(session_id, db)
+    context = await _session_map_context(session_id, db, auth)
     selected = _select_manifest(context)
     if selected is None:
         projection = PlayerMapProjection(
@@ -238,12 +241,13 @@ async def get_session_map_svg(
 async def get_session_asset(
     session_id: int,
     asset_id: str,
+    auth: Auth,
     response: Response,
     db: AsyncSession = Depends(get_session),
 ) -> BinaryResponse:
     """Serve an asset only after this session has committed its scene/passage/encounter."""
     response.headers["Cache-Control"] = "private, no-store"
-    context = await _session_map_context(session_id, db)
+    context = await _session_map_context(session_id, db, auth)
     for collection, manifest in context["manifests"].items():
         artifact = adventure_assets.get_authorized_player_asset_bytes(
             session_id=session_id,
