@@ -1,0 +1,89 @@
+# EXAMPLE log-based alert rules for the Edgar API (EDG-063). Not deployed. Not wired to any pager.
+#
+# These are LogQL rules in the Prometheus rule-file layout, the format Loki's ruler reads. They need
+# a log backend that stores the shipped JSON fields and a stream label `job="edgar-api"`; the example
+# edge shipper (ops/logging/vector.toml) does not set that label yet. Re-express them for any other
+# backend. They complement the metric alerts in ops/alerts.example.yml (EDG-139): metrics answer
+# "how many", logs answer "which request, which category".
+#
+# Every threshold is an UNTUNED placeholder. Tune them on a real baseline before relying on them.
+# Field names come from apps/api/services/safe_errors.py log_failure() and the events listed below.
+# No rule reads prompts, narration or player text; those fields never reach the log in the first place.
+groups:
+  - name: edgar-logs-example
+    rules:
+      # Support-reference bursts by category: many requests failing with the same safe category in a
+      # short window usually means one shared dependency, not independent user errors. Use the category
+      # to choose the runbook section in docs/operational-logging.md.
+      - alert: EdgarLogSupportRefBurst
+        expr: |
+          sum by (category) (
+            count_over_time({job="edgar-api"} | json | support_ref != "" [10m])
+          ) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20 support-referenced failures in 10 minutes in one category (threshold untuned)"
+
+      # Repeated safe-failure events: the same failure event firing repeatedly. Covers the API's
+      # log_failure() call sites; the event names are fixed in code, so label cardinality stays bounded.
+      - alert: EdgarLogRepeatedSafeFailure
+        expr: |
+          sum by (event, category) (
+            count_over_time(
+              {job="edgar-api"} | json
+                | event=~"turn_failed|turn_agent_error|turn_persist_failed|unhandled|adventure_ingest_failed|campaign_generation_failed|campaign_checkpoint_unreadable|qdrant_unavailable"
+              [15m]
+            )
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A safe failure event repeated more than 10 times in 15 minutes (threshold untuned)"
+
+      # Preparation stage failures: the stage and failure code are safe fixed values, and support_ref
+      # links each failure to its stored run for the support lookup.
+      - alert: EdgarLogPreparationStageFailures
+        expr: |
+          sum by (stage, failure_code) (
+            count_over_time({job="edgar-api"} | json | event="preparation_stage_failed" [30m])
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Preparation stage failed more than 3 times in 30 minutes (threshold untuned)"
+
+      # Startup configuration failure: the API aborted because a provider setting is invalid. The event
+      # is emitted before the abort; uvicorn's own abort line is matched too. Page on this.
+      - alert: EdgarLogStartupProviderConfigInvalid
+        expr: |
+          count_over_time(
+            {job="edgar-api"} | json | event=~"provider_configuration_invalid|Application startup failed.*" [5m]
+          ) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "The Edgar API refused to start: provider configuration is invalid (see the error_class field)"
+
+      # Migration failure: NOT ACTIVE. The `migrate` one-off job (db/alembic) does not emit a structured
+      # event yet, so this rule can never fire. Enable it only after a `migration_failed` event exists.
+      # Until then, a failed `make migrate` exit status is the signal.
+      - alert: EdgarLogMigrationFailed
+        expr: |
+          count_over_time({job="edgar-migrate"} | json | event="migration_failed" [15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database migration failed (rule inactive until migration_failed is emitted)"
+
+      # Silent API: no structured log lines at all for 15 minutes. Catches a stopped shipper, a broken
+      # sink connection that stopped delivery, or an API that is down. Check the shipper first.
+      - alert: EdgarLogStreamSilent
+        expr: absent_over_time({job="edgar-api"}[15m])
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Edgar API log lines in 15 minutes: check the API container, then the log shipper"
