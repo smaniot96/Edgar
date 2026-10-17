@@ -91,6 +91,15 @@ from agent.class_features import (
     sneak_attack_roll,
     spend_use,
 )
+from agent.combat_intent import (
+    _RANGED_HINT,
+    _STAND_UP,
+    _is_attack_action,
+    _name_matches,
+    _named_targets,
+    is_flee,
+)
+from agent.combat_targeting import _release_target, additional_spell_targets, select_target
 from agent.combat_telemetry import combat_round_event
 from agent.combatants import (
     INERT_NPC_DISPOSITIONS,
@@ -229,7 +238,7 @@ from agent.supported_rules import (
     ruling_lines,
 )
 from db.vector.creatures import CreatureResolutionError, resolve_creature
-from db.vector.references import normalize_reference, reference_matches
+from db.vector.references import normalize_reference
 from edgar_core.log_safety import error_summary
 from edgar_core.safe_errors import provider_error_code
 from tools.dice import DiceOutcome, parse_dice, roll
@@ -249,38 +258,7 @@ _DEFAULT_ENEMY = {"hp_max": 9, "ac": 12, "attack_bonus": 3, "damage_dice": "1d6+
 _DEFAULT_PLAYER_AC = 12
 _MONSTER_LOOKUP_TIMEOUT_S = 8.0
 
-# First-person intent to leave the fight. Requires a flee verb with nothing aimed *at* someone,
-# so "I run at the goblin" / "I run toward the door to block it" are attacks/moves, not flight.
-_FLEE_NEGATION = re.compile(
-    r"\b(?:i|we)\s+(?:won't|will not|don't|do not|never|refuse to|can't|cannot)\s+"
-    r"(?:\w+\s+)?(?:flee|run|retreat|escape|surrender|give up)",
-    re.IGNORECASE,
-)
-_FLEE_PATTERNS = (
-    re.compile(
-        # Disengage (EDG-044) and a retreat to range or away are moves, not leaving the fight.
-        r"\b(?:i|we)\s+(?:try\s+to\s+|attempt\s+to\s+|decide\s+to\s+)?"
-        r"(?:flee|surrender|give\s+up|yield|retreat(?!\s+(?:to\s+range|from|away|out\s+of\s+reach))"
-        r")\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:i|we)\s+(?:try\s+to\s+|attempt\s+to\s+)?escape\b(?!\s+(?:from\s+)?"
-        r"(?:the\s+|his\s+|her\s+|its\s+|their\s+)?(?:grapple|grip|hold|net|web|bonds|ropes|chains|shackles))",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:i|we)\s+(?:turn\s+and\s+)?run\s+(?:away|off|for\s+(?:it|my\s+life|our\s+lives|the\s+exit))\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"\b(?:i|we)\s+(?:turn\s+and\s+)?run\s*[.!]*\s*$", re.IGNORECASE),
-    re.compile(r"\brun\s+away\b|\bback\s+away\s+and\s+run\b|\bmake\s+a\s+run\s+for\s+it\b", re.IGNORECASE),
-)
 
-_GENERIC_TARGETS = {
-    "", "enemy", "enemies", "foe", "foes", "them", "it", "him", "her", "monster", "creature",
-    "target", "opponent", "the enemy", "nearest enemy", "closest enemy", "someone",
-}  # fmt: skip
 
 _FRIENDLY_WORDS = ("friend", "ally", "allied", "helpful", "companion", "loyal", "trust", "grateful", "devoted")
 _HOSTILE_WORDS = ("hostile", "enemy", "aggressive", "antagonist", "villain", "murderous", "evil", "attacks on sight")
@@ -322,13 +300,6 @@ class EncounterSetup(BaseModel):
 # --------------------------------------------------------------------------------------------
 
 
-def is_flee(text: str | None) -> bool:
-    """True when the player declares leaving the fight (not 'I run at the goblin')."""
-    if not text:
-        return False
-    if _FLEE_NEGATION.search(text):
-        return False
-    return any(p.search(text) for p in _FLEE_PATTERNS)
 
 
 def classify_disposition(disposition: Any) -> str:
@@ -390,27 +361,6 @@ def _player_ac(character: dict | None) -> int:
     return base + shield
 
 
-def _named_targets(state: AgentState) -> list[str]:
-    parsed = state.get("parsed_input")
-    names: list[str] = []
-    if parsed is not None and getattr(parsed, "target", None):
-        names.append(str(parsed.target))
-    entities = getattr(parsed, "entities", None) or {}
-    raw = entities.get("targets", entities.get("target")) if isinstance(entities, dict) else None
-    if isinstance(raw, str):
-        names.append(raw)
-    elif isinstance(raw, list):
-        names += [str(t) for t in raw if t]
-    out: list[str] = []
-    for n in names:
-        n = n.strip()
-        if n.lower() not in _GENERIC_TARGETS and n.lower() not in (o.lower() for o in out):
-            out.append(n[:60])
-    return out
-
-
-def _name_matches(a: str, b: str) -> bool:
-    return reference_matches(a, b)
 
 
 def _npc_groups(state: AgentState) -> tuple[list[str], list[str]]:
@@ -716,39 +666,8 @@ def initiative_view(combatants: list[dict]) -> list[dict]:
     ]
 
 
-def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict | None, str | None]:
-    """Pick a real living enemy for an attack, or return a question for the player."""
-    living = [e for e in enemies_in_order if is_standing(e)]
-    if not living:
-        return None, None
-    for n in named:
-        for e in living:
-            if _name_matches(n, e["name"]):
-                return e, None
-    if not named:
-        return living[0], None
-    foes = ", ".join(e["name"] for e in living)
-    return None, f"You don't see {named[0]} among your foes. Who do you attack? ({foes})"
 
 
-def additional_spell_targets(
-    enemies_in_order: list[dict], named: list[str], first: dict, spec: SpellSpec, count: int
-) -> list[dict]:
-    """Up to `count` more standing foes for an upcast spell: those the player named, then roster order.
-
-    A humanoid-only spell takes only foes whose record reads humanoid; none is refused, the cast
-    simply reaches fewer foes.
-    """
-    eligible = [
-        e
-        for e in enemies_in_order
-        if e is not first
-        and is_standing(e)
-        and not (spec.humanoid_only and humanoid_refusal(spec.name, e))
-    ]
-    # The sort is stable: named foes come first, the rest keep their roster order.
-    eligible.sort(key=lambda e: not any(_name_matches(n, e["name"]) for n in named))
-    return eligible[:count]
 
 
 def _strike(
@@ -763,14 +682,6 @@ def _strike(
             return "and it is knocked unconscious!"
         return "and it falls!"
     return f"({target['hp_current']}/{target['hp_max']} HP left)"
-def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | None:
-    """The restrained foe a player's declared release refers to (the only one when unnamed)."""
-    bound = [e for e in enemies_in_order if has_effect(e, "restrained")]
-    for n in named:
-        for e in bound:
-            if _name_matches(n, e["name"]):
-                return e
-    return bound[0] if bound and not named else None
 
 
 # --------------------------------------------------------------------------------------------
@@ -783,11 +694,6 @@ def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | No
 # --------------------------------------------------------------------------------------------
 
 # Mirrors the ranged test in resolution.resolve_attack, so the mode matches the weapon used.
-_RANGED_HINT = re.compile(r"\b(?:shoot|shoots|fire|fires|loose|looses)\b", re.IGNORECASE)
-_STAND_UP = re.compile(
-    r"\b(?:stand(?:s|ing)?\s+up|get(?:s|ting)?\s+up|rise(?:s|n)?\s+to\s+(?:my|their|his|her|your)\s+feet)\b",
-    re.IGNORECASE,
-)
 
 
 def _roll_with_mode(expression: str, mode: str) -> tuple[DiceOutcome, list[int]]:
@@ -817,14 +723,6 @@ def _contest(
     return mine.total > theirs.total, mine, theirs, draws
 
 
-def _is_attack_action(parsed: Any, named: list[str]) -> tuple[bool, bool]:
-    """(is_attack, is_spell)."""
-    norm = normalise_check(getattr(parsed, "check", None)) if parsed is not None else None
-    if norm is not None:
-        return norm[1] in ("attack", "spell_attack"), norm[1] == "spell_attack"
-    if parsed is None:
-        return True, False
-    return (getattr(parsed, "intent", "combat") == "combat" or bool(named)), False
 
 
 # --------------------------------------------------------------------------------------------
