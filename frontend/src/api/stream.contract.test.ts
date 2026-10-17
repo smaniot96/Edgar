@@ -16,7 +16,14 @@ import { describe, expect, it } from "vitest";
 import schemaJson from "./stream.schema.json";
 import { consumeTurnStream, TURN_STATUS_STAGES, TURN_STREAM_EVENTS } from "./turnStream";
 import type { TurnStreamOutcome } from "./turnStream";
-import type { AdjudicationResult, CombatState, Combatant, DebugPayload, TurnResult } from "./types";
+import type {
+  AdjudicationResult,
+  CombatState,
+  Combatant,
+  DebugPayload,
+  TurnCharacter,
+  TurnResult,
+} from "./types";
 
 interface JsonNode {
   $ref?: string;
@@ -155,6 +162,21 @@ const COMBATANT_KEYS: Record<keyof Combatant, true> = {
   reaction_used: true,
 };
 
+const TURN_CHARACTER_KEYS: Record<keyof TurnCharacter, true> = {
+  id: true,
+  name: true,
+  hp_current: true,
+  hp_max: true,
+  level: true,
+  class: true,
+  character_class: true,
+  stats: true,
+  inventory: true,
+  second_wind: true,
+  spell_slots: true,
+  hit_dice: true,
+};
+
 const ADJUDICATION_KEYS: Record<keyof AdjudicationResult, true> = {
   citations: true,
   ruling_citation_ids: true,
@@ -251,6 +273,19 @@ describe("stream schema and TypeScript consumers", () => {
           attack_bonus: "attack view is not part of the public combat projection",
           damage_dice: "damage view is not part of the public combat projection",
           effects: "condition view is not part of the public combat projection",
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it("matches done.character to TurnCharacter, including the resource views", () => {
+    expect(
+      compareKeys("done.character", nestedKeys("done", "character"), clientKeys(TURN_CHARACTER_KEYS), {
+        backendOnly: {
+          class_features: "per-feature uses (EDG-145); the client does not render them yet",
+        },
+        clientOnly: {
+          character_class: "legacy alias of class; the client still accepts it for older payloads",
         },
       }),
     ).toEqual([]);
