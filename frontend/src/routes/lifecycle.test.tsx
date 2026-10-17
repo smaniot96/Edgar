@@ -320,10 +320,21 @@ it("keeps the typed generate form after a failed attempt and submits one more re
   expect(container.textContent).toContain("The Lighthouse of Whispers");
 });
 
-it.fails("a retried generate request carries the same identity as the failed attempt (known gap: no idempotency key)", async () => {
-  // Documented gap: POST /api/adventures/generate has no request identity, so a retry after an
-  // ambiguous failure can start a second module. Fixing it needs backend idempotency, so this
-  // stays an expected failure until that contract exists.
+const setFormValue = (el: HTMLInputElement | HTMLSelectElement, value: string) => {
+  const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+  el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+};
+
+async function fillGenerateForm() {
+  await act(async () => { setFormValue(container.querySelector<HTMLSelectElement>("select")!, "3"); });
+  await act(async () => { setFormValue(container.querySelector<HTMLInputElement>('input[type="number"][min="0.01"]')!, "2"); });
+  await flush();
+}
+
+const generateRequestId = (call: FakeCall) => (call.body as { request_id?: unknown }).request_id;
+
+it("a retried generate request carries the same identity as the failed attempt", async () => {
   const posts: FakeCall[] = [];
   let attempt = 0;
   installFakeApi([
@@ -340,23 +351,47 @@ it.fails("a retried generate request carries the same identity as the failed att
   ]);
   await renderHome();
   await flush();
-  const setValue = (el: HTMLInputElement | HTMLSelectElement, value: string) => {
-    const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
-    el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
-  };
-  await act(async () => { setValue(container.querySelector<HTMLSelectElement>("select")!, "3"); });
-  await act(async () => { setValue(container.querySelector<HTMLInputElement>('input[type="number"][min="0.01"]')!, "2"); });
-  await flush();
+  await fillGenerateForm();
   const submit = () => buttonWith("Generate campaign", true)!;
   await act(() => submit().click());
   await flush();
   await act(() => submit().click());
   await flush();
   expect(posts).toHaveLength(2);
-  expect(typeof posts[0].body).toBe("object");
-  expect(typeof (posts[0].body as { request_id?: unknown }).request_id).toBe("string");
-  expect((posts[1].body as { request_id?: unknown }).request_id).toBe((posts[0].body as { request_id?: unknown }).request_id);
+  expect(typeof generateRequestId(posts[0])).toBe("string");
+  expect(generateRequestId(posts[1])).toBe(generateRequestId(posts[0]));
+  expect(posts[1].body).toEqual(posts[0].body);
+});
+
+it("a generate form renews its identity after an accepted request", async () => {
+  const posts: FakeCall[] = [];
+  installFakeApi([
+    [/^GET \/api\/users\/me$/, () => json(user)],
+    [/^GET \/api\/adventures$/, () => json([])],
+    [/^GET \/api\/campaigns$/, () => json([])],
+    [/^GET \/api\/sessions$/, () => json([])],
+    [/^GET \/api\/characters$/, () => json([{ id: 3, name: "Eda", level: 3, character_class: "Fighter", current_assignment: null }])],
+    [/^POST \/api\/adventures\/generate$/, (call) => {
+      posts.push(call);
+      return json({ slug: `lighthouse-${posts.length}`, title: "Lighthouse", status: "processing" }, 202);
+    }],
+  ]);
+  await renderHome();
+  await flush();
+  await fillGenerateForm();
+  await act(() => buttonWith("Generate campaign", true)!.click());
+  await flush();
+  expect(posts).toHaveLength(1);
+
+  // The accepted attempt closes the form; reopening it starts from a fresh attempt.
+  await act(() => buttonWith("New campaign")!.click());
+  await flush();
+  await fillGenerateForm();
+  await act(() => buttonWith("Generate campaign", true)!.click());
+  await flush();
+  expect(posts).toHaveLength(2);
+  expect(generateRequestId(posts[1])).toMatch(/^[0-9a-f-]{36}$/);
+  expect(generateRequestId(posts[1])).not.toBe(generateRequestId(posts[0]));
 });
 
 it("unmounting while a readiness refresh is in flight aborts that refresh", async () => {
