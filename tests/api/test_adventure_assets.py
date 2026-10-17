@@ -294,11 +294,11 @@ async def test_map_svg_rejects_a_projection_changed_since_the_json_read(monkeypa
 
     monkeypatch.setattr(session_assets, "_session_map_context", context)
     version = hashlib.sha256(b"edgar-map-v1:12:9").hexdigest()
-    response = await session_assets.get_session_map_svg(12, Response(), db=None, v=version)
+    response = await session_assets.get_session_map_svg(12, None, Response(), db=None, v=version)
     assert response.headers["Cache-Control"] == "private, no-store"
     assert b"No known places" in response.body
     with pytest.raises(HTTPException) as error:
-        await session_assets.get_session_map_svg(12, Response(), db=None, v="a" * 64)
+        await session_assets.get_session_map_svg(12, None, Response(), db=None, v="a" * 64)
     assert error.value.status_code == 409
 
 

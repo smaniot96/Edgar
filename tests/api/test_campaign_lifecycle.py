@@ -310,6 +310,7 @@ async def test_assign_waits_for_in_flight_end_and_is_rejected(api_client) -> Non
             assign_character_to_campaign(
                 cid,
                 CampaignCharacterAssignBody(character_id=new_id),
+                auth=None,
                 db=assigning,
                 owner_id=owner,
             )
