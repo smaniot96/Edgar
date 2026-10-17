@@ -106,3 +106,9 @@ LIMIT_JOB_LEASE_SECONDS = _int_setting("LIMIT_JOB_LEASE_SECONDS", 7200, minimum=
 # Memory-summary jobs allowed to run at once in this API process (each holds a provider call).
 # Excess jobs wait without a database connection; see apps/api/services/session_messages.py.
 MEMORY_SUMMARY_CONCURRENCY = _int_setting("EDGAR_MEMORY_SUMMARY_CONCURRENCY", 2, minimum=1)
+
+# Cross-origin policy (EDG-052). Raw strings: apps/api/origin_policy.py validates them at import and
+# names only the setting in any error, never its value. Empty origins = same-origin only (no CORS).
+EDGAR_ALLOWED_ORIGINS = os.getenv("EDGAR_ALLOWED_ORIGINS", "")
+EDGAR_ALLOW_CREDENTIALS = os.getenv("EDGAR_ALLOW_CREDENTIALS", "")
+EDGAR_TRUSTED_HOSTS = os.getenv("EDGAR_TRUSTED_HOSTS", "")
