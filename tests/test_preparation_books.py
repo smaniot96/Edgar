@@ -139,10 +139,10 @@ async def test_pre_versioning_rulebooks_stop_at_the_source_check_without_provide
     """
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams
+    from test_preparation_pipeline import OfflineAuthor, _binding
 
     from apps.api.services import adventures_meta
     from apps.api.services.preparation_stages import make_preparation_supervisor
-    from test_preparation_pipeline import OfflineAuthor, _binding
 
     monkeypatch.setenv("EDGAR_INDEX_LOCK_DIR", str(tmp_path / "locks"))
     monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
