@@ -39,10 +39,6 @@ function flush(ms = 0) {
   });
 }
 
-/** Let response bodies and chained fetches finish: they settle on real I/O ticks, not one timer. */
-async function settle() {
-  for (let i = 0; i < 25; i += 1) await flush(5);
-}
 
 const ready: ReadinessRead = { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] };
 
