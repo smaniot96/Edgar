@@ -1,0 +1,28 @@
+{
+  "id": "fun-v1",
+  "version": "1.0.0",
+  "scale": {"min": 1, "max": 5, "meaning": "1 = clearly poor, 3 = acceptable, 5 = clearly good"},
+  "dimensions": [
+    {
+      "id": "agency_felt",
+      "question": "Did the reply feel like it responded to what this player actually tried to do?"
+    },
+    {
+      "id": "consequence_clarity",
+      "question": "Was it clear what changed because of the attempt, and what did not?"
+    },
+    {
+      "id": "tone_and_prose",
+      "question": "Was the narration immersive, readable and free of meta or status-block noise?"
+    },
+    {
+      "id": "pacing_and_next_step",
+      "question": "Did it end on a useful, inviting next step without padding?"
+    },
+    {
+      "id": "overall_fun",
+      "question": "Would a player want to keep playing from here?"
+    }
+  ],
+  "reviewer_policy": "Scored by a named human reviewer only. No model may score fun unless a later, explicit authorization adds that method; a model score is never written into `scores`."
+}

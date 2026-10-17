@@ -1,0 +1,27 @@
+{
+  "id": "combat-hp-agrees-engine",
+  "version": "1.0.0",
+  "title": "Combat prose that states HP the engine recorded",
+  "description": "A hit that leaves the bandit with 3 HP. Any HP figure in prose must equal the engine's recorded value; the summary's roll line must survive.",
+  "player_input": "I swing at the bandit with my longsword.",
+  "character": {"name": "Lyra", "class": "Fighter", "level": 3, "hp_current": 17, "hp_max": 24},
+  "engine": {
+    "roll_mode": "normal",
+    "effects": [],
+    "check_rolled": true,
+    "success": true,
+    "hp_after": {"Lyra": 17, "Bandit": 3}
+  },
+  "combatants": [
+    {"name": "Lyra", "is_player": true, "hp_current": 17, "disposition": "active"},
+    {"name": "Bandit", "hp_current": 3, "disposition": "active"}
+  ],
+  "scripted": {
+    "play.parser": {"intent": "combat", "check": "attack", "difficulty": null, "target": "bandit", "retrieval_query": "weapon attack longsword", "entities": {"weapon": "longsword"}},
+    "play.consequence_planner": {"success": true, "mechanical_summary": "Lyra swings at the bandit (d20 rolled 16 + 5 = 21 vs AC 12 -> success). The hit deals 7 damage; the bandit is left with 3 HP."},
+    "play.narrator": "Your longsword opens the bandit's shoulder. He staggers back with blood on his sleeve, with 3 HP left and his guard clearly broken. He is still on his feet. What do you do next?"
+  },
+  "agency": {"expected_intent": "combat", "must_mention": ["bandit"]},
+  "expect": {"fidelity.roster": true, "fidelity.claimed_effects": true, "fidelity.hp_numbers": true, "fidelity.mechanics_summary": true},
+  "labels": ["combat", "hp", "mechanics-summary"]
+}
