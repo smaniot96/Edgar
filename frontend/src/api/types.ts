@@ -87,6 +87,8 @@ export interface AdventureGenerateRequest {
   title?: string;
   theme?: string;
   size: AdventureSize;
+  /** Client identity for one generate attempt; a retry reuses it so the server cannot create a second module. */
+  request_id?: string;
 }
 
 export interface AdventureGenerateResponse {

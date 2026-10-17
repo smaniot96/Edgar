@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 
 import { generateAdventure, uploadAdventure } from "../../api/client";
-import type { AdventureRead, AdventureSize } from "../../api/types";
+import type { AdventureGenerateRequest, AdventureRead, AdventureSize } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { ErrorNotice } from "../../components/ui/ErrorNotice";
 import { Field, Input, TextField } from "../../components/ui/Field";
@@ -43,6 +43,13 @@ export function CreatePanel({ onCreated }: { onCreated: (a: AdventureRead) => vo
   );
 }
 
+/**
+ * The identity of one generate attempt. A retry sends the same identity while the request body is
+ * unchanged, so an ambiguous failure cannot create a second module. Editing any field starts a new
+ * attempt, and so does a successful accept.
+ */
+type GenerateAttempt = { requestId: string; fingerprint: string };
+
 function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
   const preparation = usePreparationSetup();
   const [title, setTitle] = useState("");
@@ -50,19 +57,29 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
   const [size, setSize] = useState<AdventureSize>("medium");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // A ref, not state: a double submit before re-render must share the same identity.
+  const attemptRef = useRef<GenerateAttempt | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!preparation.setup) return;
+    const payload: AdventureGenerateRequest = {
+      title: title.trim() || undefined,
+      theme: theme.trim() || undefined,
+      size,
+      preparation: preparation.setup,
+    };
+    const fingerprint = JSON.stringify(payload);
+    const attempt =
+      attemptRef.current?.fingerprint === fingerprint
+        ? attemptRef.current
+        : { requestId: crypto.randomUUID(), fingerprint };
+    attemptRef.current = attempt;
     setBusy(true);
     setError(null);
     try {
-      const stub = await generateAdventure({
-        title: title.trim() || undefined,
-        theme: theme.trim() || undefined,
-        size,
-        preparation: preparation.setup,
-      });
+      const stub = await generateAdventure({ ...payload, request_id: attempt.requestId });
+      attemptRef.current = null;
       setTitle("");
       setTheme("");
       onCreated({
