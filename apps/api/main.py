@@ -27,6 +27,11 @@ from .limits import (
     validate_limit_configuration,
 )
 from .logging_config import RequestContextMiddleware, configure_logging, request_id_from_header
+from .origin_policy import (
+    apply_origin_policy,
+    origin_policy_from_config,
+    origin_policy_summary,
+)
 from .routers._common import HTTPErrorWithContext
 from .routers.adventure_manifests import router as adventure_manifests_router
 from .routers.adventures import router as adventures_router
@@ -56,6 +61,7 @@ async def lifespan(app: FastAPI):
     # Fail before any background work when local provider settings are unusable.
     log.info("provider_configuration_validated", **validate_provider_configuration())
     log.info("limits_configured", **validate_limit_configuration())
+    log.info("origin_policy_configured", **origin_policy_summary(_ORIGIN_POLICY))
     # Background ingest/generation tasks die with the process; flag the ones a previous run
     # left in "processing" as failed so the UI can offer a retry instead of spinning forever.
     from .services.adventures_meta import fail_stale_processing
@@ -86,6 +92,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=API_TITLE, version=API_VERSION, lifespan=lifespan)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(UploadSizeLimitMiddleware)
+# EDG-052: fail closed at import on a malformed origin policy. Added last so CORS and the
+# trusted-host check are the outermost layers. Same-origin default installs nothing.
+_ORIGIN_POLICY = origin_policy_from_config()
+apply_origin_policy(app, _ORIGIN_POLICY)
 
 
 @app.exception_handler(HTTPErrorWithContext)
