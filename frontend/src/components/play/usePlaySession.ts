@@ -98,6 +98,7 @@ export function usePlaySession(sessionId: number) {
   const [state, setState] = useState<PlaySessionState>(initial);
   const [attempt, setAttempt] = useState(0);
   const readinessRevision = useRef(0);
+  const refreshCtrl = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!Number.isFinite(sessionId) || sessionId < 1) return;
@@ -149,20 +150,29 @@ export function usePlaySession(sessionId: number) {
 
   const refreshReadiness = useCallback(async () => {
     const revision = ++readinessRevision.current;
+    refreshCtrl.current?.abort();
+    const ctrl = new AbortController();
+    refreshCtrl.current = ctrl;
     try {
-      const session = await getSession(sessionId);
-      if (revision !== readinessRevision.current) return;
+      const session = await getSession(sessionId, ctrl.signal);
+      if (ctrl.signal.aborted || revision !== readinessRevision.current) return;
       setState((s) => ({
         ...s,
         readiness: session.readiness ?? READINESS_UNKNOWN,
         campaignComplete: s.campaignComplete || session.readiness?.state === "completed",
       }));
     } catch {
+      if (ctrl.signal.aborted) return;
       if (revision === readinessRevision.current) {
         setState((s) => ({ ...s, readiness: READINESS_UNKNOWN }));
       }
+    } finally {
+      if (refreshCtrl.current === ctrl) refreshCtrl.current = null;
     }
   }, [sessionId]);
+
+  // A readiness refresh belongs to one session; leaving the route or session cancels it.
+  useEffect(() => () => refreshCtrl.current?.abort(), [sessionId]);
 
   /** Apply a `done` payload (character/HP, scene, combat, campaign end). */
   const applyTurnResult = useCallback((r: TurnResult) => {
