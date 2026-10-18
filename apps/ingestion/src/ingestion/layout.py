@@ -115,8 +115,13 @@ def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: l
     _full_width_zone). Other runs are two-column regions read left then right. A zone that fits
     none of these fails closed with its bounding box.
     Symbol-only spanning glyphs, such as a decorative bullet, carry no text and are omitted.
+    Mostly-symbol spanning strips, such as a page-header ornament read as punctuation, are too.
     """
-    spanning = {id(item) for item in crossing if any(c.isalnum() for c in item.text)}
+    spanning = {
+        id(item)
+        for item in crossing
+        if any(c.isalnum() for c in item.text) and not _ornament(item.text)
+    }
     symbols = {id(item) for item in crossing} - spanning
     left_ids = {id(item) for item in left}
     runs: list[list[Line]] = []
@@ -156,13 +161,21 @@ def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: l
     return [column for column in ordered if column]
 
 
+def _ornament(text: str) -> bool:
+    """True for a strip that is mostly punctuation, e.g. a decorative page-header rule."""
+    chars = [c for c in text if not c.isspace()]
+    return sum(c.isalnum() for c in chars) * 3 < len(chars)
+
+
 def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
     """Accept a zone only when reading it row by row cannot mix two column streams.
 
     A zone is safe when every line spans (a title, label or full-width intro), sits on one
-    baseline, or is a table: at least three rows carry a spanning cell, three quarters of those
-    rows hold three or more cells, and they make up at least a third of the rows. Prose columns
-    cut by a gutter that is too narrow give mostly two-cell rows, so they do not qualify.
+    baseline, or is a table: at least three rows carry a spanning cell and three quarters of
+    the rows hold three or more cells. Rows with blank cells, such as an empty "Previous Rulers"
+    entry, may leave a table's spanning rows fewer than a third of its rows, so the spanning
+    rows are then also judged on their own. Prose columns cut by a gutter that is too narrow
+    give mostly two-cell rows, so they do not qualify.
     """
     rows: list[list[Line]] = []
     for item in sorted(run, key=lambda i: i.bbox[3]):
@@ -174,8 +187,10 @@ def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
         return True
     span_rows = [row for row in rows if any(id(item) in spanning for item in row)]
     cells = sum(len(row) >= 3 for row in span_rows)
-    return (
-        len(span_rows) >= 3 and 3 * len(span_rows) >= len(rows) and 4 * cells >= 3 * len(span_rows)
+    wide = sum(len(row) >= 3 for row in rows)
+    return len(span_rows) >= 3 and (
+        (3 * len(span_rows) >= len(rows) and 4 * cells >= 3 * len(span_rows))
+        or 4 * wide >= 3 * len(rows)
     )
 
 
@@ -215,6 +230,35 @@ def _title(line: Line, body_size: float) -> bool:
         and (line.size > body_size * 1.2 or (upper > 0.8 and line.size >= body_size * 0.8))
         and not re.match(r"^(armor class|hit points|speed|challenge)\b", line.text, re.I)
     )
+
+
+# A stat field has a number after its label; prose headings such as "ARMOR CLASS" do not.
+_STAT_AC = re.compile(r"^[^\w\n]*Armor\s+Class(?:\*+|_+)?\s+\d", re.I)
+
+
+def _raster_header(
+    supplements: list[Line], size: Line | None, body_size: float, top: float
+) -> tuple[Line | None, Line | None]:
+    """Pick a raster creature size/type line and the name above it from OCR supplements."""
+    raster_size = next((item for item in supplements if SIZE_TYPE.match(item.text)), None)
+    # A native size line may also be re-read by OCR; the name's centre must sit above it.
+    anchor = size if size is not None else raster_size
+    boundary = anchor.bbox[1] if anchor is not None else top
+    raster_title = next(
+        (
+            item
+            for item in reversed(supplements)
+            if (item.bbox[1] + item.bbox[3]) / 2 < boundary
+            and len(re.findall(r"[A-Za-z]", item.text)) >= 3
+            and len(item.text) < 80
+            and letters(item.text) not in STAT_SUBHEADINGS
+            # OCR case is unreliable ("Twig Blight" reads "Twic BLIGHT"): test the
+            # shape on an uppercased copy and keep the original spelling.
+            and _title(Line(item.text.upper(), item.bbox, body_size), body_size)
+        ),
+        None,
+    )
+    return raster_size, raster_title
 
 
 def ocr_stat_header(page, bbox: tuple[float, float, float, float]) -> list[Line]:
@@ -300,7 +344,8 @@ def render_native_page(
                 rows.insert(0, Line("Illustration text", prefix[0].bbox, body_size * 2, True))
                 warnings.append("illustration_caption_separated_from_stat_record")
         for index, ac in enumerate(list(rows)):
-            if not re.match(r"^Armor\s+Class\b", ac.text, re.I):
+            # Only a stat field counts: an uppercase "ARMOR CLASS" section heading in prose is not one.
+            if not _STAT_AC.match(ac.text):
                 continue
             previous = [item for item in rows[:index] if ac.bbox[1] - item.bbox[1] <= 65]
             size = next(
@@ -323,24 +368,25 @@ def render_native_page(
                 raise ValueError("missing_stat_heading_or_type")
             left = min(item.bbox[0] for item in column)
             right = max(item.bbox[2] for item in column)
-            supplements = header_ocr((left - 2, max(0, ac.bbox[1] - 60), right + 2, ac.bbox[1]))
-            raster_size = next((item for item in supplements if SIZE_TYPE.match(item.text)), None)
-            # A native size line may also be re-read by OCR; the name's centre must sit above it.
-            anchor = size if size is not None else raster_size
-            boundary = anchor.bbox[1] if anchor is not None else ac.bbox[1]
-            raster_title = next(
-                (
-                    item
-                    for item in reversed(supplements)
-                    if (item.bbox[1] + item.bbox[3]) / 2 < boundary
-                    and len(re.findall(r"[A-Za-z]", item.text)) >= 3
-                    and len(item.text) < 80
-                    # OCR case is unreliable ("Twig Blight" reads "Twic BLIGHT"): test the
-                    # shape on an uppercased copy and keep the original spelling.
-                    and _title(Line(item.text.upper(), item.bbox, body_size), body_size)
-                ),
-                None,
-            )
+            top = ac.bbox[1]
+            # OCR is sensitive to crop edges: a name can be dropped by one crop and read by the
+            # next. Later crops are tried only when the earlier ones yield no usable header; the
+            # last two sit just above a native size line when one is present.
+            near = size.bbox[1] if size is not None else top
+            for box in (
+                (left - 2, max(0, top - 60), right + 2, top),
+                (left - 12, max(0, top - 60), right + 12, top),
+                (left - 12, max(0, top - 45), right + 12, top),
+                (left - 12, max(0, top - 72), right + 12, top),
+                (left - 12, max(0, near - 40), right + 12, near),
+                (left - 12, max(0, near - 30), right + 12, near),
+            ):
+                supplements = header_ocr(box)
+                raster_size, raster_title = _raster_header(supplements, size, body_size, top)
+                if (title is not None or raster_title is not None) and (
+                    size is not None or raster_size is not None
+                ):
+                    break
             if title is None:
                 if raster_title is None:
                     raise ValueError("missing_stat_heading")
