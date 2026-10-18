@@ -407,11 +407,13 @@ JSON_BODY_ROUTES = {
     ("POST", "/api/adventures/{slug}/retry"),
     ("POST", "/api/campaigns"),
     ("POST", "/api/campaigns/{campaign_id}/characters"),
+    ("POST", "/api/campaigns/{campaign_id}/invites"),
     ("POST", "/api/campaigns/{campaign_id}/npcs"),
     ("POST", "/api/campaigns/{campaign_id}/world-flags"),
     ("POST", "/api/characters"),
     ("POST", "/api/sessions"),
     ("POST", "/api/sessions/{session_id}/turn"),
+    ("POST", "/api/invites/accept"),
     ("POST", "/api/sessions/{session_id}/turn/stream"),
     ("POST", "/api/users"),
     ("PUT", "/api/adventures/{slug}/manifest"),
@@ -433,6 +435,7 @@ DELETE_ROUTES = {
     ("DELETE", "/api/adventures/{slug}"),
     ("DELETE", "/api/campaigns/{campaign_id}"),
     ("DELETE", "/api/campaigns/{campaign_id}/characters/{character_id}"),
+    ("DELETE", "/api/campaigns/{campaign_id}/invites/{invite_id}"),
     ("DELETE", "/api/campaigns/{campaign_id}/world-flags/{key}"),
     ("DELETE", "/api/characters/{character_id}"),
     ("DELETE", "/api/npcs/{npc_id}"),
@@ -457,7 +460,7 @@ def test_every_mutating_route_is_classified_in_the_request_mode_table(load_app) 
     app = load_app()
     classified = JSON_BODY_ROUTES | BODYLESS_POST_ROUTES | MULTIPART_ROUTES | DELETE_ROUTES
     assert _mutating_routes(app) == classified
-    assert len(classified) == 39
+    assert len(classified) == 42
     simple_surface = BODYLESS_POST_ROUTES | MULTIPART_ROUTES
     assert len(simple_surface) == 9
 

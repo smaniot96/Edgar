@@ -121,6 +121,7 @@ class AgentState(TypedDict, total=False):
     character: (
         CharacterState | None
     )  # {id, name, class, level, hp_current, hp_max, stats, inventory}
+    party: list[CharacterState]  # Every seated PC, acting character first (EDG-046); roster only
     adventure_collections: list[str]  # campaigns.adventure_collections
     world_flags: dict[str, str]
     current_scene_id: str | None

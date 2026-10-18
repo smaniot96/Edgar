@@ -114,14 +114,50 @@ flags are reached through their campaign. Characters are owned by `characters.ow
 - Owned lookups (`owned_campaign`, `owned_session`, `owned_npc`, and `authorize_campaign` /
   `authorize_session` before the turn lock) add the owner filter in token mode. A resource that
   belongs to someone else returns the same 404 as a missing one, so existence does not leak.
-- Lists (`/campaigns`, `/sessions`, `/characters`) return only the caller's rows.
+- Lists (`/campaigns`, `/sessions`, `/characters`) return only the caller's rows, including the
+  campaigns and sessions the caller has joined.
 - The turn and intro endpoints check ownership before they take the per-session lock, so another
   user cannot hold a session's lock.
 - In local mode the helpers do not filter. The queries and 404 messages match the previous
   `get_or_404` calls.
 
-There is no membership table. `campaign_members` belongs to the multiplayer work (EDG-046). Until
-then, a campaign is visible only to its creator.
+## Membership, invites and the session roster (EDG-046)
+
+The creator is the implicit owner of a campaign. Other users join through `campaign_memberships`
+(one row per user and campaign) with one of three roles:
+
+- `owner`: schema-valid for a future co-DM; the M1 API never mints it. Owner access equals creator access.
+- `player`: reads the campaign and its sessions and may take turns while their own seated character
+  holds the spotlight (`sessions.active_character_id`).
+- `spectator`: reads the campaign, its sessions and the roster. It cannot take turns, intro, seat a
+  character, or change anything (those routes return 404 or 403).
+
+Access helpers: `owned_*` (owner only) guards every mutation. `member_campaign` / `member_session`
+admit any member, and `campaign_scope` lists the campaigns a user owns or has joined. `turn_session`
+(the `authorize_session` gate for turns and intros) admits the owner, or a seated player whose
+character is the spotlight holder. Everyone else gets 403 (member) or 404 (non-member).
+
+Invites (`campaign_invites`), owner-managed under `/api/campaigns/{id}/invites`:
+
+- The token is `edginv_` plus 256 random bits. Only its SHA-256 digest is stored. The plaintext is
+  returned once, in the creation response, and never in a list, a log or an error.
+- Single use, expiring (1 to 720 hours, default 72), and revocable (`DELETE`). Acceptance consumes
+  the row in one conditional `UPDATE`, so two concurrent accepts cannot both succeed.
+- Optional `invited_email` restricts acceptance to one account. Optional `session_id` binds the
+  invite to one session. A `player` invite then also seats the accepting user's own character there.
+- `POST /api/invites/accept` requires token-mode authentication (401 in local mode). Every
+  token-level failure (unknown, expired, revoked, used, wrong account) returns the same 404. A
+  character the caller does not own, or one with no active assignment in the campaign, is refused
+  (404 or 422) and does not consume the invite.
+
+Session roster: `session_participants` holds one seat per user and one per character in a session.
+`GET /api/sessions/{id}/participants` lists it for any member. The party the agent sees is the
+spotlight character followed by the seated characters, in seat order. The narrator and intro add a
+party line only when there is more than one character, so a single-PC session is unchanged.
+
+Not in M1: removing or demoting a member, a player leaving a seat, spectator presence or broadcast
+(EDG-047), spotlight arbitration beyond the single-holder rule (EDG-048), multi-PC combat (EDG-049)
+and lobby UI (EDG-050).
 
 ## Protected-route matrix
 

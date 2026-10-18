@@ -35,6 +35,7 @@ from .character_assignments import character_play_state
 from .journal import journal_tracking_marker
 from .opening_journal import opening_journal_effects
 from .roll_record import ROLL_NO_ROLL
+from .session_party import session_party
 from .story_state import persist_story_effects
 
 _INTRO_TEMPERATURE = 0.7
@@ -112,6 +113,8 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     character = None
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
+    # Only a session with a spotlight character has a party to address (keeps one-PC intros unchanged).
+    party = await session_party(db, session) if session.active_character_id else []
 
     edition = getattr(campaign, "rules_edition", None) or DEFAULT_RULES_EDITION
     opening_scene_id = None
@@ -148,6 +151,13 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         context_parts.append(
             f"The player's character: {character['name']}, a level {character['level']} "
             f"{character['class']}."
+        )
+    if len(party) > 1:
+        # Party-wide opening (EDG-046): names and classes only; the opening stays on the spotlight PC.
+        roster = ", ".join(f"{m['name']} (level {m['level']} {m['class']})" for m in party)
+        context_parts.append(
+            f"The party at the table: {roster}. Set the scene for all of them; address the "
+            "spotlight character by name and the others as present."
         )
     if opening_text:
         context_parts.append(

@@ -184,7 +184,10 @@ async def test_ownership_lookup_is_scoped_only_in_token_mode() -> None:
         await owned_campaign(db, 5, Principal(user_id=2, token_id=1, is_admin=False))
     assert exc.value.status_code == 404
     assert exc.value.detail == "Campaign not found"
-    assert "AND campaigns.created_by = " in str(db.statements[-1].compile())
+    # Owner access: the creator, or an owner membership (EDG-046). Never an unscoped query.
+    owner_sql = str(db.statements[-1].compile())
+    assert "campaigns.created_by = " in owner_sql
+    assert "campaign_memberships.role IN" in owner_sql
 
     with pytest.raises(HTTPException):
         await owned_campaign(db, 5, None)

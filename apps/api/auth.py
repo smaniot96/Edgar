@@ -26,11 +26,19 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres import get_session
-from db.postgres.models import NPC, ApiToken, Campaign, Session as SessionModel, User
+from db.postgres.models import (
+    NPC,
+    ApiToken,
+    Campaign,
+    CampaignMembership,
+    Session as SessionModel,
+    SessionParticipant,
+    User,
+)
 
 AUTH_MODE_ENV = "EDGAR_AUTH_MODE"
 ADMIN_IDS_ENV = "EDGAR_ADMIN_USER_IDS"
@@ -83,6 +91,14 @@ def hash_token(token: str) -> str:
 def generate_token() -> str:
     """A new high-entropy bearer token. Shown once by the operator tool; never stored in plaintext."""
     return TOKEN_PREFIX + secrets.token_urlsafe(32)
+
+
+INVITE_TOKEN_PREFIX = "edginv_"
+
+
+def generate_invite_token() -> str:
+    """A single-use campaign invite token (EDG-046). Shown once at creation; stored only as a digest."""
+    return INVITE_TOKEN_PREFIX + secrets.token_urlsafe(32)
 
 
 def validate_auth_configuration(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
@@ -204,38 +220,85 @@ async def require_admin(auth: Auth) -> None:
         raise HTTPException(status_code=403, detail="Admin access required.")
 
 
-# Ownership. Each helper returns the row, or raises the same 404 the route raised for a missing row,
-# so another user's resource is indistinguishable from one that does not exist. In local mode
-# (principal is None) the lookup is unrestricted, which keeps the single-user behaviour unchanged.
+# Ownership and membership (EDG-046). Each helper returns the row, or raises the same 404 the route
+# raised for a missing row, so a resource the caller cannot see is indistinguishable from one that
+# does not exist. In local mode (principal is None) the lookup is unrestricted, which keeps the
+# single-user behaviour unchanged.
+#
+# Roles, per campaign: the creator is the implicit owner (no membership row); a membership row
+# carries ``owner`` or ``player``. ``owned_*`` helpers are owner-only and gate every mutation.
+# ``member_*`` helpers admit any member and gate reads. Turns and intros use ``authorize_session``,
+# which additionally requires the caller to hold the spotlight (see ``turn_session``).
+
+OWNER_ROLE = "owner"
+PLAYER_ROLE = "player"
+SPECTATOR_ROLE = "spectator"
+
+
+def _membership_exists(user_id: int, roles: tuple[str, ...] | None = None) -> Any:
+    stmt = select(CampaignMembership.id).where(
+        CampaignMembership.campaign_id == Campaign.id,
+        CampaignMembership.user_id == user_id,
+    )
+    if roles is not None:
+        stmt = stmt.where(CampaignMembership.role.in_(roles))
+    return exists(stmt)
+
+
+def _owner_filter(user_id: int) -> Any:
+    return or_(Campaign.created_by == user_id, _membership_exists(user_id, (OWNER_ROLE,)))
+
+
+def _member_filter(user_id: int) -> Any:
+    return or_(Campaign.created_by == user_id, _membership_exists(user_id))
+
+
+async def campaign_role(db: AsyncSession, campaign: Campaign, user_id: int) -> str | None:
+    """The caller's role in a campaign, or None when they have no access."""
+    if campaign.created_by == user_id:
+        return OWNER_ROLE
+    return await db.scalar(
+        select(CampaignMembership.role).where(
+            CampaignMembership.campaign_id == campaign.id,
+            CampaignMembership.user_id == user_id,
+        )
+    )
 
 
 async def authorize_campaign(db: AsyncSession, campaign_id: int, auth: Auth) -> None:
-    """Pre-check ownership without loading the row (no-op in local mode)."""
+    """Pre-check owner access without loading the row (no-op in local mode)."""
     if auth is not None:
         await owned_campaign(db, campaign_id, auth)
 
 
 async def owned_campaign(db: AsyncSession, campaign_id: int, auth: Auth) -> Campaign:
+    """Owner-only access to a campaign (creator or an owner membership)."""
     stmt = select(Campaign).where(Campaign.id == campaign_id)
     if auth is not None:
-        stmt = stmt.where(Campaign.created_by == auth.user_id)
+        stmt = stmt.where(_owner_filter(auth.user_id))
     campaign = (await db.execute(stmt)).scalar_one_or_none()
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return campaign
 
 
-async def authorize_session(db: AsyncSession, session_id: int, auth: Auth) -> None:
-    """Pre-check ownership before a turn takes the session lock (no-op in local mode)."""
+async def member_campaign(db: AsyncSession, campaign_id: int, auth: Auth) -> Campaign:
+    """Read access to a campaign for any member (owner or player)."""
+    stmt = select(Campaign).where(Campaign.id == campaign_id)
     if auth is not None:
-        await owned_session(db, session_id, auth)
+        stmt = stmt.where(_member_filter(auth.user_id))
+    campaign = (await db.execute(stmt)).scalar_one_or_none()
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
 
 
 async def owned_session(db: AsyncSession, session_id: int, auth: Auth) -> SessionModel:
+    """Owner-only access to a session (used by session mutations)."""
     stmt = select(SessionModel).where(SessionModel.id == session_id)
     if auth is not None:
         stmt = stmt.join(Campaign, Campaign.id == SessionModel.campaign_id).where(
-            Campaign.created_by == auth.user_id
+            _owner_filter(auth.user_id)
         )
     session = (await db.execute(stmt)).scalar_one_or_none()
     if session is None:
@@ -243,11 +306,59 @@ async def owned_session(db: AsyncSession, session_id: int, auth: Auth) -> Sessio
     return session
 
 
+async def member_session(db: AsyncSession, session_id: int, auth: Auth) -> SessionModel:
+    """Read access to a session for any campaign member."""
+    stmt = select(SessionModel).where(SessionModel.id == session_id)
+    if auth is not None:
+        stmt = stmt.join(Campaign, Campaign.id == SessionModel.campaign_id).where(
+            _member_filter(auth.user_id)
+        )
+    session = (await db.execute(stmt)).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+async def turn_session(db: AsyncSession, session_id: int, auth: Auth) -> SessionModel:
+    """The session a turn or intro may act in (EDG-046).
+
+    The campaign owner may always act (single-owner behaviour is unchanged). A player may act only
+    when their own seated character is the session's spotlight holder (``active_character_id``);
+    members who are not seated, or seated but not holding the spotlight, get 403. Non-members get
+    the same 404 as a missing session.
+    """
+    session = await member_session(db, session_id, auth)
+    if auth is None:
+        return session
+    campaign = await db.get(Campaign, session.campaign_id)
+    if campaign is not None and await campaign_role(db, campaign, auth.user_id) == OWNER_ROLE:
+        return session
+    seated = await db.scalar(
+        select(SessionParticipant.id).where(
+            SessionParticipant.session_id == session.id,
+            SessionParticipant.user_id == auth.user_id,
+            SessionParticipant.character_id == session.active_character_id,
+        )
+    )
+    if seated is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the player whose character holds the spotlight can act in this session.",
+        )
+    return session
+
+
+async def authorize_session(db: AsyncSession, session_id: int, auth: Auth) -> None:
+    """Pre-check before a turn or intro takes the session lock (no-op in local mode)."""
+    if auth is not None:
+        await turn_session(db, session_id, auth)
+
+
 async def owned_npc(db: AsyncSession, npc_id: int, auth: Auth) -> NPC:
     stmt = select(NPC).where(NPC.id == npc_id)
     if auth is not None:
         stmt = stmt.join(Campaign, Campaign.id == NPC.campaign_id).where(
-            Campaign.created_by == auth.user_id
+            _owner_filter(auth.user_id)
         )
     npc = (await db.execute(stmt)).scalar_one_or_none()
     if npc is None:
@@ -256,8 +367,8 @@ async def owned_npc(db: AsyncSession, npc_id: int, auth: Auth) -> NPC:
 
 
 def campaign_scope(auth: Auth) -> Any:
-    """SQL filter restricting a Campaign query to the caller's campaigns (None in local mode)."""
-    return None if auth is None else Campaign.created_by == auth.user_id
+    """SQL filter restricting a Campaign query to the caller's campaigns, owned or joined (None locally)."""
+    return None if auth is None else _member_filter(auth.user_id)
 
 
 __all__ = [
@@ -267,17 +378,22 @@ __all__ = [
     "authorize_campaign",
     "authorize_session",
     "auth_mode",
+    "campaign_role",
     "bearer_token",
     "campaign_scope",
+    "generate_invite_token",
     "generate_token",
     "get_current_principal",
     "hash_token",
     "owned_campaign",
+    "member_campaign",
+    "member_session",
     "owned_npc",
     "owned_session",
     "principal_for",
     "require_admin",
     "require_authentication",
     "resolve_token",
+    "turn_session",
     "validate_auth_configuration",
 ]

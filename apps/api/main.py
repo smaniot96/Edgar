@@ -45,6 +45,7 @@ from .routers.journal import router as journal_router
 from .routers.limits import router as limits_router
 from .routers.metrics import router as metrics_router
 from .routers.npc import router as npc_router
+from .routers.party import router as party_router
 from .routers.rules import router as rules_router
 from .routers.seed import router as seed_router
 from .routers.session import router as session_router
@@ -211,6 +212,7 @@ app.include_router(campaign_characters_router, prefix="/api", dependencies=API_A
 app.include_router(character_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(character_presets_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(npc_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(party_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(rules_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(seed_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(session_router, prefix="/api", dependencies=API_AUTH)

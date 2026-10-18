@@ -129,6 +129,17 @@ def build_narrator_prompt(
             f"(do not describe the PC as unhurt if HP is low, or dying if HP is still moderate); "
             f"never print the numbers, and do not invent status conditions."
         )
+    party = [m for m in (state.get("party") or []) if isinstance(m, dict) and m.get("name")]
+    if len(party) > 1:
+        # Multi-PC table (EDG-046): the roster is shared context; only the acting PC's action is resolved.
+        roster = "; ".join(
+            f"{m['name']} ({m.get('class')}, level {m.get('level')})" for m in party
+        )
+        context_parts.append(
+            f"Party at the table: {roster}. Narrate for the whole party. The acting player character "
+            f"is {character.get('name') if character else 'the spotlight character'}; do not resolve "
+            "actions for the other party members."
+        )
     npcs = [n for n in (state.get("npcs") or []) if isinstance(n, dict) and n.get("name")]
     if npcs:
         context_parts.append(
