@@ -1,6 +1,8 @@
 """Anonymized captured layout regressions plus isolated generated PDF scenarios."""
 
 import json
+import subprocess
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -9,7 +11,13 @@ import pytest
 
 from ingestion import embed, extract
 from ingestion.chunk import chunk_pages
-from ingestion.extract import extract_document, load_reviewed_extraction, save_extraction
+from ingestion.extract import (
+    ExtractedPage,
+    Extraction,
+    extract_document,
+    load_reviewed_extraction,
+    save_extraction,
+)
 from ingestion.layout import Line, native_lines, render_native_page
 from ingestion.quality import check_text, require_separate_stat_chunks
 
@@ -487,3 +495,98 @@ def test_reviewed_source_edition_is_stamped_and_cannot_be_relabelled(
     )
     assert writes and {c["rules_edition"] for c in writes[0]} == {"2014"}
     assert load_reviewed_extraction(native_pdf, report).rules_edition == "2014"
+
+
+def _extraction_with_failing_pages(page_count: int, failing: set[int]) -> Extraction:
+    pages = [
+        ExtractedPage(
+            number,
+            f"PRIVATE page {number} text",
+            "native_geometry",
+            {"errors": ["interleaved_stat_records"] if number in failing else []},
+        )
+        for number in range(1, page_count + 1)
+    ]
+    return Extraction("sample", "0" * 64, page_count, pages)
+
+
+def test_quality_summary_caps_pages_and_totals_codes_without_page_text():
+    lines = _extraction_with_failing_pages(30, set(range(1, 26))).quality_summary()
+    page_lines = [line for line in lines if line.startswith("page ")]
+    assert len(page_lines) == extract.SUMMARY_PAGE_LIMIT
+    assert page_lines[0].startswith("page 1: interleaved_stat_records (")
+    assert "25 of 30 pages failed quality checks." in lines
+    assert "... 5 more pages; see the extraction bundle." in lines
+    assert "Totals: interleaved_stat_records x25" in lines
+    assert "PRIVATE" not in "\n".join(lines)
+
+
+# Runs the real CLI in a subprocess: loguru's sink configuration is process-wide.
+_CLI_SCRIPT = """
+import sys
+import ingestion.main as cli
+from ingestion.extract import Extraction, ExtractedPage
+
+PAGE_TWO_ERRORS = sys.argv[3:]
+
+def fake_extract(path, pages=None):
+    return Extraction("sample", "0" * 64, 2, [
+        ExtractedPage(1, "PRIVATE page one text", "native_geometry", {"errors": []}),
+        ExtractedPage(2, "PRIVATE page two text", "native_geometry", {"errors": PAGE_TWO_ERRORS}),
+    ])
+
+cli.extract_document = fake_extract
+sys.argv = ["ingest", sys.argv[1], "--extract-only", "--markdown-dir", sys.argv[2]]
+cli.main()
+"""
+
+
+def _run_extract_cli(tmp_path, *page_two_errors):
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    return out, subprocess.run(
+        [sys.executable, "-c", _CLI_SCRIPT, str(pdf), str(out), *page_two_errors],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_failed_extract_cli_reports_pages_and_keeps_previous_preview(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    previous = {
+        name: f"previous good {name}\n"
+        for name in ("sample.md", "sample.extraction.json", "sample.summary.txt")
+    }
+    for name, text in previous.items():
+        (out / name).write_text(text, encoding="utf-8")
+
+    out, result = _run_extract_cli(tmp_path, "interleaved_stat_records")
+
+    assert result.returncode == 1
+    for name, text in previous.items():
+        assert (out / name).read_text(encoding="utf-8") == text
+    assert (out / "sample.failed.md").exists()
+    assert json.loads((out / "sample.failed.extraction.json").read_text())["source"] == "sample"
+    assert "page 2: interleaved_stat_records" in (out / "sample.failed.summary.txt").read_text()
+    assert "page 2: interleaved_stat_records" in result.stderr
+    assert "Totals: interleaved_stat_records x1" in result.stderr
+    assert "previous preview left unchanged" in result.stderr
+    assert "PRIVATE" not in result.stderr
+    assert "ValueError" not in result.stderr
+
+
+def test_clean_extract_cli_replaces_preview_and_writes_summary(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "sample.md").write_text("previous good preview\n", encoding="utf-8")
+
+    out, result = _run_extract_cli(tmp_path)
+
+    assert result.returncode == 0
+    assert "PRIVATE" not in result.stderr
+    assert (out / "sample.md").read_text(encoding="utf-8") != "previous good preview\n"
+    assert "0 of 2 pages failed quality checks." in (out / "sample.summary.txt").read_text()
+    assert not (out / "sample.failed.md").exists()
