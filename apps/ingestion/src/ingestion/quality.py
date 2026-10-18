@@ -78,12 +78,16 @@ def check_text(text: str) -> dict:
     """Detect heavy duplicate layers and mixed stat records without changing any numbers.
 
     Adjacent word repetitions are counted after case folding and punctuation removal.
+    Numbers and one-letter list markers repeat legitimately in spell-slot tables ("4 3 3 3")
+    and option lists ("(a) a mace"), so only alphabetic words of two or more letters count.
     A few legitimate repetitions are allowed; systematic duplicated OCR words are not.
     Each named section may contain at most one AC/HP pair. This catches both interleaved
     fields and two records accidentally concatenated under a generic Actions heading.
     """
     words = re.findall(r"\b[\w]+\b", text.casefold())
-    repeated = sum(a == b for a, b in zip(words, words[1:], strict=False))
+    repeated = sum(
+        a == b and a.isalpha() and len(a) > 1 for a, b in zip(words, words[1:], strict=False)
+    )
     errors = []
     if repeated >= 8 and repeated / max(1, len(words)) > 0.04:
         errors.append("duplicate_word_layer")

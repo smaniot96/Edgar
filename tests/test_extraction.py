@@ -117,6 +117,20 @@ def test_corrupt_layers_and_stat_boundaries_detected(text, error):
     assert error in check_text(text)["errors"]
 
 
+def test_repeated_numbers_and_list_markers_are_not_a_duplicate_layer():
+    # Spell-slot columns repeat digits, and option lists repeat one-letter markers.
+    slots = "\n".join(f"{level} 4 3 3 3 2 1" for level in range(4, 24))
+    options = "(a) a mace or (b) a warhammer\n(a) a light crossbow or (b) any simple weapon"
+    text = f"## The Bard\n\nCantrips Known\nSpells Known\n\n{slots}\n\n{options}\n\n{options}"
+    assert check_text(text)["errors"] == []
+
+
+def test_repeated_words_still_fail_beside_numeric_table_rows():
+    slots = "\n".join(f"{level} 4 3 3 3 2" for level in range(4, 14))
+    layer = " ".join(["Bardic Bardic Inspiration"] * 12)
+    assert "duplicate_word_layer" in check_text(f"{slots}\n\n{layer}")["errors"]
+
+
 def test_stat_field_anchors_ignore_class_tables_and_healing_prose():
     class_table = (
         "HIT POINTS\n\nHit Points at 1st Level: 10 + your Constitution modifier.\n"
