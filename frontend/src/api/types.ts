@@ -154,6 +154,8 @@ export interface CharacterPreset {
   hp_current: number;
   stats: Record<string, number>;
   inventory: Record<string, unknown>;
+  /** What the engine executes for this class, shown as a label on the class picker. */
+  engine_support: string;
 }
 
 export interface CampaignCharacterRead {

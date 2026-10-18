@@ -34,6 +34,7 @@ const campaign: CampaignRead = {
 const preset: CharacterPreset = {
   key: "fighter", label: "Fighter", character_class: "Fighter", level: 1,
   hp_max: 12, hp_current: 12, stats: { str: 15 }, inventory: { items: [] },
+  engine_support: "Engine: Second Wind; Action Surge from level 2",
 };
 const existingCharacter: CharacterListItem = {
   id: 30, name: "Mara Venn", character_class: "Ranger", level: 2, hp_max: 18,

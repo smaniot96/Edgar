@@ -17,6 +17,18 @@ import { LoadingText } from "./ui/EmptyState";
 import { TextField } from "./ui/Field";
 import { cardClasses } from "./ui/styles";
 
+/** Readable starting kit, e.g. "longsword, shield, chain mail". Booleans show as the item's name; "none" is omitted. */
+function describeKit(inventory: Record<string, unknown>): string {
+  const parts = Object.entries(inventory).flatMap(([key, value]) => {
+    if (Array.isArray(value)) return value.map(String);
+    if (value === true) return [key.replace(/_/g, " ")];
+    if (value === false || value == null || value === "none") return [];
+    if (typeof value === "number") return [`${value} ${key.replace(/_/g, " ")}`];
+    return [String(value)];
+  });
+  return parts.length > 0 ? `Kit: ${parts.join(", ")}` : "Kit: none";
+}
+
 export function CharacterForm({
   onCreated,
   onCancel,
@@ -46,7 +58,6 @@ export function CharacterForm({
   // `null` = follow the first preset until the player picks one.
   const [pickedKey, setPickedKey] = useState<string | null>(initialDraft?.presetKey ?? null);
   const [name, setName] = useState(initialDraft?.name ?? "");
-  const [charClass, setCharClass] = useState<string | null>(initialDraft?.characterClass ?? null);
   const [hpText, setHpText] = useState<string | null>(initialDraft?.hpText ?? null);
   const [busy, setBusy] = useState(false);
   const [localPending, setLocalPending] = useState<PendingCharacterCreate | null>(null);
@@ -55,10 +66,15 @@ export function CharacterForm({
   const [hpError, setHpError] = useState<string | null>(null);
 
   const list = presets.data ?? [];
+  // The class is the picked preset's class, so it always comes with that preset's stats and kit.
+  // A draft saved with a class that has no preset (for example "Bard") falls back to its preset when
+  // one matches, and otherwise to the first preset.
   const selected: CharacterPreset | undefined =
-    list.find((p) => p.key === pickedKey) ?? list[0];
-  // Class/HP default to the selected preset until the player edits them.
-  const classValue = charClass ?? selected?.character_class ?? "";
+    list.find((p) => p.key === pickedKey) ??
+    list.find((p) => p.character_class === initialDraft?.characterClass) ??
+    list[0];
+  const classValue = selected?.character_class ?? "";
+  // HP defaults to the selected preset until the player edits it.
   const hpValue = hpText ?? String(selected?.hp_max ?? 10);
   const retainedCreate = pendingCreate ?? (onCreateRequested ? null : localPending);
   const locked = retainedCreate != null;
@@ -68,17 +84,17 @@ export function CharacterForm({
     onDraftChange?.({
       name: next.name ?? name,
       presetKey: next.presetKey === undefined ? pickedKey : next.presetKey,
-      characterClass: next.characterClass === undefined ? charClass : next.characterClass,
+      characterClass: next.characterClass === undefined ? (selected?.character_class ?? null) : next.characterClass,
       hpText: next.hpText === undefined ? hpText : next.hpText,
     });
   }
 
+  // Picking a class resets HP to that preset's value; stats and kit follow from the preset at submit.
   function pick(p: CharacterPreset) {
     setPickedKey(p.key);
-    setCharClass(null);
     setHpText(null);
     setHpError(null);
-    saveDraft({ presetKey: p.key, characterClass: null, hpText: null });
+    saveDraft({ presetKey: p.key, characterClass: p.character_class, hpText: null });
   }
 
   async function submit(e: FormEvent) {
@@ -95,7 +111,7 @@ export function CharacterForm({
     try {
       const body: CharacterCreateBody = retainedCreate?.body ?? {
         name: name.trim(),
-        character_class: classValue.trim(),
+        character_class: classValue,
         level: selected?.level ?? 1,
         hp_max: hp,
         base_stats: selected?.stats ?? {},
@@ -135,7 +151,7 @@ export function CharacterForm({
         <ErrorNotice error={presets.error} onRetry={presets.refetch} />
       ) : list.length > 0 ? (
         <fieldset>
-          <legend className="mb-1.5 text-xs font-medium text-ink-muted">Starting preset</legend>
+          <legend className="mb-1.5 text-xs font-medium text-ink-muted">Class (starting preset)</legend>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((p) => {
               const active = selected?.key === p.key;
@@ -168,6 +184,8 @@ export function CharacterForm({
                       </span>
                     ))}
                   </div>
+                  <p className="mt-1.5 text-xs text-ink-muted">{describeKit(p.inventory)}</p>
+                  <p className="mt-1 text-xs text-ink-muted">{p.engine_support}</p>
                 </button>
               );
             })}
@@ -187,19 +205,11 @@ export function CharacterForm({
           saveDraft({ name: e.target.value });
         }}
       />
-      <div className="flex gap-3">
-        <TextField
-          fieldClassName="flex-1"
-          label="Class"
-          required
-          maxLength={255}
-          value={classValue}
-          disabled={locked}
-          onChange={(e) => {
-            setCharClass(e.target.value);
-            saveDraft({ characterClass: e.target.value });
-          }}
-        />
+      <div className="flex items-end gap-3">
+        <p className="flex-1 text-sm">
+          <span className="block text-xs font-medium text-ink-muted">Class</span>
+          <span className="font-medium">{classValue || "Choose a preset"}</span>
+        </p>
         <TextField
           fieldClassName="w-28"
           label="Max HP"
