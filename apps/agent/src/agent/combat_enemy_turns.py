@@ -6,6 +6,8 @@ before the split, so seeded rounds are unchanged. The round's shared state is `R
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from agent.action_economy import (
     ACTION,
     BONUS_ACTION,
@@ -87,6 +89,12 @@ class EnemyTurns:
 
     def __init__(self, rec: RoundRecord) -> None:
         self.rec = rec
+        # EDG-044c: told when a foe closes from range into melee on its own turn, before its attacks.
+        self.on_closed: Callable[[dict], None] | None = None
+
+    def _foe_closed(self, e: dict) -> None:
+        if self.on_closed is not None:
+            self.on_closed(e)
 
     # --- Shared HP bookkeeping (engine only) ---
 
@@ -538,6 +546,7 @@ class EnemyTurns:
             if band_of(e) == RANGED:
                 e["band"] = MELEE
                 self.rec.log_lines.append(f"{e['name']} closes to melee range.")
+                self._foe_closed(e)
             self.enemy_attack(
                 e,
                 label=None,
@@ -554,6 +563,7 @@ class EnemyTurns:
             # A melee-only foe at range spends its movement to close in, then attacks (EDG-044).
             e["band"] = band = MELEE
             self.rec.log_lines.append(f"{e['name']} closes to melee range.")
+            self._foe_closed(e)
         plan = attacks_from_band(plan, band)
         if not plan:
             self.rec.log_lines.append(f"{e['name']} has no supported attack and takes no action.")
@@ -564,7 +574,7 @@ class EnemyTurns:
             spend_recharge(e, attack)  # a recharge attack waits for its d6 (no-op for the others)
 
     def opportunity_attack(self, e: dict) -> bool:
-        """The foe's reaction: one melee attack against the hero as it leaves reach (PHB p.195).
+        """The foe's reaction: one melee attack against the hero as it leaves reach (PDF p.196).
 
         Uses the record's first melee attack, or the stored numbers of a legacy foe. Returns False
         when the foe has no melee attack to make.
@@ -686,7 +696,7 @@ class EnemyTurns:
             self.lair_boundary()
 
     def enemy_turn(self, e: dict) -> None:
-        start_turn(e)  # its reaction comes back at the start of its turn (PHB p.190)
+        start_turn(e)  # its reaction comes back at the start of its turn (PDF p.191)
         e.pop("legendary_spent", None)  # and its spent legendary actions (MM, PDF p.12)
         if ended_spell := drop_concentration_if_incapacitated(e, [self.rec.player]):
             self.rec.log_lines.append(f"{_display(e)}'s concentration on {ended_spell} ends while incapacitated.")

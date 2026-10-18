@@ -130,7 +130,13 @@ def settle_round(
 
     # EDG-044: what this turn spent, kept on the player row (persisted with the combatants).
     spent = declared if player_acted and not rec.fled else []
-    player["action_economy"] = economy_record(rec.round_num, spent, dodging=has_effect(player, "dodging"))
+    readied_fired = "readied_attack" in rec.round_effects
+    player["action_economy"] = economy_record(
+        rec.round_num,
+        spent,
+        dodging=has_effect(player, "dodging"),
+        reaction="readied attack" if readied_fired else None,
+    )
     view = initiative_view(combatants)
     player_view_index = next((i for i, c in enumerate(view) if c["is_player"]), 0)
     combat_state.update(

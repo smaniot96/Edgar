@@ -585,6 +585,8 @@ export interface CombatEconomy {
   /** Label of the bonus action the turn spent (e.g. "Second Wind"), or null when none. */
   bonus_action?: string | null;
   dodging?: boolean | null;
+  /** The reaction the hero spent this round, e.g. "readied attack" (EDG-044c, additive); absent when unused. */
+  reaction?: string | null;
 }
 
 export interface CombatState {

@@ -75,6 +75,9 @@ EFFECT_KINDS: tuple[str, ...] = (
     "poisoned",
     "frightened",
     "stunned",
+    # EDG-044c: a grapple (PDF p.196, Appendix A p.291) and the hero's readied attack (PDF p.194).
+    "grappled",
+    "readied",
 )
 # Kinds that give the bearer's own attack rolls disadvantage, and kinds that give attacks against
 # the bearer advantage (a prone bearer is the exception: its 5-foot split is in attack_roll_mode).
@@ -85,6 +88,16 @@ _AGAINST_ADVANTAGE = frozenset({"restrained", "blinded", "marked", "paralyzed", 
 # Kinds that give the bearer disadvantage on ability checks (PHB Appendix A, PDF pp.291, 293).
 _CHECK_DISADVANTAGE = frozenset({"frightened", "poisoned"})
 _EFFECT_TEXT = {
+    # A grappled creature's speed is 0 (speed is not tracked); the grapple gives it no attack or save
+    # penalty (PHB Appendix A, PDF p.291). Only a restrained creature has those (PDF p.293).
+    "grappled": (
+        "grappled by {source}: its speed is 0 and it takes no other penalty from the grapple; the "
+        "grapple ends when the hero releases it or the foe is defeated"
+    ),
+    "readied": (
+        "the hero has readied an attack ({source}): it is made with the hero's reaction when the "
+        "trigger occurs, and lapses at the start of the hero's next turn"
+    ),
     "restrained": (
         "restrained with {source}: its attacks have disadvantage and attacks against it have "
         "advantage"
@@ -155,7 +168,8 @@ _OTHER_ATTACKER = re.compile(
     re.IGNORECASE,
 )
 # Supported contested maneuvers, read from the player's words (EDG-021). Shove-away and other
-# maneuvers are not matched here, so they stay unsupported and receive a ruling.
+# maneuvers are not matched here, so they stay unsupported and receive a ruling. EDG-044c: every hold
+# is a grapple (PDF p.196), including "pin" and binding with rope; the 2014 rules have no separate pin.
 _RESTRAIN_TEXT = re.compile(
     r"\b(?:grapple\w*|pin|pins|pinned|pinning|restrain\w*|tie\s+(?:him|her|it|them)\s+up"
     r"|hold\s+(?:him|her|it|them)\s+(?:down|in\s+place|still|fast))\b",
@@ -177,8 +191,26 @@ _ROPE_TEXT = re.compile(r"\b(?:rope|cord|chains?|manacles?|bonds?|bindings?)\b",
 
 @dataclass(frozen=True)
 class CombatManeuver:
-    kind: str  # "restrained" | "prone" | "release"
-    source: str | None = None  # "rope" | "hands" for a restraint; "shove" for prone
+    kind: str  # "grappled" | "prone" | "release"
+    source: str | None = None  # "rope" | "hands" for a grapple; "shove" for prone
+
+
+def contest_defender_bonus(target: Mapping[str, Any]) -> int:
+    """The foe's bonus to a grapple or shove contest (PDF p.196).
+
+    The target chooses Strength (Athletics) or Dexterity (Acrobatics), so the better modifier counts.
+    A record does not state Athletics proficiency, so only the ability modifiers are used. A legacy
+    row with no stat block uses its stored initiative bonus as its Dexterity modifier.
+    """
+    stats = target.get("monster_stats")
+    abilities = stats.get("abilities") if isinstance(stats, Mapping) else None
+    dex = int(target.get("initiative_bonus", 0) or 0)
+    if not isinstance(abilities, Mapping):
+        return dex
+    dex = int(abilities.get("DEX", dex))
+    if "STR" not in abilities:
+        return dex
+    return max(int(abilities["STR"]), dex)
 
 
 def classify_combat_maneuver(text: str | None) -> CombatManeuver | None:
@@ -187,7 +219,7 @@ def classify_combat_maneuver(text: str | None) -> CombatManeuver | None:
     if _RELEASE_TEXT.search(words):
         return CombatManeuver("release")
     if _RESTRAIN_TEXT.search(words):
-        return CombatManeuver("restrained", "rope" if _ROPE_TEXT.search(words) else "hands")
+        return CombatManeuver("grappled", "rope" if _ROPE_TEXT.search(words) else "hands")
     if _PRONE_TEXT.search(words):
         return CombatManeuver("prone", "shove")
     return None

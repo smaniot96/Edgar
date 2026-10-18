@@ -80,7 +80,12 @@ from agent.combat_narration import (
     PendingRoundNarration,
     finalize_round_narration,
 )
-from agent.combat_player_phase import PlayerTurnInput, finish_hero_turn, run_player_turn
+from agent.combat_player_phase import (
+    PlayerTurnInput,
+    finish_hero_turn,
+    fire_readied,
+    run_player_turn,
+)
 from agent.combat_round_record import RoundRecord
 from agent.combat_setup import (
     ENCOUNTER_BUILDER,
@@ -539,6 +544,8 @@ async def combat_round_node(state: AgentState) -> dict:
         second_wind_auto_at_zero_hp=SECOND_WIND_AUTO_AT_ZERO_HP,
     )
     turns = EnemyTurns(rec)
+    # EDG-044c: a foe that closes into melee on its own turn may trigger the hero's readied attack.
+    turns.on_closed = lambda foe: fire_readied(rec, turns, foe)
 
     # A predicted source-turn expiry lets a stunned hero keep a flee declaration. Resolve foes ahead
     # first; restore the flee state before the player slot so it succeeds only if the stun ends.

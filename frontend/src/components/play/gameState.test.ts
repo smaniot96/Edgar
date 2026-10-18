@@ -294,6 +294,19 @@ describe("combat economy (EDG-044)", () => {
     expect(economyLine(undefined)).toBeNull();
   });
 
+  it("names the reaction the hero spent this round (EDG-044c), and only when one was spent", () => {
+    expect(
+      economyLine({ round: 1, action: "Ready", bonus_action: null, dodging: false, reaction: "readied attack" }),
+    ).toBe("Last turn: action Ready · bonus action unused · reaction readied attack");
+  });
+
+  it("labels a grapple and a readied attack as the engine's effects (EDG-044c)", () => {
+    expect(mechanicalEffects([{ kind: "grappled" }, { kind: "readied" }])).toEqual([
+      { kind: "grappled", label: "Grappled" },
+      { kind: "readied", label: "Attack readied" },
+    ]);
+  });
+
   it("labels Dodging as a mechanical effect and drops unknown kinds", () => {
     expect(mechanicalEffects([{ kind: "dodging" }, { kind: "stunned" }])).toEqual([
       { kind: "dodging", label: "Dodging" },

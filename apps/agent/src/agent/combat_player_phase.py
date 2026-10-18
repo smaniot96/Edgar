@@ -35,8 +35,10 @@ from agent.combatants import (
     apply_defeat,
     attack_roll_mode,
     can_act,
+    contest_defender_bonus,
     declared_lethality,
     disposition_of,
+    effects_of,
     has_effect,
     impaired_checks,
     is_standing,
@@ -63,7 +65,8 @@ from agent.monster_stats import (
     stats_of,
     weapon_damage_type,
 )
-from agent.positioning import MELEE, RANGED, band_of
+from agent.positioning import MELEE, RANGED, MovePlan, band_of, start_turn
+from agent.readied_action import ReadyOrder
 from agent.resolution import (
     SECOND_WIND_REFUSAL,
     CheckResult,
@@ -181,6 +184,12 @@ def _start_slot(t: _Turn) -> None:
     # EDG-044: a Dodge lasts until the hero's next turn starts, which is here (after the foes that
     # act ahead of the hero in initiative). A Dodge declared this turn applies to the foes after.
     release_effect(player, "dodging")
+    # EDG-044c: the hero's reaction comes back at the start of its own turn (PDF p.191). A readied attack
+    # not yet triggered lapses here: it was held until the hero's next turn (PDF p.194).
+    if player.get("reaction_used"):
+        start_turn(player)  # written only when a reaction was spent, so a plain turn's row keeps its shape
+    if release_effect(player, "readied"):
+        rec.log_lines.append(f"{hero}'s readied attack lapses: its trigger did not occur.")
     if t.player_acted and decl.standing_up and release_effect(player, "prone"):
         rec.log_lines.append(f"{hero} stands up and is no longer prone.")
     # A rage lasts 1 minute (PHB, PDF p.49), counted from the round it began in.
@@ -261,7 +270,7 @@ def _action_surge(t: _Turn) -> None:
 
 def _declared_moves(t: _Turn) -> None:
     """Declared moves happen before the action. Leaving a foe's melee band provokes one opportunity
-    attack from it, unless the hero took Disengage this turn (PHB p.192, p.195)."""
+    attack from it, unless the hero took Disengage this turn (PDF p.193, p.196)."""
     rec, inp = t.rec, t.inp
     player, hero = rec.player, rec.hero
     decl = inp.decl
@@ -349,6 +358,8 @@ def _resolve_action(t: _Turn) -> None:
         # Narrative ruling only; appended to the round summary below.
         t.extra_outcome = ""
         t.player_action = {"action": "declared_action", "result": "narrative_only"}
+    elif decl.ready is not None:
+        _ready(t, decl.ready)
     elif decl.combat_action is not None and decl.combat_action.kind == "release":
         _release(t)
     elif (
@@ -555,21 +566,122 @@ def _catalog_spell(t: _Turn, spell_plan: CastPlan) -> None:
 
 
 def _release(t: _Turn) -> None:
-    """Releasing a foe the hero has restrained (EDG-021)."""
+    """Releasing a foe the hero has grappled or restrained (EDG-021, EDG-044c)."""
     rec, decl = t.rec, t.inp.decl
     hero = rec.hero
     t.player_action = {"action": "release", "result": "nothing_bound"}
     if decl.release_target is None:
         t.extra_outcome = f"{hero} has nothing bound to release."
     else:
-        release_effect(decl.release_target, "restrained")
+        # A grapple (PDF p.196) and a restraint from another source both end when the hero lets go.
+        released = [kind for kind in ("grappled", "restrained") if release_effect(decl.release_target, kind)]
         t.player_action = {
             "action": "release",
             "target": stable_id(decl.release_target),
             "result": "released",
         }
-        t.extra_outcome = f"{hero} releases {decl.release_target['name']}; it is no longer restrained."
+        t.extra_outcome = f"{hero} releases {decl.release_target['name']}; it is no longer {released[0] if released else 'held'}."
     rec.log_lines.append(t.extra_outcome)
+
+
+def _ready(t: _Turn, order: ReadyOrder) -> None:
+    """The Ready action (PDF p.194): the attack is held for its trigger, with no roll now (EDG-044c).
+
+    The effect is typed and visible; `fire_readied` resolves it when the foe closes in. A second readied
+    attack while one is held is refused by the effect model, so at most one is held at a time.
+    """
+    rec = t.rec
+    player, hero = rec.player, rec.hero
+    round_num = int(rec.combat_state.get("round", 1) or 1)
+    if not add_effect(
+        player,
+        "readied",
+        source=f"attack {order.foe_name} when it closes in",
+        source_id=order.foe_id,
+        round_applied=round_num,
+    ):
+        t.player_action = {"action": "ready", "result": "already_readied"}
+        t.extra_outcome = f"{hero} already has a readied attack."
+        rec.log_lines.append(t.extra_outcome)
+        return
+    for entry in player.get("effects") or []:
+        if entry.get("kind") == "readied":
+            entry["weapon_hint"] = order.weapon_hint  # the weapon the words name, read when it fires
+    rec.round_effects.append("readied")
+    t.player_action = {"action": "ready", "target": order.foe_id, "result": "readied"}
+    t.extra_outcome = (
+        f"{hero} readies an attack: when {order.foe_name} closes in, {hero} attacks with the reaction."
+    )
+    rec.log_lines.append(t.extra_outcome)
+
+
+def fire_readied(rec: RoundRecord, turns: EnemyTurns, foe: dict) -> None:
+    """A foe has just closed into melee on its own turn: the hero's readied attack, if any, resolves now.
+
+    The hero's reaction makes it (PDF p.194), before the foe's own attacks (PDF p.191). It fires once,
+    only when the hero can react and the foe is still standing, and it spends the reaction until the
+    hero's next turn. The attack is the engine's ordinary melee attack roll and damage.
+    """
+    player = rec.player
+    entry = next(
+        (
+            e
+            for e in effects_of(player)
+            if e["kind"] == "readied" and e.get("source_id") == stable_id(foe)
+        ),
+        None,
+    )
+    if (
+        entry is None
+        or rec.hp <= 0
+        or player.get("reaction_used")
+        or not can_act(player)
+        or not is_standing(foe)
+    ):
+        return
+    release_effect(player, "readied")
+    player["reaction_used"] = True
+    rec.round_effects.append("readied_attack")
+    rec.log_lines.append(f"{foe['name']} closes in, and {rec.hero} makes the readied attack.")
+    decl = Declaration(
+        is_attack=True,
+        is_spell=False,
+        spell_declared=False,
+        spell_plan=None,
+        bonus_spell=None,
+        dodge=False,
+        dash=False,
+        disengage=False,
+        moving=False,
+        standing_up=False,
+        wants_second_wind=False,
+        rage_declared=False,
+        heal_item=None,
+        missing_item=False,
+        combat_action=None,
+        declared=[],
+        target=foe,
+        release_target=None,
+        spell_target=None,
+        spell_targets=[None],
+        moves=MovePlan(),
+        attack_ranged=False,
+        off_weapon=None,
+    )
+    inp = PlayerTurnInput(
+        decl=decl,
+        player_input=str(entry.get("weapon_hint") or ""),
+        parsed=None,
+        hp_max=rec.hp,  # read only by Second Wind, which a reaction never uses
+        cf_requested=(),
+        cf_left={},
+        turns=turns,
+    )
+    swing = _Turn(rec=rec, inp=inp)
+    _attack(swing, foe)
+    if swing.check_result is not None:
+        # The readied swing is made in the foe phase, after the adjudication that logs the hero's dice.
+        rec.dice_log.extend(swing.check_result.dice_log)
 
 
 def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
@@ -578,9 +690,10 @@ def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
     player, hero, character = rec.player, rec.hero, rec.character
     combat_state, log_lines = rec.combat_state, rec.log_lines
     check_mode = "disadvantage" if impaired_checks(player) else "normal"
+    # The foe chooses Strength (Athletics) or Dexterity (Acrobatics), so its better modifier counts (PDF p.196).
     won, mine, theirs, mine_draws = _contest(
         check_spec(character, "athletics").modifier,
-        int(target.get("initiative_bonus", 0) or 0),
+        contest_defender_bonus(target),
         attacker_mode=check_mode,
     )
     rec.dice_log.extend(
@@ -599,7 +712,11 @@ def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
     target_name = target["name"]
     kind = combat_action.kind
     if not won:
-        extra_outcome = f"{hero} fails to hold {target_name}."
+        extra_outcome = (
+            f"{hero} fails to hold {target_name}."
+            if kind == "grappled"
+            else f"{hero} fails to shove {target_name}."
+        )
     elif add_effect(
         target,
         kind,
@@ -607,12 +724,12 @@ def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
         round_applied=int(combat_state.get("round", 1) or 1),
     ):
         rec.round_effects.append(kind)
-        if kind == "restrained":
-            extra_outcome = f"{hero} restrains {target_name} with {combat_action.source}."
+        if kind == "grappled":
+            extra_outcome = f"{hero} grapples {target_name} with {combat_action.source}."
         else:
             extra_outcome = f"{hero} shoves {target_name} prone."
     else:
-        extra_outcome = f"{target_name} is already {'restrained' if kind == 'restrained' else 'prone'}."
+        extra_outcome = f"{target_name} is already {'grappled' if kind == 'grappled' else 'prone'}."
     t.player_action = {
         "action": f"maneuver_{kind}",
         "target": stable_id(target),

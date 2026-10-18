@@ -42,6 +42,13 @@ from agent.positioning import (
     plan_moves,
     reach_refusal,
 )
+from agent.readied_action import (
+    READY_PHRASE,
+    ReadyOrder,
+    foe_is_beyond_reach,
+    movement_text,
+    ready_order,
+)
 from agent.resolution import (
     Weapon,
     character_class,
@@ -82,6 +89,7 @@ class Declaration:
     moves: MovePlan
     attack_ranged: bool
     off_weapon: Weapon | None
+    ready: ReadyOrder | None = None  # EDG-044c: a validated readied melee attack, held for its trigger
 
 
 def declare_action(
@@ -122,7 +130,9 @@ def declare_action(
     dodge = not fled and dodge_declared(player_input)
     dash = not fled and dash_declared(player_input)
     disengage = not fled and disengage_declared(player_input)
-    moving = not fled and bool(movement_steps(player_input))
+    # A readied attack's trigger ("when the goblin closes in") is the foe's move, not the hero's.
+    moves_text = movement_text(player_input)
+    moving = not fled and bool(movement_steps(moves_text))
     standing_up = not fled and bool(_STAND_UP.search(player_input))
     off_hand = not fled and off_hand_declared(player_input)
     # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
@@ -162,6 +172,12 @@ def declare_action(
         combat_action = classify_combat_maneuver(player_input)
     if combat_action is not None:
         is_attack, is_spell = False, False
+    # EDG-044c: Ready takes the action and replaces the attack. Its trigger and foe are checked after the
+    # planned moves below, because a retreat that puts the foe at range makes a readied attack valid.
+    ready_declared = not fled and bool(READY_PHRASE.search(player_input))
+    if ready_declared:
+        is_attack, is_spell = False, False
+        combat_action = None
     # EDG-044: the slots this turn declares. Two of one slot are refused with no roll and no round.
     declared: list[Declared] = []
     if dodge:
@@ -186,6 +202,8 @@ def declare_action(
         declared.append(Declared("rage", BONUS_ACTION, "Rage"))
     if off_hand:
         declared.append(OFF_HAND_ATTACK)
+    if ready_declared:
+        declared.append(Declared("ready", ACTION, "Ready"))
     refusal = refusal_for(declared, hero)
     if refusal:
         return _ask_player(state, refusal, combat_state=combat_state)
@@ -224,7 +242,7 @@ def declare_action(
     # EDG-044: declared moves are free but change band at most once (twice with Dash). Planned on
     # copies only: a refused turn changes no foe and rolls no die.
     moves = plan_moves(
-        None if fled else player_input,
+        None if fled else moves_text,
         named,
         [e for e in enemies if can_act(e)],
         pick=lambda n: next(
@@ -241,6 +259,20 @@ def declare_action(
     )
     if refused_move:
         return _ask_player(state, refused_move, combat_state=combat_state)
+    ready: ReadyOrder | None = None
+    if ready_declared:
+        order = ready_order(player_input, [e for e in enemies if can_act(e)], hero=hero)
+        if isinstance(order, str):
+            return _ask_player(state, order, combat_state=combat_state)
+        if not foe_is_beyond_reach(order.foe, moves.bands):
+            return _ask_player(
+                state,
+                f"{order.foe_name} is already within 5 feet of {hero} once this turn's moves are made, "
+                "so a readied attack would not trigger. Attack it now, or back away first. No roll is "
+                "made and no turn is spent.",
+                combat_state=combat_state,
+            )
+        ready = order
     # A melee attack or grapple cannot reach a foe beyond 5 feet; a ranged weapon or spell can.
     attack_weapon = choose_weapon(
         character, player_input, prefer_ranged=bool(_RANGED_HINT.search(player_input))
@@ -285,4 +317,5 @@ def declare_action(
         moves=moves,
         attack_ranged=attack_ranged,
         off_weapon=off_weapon,
+        ready=ready,
     )
