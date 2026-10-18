@@ -14,7 +14,15 @@ from db.postgres.models import Character
 
 
 def hero(**changes):
-    return {"name": "Aster", "character_class": "Fighter", "level": 1, "hp_max": 10, **changes}
+    return {
+        "name": "Aster",
+        "character_class": "Fighter",
+        "level": 1,
+        "hp_max": 10,
+        "base_stats": {"STR": 16, "DEX": 12, "CON": 14, "INT": 10, "WIS": 12, "CHA": 8},
+        "base_inventory": {"weapons": ["longsword", "shield"], "armor": "chain mail"},
+        **changes,
+    }
 
 
 def test_creation_digest_is_canonical_and_excludes_transport_key():

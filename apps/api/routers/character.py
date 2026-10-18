@@ -14,10 +14,18 @@ from ..schemas.character import (
     CurrentAssignmentSummary,
 )
 from ..services.character_assignments import resource_view, sheet_view
+from ..services.character_presets import kit_error, preset_for_class
 from ..services.setup_requests import creation_identity, creation_replay
 from ._common import Page
 
 router = APIRouter(tags=["characters"])
+
+# Fields that together must be one supported preset's starting kit (see services.character_presets).
+KIT_FIELDS = ("character_class", "base_stats", "base_inventory")
+
+
+def _kit_rejected(message: str) -> HTTPException:
+    return HTTPException(status_code=422, detail={"code": "validation_failed", "message": message})
 
 
 async def _character_owned_or_404(db: AsyncSession, character_id: int, owner_id: int) -> Character:
@@ -110,6 +118,9 @@ async def create_character(
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
+    problem = kit_error(body.character_class, body.base_stats, body.base_inventory)
+    if problem is not None:
+        raise _kit_rejected(problem)
     existing = await creation_replay(db, Character, owner_id, body)
     if existing is not None:
         summary = await _current_assignment_summary(db, existing.id)
@@ -118,7 +129,7 @@ async def create_character(
         **creation_identity(body),
         owner_user_id=owner_id,
         name=body.name,
-        character_class=body.character_class,
+        character_class=preset_for_class(body.character_class)["character_class"],
         level=body.level,
         hp_max=body.hp_max,
         base_stats=body.base_stats,
@@ -139,6 +150,13 @@ async def update_character(
 ):
     character = await _character_owned_or_404(db, character_id, owner_id)
     update_data = body.model_dump(exclude_unset=True)
+    # Only a change to the kit is checked, so a legacy row can still be renamed or re-saved unchanged.
+    if any(key in update_data and update_data[key] != getattr(character, key) for key in KIT_FIELDS):
+        merged = {key: update_data.get(key, getattr(character, key)) for key in KIT_FIELDS}
+        problem = kit_error(merged["character_class"], merged["base_stats"], merged["base_inventory"])
+        if problem is not None:
+            raise _kit_rejected(problem)
+        update_data["character_class"] = preset_for_class(merged["character_class"])["character_class"]
     for key, value in update_data.items():
         setattr(character, key, value)
     await db.commit()

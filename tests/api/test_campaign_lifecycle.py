@@ -158,8 +158,8 @@ async def test_assign_character_to_ended_campaign_returns_409(api_client) -> Non
             "character_class": "Rogue",
             "level": 1,
             "hp_max": 10,
-            "base_stats": {},
-            "base_inventory": {},
+            "base_stats": {"STR": 10, "DEX": 17, "CON": 12, "INT": 12, "WIS": 11, "CHA": 14},
+            "base_inventory": {"weapons": ["shortsword", "shortbow"], "armor": "leather", "thieves_tools": True},
         },
     )
     assert created.status_code == 201
@@ -177,7 +177,14 @@ async def test_assign_character_to_ended_campaign_returns_409(api_client) -> Non
 async def _create_character(api_client, name: str) -> int:
     created = await api_client.post(
         "/api/characters",
-        json={"name": name, "character_class": "Rogue", "level": 1, "hp_max": 10},
+        json={
+            "name": name,
+            "character_class": "Rogue",
+            "level": 1,
+            "hp_max": 10,
+            "base_stats": {"STR": 10, "DEX": 17, "CON": 12, "INT": 12, "WIS": 11, "CHA": 14},
+            "base_inventory": {"weapons": ["shortsword", "shortbow"], "armor": "leather", "thieves_tools": True},
+        },
     )
     assert created.status_code == 201
     return created.json()["id"]
