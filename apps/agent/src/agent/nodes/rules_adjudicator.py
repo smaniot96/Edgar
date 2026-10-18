@@ -317,6 +317,12 @@ async def adjudicate(
                 f"{_spell.name} is not cast: a condition needs a foe in combat, so no spell effect "
                 "is applied."
             )
+        if refusal is None and plan is not None and plan.spell.kind == "attack":
+            # An attack needs an established target AC: outside combat none is tracked, so no roll and no slot.
+            refusal = (
+                f"{_spell.name} is not cast: no target is established, so no spell effect is applied. "
+                "Name the creature you cast it at, or start an encounter with it."
+            )
         if refusal:
             return AdjudicationResult(
                 success=False, mechanical_summary=refusal, completion_status="none"
