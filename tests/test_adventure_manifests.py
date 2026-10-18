@@ -766,7 +766,7 @@ def test_ready_payload_carries_structure_and_no_content(source_bundle):
     assert "Public detail" not in body
 
 
-def test_unclassified_draft_fails_named_check_without_content(source_bundle):
+def test_unclassified_upload_needs_the_manual_review_and_never_offers_regeneration(source_bundle):
     _pdf, extraction, draft = source_bundle
     _save_draft(draft)
 
@@ -774,14 +774,102 @@ def test_unclassified_draft_fails_named_check_without_content(source_bundle):
     body = review.model_dump_json()
     failed = {check.code: check for check in review.checks if check.status == "failed"}
 
-    assert review.state == "blocked"
+    assert review.state == "needs_classification"
     assert review.reviewed_digest is None
-    assert set(failed) == {"passages_classified", "opening_scene_reviewed"}
-    assert failed["passages_classified"].count == len(draft.passages)
-    assert failed["passages_classified"].recovery == "regenerate"
-    assert f"{len(draft.passages)} passage(s)" in failed["passages_classified"].message
+    assert "passages_unclassified" in failed
+    assert failed["passages_unclassified"].count == len(draft.passages)
+    assert failed["passages_unclassified"].recovery == "manual_review"
+    assert "This adventure is an upload; its passages need your classification" in (
+        failed["passages_unclassified"].message
+    )
+    assert "regenerate" not in body
     for secret in _secret_strings(draft, extraction):
         assert secret not in body, f"failed-check payload leaked {secret!r}"
+
+
+def test_unclassified_generated_draft_is_regenerable(tmp_path, monkeypatch, isolated_index):
+    from apps.api.services import adventure_manifests as service, adventures_meta as store
+    from ingestion.extract import ExtractedPage, Extraction
+    from ingestion.quality import check_text
+
+    monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
+    text = "A friendly guide waits beside the well in the quiet village."
+    extraction = Extraction(
+        "generated-gen", "", 1, [ExtractedPage(1, text, "generated", check_text(text))]
+    )
+    extraction.source_sha256 = extraction.text_sha256()
+    report = prepare_report(
+        extraction, source_kind="generated", chunks=[{"text": text, "page": 1, "source_pages": [1]}]
+    )
+    save_extraction(extraction, store.ADVENTURES_DIR / "generated-gen", readiness=report)
+    store.save_meta("generated-gen", {"status": "ready", "ingestion": report_summary(report)})
+    service.compile_draft("generated-gen")
+
+    review = build_solo_review("generated-gen")
+    failed = {check.code: check for check in review.checks if check.status == "failed"}
+
+    assert review.state == "blocked"
+    assert failed["passages_unclassified"].recovery == "regenerate"
+    assert "manual_review" not in review.model_dump_json()
+
+
+def test_classified_draft_that_fails_a_check_offers_regeneration(source_bundle):
+    _pdf, extraction, draft = source_bundle
+    classified = edited_manifest(extraction, draft)
+    data = classified.model_dump()
+    data["rules_edition"] = "2024"  # no longer matches the source edition
+    _save_draft(AdventureManifest.model_validate(data))
+
+    review = build_solo_review(SLUG)
+    failed = {check.code: check for check in review.checks if check.status == "failed"}
+
+    assert review.state == "blocked"
+    assert failed["edition_matches_source"].recovery == "regenerate"
+    assert "manual_review" not in review.model_dump_json()
+
+
+def test_ai_generated_classified_draft_reaches_ready_and_publishes_end_to_end(
+    tmp_path, monkeypatch, isolated_index
+):
+    """Preparation-contract classification (not a manual upload) goes ready and publishes via the routes."""
+    from apps.api.services import adventure_manifests as service, adventures_meta as store
+    from ingestion.extract import ExtractedPage, Extraction
+    from ingestion.quality import check_text
+
+    monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
+    text = (
+        "The old forest road leads to a quiet village where a friendly guide waits beside the well."
+    )
+    extraction = Extraction(
+        "ai-gen", "", 1, [ExtractedPage(1, text, "generated", check_text(text))]
+    )
+    extraction.source_sha256 = extraction.text_sha256()
+    report = prepare_report(
+        extraction, source_kind="generated", chunks=[{"text": text, "page": 1, "source_pages": [1]}]
+    )
+    save_extraction(extraction, store.ADVENTURES_DIR / "ai-gen", readiness=report)
+    store.save_meta(
+        "ai-gen", {"status": "ready", "title": "Forest Road", "ingestion": report_summary(report)}
+    )
+    compiled = service.compile_draft("ai-gen")
+    draft = AdventureManifest.model_validate(compiled["manifest"])
+    draft.opening_scene_id = draft.scenes[0].scene_id
+    for passage in draft.passages:
+        passage.audience = "player"  # the preparation contract's classification
+    service.edit_draft("ai-gen", draft)
+
+    review = build_solo_review("ai-gen")
+    assert review.state == "ready"
+    assert review.reviewed_digest is not None
+    assert all(check.status == "passed" for check in review.checks)
+
+    result = service.publish_manifest(
+        "ai-gen", reviewed_digest=review.reviewed_digest, reviewer=SOLO_REVIEWER
+    )
+    assert result["status"] == "ready"
+    assert build_solo_review("ai-gen").state == "published"
 
 
 def test_missing_draft_offers_regeneration_only(source_bundle):

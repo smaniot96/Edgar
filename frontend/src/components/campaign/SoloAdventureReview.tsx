@@ -121,6 +121,18 @@ export function SoloAdventureReview(props: SoloReviewCardProps) {
         </div>
       ) : null}
 
+      {review.state === "needs_classification" ? (
+        <div className="space-y-2">
+          <p role="status" className="font-medium">This adventure is an upload; its passages need your classification.</p>
+          <p className="text-xs text-ink-muted">
+            Classification happens only in the full review below, where you read each passage. Nothing changes for players until you publish there.
+          </p>
+          <ul className="list-disc space-y-1 pl-5 text-xs">
+            {failed.map((check) => <li key={check.code}>{check.message}</li>)}
+          </ul>
+        </div>
+      ) : null}
+
       {review.state === "ready" && phase !== "published" ? (
         <div className="space-y-2">
           <p role="status" className="text-ink-muted">Every automatic check passed. Publish to start play with this adventure.</p>

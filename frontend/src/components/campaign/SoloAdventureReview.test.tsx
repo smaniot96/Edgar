@@ -198,3 +198,35 @@ it("does not fall back to passage review when the solo decision cannot be loaded
   expect(container.textContent).toContain("no verified source record");
   expect(inspectAdventureManifest).not.toHaveBeenCalled();
 });
+
+it("shows an uploaded draft that needs classification with the spoiler review as its only action", async () => {
+  await renderWith(solo({
+    state: "needs_classification",
+    reviewed_digest: null,
+    checks: [{
+      code: "passages_unclassified", status: "failed",
+      message: "This adventure is an upload; its passages need your classification (4 unclassified).",
+      count: 4, recovery: "manual_review",
+    }],
+  }));
+
+  expect(container.textContent).toContain("This adventure is an upload; its passages need your classification.");
+  expect(container.textContent).not.toContain("regenerate");
+  expect(container.textContent).not.toContain("Publish and play");
+  expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Regenerate review draft")).toBe(false);
+  expect(inspectAdventureManifest).not.toHaveBeenCalled();
+  expect(container.textContent).not.toContain(SECRET);
+
+  vi.mocked(recordSoloSpoilerReview).mockResolvedValue({ recorded: true });
+  vi.mocked(inspectAdventureManifest).mockRejectedValue(new ApiError(409, "{}"));
+  const summary = [...container.querySelectorAll("summary")].find((s) => s.textContent === "Review the material anyway (spoilers)")!;
+  await act(async () => { summary.click(); });
+  await act(async () => { button("Show secret text").click(); });
+  await act(async () => { (container.querySelector('input[type="checkbox"]') as HTMLInputElement).click(); });
+  await act(async () => { button("Open the full review").click(); });
+
+  expect(recordSoloSpoilerReview).toHaveBeenCalledWith("salt_gate", 7);
+  expect(inspectAdventureManifest).toHaveBeenCalled();
+  expect(container.textContent).toContain("Needs review.");
+  expect(publishAdventureManifest).not.toHaveBeenCalled();
+});

@@ -31,7 +31,7 @@ CheckCode = Literal[
     "draft_well_formed",
     "spans_match_source",
     "edition_matches_source",
-    "passages_classified",
+    "passages_unclassified",
     "prepared_structure_valid",
     "opening_scene_reviewed",
 ]
@@ -55,9 +55,14 @@ _COPY: dict[str, tuple[str, str]] = {
         "The rules edition matches the source.",
         "The draft's rules edition differs from the source edition.",
     ),
-    "passages_classified": (
+    "passages_unclassified": (
         "Every passage has an explicit audience.",
         "{count} passage(s) still have no explicit audience.",
+    ),
+    # Uploaded sources need a human classification; the copy names no content.
+    "passages_unclassified_upload": (
+        "Every passage has an explicit audience.",
+        "This adventure is an upload; its passages need your classification ({count} unclassified).",
     ),
     "prepared_structure_valid": (
         "The prepared structure passes deterministic validation.",
@@ -68,8 +73,10 @@ _COPY: dict[str, tuple[str, str]] = {
         "The opening scene has no unconditional reviewed player text.",
     ),
 }
-# Every automatic check is recovered by regenerating the draft; none asks the host to read secrets.
+# Regenerating recovers a failed automatic check. An uploaded draft's unclassified passages can only
+# be classified by the host in the opt-in manual review, so that case offers no regeneration.
 _RECOVERY: dict[str, str] = {code: "regenerate" for code in _COPY}
+_RECOVERY["passages_unclassified_upload"] = "manual_review"
 _WARNING_COPY: dict[str, str] = {
     "rules_edition_unspecified": "The source does not declare a rules edition.",
     "no_entities_declared": "The draft declares no actors, clues, hazards or endings.",
@@ -86,7 +93,7 @@ class SoloCheck(SafeRecord):
     status: Literal["passed", "failed"]
     message: str = Field(max_length=300)
     count: int | None = None
-    recovery: Literal["regenerate"] | None = None
+    recovery: Literal["regenerate", "manual_review"] | None = None
 
 
 class SoloWarning(SafeRecord):
@@ -110,7 +117,9 @@ class SoloReview(SafeRecord):
     """Allowlisted spoiler-safe payload. Shared campaigns receive only `mode`."""
 
     mode: Literal["solo", "shared"]
-    state: Literal["no_draft", "blocked", "ready", "published"] | None = None
+    state: Literal["no_draft", "blocked", "needs_classification", "ready", "published"] | None = (
+        None
+    )
     title: str | None = Field(default=None, max_length=200)
     rules_edition: str | None = Field(default=None, max_length=32)
     checks: list[SoloCheck] = Field(default_factory=list, max_length=12)
@@ -124,13 +133,17 @@ def shared_review() -> SoloReview:
     return SoloReview(mode="shared")
 
 
-def _check(code: str, ok: bool, count: int | None = None) -> SoloCheck:
-    passed, failed = _COPY[code]
+def _check(
+    code: str, ok: bool, count: int | None = None, *, variant: str | None = None
+) -> SoloCheck:
+    """`variant` selects a more specific failure copy and recovery under the same check code."""
+    key = variant or code
+    passed, failed = _COPY[key]
     if ok:
         return SoloCheck(code=code, status="passed", message=passed)
     message = failed.format(count=count) if count is not None else failed
     return SoloCheck(
-        code=code, status="failed", message=message, count=count, recovery=_RECOVERY[code]
+        code=code, status="failed", message=message, count=count, recovery=_RECOVERY[key]
     )
 
 
@@ -205,7 +218,18 @@ def build_solo_review(slug: str) -> SoloReview:
 
     audiences = Counter(p.audience for p in manifest.passages)
     unclassified = audiences["unreviewed"]
-    checks.append(_check("passages_classified", unclassified == 0, unclassified or None))
+    # Uploads (pdf/text sources) are classified only by a human; generated drafts are regenerable.
+    source_kind = (meta.get("ingestion") or {}).get("source_kind")
+    upload = source_kind in ("pdf", "text")
+    checks.append(
+        _check(
+            "passages_unclassified",
+            unclassified == 0,
+            unclassified or None,
+            variant="passages_unclassified_upload" if upload else None,
+        )
+    )
+    needs_classification = unclassified > 0 and upload
 
     if manifest.prepared is None:
         checks.append(_check("prepared_structure_valid", True))
@@ -224,6 +248,17 @@ def build_solo_review(slug: str) -> SoloReview:
     checks.append(_check("opening_scene_reviewed", opening_ok))
 
     ready = all(check.status == "passed" for check in checks)
+    if ready:
+        state = "ready"
+    elif needs_classification:
+        # Other failures here follow from the unclassified passages, so regenerating cannot fix them.
+        state = "needs_classification"
+        checks = [
+            check.model_copy(update={"recovery": None}) if check.recovery == "regenerate" else check
+            for check in checks
+        ]
+    else:
+        state = "blocked"
     counts = SoloCounts(
         passages=len(manifest.passages),
         player=audiences["player"],
@@ -237,7 +272,7 @@ def build_solo_review(slug: str) -> SoloReview:
     )
     return SoloReview(
         mode="solo",
-        state="ready" if ready else "blocked",
+        state=state,
         title=title,
         rules_edition=edition,
         checks=checks,

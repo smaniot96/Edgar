@@ -20,7 +20,7 @@ export interface ManifestInspection {
 /** Spoiler-safe solo review (EDG-176). Shared campaigns receive only `mode`. Never passage text or identifiers. */
 export interface SoloAdventureReview {
   mode: "solo" | "shared";
-  state: "no_draft" | "blocked" | "ready" | "published" | null;
+  state: "no_draft" | "blocked" | "needs_classification" | "ready" | "published" | null;
   title: string | null;
   rules_edition: string | null;
   checks: Array<{
@@ -28,7 +28,7 @@ export interface SoloAdventureReview {
     status: "passed" | "failed";
     message: string;
     count: number | null;
-    recovery: "regenerate" | null;
+    recovery: "regenerate" | "manual_review" | null;
   }>;
   warnings: Array<{ code: string; message: string }>;
   counts: {
