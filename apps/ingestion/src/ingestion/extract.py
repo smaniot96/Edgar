@@ -17,9 +17,10 @@ import pymupdf4llm
 from edgar_core.sources import SourceEdition
 from ingestion.artifacts import source_digest, text_digest
 from ingestion.layout import native_lines, ocr_stat_header, render_native_page
-from ingestion.quality import check_text
+from ingestion.quality import check_text, diagnostic_message
 
 EXTRACTION_VERSION = 1
+SUMMARY_PAGE_LIMIT = 20
 
 
 @dataclass
@@ -53,10 +54,30 @@ class Extraction:
     def text_sha256(self) -> str:
         return text_digest(self.markdown())
 
+    def failing_pages(self) -> dict[int, list[str]]:
+        return {p.page: errors for p in self.pages if (errors := p.errors())}
+
+    def quality_summary(self) -> list[str]:
+        """Bounded, text-free lines: failing pages with codes, then totals per code."""
+        failing = self.failing_pages()
+        totals = Counter(code for codes in failing.values() for code in codes)
+        lines = [f"{len(failing)} of {self.page_count} pages failed quality checks."]
+        for page, codes in list(failing.items())[:SUMMARY_PAGE_LIMIT]:
+            details = "; ".join(f"{code} ({diagnostic_message(code)})" for code in codes)
+            lines.append(f"page {page}: {details}")
+        if len(failing) > SUMMARY_PAGE_LIMIT:
+            lines.append(
+                f"... {len(failing) - SUMMARY_PAGE_LIMIT} more pages; see the extraction bundle."
+            )
+        lines.append(
+            "Totals: " + (", ".join(f"{c} x{n}" for c, n in sorted(totals.items())) or "none")
+        )
+        return lines
+
     def require_valid(self) -> None:
         if self.rules_edition not in ("2014", "2024", "unspecified"):
             raise ValueError("Declare rules edition 2014, 2024 or unspecified.")
-        errors = {p.page: errors for p in self.pages if (errors := p.errors())}
+        errors = self.failing_pages()
         if errors:
             raise ValueError(
                 f"Extraction quality checks failed: {errors}. Save and inspect the preview before indexing."
@@ -157,12 +178,18 @@ def save_extraction(
     output_dir: str | Path,
     *,
     readiness: dict | None = None,
+    name: str | None = None,
 ) -> tuple[Path, Path]:
-    """Save selected text and diagnostics from the SAME run; no second extraction."""
+    """Save selected text and diagnostics from the SAME run; no second extraction.
+
+    `name` overrides the file stem only, e.g. `<source>.failed` keeps a failed run beside
+    the previous preview. The bundle's own `source` stays unchanged.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    markdown = output_dir / f"{extraction.source}.md"
-    report = output_dir / f"{extraction.source}.extraction.json"
+    stem = name or extraction.source
+    markdown = output_dir / f"{stem}.md"
+    report = output_dir / f"{stem}.extraction.json"
     text = extraction.markdown()
     markdown.write_text(text, encoding="utf-8")
     data = asdict(extraction)

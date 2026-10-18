@@ -131,9 +131,24 @@ def main() -> None:
             out_dir = args.markdown_dir or default_markdown_dir()
             extraction = extract_document(args.path, pages=args.pages)
             extraction.rules_edition = args.rules_edition or "unspecified"
-            out_path, report_path = save_extraction(extraction, out_dir)
+            # A failed run never replaces the previous preview or bundle; it is saved beside them.
+            failed = bool(extraction.failing_pages())
+            stem = f"{extraction.source}.failed" if failed else extraction.source
+            out_path, report_path = save_extraction(extraction, out_dir, name=stem)
+            summary = extraction.quality_summary()
+            (out_dir / f"{stem}.summary.txt").write_text(
+                "\n".join(summary) + "\n", encoding="utf-8"
+            )
+            if failed:
+                for line in summary:
+                    logger.error("{}", line)
+                logger.error(
+                    "Extract failed: previous preview left unchanged; inspect {}", report_path
+                )
+                sys.exit(1)
             logger.info("Saved markdown to {} and diagnostics to {}", out_path, report_path)
-            extraction.require_valid()
+            for line in summary:
+                logger.info("{}", line)
         except Exception as e:
             logger.error("Extract failed: {}", error_summary(e))
             sys.exit(1)
