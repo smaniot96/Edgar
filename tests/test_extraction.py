@@ -122,6 +122,32 @@ def test_stat_field_anchors_ignore_class_tables_and_healing_prose():
     assert result["armor_class_fields"] == result["hit_points_fields"] == 1
 
 
+def test_colon_style_object_lines_are_not_stat_fields():
+    objects = "\n\n".join(
+        f"Siege Object {i}\nArmor Class: 15\nHit Points: {50 + i}" for i in range(4)
+    )
+    result = check_text(f"## Siege Weapons\n\n{objects}")
+    assert "interleaved_stat_records" not in result["errors"]
+    assert result["errors"] == []
+    assert result["armor_class_fields"] == result["hit_points_fields"] == 0
+
+
+def test_bold_stat_field_blocks_keep_their_checks():
+    block = (
+        "## Creature\n\nMedium beast, unaligned\n\n"
+        "**Armor Class** 15 (natural armor)\n**Hit Points** 50 (6d10+18)\n\n"
+        "## ACTIONS\n\nBite. The creature hits."
+    )
+    assert check_text(block)["errors"] == []
+    concatenated = block.replace(
+        "Bite. The creature hits.",
+        "Bite. The creature hits.\n\n**Armor Class** 16 (natural armor)\n**Hit Points** 60",
+    )
+    assert "interleaved_stat_records" in check_text(concatenated)["errors"]
+    missing_hp = block.replace("**Hit Points** 50 (6d10+18)", "Speed 30 ft.")
+    assert "incomplete_stat_fields" in check_text(missing_hp)["errors"]
+
+
 def test_require_separate_stat_chunks_allows_prose_and_rejects_concatenated_records():
     prose = {"index": 0, "page": 1, "stat_block": True, "text": "Healing. Regains 20 hit points."}
     require_separate_stat_chunks([prose])
