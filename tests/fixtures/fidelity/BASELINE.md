@@ -3,7 +3,7 @@
 `uv run --locked python tools/eval_fidelity.py --compact` completed with `all_passed: true`.
 The baseline is pinned to corpus SHA-256
 `d1f0d687c4e7df3530fd5f2b3cb9b6a398e691683e891d90e7c49945d23a2ab3` and production prompt-source
-SHA-256 `e9de592383d3fc3c44728dccc3fee066bbc48c179733d0b4ab600dd46ce84ac8`.
+SHA-256 `6d781cfd18d8654ee2aad5e515280823276517364c9feca9bb44c57ccd5e2f26`.
 
 | Measure | Result |
 | --- | ---: |
@@ -59,3 +59,5 @@ refreshed after reviewing the merged retrieved-excerpt trust-boundary and tag-ne
 changes; no prompt was invoked. The Dragon excerpt remains unchanged source text. Its abbreviated
 breath wording does not match the exact parser, so it stays declared. This does not imply that
 full correctly worded breath actions are unsupported; their execution is covered by EDG-043.
+
+EDG-170 (October 2026): the production prompt-source pin above was refreshed for the parser prompt change (no model call, no re-measurement; the rulings and retrieval results are unchanged).

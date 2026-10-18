@@ -58,10 +58,11 @@ def test_committed_golden_manifest_matches_current_prompts() -> None:
 def test_changed_text_without_version_bump_is_a_violation() -> None:
     current = prompt_manifest()
     golden = _golden()
-    changed = PromptEntry("play.parser", "input parser", "1.0.0", INPUT_PARSER + " ")
+    version = current["play.parser"]["version"]
+    changed = PromptEntry("play.parser", "input parser", version, INPUT_PARSER + " ")
     patched = {**current, "play.parser": {"version": changed.version, "sha256": changed.sha256}}
     problems = manifest_drift(patched, golden)
-    assert any("text changed but version is still 1.0.0" in p for p in problems)
+    assert any(f"text changed but version is still {version}" in p for p in problems)
 
 
 def test_bumped_version_with_changed_text_is_only_a_refresh_request() -> None:
