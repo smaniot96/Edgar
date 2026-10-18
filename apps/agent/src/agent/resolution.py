@@ -27,6 +27,16 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from agent.death import (
+    DEAD,
+    DEATH_MODE_SAVES,
+    DEATH_MODE_SUBDUED,
+    DYING,
+    DeathRecord,
+    death_save,
+    record_from,
+    take_damage,
+)
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagUpdate, RestRecord
 from tools.dice import DiceOutcome, parse_dice, roll, try_roll
 
@@ -1249,6 +1259,8 @@ SECOND_WIND_KEY = "second_wind"
 CLASS_FEATURES_KEY = "class_features"
 # The last applied level-up (EDG-045): the request it came from and the record it produced.
 ADVANCEMENT_KEY = "advancement"
+# The hero's death-save record while dying or stable, or permanently dead (EDG-045, agent.death).
+DEATH_SAVES_KEY = "death_saves"
 # Sheet `stats` keys written only by the engine; a manual sheet edit must not overwrite them.
 ENGINE_STATS_KEYS = (
     SECOND_WIND_KEY,
@@ -1256,6 +1268,7 @@ ENGINE_STATS_KEYS = (
     CLASS_FEATURES_KEY,
     "spell_slots_expended",
     ADVANCEMENT_KEY,
+    DEATH_SAVES_KEY,
 )
 SECOND_WIND_REFUSAL = (
     "{hero} has already used Second Wind and has no uses left until a short or long rest. "
@@ -1521,8 +1534,13 @@ def enforce_side_effects(
     in_combat: bool = False,
     rng: random.Random | None = None,
     canonical_inventory: bool = False,
+    death_mode: str = DEATH_MODE_SUBDUED,
 ) -> AdjudicationResult:
-    """Keep only the LLM-proposed side effects the engine can justify. Mutates and returns adj."""
+    """Keep only the LLM-proposed side effects the engine can justify. Mutates and returns adj.
+
+    `death_mode` 'death_saves' (EDG-045) applies the death rules outside combat too: a hero at 0 HP
+    rolls a death save at the start of a turn, and damage at 0 HP is a failure (agent.death).
+    """
     adj.conditions = normalise_conditions(adj.conditions)
     context_text = " ".join(str(c.get("text", "")) for c in (adventure_context or []))
     items = inventory_items(character)
@@ -1538,6 +1556,7 @@ def enforce_side_effects(
         cu.class_feature_uses = None
         cu.hit_dice_spent = None
         cu.spell_slots_expended = None
+        cu.death_saves = None
         cu.add_conditions = normalise_conditions(cu.add_conditions)
         cu.remove_conditions = normalise_conditions(cu.remove_conditions)
         cu.inventory_add = (
@@ -1563,6 +1582,27 @@ def enforce_side_effects(
     else:
         hp_delta = 0
         damage_taken = 0
+        # EDG-045: death saves outside combat (agent.death). A subdued campaign skips all of it.
+        death_on = death_mode == DEATH_MODE_SAVES and character is not None
+        hp_start = int((character or {}).get("hp_current") or 0)
+        hp_cap = int((character or {}).get("hp_max") or max(1, hp_start))
+        stored = (
+            record_from(((character or {}).get("stats") or {}).get(DEATH_SAVES_KEY))
+            if death_on
+            else None
+        )
+        death_rec = stored
+        death_changed = False
+        if death_on and hp_start <= 0:
+            if death_rec is None:
+                death_rec = DeathRecord(DYING)
+            if death_rec.state == DYING:
+                save = death_save(death_rec, rng)
+                adj.dice_log = [*adj.dice_log, save.dice.to_log("death saving throw")]
+                death_rec = save.record
+                if save.regained:
+                    hp_delta += save.hp
+                death_changed = True
         proposed_damage = cu is not None and (cu.damage_dice or (cu.hp_delta or 0) < 0)
         if proposed_damage and check_result is not None and not check_result.success:
             level = int((character or {}).get("level") or 1)
@@ -1579,7 +1619,14 @@ def enforce_side_effects(
                 "dropped_unbacked_damage", extra={"hp_delta": cu.hp_delta, "dice": cu.damage_dice}
             )
             cu.damage_dice = None
-        hp_delta -= damage_taken
+        if death_on and damage_taken:
+            running = hp_start + hp_delta
+            hit = take_damage(running, hp_cap, damage_taken, record=death_rec)
+            hp_delta += hit.hp - running
+            death_rec = hit.record
+            death_changed = True
+        else:
+            hp_delta -= damage_taken
 
         if detect_rest(player_input) == "long":
             # A long rest restores every expended spell slot (the ledger is cleared).
@@ -1663,6 +1710,21 @@ def enforce_side_effects(
         if sw_refusal or hit_dice_refusal:
             refusals = " ".join(x for x in (sw_refusal, hit_dice_refusal) if x)
             adj.mechanical_summary = " ".join(x for x in (refusals, adj.mechanical_summary) if x)
+        if death_on:
+            # Engine-owned end state: healing lifts the record, permanent death holds at 0 HP.
+            final = max(0, min(hp_cap, hp_start + hp_delta))
+            if death_rec is not None and death_rec.state == DEAD:
+                final = 0
+            elif final > 0:
+                death_rec = None
+            elif death_rec is None:
+                death_rec = DeathRecord(DYING)
+            hp_delta = final - hp_start
+            if stored is not None or death_changed or final == 0:
+                if cu is None:
+                    cu = CharacterUpdate()
+                    adj.character_update = cu
+                cu.death_saves = death_rec.to_dict() if death_rec is not None and final == 0 else {}
         if cu is None and hp_delta:
             cu = CharacterUpdate()
             adj.character_update = cu

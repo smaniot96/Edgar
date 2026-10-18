@@ -71,6 +71,8 @@ class CampaignCharacterRead(BaseModel):
     hp_current: int
     hp_max: int
     milestones_pending: int = 0  # EDG-045: granted milestones not yet spent on a level-up
+    # EDG-045: alive, or the death-save state (dying, stable) and dead (permanent, see agent.death).
+    life_state: str = "alive"
 
 
 class CampaignCharacterPatch(BaseModel):

@@ -264,6 +264,66 @@ async def persist_combat_outcome_facts(
         )
 
 
+HERO_DEATH_COLLECTION = "hero"
+
+
+def hero_death_target(character_id: int) -> StoryRef:
+    """Stable identity of one hero (library character) for its permanent death (EDG-045)."""
+    return StoryRef(
+        collection=HERO_DEATH_COLLECTION,
+        source_sha256=hashlib.sha256(f"hero-death:{character_id}".encode()).hexdigest(),
+        manifest_sha256=hashlib.sha256(b"engine:hero-death:v1").hexdigest(),
+        kind="entity",
+        canonical_id=f"hero_{character_id}",
+    )
+
+
+async def record_hero_death_if_dead(
+    db: AsyncSession,
+    game_session: SessionModel,
+    *,
+    event_id: int,
+    turn_id: str,
+) -> bool:
+    """Record the active hero's permanent death in the story ledger once (caller commits).
+
+    The sheet's death record decides it (agent.death). The fact is a `dead` entity status keyed by
+    the hero, so a retried turn or a repeated write is a no-op (the effect id is the same).
+    """
+    from agent.death import DEAD, record_from
+    from agent.resolution import DEATH_SAVES_KEY
+
+    from .character_assignments import load_active_assignment
+
+    if not game_session.active_character_id:
+        return False
+    assignment = await load_active_assignment(
+        db, game_session.active_character_id, game_session.campaign_id
+    )
+    if assignment is None:
+        return False
+    record = record_from((assignment.stats or {}).get(DEATH_SAVES_KEY))
+    if record is None or record.state != DEAD:
+        return False
+    character = assignment.character
+    character_id = int(game_session.active_character_id)
+    await _record_encounter_fact(
+        db,
+        game_session,
+        hero_death_target(character_id),
+        "dead",
+        display_name=str(getattr(character, "name", "") or f"hero {character_id}"),
+        provenance={
+            "reference_id": hashlib.sha256(f"hero-death:{character_id}".encode()).hexdigest(),
+            "audience": "engine",
+            "character_id": character_id,
+        },
+        event_id=event_id,
+        turn_id=turn_id,
+    )
+    return True
+
+
 async def persist_captive_fact(
     db: AsyncSession,
     game_session: SessionModel,

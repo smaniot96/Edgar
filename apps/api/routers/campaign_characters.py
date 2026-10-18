@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agent.death import life_state_of
 from agent.progression import ProgressionError
 from agent.resolution import ENGINE_STATS_KEYS
 from db.postgres.models import Campaign, Character, CharacterAssignment
@@ -42,6 +43,7 @@ def _roster_row(assignment: CharacterAssignment, ch: Character) -> CampaignChara
         hp_current=assignment.hp_current,
         hp_max=assignment.hp_max,
         milestones_pending=assignment.milestones_pending,
+        life_state=life_state_of(assignment.stats or {}),
     )
 
 

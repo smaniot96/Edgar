@@ -121,6 +121,9 @@ _register(
     "choose_character", "character_assignment_conflict",
 )
 _register(
+    FailureSpec(ErrorCategory.ASSIGNMENT, "hero_dead", "Your hero has died. Add a replacement hero to this campaign, switch the session to them, and release the dead hero from the roster.", 409, RecoveryAction.ASSIGN_CHARACTER),
+)
+_register(
     FailureSpec(ErrorCategory.BUSY, "busy", "This action is still being processed. Check its status before trying again.", 409, RecoveryAction.WAIT),
     "session_busy", "turn_busy", "request_busy", "lock_conflict", "preparation_busy",
 )

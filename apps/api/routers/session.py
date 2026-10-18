@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
+from agent.death import life_state_of
 from agent.turn_diagnostics import (
     TURN_DIAGNOSTICS_EVENT,
     turn_diagnostics_public,
@@ -227,6 +228,18 @@ async def _load_turn_initial_state(
     character = None
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
+        # EDG-045: a dead hero takes no turns. The way on is a replacement hero (no dead end).
+        if character is not None and life_state_of(character.get("stats")) == "dead":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "hero_dead",
+                    "message": (
+                        "Your hero has died. Add a replacement hero to this campaign, switch the "
+                        "session to them, and release the dead hero from the roster."
+                    ),
+                },
+            )
     party = await session_party(db, session)
     npcs = await load_npcs(db, session.campaign_id, session_id)
     npc_summaries = model_context_npcs(npcs, story_state)

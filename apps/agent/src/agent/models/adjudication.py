@@ -49,6 +49,9 @@ class CharacterUpdate(BaseModel):
     # Engine-owned Hit Dice spent (EDG-026): written after a short rest spends a die or a long
     # rest recovers some. A model-proposed value is cleared in enforce_side_effects.
     hit_dice_spent: SkipJsonSchema[int | None] = None
+    # Engine-owned death record (EDG-045, death_mode 'death_saves'): written as a dict, or {} to
+    # clear it. A model proposal is cleared in enforce_side_effects; the model never sees the field.
+    death_saves: SkipJsonSchema[dict | None] = None
 
     @field_validator(
         "add_conditions", "remove_conditions", "inventory_add", "inventory_remove", mode="before"

@@ -148,6 +148,24 @@ async def update_campaign(
         "progression_mode" in update_data or "death_mode" in update_data
     ):
         raise HTTPException(status_code=409, detail="Reopen the campaign to change its modes.")
+    if "death_mode" in update_data and update_data["death_mode"] != campaign.death_mode:
+        # EDG-045: a hero who is dying or stable keeps the rules that put them there until it ends.
+        from agent.death import DYING, STABLE, record_from
+        from agent.resolution import DEATH_SAVES_KEY
+
+        active = await db.execute(
+            select(CharacterAssignment).where(
+                CharacterAssignment.campaign_id == campaign.id,
+                CharacterAssignment.ended_at.is_(None),
+            )
+        )
+        for assignment in active.scalars().all():
+            record = record_from((assignment.stats or {}).get(DEATH_SAVES_KEY))
+            if record is not None and record.state in (DYING, STABLE):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A hero is dying or stable. The death mode can change once it is resolved.",
+                )
     from ..services.prepared_play import protect_prepared_campaign_binding, require_prepared_play
 
     await run_in_threadpool(protect_prepared_campaign_binding, campaign, update_data)

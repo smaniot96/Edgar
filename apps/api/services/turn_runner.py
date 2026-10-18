@@ -92,6 +92,7 @@ from .journal import journal_tracking_marker
 from .operational_metrics import observe_committed_turn
 from .roll_record import build_roll_record, roll_status_for
 from .safe_errors import classify_error, log_failure
+from .story_state import record_hero_death_if_dead
 from .world_writes import (
     MissingCharacterAssignmentError,
     apply_adjudication,
@@ -418,6 +419,10 @@ async def persist_turn(
             )
             db.add(narration_event)
             await db.flush()
+            # EDG-045: a hero the engine killed this turn is recorded in the story ledger, once.
+            await record_hero_death_if_dead(
+                db, game_session, event_id=narration_event.id, turn_id=turn_id or ""
+            )
             if accepted_amendment is not None:
                 await append_session_prepared_amendment(
                     db,

@@ -107,6 +107,7 @@ from agent.conditions import (
     drop_concentration_if_incapacitated,
     stun_ends_before_turn,
 )
+from agent.death import DEATH_MODE_SAVES, DEATH_MODE_SUBDUED
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model, message_text
 from agent.models.adjudication import AdjudicationResult
@@ -128,6 +129,7 @@ from agent.positioning import (
 from agent.prompts import wrap_player_action
 from agent.provider_trace import traced_call
 from agent.resolution import (
+    DEATH_SAVES_KEY,
     initiative_bonus,
     second_wind_remaining,
 )
@@ -521,6 +523,13 @@ async def combat_round_node(state: AgentState) -> dict:
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
 
+    # EDG-045: the death mode of the campaign and the hero's death record (agent.death). The record
+    # lives on the hero's combatant row for the encounter; a new encounter takes it from the sheet.
+    death_mode = str(state.get("death_mode") or DEATH_MODE_SUBDUED)
+    if death_mode == DEATH_MODE_SAVES and DEATH_SAVES_KEY not in player:
+        sheet_stats = (character or {}).get("stats") or {}
+        player[DEATH_SAVES_KEY] = sheet_stats.get(DEATH_SAVES_KEY)
+
     # --- Round record and enemy phases (agent.combat_enemy_turns, EDG-057) ---
     # Typed effects this round's engine applied; the boundary and narrator read them.
     round_effects: list[str] = []
@@ -542,6 +551,7 @@ async def combat_round_node(state: AgentState) -> dict:
         round_effects=round_effects,
         round_modes=round_modes,
         second_wind_auto_at_zero_hp=SECOND_WIND_AUTO_AT_ZERO_HP,
+        death_mode=death_mode,
     )
     turns = EnemyTurns(rec)
     # EDG-044c: a foe that closes into melee on its own turn may trigger the hero's readied attack.

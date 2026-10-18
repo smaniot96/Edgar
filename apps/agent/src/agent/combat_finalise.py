@@ -26,8 +26,9 @@ from agent.combatants import (
     stable_id,
 )
 from agent.conditions import expire_effects, settle_concentration
+from agent.death import DEATH_MODE_SAVES, record_from
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
-from agent.resolution import decide_completion, second_wind_status
+from agent.resolution import DEATH_SAVES_KEY, decide_completion, second_wind_status
 from agent.supported_rules import actions_for_state, ruling_lines
 
 
@@ -101,17 +102,23 @@ def settle_round(
     if rec.fled:
         ended, outcome = True, "fled"
         log_lines.append("You break away from the fight and escape.")
+    elif rec.dead:
+        # EDG-045: death saves or massive damage ended the hero. The encounter is a defeat.
+        ended, outcome = True, "defeat"
+        player["disposition"] = "dead"
+        player["alive"] = False
+        log_lines.append(f"{hero} dies.")
     elif not active_enemies:
         ended, outcome = True, "victory"
         log_lines.append("All enemies are defeated. Victory!")
-    elif rec.hp <= 0:
+    elif rec.hp <= 0 and rec.death_mode != DEATH_MODE_SAVES:
         ended, outcome = True, "defeat"
         log_lines.append(f"{hero} is overwhelmed and falls unconscious, subdued by the enemy.")
     elif rec.round_num >= max_rounds:
         ended, outcome = True, "fled"
         log_lines.append("The fight drags on; you disengage to regroup.")
 
-    if outcome == "defeat":
+    if outcome == "defeat" and rec.death_mode != DEATH_MODE_SAVES:
         # Solo campaigns have no human GM to adjudicate death, so a "defeat" means the player
         # is subdued / knocked unconscious (and the story continues — often captured), rather
         # than a permanent dead-end. Leave them at 1 HP.
@@ -175,6 +182,10 @@ def settle_adjudication(rec: RoundRecord, inp: SettlementInput) -> RoundSettleme
         # Class feature uses (EDG-145): only the spent features are written, as for Second Wind.
         cu.class_feature_uses = cf_changed
     cu.spell_slots_expended = inp.spell_expended
+    if rec.death_mode == DEATH_MODE_SAVES:
+        # EDG-045: the hero's death record after the round; {} when conscious (clears a stored one).
+        record = record_from(rec.player.get(DEATH_SAVES_KEY))
+        cu.death_saves = record.to_dict() if record is not None else {}
     for item in inp.inventory_used:
         if item not in cu.inventory_remove:
             cu.inventory_remove.append(item)
