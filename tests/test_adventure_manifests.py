@@ -1,7 +1,9 @@
 """Real synthetic PDF -> review -> disposable index; no live storage or provider calls."""
 
 import json
+import logging
 from contextlib import closing
+from types import SimpleNamespace
 
 import pymupdf
 import pytest
@@ -10,6 +12,9 @@ from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
 
+from apps.api.routers import adventure_manifests as solo_router
+from apps.api.services import adventure_manifests as service, adventures_meta as store
+from apps.api.services.solo_review import SOLO_REVIEWER, SoloReview, build_solo_review
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.retrieval import _chunk_from_payload, retrieve_active_scene
 from db.vector.versions import active_index_read
@@ -436,7 +441,9 @@ def test_generated_manuscript_review_uses_existing_bundle_without_pdf(
         service.inspect_manifest("authored")
 
 
-def test_publishing_the_same_reviewed_draft_twice_is_idempotent(tmp_path, monkeypatch, isolated_index):
+def test_publishing_the_same_reviewed_draft_twice_is_idempotent(
+    tmp_path, monkeypatch, isolated_index
+):
     """A double-submitted publish for the same inspected digest must not corrupt the active review."""
     from apps.api.services import adventure_manifests as service, adventures_meta as store
     from ingestion.extract import ExtractedPage, Extraction
@@ -444,7 +451,9 @@ def test_publishing_the_same_reviewed_draft_twice_is_idempotent(tmp_path, monkey
 
     monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
     monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
-    text = "The old forest road leads to a quiet village where a friendly guide waits beside the well."
+    text = (
+        "The old forest road leads to a quiet village where a friendly guide waits beside the well."
+    )
     extraction = Extraction("twice", "", 1, [ExtractedPage(1, text, "generated", check_text(text))])
     extraction.source_sha256 = extraction.text_sha256()
     report = prepare_report(
@@ -458,12 +467,19 @@ def test_publishing_the_same_reviewed_draft_twice_is_idempotent(tmp_path, monkey
         passage.audience = "player"
     inspected = service.edit_draft("twice", draft)
 
-    first = service.publish_manifest("twice", reviewed_digest=inspected["reviewed_digest"], reviewer="Host")
-    second = service.publish_manifest("twice", reviewed_digest=inspected["reviewed_digest"], reviewer="Host")
+    first = service.publish_manifest(
+        "twice", reviewed_digest=inspected["reviewed_digest"], reviewer="Host"
+    )
+    second = service.publish_manifest(
+        "twice", reviewed_digest=inspected["reviewed_digest"], reviewer="Host"
+    )
 
     assert first["status"] == second["status"] == "ready"
     assert first["manifest_sha256"] == second["manifest_sha256"]
-    assert service.campaign_manifests(["twice"])["twice"]["reviewed_sha256"] == inspected["reviewed_digest"]
+    assert (
+        service.campaign_manifests(["twice"])["twice"]["reviewed_sha256"]
+        == inspected["reviewed_digest"]
+    )
 
 
 def test_failed_publication_retains_reviewable_draft_without_certifying_index(
@@ -690,3 +706,299 @@ def test_adventure_without_a_verified_source_kind_is_flagged_for_recovery(tmp_pa
         service.compile_draft("legacy")
     with pytest.raises(ManifestError):
         service.compile_draft("legacy")
+
+
+# --- EDG-176 solo spoiler-safe review ---
+
+SLUG = "branching"
+TITLE = "The Keeper's Vale"
+
+
+def _save_draft(draft: AdventureManifest) -> None:
+    meta = store.load_meta(SLUG)
+    meta["manifest_draft"] = draft.model_dump()
+    meta["title"] = TITLE
+    store.save_meta(SLUG, meta)
+
+
+def _secret_strings(draft: AdventureManifest, extraction) -> list[str]:
+    """Distinctive material that must never reach the solo payload in any form."""
+    pages = dict(extraction.text_pages())
+    secrets = {
+        "PRIVATE fact",
+        "unseen guardian",
+        "concealed map",
+        "old_guardian",
+        "hidden_map",
+        "sleeping_trap",
+        "village_square",
+        "peaceful_ending",
+        "broken_oath_ending",
+        "The hidden map",
+        "Sleeping trap",
+        "The guardian",
+        "Broken oath ending",
+    }
+    for passage in draft.passages:
+        secrets.add(passage.passage_id)
+        secrets.add(pages[passage.page][passage.start : passage.end][:40])
+    for scene in draft.scenes:
+        secrets.add(scene.scene_id)
+    return sorted(secrets)
+
+
+def test_ready_payload_carries_structure_and_no_content(source_bundle):
+    _pdf, extraction, draft = source_bundle
+    classified = edited_manifest(extraction, draft)
+    _save_draft(classified)
+
+    review = build_solo_review(SLUG)
+    body = review.model_dump_json()
+
+    assert review.state == "ready"
+    assert review.reviewed_digest == manifest_digest(classified)
+    assert review.title == TITLE
+    assert review.counts.player > 0 and review.counts.planner > 0
+    assert review.counts.unreviewed == 0
+    assert all(check.status == "passed" for check in review.checks)
+    for secret in _secret_strings(classified, extraction):
+        assert secret not in body, f"solo payload leaked {secret!r}"
+    assert "Public detail" not in body
+
+
+def test_unclassified_upload_needs_the_manual_review_and_never_offers_regeneration(source_bundle):
+    _pdf, extraction, draft = source_bundle
+    _save_draft(draft)
+
+    review = build_solo_review(SLUG)
+    body = review.model_dump_json()
+    failed = {check.code: check for check in review.checks if check.status == "failed"}
+
+    assert review.state == "needs_classification"
+    assert review.reviewed_digest is None
+    assert "passages_unclassified" in failed
+    assert failed["passages_unclassified"].count == len(draft.passages)
+    assert failed["passages_unclassified"].recovery == "manual_review"
+    assert "This adventure is an upload; its passages need your classification" in (
+        failed["passages_unclassified"].message
+    )
+    assert "regenerate" not in body
+    for secret in _secret_strings(draft, extraction):
+        assert secret not in body, f"failed-check payload leaked {secret!r}"
+
+
+def test_unclassified_generated_draft_is_regenerable(tmp_path, monkeypatch, isolated_index):
+    from apps.api.services import adventure_manifests as service, adventures_meta as store
+    from ingestion.extract import ExtractedPage, Extraction
+    from ingestion.quality import check_text
+
+    monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
+    text = "A friendly guide waits beside the well in the quiet village."
+    extraction = Extraction(
+        "generated-gen", "", 1, [ExtractedPage(1, text, "generated", check_text(text))]
+    )
+    extraction.source_sha256 = extraction.text_sha256()
+    report = prepare_report(
+        extraction, source_kind="generated", chunks=[{"text": text, "page": 1, "source_pages": [1]}]
+    )
+    save_extraction(extraction, store.ADVENTURES_DIR / "generated-gen", readiness=report)
+    store.save_meta("generated-gen", {"status": "ready", "ingestion": report_summary(report)})
+    service.compile_draft("generated-gen")
+
+    review = build_solo_review("generated-gen")
+    failed = {check.code: check for check in review.checks if check.status == "failed"}
+
+    assert review.state == "blocked"
+    assert failed["passages_unclassified"].recovery == "regenerate"
+    assert "manual_review" not in review.model_dump_json()
+
+
+def test_classified_draft_that_fails_a_check_offers_regeneration(source_bundle):
+    _pdf, extraction, draft = source_bundle
+    classified = edited_manifest(extraction, draft)
+    data = classified.model_dump()
+    data["rules_edition"] = "2024"  # no longer matches the source edition
+    _save_draft(AdventureManifest.model_validate(data))
+
+    review = build_solo_review(SLUG)
+    failed = {check.code: check for check in review.checks if check.status == "failed"}
+
+    assert review.state == "blocked"
+    assert failed["edition_matches_source"].recovery == "regenerate"
+    assert "manual_review" not in review.model_dump_json()
+
+
+def test_ai_generated_classified_draft_reaches_ready_and_publishes_end_to_end(
+    tmp_path, monkeypatch, isolated_index
+):
+    """Preparation-contract classification (not a manual upload) goes ready and publishes via the routes."""
+    from apps.api.services import adventure_manifests as service, adventures_meta as store
+    from ingestion.extract import ExtractedPage, Extraction
+    from ingestion.quality import check_text
+
+    monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
+    text = (
+        "The old forest road leads to a quiet village where a friendly guide waits beside the well."
+    )
+    extraction = Extraction(
+        "ai-gen", "", 1, [ExtractedPage(1, text, "generated", check_text(text))]
+    )
+    extraction.source_sha256 = extraction.text_sha256()
+    report = prepare_report(
+        extraction, source_kind="generated", chunks=[{"text": text, "page": 1, "source_pages": [1]}]
+    )
+    save_extraction(extraction, store.ADVENTURES_DIR / "ai-gen", readiness=report)
+    store.save_meta(
+        "ai-gen", {"status": "ready", "title": "Forest Road", "ingestion": report_summary(report)}
+    )
+    compiled = service.compile_draft("ai-gen")
+    draft = AdventureManifest.model_validate(compiled["manifest"])
+    draft.opening_scene_id = draft.scenes[0].scene_id
+    for passage in draft.passages:
+        passage.audience = "player"  # the preparation contract's classification
+    service.edit_draft("ai-gen", draft)
+
+    review = build_solo_review("ai-gen")
+    assert review.state == "ready"
+    assert review.reviewed_digest is not None
+    assert all(check.status == "passed" for check in review.checks)
+
+    result = service.publish_manifest(
+        "ai-gen", reviewed_digest=review.reviewed_digest, reviewer=SOLO_REVIEWER
+    )
+    assert result["status"] == "ready"
+    assert build_solo_review("ai-gen").state == "published"
+
+
+def test_missing_draft_offers_regeneration_only(source_bundle):
+    review = build_solo_review(SLUG)
+
+    assert review.state == "no_draft"
+    assert [c.code for c in review.checks] == ["draft_present"]
+    assert review.checks[0].recovery == "regenerate"
+    assert review.reviewed_digest is None
+
+
+def test_payload_model_rejects_unlisted_fields():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SoloReview(mode="solo", passage_text="The keeper waits.")
+
+
+@pytest.mark.asyncio
+async def test_shared_campaign_receives_only_the_mode(source_bundle, monkeypatch):
+    _pdf, extraction, draft = source_bundle
+    _save_draft(edited_manifest(extraction, draft))
+
+    async def owned(db, campaign_id, auth):
+        return SimpleNamespace(id=campaign_id, adventure_collections=[SLUG], created_by=1)
+
+    async def read(campaign):
+        return SimpleNamespace(sources=[])
+
+    async def shared(db, campaign):
+        return False
+
+    monkeypatch.setattr(solo_router, "owned_campaign", owned)
+    monkeypatch.setattr(solo_router, "campaign_read", read)
+    monkeypatch.setattr(solo_router, "is_solo_campaign", shared)
+
+    payload = (
+        await solo_router.solo_review(slug=SLUG, campaign_id=7, auth=None, db=None)
+    ).model_dump()
+
+    assert payload["mode"] == "shared"
+    assert payload["checks"] == [] and payload["counts"] is None
+    assert payload["title"] is None and payload["reviewed_digest"] is None
+    assert SOLO_REVIEWER not in json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_campaign_must_own_the_adventure(monkeypatch):
+    async def owned(db, campaign_id, auth):
+        return SimpleNamespace(id=campaign_id, adventure_collections=["other_book"], created_by=1)
+
+    async def read(campaign):
+        return SimpleNamespace(sources=[])
+
+    monkeypatch.setattr(solo_router, "owned_campaign", owned)
+    monkeypatch.setattr(solo_router, "campaign_read", read)
+
+    with pytest.raises(solo_router.HTTPException) as info:
+        await solo_router.solo_review(slug=SLUG, campaign_id=7, auth=None, db=None)
+    assert info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_spoiler_opt_in_is_recorded_and_changes_no_state(source_bundle, monkeypatch, caplog):
+    _pdf, extraction, draft = source_bundle
+    _save_draft(draft)
+    before = store.load_meta(SLUG)
+
+    async def owned(db, campaign_id, auth):
+        return SimpleNamespace(id=campaign_id, adventure_collections=[SLUG], created_by=1)
+
+    async def read(campaign):
+        return SimpleNamespace(sources=[])
+
+    async def solo(db, campaign):
+        return True
+
+    monkeypatch.setattr(solo_router, "owned_campaign", owned)
+    monkeypatch.setattr(solo_router, "campaign_read", read)
+    monkeypatch.setattr(solo_router, "is_solo_campaign", solo)
+
+    with caplog.at_level(logging.INFO, logger="apps.api.services.solo_review"):
+        result = await solo_router.open_spoiler_review(
+            slug=SLUG, campaign_id=7, body=solo_router.SpoilerOpenedRequest(), auth=None, db=None
+        )
+
+    assert result == {"recorded": True}
+    assert any(
+        SLUG in record.getMessage() and "opened" in record.getMessage() for record in caplog.records
+    )
+    assert store.load_meta(SLUG) == before
+
+
+@pytest.mark.asyncio
+async def test_shared_campaign_cannot_open_the_solo_spoiler_path(monkeypatch):
+    async def owned(db, campaign_id, auth):
+        return SimpleNamespace(id=campaign_id, adventure_collections=[SLUG], created_by=1)
+
+    async def read(campaign):
+        return SimpleNamespace(sources=[])
+
+    async def shared(db, campaign):
+        return False
+
+    monkeypatch.setattr(solo_router, "owned_campaign", owned)
+    monkeypatch.setattr(solo_router, "campaign_read", read)
+    monkeypatch.setattr(solo_router, "is_solo_campaign", shared)
+
+    with pytest.raises(solo_router.HTTPException) as info:
+        await solo_router.open_spoiler_review(
+            slug=SLUG, campaign_id=7, body=solo_router.SpoilerOpenedRequest(), auth=None, db=None
+        )
+    assert info.value.status_code == 409
+
+
+def test_publish_and_play_uses_the_existing_publish_gate(source_bundle, isolated_index):
+    _pdf, extraction, draft = source_bundle
+    classified = edited_manifest(extraction, draft)
+    _save_draft(classified)
+    review = build_solo_review(SLUG)
+    assert review.state == "ready"
+
+    with pytest.raises(ManifestError):
+        service.publish_manifest(SLUG, reviewed_digest="0" * 64, reviewer=SOLO_REVIEWER)
+
+    result = service.publish_manifest(
+        SLUG, reviewed_digest=review.reviewed_digest, reviewer=SOLO_REVIEWER
+    )
+    assert result["status"] == "ready"
+    published = build_solo_review(SLUG)
+    assert published.state == "published"
+    assert published.reviewed_digest is None

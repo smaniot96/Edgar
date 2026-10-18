@@ -1,12 +1,23 @@
 """Explicit JSON review interface; drafts are never implicitly approved by compilation."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from edgar_core.manifests import AdventureManifest
 
-from ..auth import require_admin
+from ..auth import Auth, owned_campaign, require_admin
+from ..dependencies import get_session
 from ..services import adventure_manifests as service
+from ..services.campaign_membership import is_solo_campaign
+from ..services.campaign_sources import campaign_read
+from ..services.solo_review import (
+    SoloReview,
+    build_solo_review,
+    record_spoiler_review_opened,
+    shared_review,
+)
 
 # Manifest review and publication change the shared adventure catalogue: operator (admin) only.
 router = APIRouter(
@@ -19,6 +30,12 @@ router = APIRouter(
 class ManifestReview(BaseModel):
     reviewed_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     reviewer: str = Field(min_length=1, max_length=200)
+
+
+class SpoilerOpenedRequest(BaseModel):
+    """Empty JSON body on purpose: a JSON body needs a CORS preflight, so no cross-site simple request reaches it."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 def _call(action, *args, **kwargs):
@@ -71,3 +88,51 @@ def edit_manifest(slug: str, body: AdventureManifest):
 @router.post("/publish")
 def publish_manifest(slug: str, body: ManifestReview):
     return _call(service.publish_manifest, slug, **body.model_dump())
+
+
+async def _campaign_adventure(db: AsyncSession, campaign_id: int, auth: Auth, slug: str):
+    """The campaign must own this adventure; a foreign or unknown pair is the same 404."""
+    campaign = await owned_campaign(db, campaign_id, auth)
+    bound = set(campaign.adventure_collections or []) | {
+        source.slug for source in (await campaign_read(campaign)).sources
+    }
+    if slug not in bound:
+        raise HTTPException(status_code=404, detail="Adventure not found in this campaign")
+    return campaign
+
+
+@router.get("/solo-review", response_model=SoloReview)
+async def solo_review(
+    slug: str,
+    campaign_id: int,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+):
+    """Spoiler-safe review for a solo host; shared campaigns get the mode only (EDG-176)."""
+    campaign = await _campaign_adventure(db, campaign_id, auth, slug)
+    if not await is_solo_campaign(db, campaign):
+        return shared_review()
+    return await run_in_threadpool(_call, build_solo_review, slug)
+
+
+@router.post("/solo-review/spoiler-opened")
+async def open_spoiler_review(
+    slug: str,
+    campaign_id: int,
+    body: SpoilerOpenedRequest,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+):
+    """Records the opt-in spoiler review. It changes no audience, draft or publication state."""
+    campaign = await _campaign_adventure(db, campaign_id, auth, slug)
+    if not await is_solo_campaign(db, campaign):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "shared_review_required",
+                "message": "Shared campaigns use the manual review.",
+            },
+        )
+    user_id = auth.user_id if auth is not None else None
+    await run_in_threadpool(record_spoiler_review_opened, slug, campaign.id, user_id)
+    return {"recorded": True}

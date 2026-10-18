@@ -17,6 +17,35 @@ export interface ManifestInspection {
   review_note: string;
 }
 
+/** Spoiler-safe solo review (EDG-176). Shared campaigns receive only `mode`. Never passage text or identifiers. */
+export interface SoloAdventureReview {
+  mode: "solo" | "shared";
+  state: "no_draft" | "blocked" | "needs_classification" | "ready" | "published" | null;
+  title: string | null;
+  rules_edition: string | null;
+  checks: Array<{
+    code: string;
+    status: "passed" | "failed";
+    message: string;
+    count: number | null;
+    recovery: "regenerate" | "manual_review" | null;
+  }>;
+  warnings: Array<{ code: string; message: string }>;
+  counts: {
+    passages: number;
+    player: number;
+    planner: number;
+    excluded: number;
+    unreviewed: number;
+    scenes: number;
+    entities: number;
+    resolution_policies: number;
+    coverage_percent: number;
+  } | null;
+  reviewed_digest: string | null;
+  reviewer: string | null;
+}
+
 export interface SourceRead {
   slug: string;
   title: string;

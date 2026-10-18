@@ -80,7 +80,7 @@ route is protected.
 So the JSON turn route is not reachable through a simple request. Other JSON routes use the same FastAPI
 body parsing, but each was not executed separately.
 
-**Mutating routes reachable by a simple request.** Of 38 mutating routes, 9 accept a cross-site simple
+**Mutating routes reachable by a simple request.** Of 39 mutating routes, 9 accept a cross-site simple
 request with no body check, and CORS does not stop them in local mode:
 
 | Method and path | Body |
@@ -99,8 +99,8 @@ A minimal app test (`test_simple_form_post_reaches_a_bodyless_route_without_a_co
 that FastAPI does not check `Content-Type` on a bodyless route, so a cross-site HTML form runs the
 handler. The real handlers were not executed in tests because they write data.
 
-The other 29 mutating routes are either `DELETE` (7, which needs a preflight that the default policy
-refuses) or JSON-body `PATCH`, `PUT` and `POST` (22, which need a preflight). The test
+The other 30 mutating routes are either `DELETE` (7, which needs a preflight that the default policy
+refuses) or JSON-body `PATCH`, `PUT` and `POST` (23, which need a preflight). The test
 `test_every_mutating_route_is_classified_in_the_request_mode_table` pins this classification and fails
 when a route is added without a deliberate placement.
 

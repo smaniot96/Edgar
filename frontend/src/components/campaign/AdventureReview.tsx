@@ -4,14 +4,16 @@ import {
   ApiError,
   compileAdventureManifest,
   getCampaign,
+  getSoloAdventureReview,
   inspectAdventureManifest,
   publishAdventureManifest,
   saveAdventureManifest,
 } from "../../api/client";
 import { safeFailureFromUnknown } from "../../api/turnStream";
-import type { CampaignRead, ManifestInspection } from "../../api/types";
+import type { CampaignRead, ManifestInspection, SoloAdventureReview as SoloReview } from "../../api/types";
 import { Button } from "../ui/Button";
 import { ErrorNotice } from "../ui/ErrorNotice";
+import { SoloAdventureReview } from "./SoloAdventureReview";
 
 type Phase = "loading" | "needs_draft" | "draft" | "publishing" | "published" | "error";
 
@@ -42,14 +44,74 @@ export function AdventureReview({ campaign, onUpdated }: {
   return (
     <section aria-label="Adventure review" className="mt-3 space-y-3 rounded-card border border-warning bg-surface-sunken p-4 text-sm [overflow-wrap:anywhere] [&_button]:min-h-11">
       <h2 className="font-semibold">Review and publish the adventure</h2>
-      <p className="text-ink-muted">
-        Players cannot start or continue play until the host publishes a reviewed version. Only passages you mark as player or planner text are used in play.
-      </p>
+      <p className="text-ink-muted">Players cannot start or continue play until the host publishes a reviewed version.</p>
       {targets.length === 0 ? <p className="text-ink-muted">No adventure source is bound to this campaign.</p> : null}
       {targets.map((target) => (
-        <ReviewCard key={target.slug} campaignId={campaign.id} slug={target.slug} title={target.title} onUpdated={onUpdated} />
+        <ReviewTarget key={target.slug} campaignId={campaign.id} slug={target.slug} title={target.title} onUpdated={onUpdated} />
       ))}
     </section>
+  );
+}
+
+type TargetLoad = { status: "loading" } | { status: "error"; error: unknown } | { status: "ready"; review: SoloReview };
+
+/**
+ * Chooses the review flow from the server's decision. A solo host gets the spoiler-safe summary;
+ * a shared campaign keeps the manual passage review unchanged.
+ */
+function ReviewTarget({ campaignId, slug, title, onUpdated }: ReviewCardProps) {
+  const [load, setLoad] = useState<TargetLoad>({ status: "loading" });
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getSoloAdventureReview(slug, campaignId, controller.signal)
+      .then((review) => {
+        if (!controller.signal.aborted) setLoad({ status: "ready", review });
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setLoad({ status: "error", error });
+      });
+    return () => controller.abort();
+  }, [slug, campaignId, version]);
+
+  function reload() {
+    setLoad({ status: "loading" });
+    setVersion((value) => value + 1);
+  }
+
+  if (load.status === "loading") {
+    return (
+      <div className="space-y-2 border-t border-line pt-3" aria-label={`Review ${title}`}>
+        <p className="font-medium">{title}</p>
+        <p role="status" className="text-ink-muted">Checking the review draft…</p>
+      </div>
+    );
+  }
+  if (load.status === "error") {
+    return (
+      <div className="space-y-2 border-t border-line pt-3" aria-label={`Review ${title}`}>
+        <p className="font-medium">{title}</p>
+        <ErrorNotice error={load.error} />
+        {isUnverifiedSource(load.error) ? null : (
+          <Button variant="secondary" size="sm" onClick={reload}>Reload review</Button>
+        )}
+      </div>
+    );
+  }
+  if (load.review.mode === "shared") {
+    return <ReviewCard campaignId={campaignId} slug={slug} title={title} onUpdated={onUpdated} />;
+  }
+  return (
+    <SoloAdventureReview
+      campaignId={campaignId}
+      slug={slug}
+      title={title}
+      review={load.review}
+      onUpdated={onUpdated}
+      onRefresh={reload}
+      renderSpoilerReview={() => <ReviewCard campaignId={campaignId} slug={slug} title={title} onUpdated={onUpdated} />}
+    />
   );
 }
 
@@ -164,6 +226,7 @@ function ReviewCard({ campaignId, slug, title, onUpdated }: ReviewCardProps) {
   return (
     <div className="space-y-2 border-t border-line pt-3" aria-label={`Review ${title}`}>
       <p className="font-medium">{title}</p>
+      <p className="text-xs text-ink-muted">Only passages you mark as player or planner text are used in play.</p>
       {phase === "loading" ? <p role="status" className="text-ink-muted">Checking the review draft…</p> : null}
       {phase === "needs_draft" ? (
         <>
