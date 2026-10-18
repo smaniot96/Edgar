@@ -914,6 +914,46 @@ def initiative_bonus(character: dict | None) -> int:
 # --------------------------------------------------------------------------------------------
 
 
+# EDG-170: a check is only worth rolling when failure has a cost. The parser proposes the check; this
+# guard waives it for a plain question to someone who can answer it, or plain movement with no
+# hazard, lock, trap or deceit. Any risk word keeps the roll, so picking a lock or deceiving a guard
+# still rolls. Attacks, saves and tools are never waived (they are not in the sets below).
+_RISK_WORDS = re.compile(
+    r"\b(?:trap|traps|lock|locks|locked|pick|picks|picking|sneak|sneaks|sneaking|hide|hiding|"
+    r"quiet|quietly|silent|silently|slip|slips|slippery|slick|ice|icy|ledge|cliff|rope|collapse|"
+    r"collapses|jump|jumps|leap|leaps|swim|climb|climbs|climbing|lie|lies|lying|liar|deceive|"
+    r"deceives|deceiving|deception|bluff|pretend|disguise|steal|steals|threat|threaten|threatens|"
+    r"intimidate|force|forces|break|breaks|smash|attack|fight|hurry|run|runs|running|escape|chase|"
+    r"pursue|ambush|sabotage|spy|let|allow|convince|persuade|bargain|beg|plead|demand|order|"
+    r"command|sway|bribe)\b",
+    re.IGNORECASE,
+)
+# A question mark, or asking someone a what/where/who/when/how/why/whether question. "Ask X to do
+# Y" is a request for help, not information, and keeps its roll.
+_INFO_REQUEST = re.compile(
+    r"\?|\bask(?:s|ing|ed)?\b[^.;,]*\b(?:what|where|who|when|how|why|whether)\b", re.IGNORECASE
+)
+_ROUTINE_MOVE = re.compile(
+    r"\b(?:walk|walks|walking|descend|descends|descending|ascend|ascends|ascending|go|goes|going|"
+    r"head|heads|heading|stairs|stairway|staircase|steps)\b",
+    re.IGNORECASE,
+)
+# Checks that can be waived for a plain question (someone who can answer) or plain movement.
+_QUESTION_CHECKS = frozenset({"persuasion", "insight", "perception", "investigation"})
+_MOVEMENT_CHECKS = frozenset({"athletics", "acrobatics", "perception", "survival"})
+
+
+def routine_check_waived(player_input: str, check: str | None) -> bool:
+    """True when a proposed check is routine: no roll, the attempt simply succeeds (EDG-170)."""
+    norm = normalise_check(check)
+    if norm is None or not player_input or _RISK_WORDS.search(player_input):
+        return False
+    name = norm[0]
+    if name in _QUESTION_CHECKS and _INFO_REQUEST.search(player_input):
+        return True
+    return name in _MOVEMENT_CHECKS and bool(_ROUTINE_MOVE.search(player_input))
+
+
 def resolve_from_parsed(
     character: dict | None,
     parsed: Any,
@@ -940,6 +980,9 @@ def resolve_from_parsed(
             # Declared spells resolve through agent.spells (catalog) or get the narrative ruling
             # of the supported-action boundary (agent.supported_rules). Never a class-die roll.
             log.info("declared_spell_attack_not_resolved")
+            return None, []
+        if routine_check_waived(player_input, check):
+            log.info("routine_check_waived", extra={"check": norm[0]})
             return None, []
         return resolve_check(
             character, check, difficulty, hint=hint, rng=rng, impaired=impaired

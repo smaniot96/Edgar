@@ -496,3 +496,45 @@ def test_contest_with_missing_check_rolls_nothing() -> None:
     before = rng.getstate()
     assert resolve_contest(FIGHTER, "athletics", FIGHTER, None, rng=rng) is None
     assert rng.getstate() == before
+
+
+# --- routine actions need no roll (EDG-170) -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("player_input", "check", "difficulty"),
+    [
+        ("I ask whoever is in charge what happened", "persuasion", "medium"),
+        ("Who is in charge here?", "insight", "easy"),
+        ("I descend the stairs, listening for the calling voice", "perception", "medium"),
+        ("I walk down the stairs", "athletics", "easy"),
+    ],
+)
+def test_routine_question_or_movement_rolls_nothing(player_input, check, difficulty) -> None:
+    parsed = ParsedInput(intent="rp", check=check, difficulty=difficulty)
+    res, extra = resolve_from_parsed(FIGHTER, parsed, player_input=player_input)
+    assert res is None and extra == []
+
+
+@pytest.mark.parametrize(
+    ("player_input", "check"),
+    [
+        ("I pick the lock on the cellar door", "thieves_tools"),
+        ("I deceive the guard into thinking I am a messenger", "deception"),
+        ("I ask the captain to let me pass", "persuasion"),
+        ("I politely ask Odo to compare the ledgers.", "persuasion"),
+        ("I descend the cliff with a rope", "athletics"),
+        ("I walk up and attack the goblin", "attack"),
+    ],
+)
+def test_risky_or_contested_actions_still_roll(player_input, check) -> None:
+    parsed = ParsedInput(intent="exploration", check=check, difficulty="medium")
+    res, _extra = resolve_from_parsed(FIGHTER, parsed, player_input=player_input)
+    assert res is not None
+    assert res.dice_log and res.roll_expression.startswith("1d20")
+
+
+def test_routine_waiver_needs_the_player_input_and_never_applies_without_it() -> None:
+    parsed = ParsedInput(intent="rp", check="persuasion", difficulty="medium")
+    res, _extra = resolve_from_parsed(FIGHTER, parsed)
+    assert res is not None
