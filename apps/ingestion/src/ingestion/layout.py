@@ -192,6 +192,18 @@ def render_native_page(
             line.heading = _title(line, body_size)
             if letters(line.text) in STAT_SUBHEADINGS:
                 line.heading = True
+        # A creature name sits directly above its size/type line. Only a tight, sentence-free
+        # line qualifies, so sidebar captions and prose far above a stat record never do.
+        for name, size_line in zip(rows, rows[1:], strict=False):
+            if (
+                SIZE_TYPE.match(size_line.text)
+                and abs(size_line.bbox[1] - name.bbox[3]) <= 4
+                and 3 <= len(letters(name.text))
+                and len(name.text) < 60
+                and not re.search(r"[.,;:!?]$", name.text)
+                and not re.match(r"^(armor class|hit points|speed)\b", name.text, re.I)
+            ):
+                name.heading = True
         first_stat = next((i for i, item in enumerate(rows) if SIZE_TYPE.match(item.text)), None)
         if ordered and first_stat is not None and first_stat > 1:
             # Illustration captions above the next column's separate stat record are
@@ -231,15 +243,19 @@ def render_native_page(
             right = max(item.bbox[2] for item in column)
             supplements = header_ocr((left - 2, max(0, ac.bbox[1] - 60), right + 2, ac.bbox[1]))
             raster_size = next((item for item in supplements if SIZE_TYPE.match(item.text)), None)
+            # A native size line may also be re-read by OCR; the name's centre must sit above it.
+            anchor = size if size is not None else raster_size
+            boundary = anchor.bbox[1] if anchor is not None else ac.bbox[1]
             raster_title = next(
                 (
                     item
                     for item in reversed(supplements)
-                    if raster_size is not None
-                    and item.bbox[1] < raster_size.bbox[1]
+                    if (item.bbox[1] + item.bbox[3]) / 2 < boundary
                     and len(re.findall(r"[A-Za-z]", item.text)) >= 3
                     and len(item.text) < 80
-                    and _title(item, 0)
+                    # OCR case is unreliable ("Twig Blight" reads "Twic BLIGHT"): test the
+                    # shape on an uppercased copy and keep the original spelling.
+                    and _title(Line(item.text.upper(), item.bbox, body_size), body_size)
                 ),
                 None,
             )

@@ -191,6 +191,94 @@ def test_spanning_prose_across_two_columns_fails_closed():
         render_native_page(lines, 500)
 
 
+def _single_record(name, size_text="Medium plant, neutral evil", top=60, name_size=8.5):
+    """One single-column stat record; name/size_text of None leave that line to raster OCR."""
+    lines = []
+    if name is not None:
+        lines.append(Line(name, (40, top, 200, top + 10), name_size))
+    y = top + 11
+    for text in (size_text, "Armor Class 14", "Hit Points 9", "Speed 20 ft."):
+        if text is not None:
+            lines.append(Line(text, (40, y, 200, y + 10), 8.5))
+        y += 11
+    return lines
+
+
+def test_native_name_directly_above_size_line_is_promoted_to_heading():
+    # Title case at body size fails layout._title; the tight name/size pair still promotes it.
+    text, _ = render_native_page(_single_record("Twig Blight"), 500, header_ocr=lambda bbox: [])
+    assert text.startswith("## Twig Blight\n\nMedium plant, neutral evil")
+
+
+def test_prose_sentence_above_size_line_is_not_promoted_to_heading():
+    lines = _single_record("Beware the hound.")
+    with pytest.raises(ValueError, match="missing_stat_heading"):
+        render_native_page(lines, 500, header_ocr=lambda bbox: [])
+
+
+def test_distant_caption_above_native_name_is_not_promoted_to_heading():
+    caption = Line("Dungeon survival", (40, 20, 150, 26), 5.9)
+    text, _ = render_native_page(
+        [caption, *_single_record("Twig Blight", top=60)], 500, header_ocr=lambda bbox: []
+    )
+    assert "## Twig Blight" in text
+    assert "## Dungeon" not in text
+    assert "Dungeon survival" in text
+
+
+def test_image_only_name_above_native_size_uses_raster_name_with_review_warning():
+    # Mirrors MM p.25/p.29: the name exists only in the raster header, the size line is native.
+    lines = _single_record(None, size_text="Large aberration, lawful evil")
+    headers = [
+        Line("BEHOLDER", (40, 50, 110, 64)),
+        Line("aberration, lawful evil", (40, 71, 150, 81)),
+    ]
+    text, warnings = render_native_page(
+        lines, 500, header_ocr=lambda bbox: [h for h in headers if h.bbox[1] < bbox[3]]
+    )
+    assert text.startswith("## Beholder\n\nLarge aberration, lawful evil")
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_raster_name_keeps_ocr_spelling_and_never_takes_the_native_size_line():
+    # Mirrors MM p.33: OCR reads "TWIG" as "Twic"; the re-read native size line is not a name.
+    lines = _single_record(None, size_text="Small plant, neutral evil")
+    headers = [
+        Line("Twic BLIGHT", (40, 52, 150, 68)),
+        Line("Small plant, neutral evil", (40, 71, 150, 81)),
+    ]
+    text, warnings = render_native_page(
+        lines, 500, header_ocr=lambda bbox: [h for h in headers if h.bbox[1] < bbox[3]]
+    )
+    assert text.startswith("## Twic Blight\n\nSmall plant, neutral evil")
+    assert "Twig" not in text
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_native_name_with_raster_size_line_keeps_native_heading():
+    # Mirrors MM p.21 RUG OF SMOTHERING: native name, image-only size/type line.
+    lines = _single_record("RUG OF SMOTHERING", size_text=None, name_size=12)
+    headers = [Line("Medium object, unaligned", (40, 71, 150, 81))]
+    text, warnings = render_native_page(
+        lines, 500, header_ocr=lambda bbox: [h for h in headers if h.bbox[1] < bbox[3]]
+    )
+    assert text.startswith("## Rug Of Smothering\n\nMedium object, unaligned")
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_image_only_size_line_fails_with_page_specific_reason_instead_of_guessing():
+    # Mirrors MM p.21 FLYING SWORD: OCR drops the italic alignment word, so no type is invented.
+    lines = _single_record(None, size_text=None)
+    headers = [
+        Line("FLYING SWORD", (40, 52, 150, 66)),
+        Line("'Small construct,", (40, 67, 150, 79)),
+    ]
+    with pytest.raises(ValueError, match="missing_stat_type"):
+        render_native_page(
+            lines, 500, header_ocr=lambda bbox: [h for h in headers if h.bbox[1] < bbox[3]]
+        )
+
+
 @pytest.fixture
 def native_pdf(tmp_path):
     path = tmp_path / "prepared.pdf"
