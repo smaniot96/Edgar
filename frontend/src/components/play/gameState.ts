@@ -314,7 +314,7 @@ export interface HudCombatant {
   canAct: boolean | null;
   /** A foe's distance band from the hero ("melee" or "ranged"); null when unknown or for the hero. */
   band: string | null;
-  /** Supported engine effects only (restrained, prone), in engine order. */
+  /** Supported engine effects only (grappled, restrained, prone, readied...), in engine order. */
   effects: CombatEffectView[];
   isCurrent: boolean;
 }
@@ -326,6 +326,8 @@ export interface CombatEffectView {
 
 /** Plain-language labels for the supported combat effects; any other kind is not shown as active. */
 const EFFECT_LABELS = new Map<string, string>([
+  ["grappled", "Grappled"],
+  ["readied", "Attack readied"],
   ["restrained", "Restrained"],
   ["prone", "Prone"],
   ["dodging", "Dodging"],
@@ -338,7 +340,8 @@ export function economyLine(economy: CombatState["economy"]): string | null {
   if (!economy || typeof economy !== "object") return null;
   const action = typeof economy.action === "string" ? economy.action : "unused";
   const bonus = typeof economy.bonus_action === "string" ? economy.bonus_action : "unused";
-  return `Last turn: action ${action} · bonus action ${bonus}`;
+  const reaction = typeof economy.reaction === "string" ? ` · reaction ${economy.reaction}` : "";
+  return `Last turn: action ${action} · bonus action ${bonus}${reaction}`;
 }
 
 /** Engine `effects` mapped to display labels; unknown or narrative kinds are dropped. */
