@@ -90,7 +90,7 @@ class UnsupportedMechanic:
 SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
         id="campaign_modes",
-        title="Campaign progression and death modes",
+        title="Campaign modes",
         scope=(
             "Two campaign settings are stored, never inferred. progression_mode is 'fixed' (the sheet keeps "
             "its level; the default, and the behaviour of every campaign created before the modes) or "
@@ -106,7 +106,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="milestone_advancement",
-        title="Milestone level-up to level 5 for the supported classes",
+        title="Level-up",
         scope=(
             "Only in progression_mode 'milestone'. The engine grants one milestone when the active "
             "encounter ends in a victory, once per encounter, and never past level 5 counting pending "
@@ -128,7 +128,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="death_saves",
-        title="Death saving throws and instant death (death_mode 'death_saves')",
+        title="Death saves",
         scope=(
             "Only in death_mode 'death_saves' (the default 'subdued' keeps the 1 HP continuation). Damage "
             "that takes the hero from above 0 HP to 0 leaves it unconscious; damage left over that equals or "
@@ -904,7 +904,7 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="ally_aid",
-        title="Aid to an unconscious ally (Medicine, healing by another creature)",
+        title="Ally aid",
         boundary=(
             "Stabilising another creature with a Medicine check (PHB, PDF p.198) and healing a creature at 0 HP by "
             "an ally's potion or spell have no engine effect. No companion is a combatant in the engine, so only "
@@ -915,7 +915,7 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="advancement_features",
-        title="Features named at a level-up that the engine does not run",
+        title="Unrun features",
         boundary=(
             "Extra Attack (fighter and ranger at 5th level), subclass features (Martial, Roguish, Arcane "
             "and Divine archetypes), Cunning Action, Uncanny Dodge, Channel Divinity, Destroy Undead, the "
@@ -1533,7 +1533,7 @@ def scope_notice() -> str:
         "Simplified rules scope (engine-enforced; do not claim other mechanics): "
         f"executed by the engine: {supported}. "
         f"Not supported (declared actions get a narrative ruling and no mechanical effect): "
-        f"{unsupported}. Defeat for the solo hero is subdued at 1 HP, not death, unless the campaign uses death saves."
+        f"{unsupported}. Defeat for the solo hero is subdued at 1 HP, not death."
     )
 
 

@@ -23,6 +23,11 @@ from edgar_core.model_profiles import (
 from edgar_core.token_budget import estimate_tokens, fit_count
 from tests.agent.test_history_context import _state
 
+# The pinned input budget for these prompts. Raised from 26000 by EDG-045: the supported-scope
+# contract gained three executed and two declared mechanic titles, which add about 21 tokens to the
+# scope notice every play prompt embeds. Scope text is kept, not trimmed, so the budget moves.
+TEST_INPUT_BUDGET = 26100
+
 PLAY_BUDGET_STAGES = (
     "play.parser",
     "play.consequence_planner",
@@ -98,13 +103,13 @@ def test_long_turns_are_trimmed_to_the_input_budget_without_dropping_critical_fa
 ) -> None:
     state = long_turn_state()
     unbounded = prompts(state)
-    assert all(estimate_tokens(text) > 26000 for text in unbounded.values())
+    assert all(estimate_tokens(text) > TEST_INPUT_BUDGET for text in unbounded.values())
 
-    with model_profile_snapshot(all_stages(tmp_path, 26000)):
+    with model_profile_snapshot(all_stages(tmp_path, TEST_INPUT_BUDGET)):
         bounded = prompts(state)
 
     for stage, text in bounded.items():
-        assert estimate_tokens(text) <= 26000, stage
+        assert estimate_tokens(text) <= TEST_INPUT_BUDGET, stage
         assert "earlier verbatim messages omitted to fit the input budget" in text
         assert "player action 1 " not in text
         assert "Ilyra cannot remember the note." in text
@@ -181,8 +186,8 @@ def test_parser_uses_the_same_budgeted_context(tmp_path: Path, fake_llm_schema) 
     from agent.nodes.input_parser import input_parser_node
 
     fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="rp")
-    with model_profile_snapshot(all_stages(tmp_path, 26000)):
+    with model_profile_snapshot(all_stages(tmp_path, TEST_INPUT_BUDGET)):
         asyncio.run(input_parser_node(long_turn_state()))
 
     sent = fake_llm_schema.calls[-1][1]
-    assert estimate_tokens(sent[0].content + sent[1].content) <= 26000
+    assert estimate_tokens(sent[0].content + sent[1].content) <= TEST_INPUT_BUDGET

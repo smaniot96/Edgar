@@ -67,8 +67,10 @@ def test_changed_text_without_version_bump_is_a_violation() -> None:
 
 def test_bumped_version_with_changed_text_is_only_a_refresh_request() -> None:
     golden = _golden()
-    # Bump past the golden version, so the drift is the text change plus the version bump.
-    bumped = f"{golden['play.narrator']['version'].rsplit('.', 1)[0]}.{int(golden['play.narrator']['version'].rsplit('.', 1)[1]) + 1}"
+    # The next patch version of whatever the registry ships now, so a later bump does not break this.
+    shipped = prompt_manifest()["play.narrator"]["version"]
+    major, minor, patch = (int(part) for part in shipped.split("."))
+    bumped = f"{major}.{minor}.{patch + 1}"
     changed = PromptEntry("play.narrator", "narrator", bumped, NARRATOR + " ")
     current = {**prompt_manifest(), "play.narrator": {"version": bumped, "sha256": changed.sha256}}
     problems = manifest_drift(current, golden)
