@@ -29,6 +29,16 @@ def _call(action, *args, **kwargs):
     require_public_source(args[0])
     try:
         return action(*args, **kwargs)
+    except service.ManifestSourceUnverified as exc:
+        # Retrying review cannot succeed without a verified source record, so the host gets a
+        # distinct code and a next step rather than the generic review-required gate.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "adventure_source_unverified",
+                "message": "This adventure has no verified source record, so its review draft cannot be prepared. Start a new campaign with the current preparation pipeline, then remove this one.",
+            },
+        ) from exc
     except (ValueError, OSError, KeyError) as exc:
         # Validation messages are written for the host. I/O and lookup errors can carry file
         # paths or internal keys, so those get a fixed safe message instead.

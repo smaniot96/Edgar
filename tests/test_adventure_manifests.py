@@ -678,3 +678,15 @@ def test_exact_generated_original_and_structured_references_survive_reviewed_rei
         assert chunk["extraction_sha256"] == second_export.extraction_sha256
         assert chunk["manifest_sha256"] == second_manifest["reviewed_sha256"]
     assert any(c["entity_ids"] == ["guide", "silver_key"] for c in scene["adventure_context"])
+
+
+def test_adventure_without_a_verified_source_kind_is_flagged_for_recovery(tmp_path, monkeypatch):
+    from apps.api.services import adventure_manifests as service, adventures_meta as store
+
+    monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
+    store.save_meta("legacy", {"status": "ready", "chunks": 140})
+    with pytest.raises(service.ManifestSourceUnverified, match="unverified"):
+        service.compile_draft("legacy")
+    with pytest.raises(ManifestError):
+        service.compile_draft("legacy")

@@ -93,6 +93,9 @@ for _book_code, _book_label in (
         )
     )
 _register(
+    FailureSpec(ErrorCategory.SOURCE, "adventure_source_unverified", "This adventure has no verified source record, so its review draft cannot be prepared. Start a new campaign with the current preparation pipeline, then remove this one.", 409, RecoveryAction.RESTART_PREPARATION),
+)
+_register(
     FailureSpec(ErrorCategory.REVIEW, "adventure_manifest_review_required", "Review the current adventure material before continuing.", 409, RecoveryAction.REVIEW_SOURCE),
     "manifest_review_required", "review_required", "source_review_required",
     "source_review_needed", "adventure_review_needed",

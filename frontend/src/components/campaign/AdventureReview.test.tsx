@@ -197,3 +197,12 @@ it("hides review-only server internals and never shows raw error text", async ()
   expect(container.textContent).not.toContain("Publish reviewed adventure");
   expect(button("Reload saved draft")).toBeTruthy();
 });
+
+it("explains an unverified source once and offers no draft or reload loop", async () => {
+  vi.mocked(inspectAdventureManifest).mockRejectedValue(new ApiError(409, JSON.stringify({ detail: { code: "adventure_source_unverified", message: "Source kind is unverified. Recover its canonical extraction first." } })));
+  await act(() => root.render(<AdventureReview campaign={blocked} onUpdated={vi.fn()} />));
+  expect(container.textContent).toContain("no verified source record");
+  expect(container.textContent).not.toContain("Needs review.");
+  expect(container.textContent).not.toContain("Recover its canonical extraction");
+  expect([...container.querySelectorAll("button")].map((b) => b.textContent)).toEqual([]);
+});
