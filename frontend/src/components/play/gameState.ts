@@ -1,10 +1,12 @@
 /** Normalise backend character / combat payloads into what the play UI renders. */
 import type {
+  CastableSpell,
   CharacterAssignmentHistoryRead,
   CharacterRead,
   CombatEffect,
   CombatState,
   HitDiceStatus,
+  SheetProficiencies,
   SecondWindState,
   SpellSlotState,
   TurnCharacter,
@@ -37,6 +39,10 @@ export interface SheetCharacter {
   secondWind: SecondWindState | null;
   /** Engine spell slots by level; null for non-casters and legacy payloads. */
   spellSlots: SpellSlotRow[] | null;
+  /** Catalog spells the hero can cast (EDG-173); null when none or on legacy payloads. */
+  spells?: CastableSpell[] | null;
+  /** Proficient saves and skills with engine modifiers (EDG-173); null on legacy payloads. */
+  proficiencies?: SheetProficiencies | null;
 }
 
 const ABILITY_ORDER = ["STR", "DEX", "CON", "INT", "WIS", "CHA"] as const;
@@ -80,8 +86,8 @@ export function hitDiceFrom(v: unknown): HitDiceStatus | null {
 }
 
 function itemLabel(v: unknown): string | null {
-  if (v == null || v === "") return null;
-  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v == null || v === "" || typeof v === "boolean") return null;
+  if (typeof v === "string" || typeof v === "number") return String(v);
   if (typeof v === "object") {
     const o = v as Record<string, unknown>;
     const name = typeof o.name === "string" ? o.name : null;
@@ -157,15 +163,59 @@ export function parseSpellSlots(v: unknown): SpellSlotRow[] | null {
   return rows.sort((a, b) => a.level - b.level);
 }
 
+/** Inventory groups in plain words. A `true` flag (`holy_symbol: true`) is an item, never the word "true". */
 export function parseInventory(inv: Record<string, unknown> | null | undefined): InventoryGroup[] {
   const groups: InventoryGroup[] = [];
+  const flags: string[] = [];
   for (const [k, v] of Object.entries(inv ?? {})) {
+    if (v === true) {
+      flags.push(humanize(k));
+      continue;
+    }
     const items = (Array.isArray(v) ? v : [v])
       .map(itemLabel)
       .filter((x): x is string => !!x);
     if (items.length) groups.push({ label: k === "items" ? "Items" : humanize(k), items });
   }
+  if (flags.length) {
+    const items = groups.find((g) => g.label === "Items");
+    if (items) items.items.push(...flags);
+    else groups.push({ label: "Items", items: flags });
+  }
   return groups;
+}
+
+/** Castable catalog spells from a payload; null when absent, empty or malformed. */
+export function parseCastableSpells(v: unknown): CastableSpell[] | null {
+  if (!Array.isArray(v)) return null;
+  const spells: CastableSpell[] = [];
+  for (const raw of v) {
+    if (!raw || typeof raw !== "object") continue;
+    const o = raw as Record<string, unknown>;
+    const level = num(o.level);
+    if (typeof o.name !== "string" || level == null || typeof o.action !== "string") continue;
+    spells.push({ name: o.name, level, action: o.action });
+  }
+  return spells.length ? spells : null;
+}
+
+/** Engine proficiencies from a payload; null when absent or malformed. */
+export function parseProficiencies(v: unknown): SheetProficiencies | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const saves: SheetProficiencies["saving_throws"] = [];
+  for (const raw of Array.isArray(o.saving_throws) ? o.saving_throws : []) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const modifier = num(r.modifier);
+    if (typeof r.ability === "string" && modifier != null) saves.push({ ability: r.ability, modifier });
+  }
+  const skills: SheetProficiencies["skills"] = [];
+  for (const raw of Array.isArray(o.skills) ? o.skills : []) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const modifier = num(r.modifier);
+    if (typeof r.skill === "string" && modifier != null) skills.push({ skill: r.skill, modifier });
+  }
+  return { saving_throws: saves, skills };
 }
 
 export function sheetFromLibrary(
@@ -180,13 +230,16 @@ export function sheetFromLibrary(
     level: c.level,
     hpCurrent: assignment?.hp_current ?? c.hp_max,
     hpMax: assignment?.hp_max ?? c.hp_max,
-    ac: stats.ac,
+    // The engine's armour class (EDG-173) wins; a stats-level AC is only a legacy fallback.
+    ac: assignment?.armor_class ?? stats.ac,
     abilities: stats.abilities,
     conditions: stats.conditions,
     inventory: parseInventory(assignment?.inventory ?? c.base_inventory),
     hitDice: hitDiceFrom(assignment?.hit_dice),
     secondWind: parseSecondWind(assignment?.second_wind),
     spellSlots: parseSpellSlots(assignment?.spell_slots),
+    spells: parseCastableSpells(assignment?.spells),
+    proficiencies: parseProficiencies(assignment?.proficiencies),
   };
 }
 

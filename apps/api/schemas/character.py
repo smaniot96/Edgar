@@ -116,3 +116,7 @@ class CharacterAssignmentHistoryRead(BaseModel):
     # Derived, read-only resource views (EDG-034); absent for classes without the resource.
     second_wind: SecondWindRead | None = None
     spell_slots: dict[str, SpellSlotRead] | None = None
+    # Read-only sheet view (EDG-173): armour class, castable catalog spells, proficient saves and skills.
+    armor_class: int | None = None
+    spells: list[dict] | None = None
+    proficiencies: dict | None = None

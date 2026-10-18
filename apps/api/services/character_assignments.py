@@ -10,8 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from agent.class_features import class_feature_status
-from agent.resolution import hit_dice_status, second_wind_status
-from agent.spells import expended_slots, slot_totals
+from agent.combat_setup import _player_ac
+from agent.conditions import save_modifier
+from agent.resolution import (
+    ABILITIES,
+    check_spec,
+    hit_dice_status,
+    save_proficiencies,
+    second_wind_status,
+    skill_proficiencies,
+)
+from agent.spells import castable_spells, expended_slots, slot_totals
 from db.postgres.models import Character, CharacterAssignment
 
 
@@ -91,6 +100,33 @@ def resource_view(character: dict[str, Any]) -> dict[str, Any]:
     class_features = class_feature_status(character)
     if class_features is not None:
         out["class_features"] = class_features
+    return out
+
+
+def sheet_view(character: dict[str, Any]) -> dict[str, Any]:
+    """Read-only sheet projection (EDG-173): armour class, castable spells and proficiencies.
+
+    Every number is the engine's own: the AC the combat rolls use (`_player_ac`), the catalog spells
+    the class can cast (`castable_spells`), and the saving-throw and skill modifiers the checks use.
+    `spells` is present only for a class with a castable spell. Nothing is stored or rewritten here.
+    """
+    out: dict[str, Any] = {
+        "armor_class": _player_ac(character),
+        "proficiencies": {
+            "saving_throws": [
+                {"ability": ability, "modifier": save_modifier(character, ability)}
+                for ability in ABILITIES
+                if ability in save_proficiencies(character)
+            ],
+            "skills": [
+                {"skill": skill, "modifier": check_spec(character, skill).modifier}
+                for skill in sorted(skill_proficiencies(character))
+            ],
+        },
+    }
+    spells = castable_spells(character)
+    if spells:
+        out["spells"] = spells
     return out
 
 

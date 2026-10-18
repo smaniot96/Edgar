@@ -407,6 +407,26 @@ export interface CharacterAssignmentHistoryRead {
   second_wind?: SecondWindState | null;
   /** Derived spell slots per level, keyed by level as a string (casters only). */
   spell_slots?: Record<string, SpellSlotState> | null;
+  /** Engine armour class (EDG-173); absent on older servers. */
+  armor_class?: number | null;
+  /** Catalog spells the class can cast at its highest slot level (EDG-173); absent for non-casters. */
+  spells?: CastableSpell[] | null;
+  /** Proficient saving throws and skills with engine modifiers (EDG-173). */
+  proficiencies?: SheetProficiencies | null;
+}
+
+/** A supported catalog spell the character can cast; `level` 0 is a cantrip (no slot). */
+export interface CastableSpell {
+  name: string;
+  level: number;
+  /** "action" or "bonus_action". */
+  action: string;
+}
+
+/** Proficient saving throws (ability key) and skills (skill key), each with its engine modifier. */
+export interface SheetProficiencies {
+  saving_throws: { ability: string; modifier: number }[];
+  skills: { skill: string; modifier: number }[];
 }
 
 /** Per-turn adjudication frame from the SSE/turn contract. */
