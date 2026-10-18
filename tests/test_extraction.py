@@ -88,10 +88,51 @@ def test_identical_overlapping_native_layer_removed_without_dropping_repeated_ta
         ("## Creature\n\nMedium construct, unaligned\nArmor Class 14", "incomplete_stat_fields"),
         ("## Creature\n\nMedium construct, unaligned\nHit Points 9", "incomplete_stat_fields"),
         ("Armor Class 14\nHit Points 9", "missing_stat_heading"),
+        (
+            "## Creature\n\nMedium construct, unaligned\n\nArmor Class 14\nHit Points 9\n\n"
+            "## ACTIONS\n\nBite. The creature hits.\n\n"
+            "Armor Class 16\nHit Points 23",
+            "interleaved_stat_records",
+        ),
+        (
+            "## Creature\n\nMedium construct, unaligned\n\nArmor Class 14\n\n"
+            "## ACTIONS\n\nHealing Touch. The creature regains 20 hit points.",
+            "incomplete_stat_fields",
+        ),
     ],
 )
 def test_corrupt_layers_and_stat_boundaries_detected(text, error):
     assert error in check_text(text)["errors"]
+
+
+def test_stat_field_anchors_ignore_class_tables_and_healing_prose():
+    class_table = (
+        "HIT POINTS\n\nHit Points at 1st Level: 10 + your Constitution modifier.\n"
+        "Hit Points at Higher Levels: 1d10 (or 6) + your Constitution modifier per level.\n"
+        "Life Domain: restore hit points equal to 1d6 + the spell's level."
+    )
+    assert check_text(class_table)["errors"] == []
+    healing = (
+        "## Deva\n\nMedium celestial, lawful good\n\nArmor Class 17\nHit Points 136\n\n"
+        "## ACTIONS\n\nHealing Touch. The deva touches another creature and it regains "
+        "20 hit points.\n\nMultiattack. The deva makes two attacks."
+    )
+    result = check_text(healing)
+    assert result["errors"] == []
+    assert result["armor_class_fields"] == result["hit_points_fields"] == 1
+
+
+def test_require_separate_stat_chunks_allows_prose_and_rejects_concatenated_records():
+    prose = {"index": 0, "page": 1, "stat_block": True, "text": "Healing. Regains 20 hit points."}
+    require_separate_stat_chunks([prose])
+    concatenated = {
+        "index": 1,
+        "page": 2,
+        "stat_block": True,
+        "text": "Armor Class 14\nHit Points 9\n\nArmor Class 16\nHit Points 23",
+    }
+    with pytest.raises(ValueError, match="Mixed stat records in chunk 1 on page 2"):
+        require_separate_stat_chunks([concatenated])
 
 
 def test_repeated_trait_in_separate_creatures_is_not_a_duplicate_layer():

@@ -3,8 +3,10 @@
 import re
 from collections import Counter
 
-_AC = re.compile(r"\bArmor\s+Class\b", re.I)
-_HP = re.compile(r"\bHit\s+Points\b", re.I)
+# Stat fields are anchored to their own line and must carry a number, so prose such as
+# "regains 20 hit points" or class tables such as "Hit Points at 1st Level" are not counted.
+_AC = re.compile(r"^[^\w\n]*Armor\s+Class\b[^\w\n]*\d", re.I | re.M)
+_HP = re.compile(r"^[^\w\n]*Hit\s+Points\b[^\w\n]*\d", re.I | re.M)
 _HEADING = re.compile(r"^#{1,6}\s+(.+)$", re.M)
 STAT_SUBHEADINGS = {
     "ACTIONS",
