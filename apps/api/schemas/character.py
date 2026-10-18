@@ -67,9 +67,10 @@ class CampaignCharacterRead(BaseModel):
     character_id: int
     name: str
     character_class: str
-    level: int
+    level: int  # this campaign's level (EDG-045), not the library creation level
     hp_current: int
     hp_max: int
+    milestones_pending: int = 0  # EDG-045: granted milestones not yet spent on a level-up
 
 
 class CampaignCharacterPatch(BaseModel):

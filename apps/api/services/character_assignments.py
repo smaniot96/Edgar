@@ -53,6 +53,8 @@ def seed_assignment_row_payload(character: Character) -> dict[str, Any]:
     return {
         "hp_current": character.hp_max,
         "hp_max": character.hp_max,
+        "level": character.level,
+        "milestones_pending": 0,
         "stats": copy.deepcopy(character.base_stats or {}),
         "inventory": copy.deepcopy(character.base_inventory or {}),
     }
@@ -72,9 +74,10 @@ async def character_play_state(
         "id": char.id,
         "name": char.name,
         "class": char.character_class,
-        "level": char.level,
+        "level": assignment.level,
         "hp_current": assignment.hp_current,
         "hp_max": assignment.hp_max,
+        "milestones_pending": assignment.milestones_pending,
         "stats": assignment.stats,
         "inventory": assignment.inventory,
     }

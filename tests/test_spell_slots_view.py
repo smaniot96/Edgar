@@ -13,6 +13,8 @@ from apps.api.services import character_assignments as assignments
 
 def _assignment(character_class: str, level: int, stats: dict | None = None) -> SimpleNamespace:
     return SimpleNamespace(
+        level=level,  # EDG-045: the assignment owns the level the engine reads
+        milestones_pending=0,
         hp_current=5,
         hp_max=12,
         stats={} if stats is None else stats,

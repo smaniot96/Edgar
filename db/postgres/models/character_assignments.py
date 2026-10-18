@@ -27,6 +27,10 @@ class CharacterAssignment(Base):
         CheckConstraint("hp_current <= hp_max", name="character_assignments_hp_within_max"),
         CheckConstraint("hp_current >= 0", name="character_assignments_hp_nonnegative"),
         CheckConstraint("hp_max >= 1", name="character_assignments_hp_max_positive"),
+        CheckConstraint("level BETWEEN 1 AND 20", name="character_assignments_level_valid"),
+        CheckConstraint(
+            "milestones_pending >= 0", name="character_assignments_milestones_nonnegative"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -38,6 +42,11 @@ class CharacterAssignment(Base):
     )
     hp_current: Mapped[int] = mapped_column(Integer, nullable=False)
     hp_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    # EDG-045: this campaign's level (backfilled from the library character) and unspent milestones.
+    level: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    milestones_pending: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     stats: Mapped[dict] = mapped_column(JSONB, nullable=False)
     inventory: Mapped[dict] = mapped_column(JSONB, nullable=False)
     assigned_at: Mapped[datetime] = mapped_column(

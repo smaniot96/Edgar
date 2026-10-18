@@ -212,12 +212,12 @@ async def list_character_assignments(
                 ended_at=a.ended_at,
                 status="ended" if ended else "active",
                 **resource_view(
-                    {"class": character.character_class, "level": character.level, "stats": a.stats}
+                    {"class": character.character_class, "level": a.level, "stats": a.stats}
                 ),
                 **sheet_view(
                     {
                         "class": character.character_class,
-                        "level": character.level,
+                        "level": a.level,
                         "stats": a.stats,
                         "inventory": a.inventory,
                     }

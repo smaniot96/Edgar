@@ -84,6 +84,7 @@ from edgar_core.model_profiles import (
 from edgar_core.safe_errors import OutcomeState, SafeFailure
 from edgar_core.sources import citations_for, public_citations
 
+from .advancement import grant_victory_milestone, victory_just_ended
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
@@ -367,12 +368,16 @@ async def persist_turn(
                     },
                 )
 
+            # EDG-045: a won encounter grants a milestone once, on its open-to-victory transition.
+            won_now = await victory_just_ended(db, session_id, new_combat)
             combat_id = None
             if new_combat:
                 combat_id = await persist_combat(db, session_id, new_combat)
                 await persist_combat_npcs(
                     db, session_id, game_session.campaign_id, combat_id, new_combat
                 )
+            if won_now:
+                await grant_victory_milestone(db, campaign, game_session.active_character_id)
 
             if adjudication:
                 discovery_keys = {

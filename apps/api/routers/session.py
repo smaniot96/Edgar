@@ -249,6 +249,9 @@ async def _load_turn_initial_state(
         ),
         "source_mode": campaign.source_mode,
         "rules_edition": campaign.rules_edition,
+        # EDG-045: explicit campaign modes (progression_mode, death_mode) the engine reads per turn.
+        "progression_mode": campaign.progression_mode,
+        "death_mode": campaign.death_mode,
         "adventure_manifests": manifests,
         "prepared_campaign_overlays": prepared_overlays,
         "prepared_amendment_events": prepared_amendment_events,

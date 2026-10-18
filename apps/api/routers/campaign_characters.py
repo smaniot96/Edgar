@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agent.progression import ProgressionError
 from agent.resolution import ENGINE_STATS_KEYS
 from db.postgres.models import Campaign, Character, CharacterAssignment
 
@@ -16,6 +17,8 @@ from ..schemas.character import (
     CampaignCharacterPatch,
     CampaignCharacterRead,
 )
+from ..schemas.progression import LevelUpRead, LevelUpRequest
+from ..services.advancement import LevelUpConflict, apply_level_up
 from ..services.campaign_completion import lock_campaign
 from ..services.character_assignments import (
     load_active_assignment,
@@ -35,9 +38,10 @@ def _roster_row(assignment: CharacterAssignment, ch: Character) -> CampaignChara
         character_id=ch.id,
         name=ch.name,
         character_class=ch.character_class,
-        level=ch.level,
+        level=assignment.level,
         hp_current=assignment.hp_current,
         hp_max=assignment.hp_max,
+        milestones_pending=assignment.milestones_pending,
     )
 
 
@@ -173,6 +177,59 @@ async def patch_campaign_character(
     await db.commit()
     await db.refresh(assignment)
     return _roster_row(assignment, character)
+
+
+@router.post(
+    "/campaigns/{campaign_id}/characters/{character_id}/level-up",
+    response_model=LevelUpRead,
+)
+async def level_up_campaign_character(
+    campaign_id: int,
+    character_id: int,
+    body: LevelUpRequest,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+    owner_id: int = Depends(current_user_id),
+):
+    """Spend one milestone on one level (EDG-045). Atomic; a repeated request_id replays the result."""
+    await authorize_campaign(db, campaign_id, auth)
+    cr = await db.execute(select(Character).where(Character.id == character_id))
+    character = cr.scalar_one_or_none()
+    if character is None or character.owner_user_id != owner_id:
+        raise HTTPException(status_code=404, detail="Character not found")
+    campaign = await owned_campaign(db, campaign_id, auth)
+    await lock_campaign(db, campaign)
+    try:
+        result = await apply_level_up(
+            db,
+            campaign,
+            character_id,
+            from_level=body.from_level,
+            request_id=body.request_id,
+            hp_method=body.hp_method,
+            ability_increases=body.ability_increases,
+        )
+    except LevelUpConflict as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProgressionError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result.applied:
+        await db.commit()
+    assignment = await load_active_assignment(db, character_id, campaign_id)
+    record = result.record
+    return LevelUpRead(
+        applied=result.applied,
+        from_level=record["from_level"],
+        to_level=record["to_level"],
+        hit_points=record["hit_points"],
+        ability_increases=record.get("ability_increases") or {},
+        features=record.get("features") or [],
+        spell_slots=record.get("spell_slots") or {},
+        milestones_pending=record["milestones_pending"],
+        character=_roster_row(assignment, character),
+    )
 
 
 @router.delete("/campaigns/{campaign_id}/characters/{character_id}", status_code=204)

@@ -3,11 +3,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent.progression import DEFAULT_DEATH_MODE, DEFAULT_PROGRESSION_MODE
 from edgar_core.sources import DEFAULT_RULES_EDITION, RulesEdition
 
 from ._validators import forbid_null
 from .adventure import AdventureJobRead
 from .readiness import ReadinessRead
+
+ProgressionMode = Literal["fixed", "milestone"]
+DeathMode = Literal["subdued", "death_saves"]
 
 SourceStatus = Literal[
     "ready", "missing", "empty", "partial", "unavailable", "processing", "failed"
@@ -39,6 +43,9 @@ class CampaignCreate(BaseModel):
     adventure_collections: list[str] | None = None
     source_mode: Literal["module", "homebrew"] = "module"
     rules_edition: RulesEdition = DEFAULT_RULES_EDITION
+    # EDG-045: explicit modes. The defaults keep the behaviour every campaign had before the modes.
+    progression_mode: ProgressionMode = DEFAULT_PROGRESSION_MODE
+    death_mode: DeathMode = DEFAULT_DEATH_MODE
 
 
 class CampaignRead(BaseModel):
@@ -54,6 +61,8 @@ class CampaignRead(BaseModel):
     adventure_collections: list[str]
     source_mode: Literal["module", "homebrew"] = "module"
     rules_edition: RulesEdition = DEFAULT_RULES_EDITION
+    progression_mode: ProgressionMode = DEFAULT_PROGRESSION_MODE
+    death_mode: DeathMode = DEFAULT_DEATH_MODE
     sources: list[SourceRead] = Field(default_factory=list)
     retrieval_degraded: bool = False
     play_allowed: bool = True
@@ -70,7 +79,15 @@ class CampaignUpdate(BaseModel):
     adventure_collections: list[str] | None = None
     source_mode: Literal["module", "homebrew"] = "module"
     rules_edition: RulesEdition = DEFAULT_RULES_EDITION
+    progression_mode: ProgressionMode = DEFAULT_PROGRESSION_MODE
+    death_mode: DeathMode = DEFAULT_DEATH_MODE
 
     reject_nulls = forbid_null(
-        "title", "system", "adventure_collections", "source_mode", "rules_edition"
+        "title",
+        "system",
+        "adventure_collections",
+        "source_mode",
+        "rules_edition",
+        "progression_mode",
+        "death_mode",
     )

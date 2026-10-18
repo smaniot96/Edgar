@@ -1247,8 +1247,16 @@ def build_rest_record(
 SECOND_WIND_KEY = "second_wind"
 # Class feature uses (EDG-145), one nested entry per feature: agent.class_features.
 CLASS_FEATURES_KEY = "class_features"
+# The last applied level-up (EDG-045): the request it came from and the record it produced.
+ADVANCEMENT_KEY = "advancement"
 # Sheet `stats` keys written only by the engine; a manual sheet edit must not overwrite them.
-ENGINE_STATS_KEYS = (SECOND_WIND_KEY, HIT_DICE_KEY, CLASS_FEATURES_KEY, "spell_slots_expended")
+ENGINE_STATS_KEYS = (
+    SECOND_WIND_KEY,
+    HIT_DICE_KEY,
+    CLASS_FEATURES_KEY,
+    "spell_slots_expended",
+    ADVANCEMENT_KEY,
+)
 SECOND_WIND_REFUSAL = (
     "{hero} has already used Second Wind and has no uses left until a short or long rest. "
     "No healing is rolled."

@@ -25,6 +25,12 @@ class Campaign(Base):
             "source_mode IN ('module', 'homebrew')", name="campaigns_source_mode_valid"
         ),
         CheckConstraint("rules_edition IN ('2014', '2024')", name="campaigns_rules_edition_valid"),
+        CheckConstraint(
+            "progression_mode IN ('fixed', 'milestone')", name="campaigns_progression_mode_valid"
+        ),
+        CheckConstraint(
+            "death_mode IN ('subdued', 'death_saves')", name="campaigns_death_mode_valid"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -44,6 +50,13 @@ class Campaign(Base):
     )
     rules_edition: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default=text("'2014'")
+    )
+    # EDG-045: explicit modes. The server defaults are the behaviour existing campaigns already had.
+    progression_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'fixed'")
+    )
+    death_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'subdued'")
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

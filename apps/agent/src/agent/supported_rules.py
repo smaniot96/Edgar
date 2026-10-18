@@ -89,6 +89,44 @@ class UnsupportedMechanic:
 
 SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
+        id="campaign_modes",
+        title="Campaign progression and death modes",
+        scope=(
+            "Two campaign settings are stored, never inferred. progression_mode is 'fixed' (the sheet keeps "
+            "its level; the default, and the behaviour of every campaign created before the modes) or "
+            "'milestone' (see milestone_advancement). death_mode is 'subdued' (the default and the "
+            "behaviour of every earlier campaign: a defeat leaves the hero unconscious at 1 HP and the "
+            "story continues) or 'death_saves' (raw death saving throws at 0 HP, see death_saves). Both "
+            "can be set when a campaign is created and changed while it is active. A change of "
+            "death_mode is refused while the hero is dying or stable. A campaign's modes are shown with "
+            "its settings and sent to every turn."
+        ),
+        implementation="agent.progression:plan_level_up",
+        test="tests/api/test_campaign_modes.py::test_campaign_modes_default_to_the_existing_behaviour",
+    ),
+    Mechanic(
+        id="milestone_advancement",
+        title="Milestone level-up to level 5 for the supported classes",
+        scope=(
+            "Only in progression_mode 'milestone'. The engine grants one milestone when the active "
+            "encounter ends in a victory, once per encounter, and never past level 5 counting pending "
+            "milestones. Nothing else grants one. A level-up is an explicit player request that names "
+            "the level it starts from, so a stale request is refused and a repeated request_id replays "
+            "the stored result instead of applying twice. It is refused during an open encounter. It "
+            "spends one milestone and raises the level by one, up to level 5, for fighter, rogue, wizard, "
+            "cleric and ranger. Hit points rise by the class table's fixed value (floor(die / 2) + 1, PHB, "
+            "pp.58, 72, 91, 96, 114) or by an engine roll of the hit die, plus the Constitution modifier, "
+            "never below zero; current HP rises by the same amount. The proficiency bonus, Hit Dice total, "
+            "spell slot totals (PHB Wizard and Cleric tables pp.114 and 58, Ranger table p.91) and the "
+            "level-gated features the engine runs (Action Surge at 2, Sneak Attack dice at 3 and 5, Rage "
+            "uses) follow the new level. Ability Score Improvement at level 4 is two points to one score "
+            "or one point to each of two, no score above 20 (PHB, PDF p.73). The level is stored per campaign, "
+            "so a level-up never changes the library character."
+        ),
+        implementation="apps.api.services.advancement:apply_level_up",
+        test="tests/agent/test_progression.py::test_average_hit_points_are_the_class_table_fixed_value",
+    ),
+    Mechanic(
         id="d20_checks",
         title="d20 ability, skill, saving-throw and tool checks",
         scope=(
@@ -841,6 +879,18 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
             "trigger, a readied ranged attack, spell or move, and any other bonus action."
         ),
         owner="EDG-044",
+    ),
+    UnsupportedMechanic(
+        id="advancement_features",
+        title="Features named at a level-up that the engine does not run",
+        boundary=(
+            "Extra Attack (fighter and ranger at 5th level), subclass features (Martial, Roguish, Arcane "
+            "and Divine archetypes), Cunning Action, Uncanny Dodge, Channel Divinity, Destroy Undead, the "
+            "fighting styles, Favored Enemy and Natural Explorer are named when a level is gained and have "
+            "no engine effect. A prepared-spell limit is not enforced: every catalog spell of the class "
+            "may be cast within its slots. A level-up never adds a feat."
+        ),
+        owner="unassigned",
     ),
     UnsupportedMechanic(
         id="class_features",

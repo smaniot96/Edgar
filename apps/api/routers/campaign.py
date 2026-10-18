@@ -125,6 +125,8 @@ async def create_campaign(
     campaign = Campaign(
         source_mode=body.source_mode,
         rules_edition=body.rules_edition,
+        progression_mode=body.progression_mode,
+        death_mode=body.death_mode,
         title=body.title,
         system=body.system,
         created_by=owner_id,
@@ -142,6 +144,10 @@ async def update_campaign(
 ):
     campaign = await owned_campaign(db, campaign_id, auth)
     update_data = body.model_dump(exclude_unset=True)
+    if campaign.status == "ended" and (
+        "progression_mode" in update_data or "death_mode" in update_data
+    ):
+        raise HTTPException(status_code=409, detail="Reopen the campaign to change its modes.")
     from ..services.prepared_play import protect_prepared_campaign_binding, require_prepared_play
 
     await run_in_threadpool(protect_prepared_campaign_binding, campaign, update_data)
