@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy import func, select
 
+from apps.api.services.journal import journal_tracking_marker
 from apps.api.services.npcs import load_npcs
 from apps.api.services.story_state import (
     StoryStateConflict,
@@ -153,7 +154,10 @@ async def setup(db):
     sessions = [Session(campaign_id=campaign.id), Session(campaign_id=campaign.id)]
     db.add_all(sessions)
     await db.flush()
-    events = [EventLog(session_id=s.id, event_type="narration", payload={}) for s in sessions]
+    events = [
+        EventLog(session_id=s.id, event_type="narration", payload=journal_tracking_marker())
+        for s in sessions
+    ]
     db.add_all(events)
     await db.flush()
     return campaign, sessions, events
@@ -350,6 +354,9 @@ async def test_legacy_npc_rows_stay_campaign_wide_and_new_rows_are_scoped(api_cl
 
 async def test_legacy_session_tracking_state_and_earned_name_refresh(api_client, db_session):
     campaign, sessions, events = await setup(db_session)
+    # Model a pre-journal session: its narration row predates the tracking marker.
+    events[0].payload = {}
+    await db_session.commit()
     legacy = await api_client.get(f"/api/campaigns/{campaign.id}/npcs?session_id={sessions[0].id}")
     assert legacy.headers["x-npc-tracking"] == "legacy_untracked"
 

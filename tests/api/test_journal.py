@@ -3,7 +3,8 @@
 import hashlib
 from datetime import UTC, datetime
 
-from db.postgres.models import EventLog, StoryFact as StoryFactRow
+from apps.api.services.journal import journal_tracking_marker
+from db.postgres.models import EventLog, Session, StoryFact as StoryFactRow
 from edgar_core.story import StoryFact, StoryRef, story_target_id
 
 
@@ -132,3 +133,33 @@ async def test_journal_routes_are_safe_and_session_scoped(api_client, db_session
         "The lens tracks reflections, not the sky."
     ]
     assert "PRIVATE FUTURE" not in exported.text
+
+
+async def _add_narration(db_session, session_id: int, *, tracked: bool) -> None:
+    payload = {"turn_id": f"turn-{session_id}", **(journal_tracking_marker() if tracked else {})}
+    db_session.add(EventLog(session_id=session_id, event_type="narration", payload=payload))
+    await db_session.commit()
+
+
+async def test_new_session_is_tracked_and_pre_journal_session_is_legacy_in_journal_and_map(
+    api_client, db_session
+) -> None:
+    first_id = (await api_client.post("/api/seed")).json()["session_id"]
+    campaign_id = (await api_client.get(f"/api/sessions/{first_id}")).json()["campaign_id"]
+    new_session = Session(campaign_id=campaign_id)
+    legacy_session = Session(campaign_id=campaign_id)
+    db_session.add_all([new_session, legacy_session])
+    await db_session.commit()
+    new_id, legacy_id = new_session.id, legacy_session.id
+    await _add_narration(db_session, new_id, tracked=True)
+    await _add_narration(db_session, legacy_id, tracked=False)
+
+    for session_id, expected in ((new_id, "available"), (legacy_id, "legacy_untracked")):
+        journal = await api_client.get(f"/api/sessions/{session_id}/journal")
+        assert journal.status_code == 200
+        assert journal.json()["tracking"] == expected
+        assert journal.json()["entries"] == []
+
+        map_response = await api_client.get(f"/api/sessions/{session_id}/map")
+        assert map_response.status_code == 200
+        assert map_response.json()["tracking"] == expected

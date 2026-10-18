@@ -3,7 +3,11 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
 
-from apps.api.services.journal import filter_player_journal, project_player_journal
+from apps.api.services.journal import (
+    filter_player_journal,
+    journal_tracking_marker,
+    project_player_journal,
+)
 from db.postgres.models import EventLog
 from edgar_core.story import StoryFact, StoryRef, story_target_id
 
@@ -61,12 +65,15 @@ def _fact(
     )
 
 
-def _event(event_id: int, session_id: int, turn_id: str, created_at: datetime) -> EventLog:
+def _event(
+    event_id: int, session_id: int, turn_id: str, created_at: datetime, *, tracked: bool = True
+) -> EventLog:
+    payload = {"turn_id": turn_id, **(journal_tracking_marker() if tracked else {})}
     return EventLog(
         id=event_id,
         session_id=session_id,
         event_type="narration",
-        payload={"turn_id": turn_id},
+        payload=payload,
         created_at=created_at,
     )
 
@@ -112,7 +119,7 @@ def test_projection_is_session_scoped_and_exposes_only_allowlisted_origins() -> 
         assert private_value not in serialized
 
 
-def test_private_only_facts_do_not_make_tracking_look_available() -> None:
+def test_new_session_without_committed_facts_is_available_and_empty() -> None:
     now = datetime.now(UTC)
     private = _fact(
         kind="discover",
@@ -125,27 +132,46 @@ def test_private_only_facts_do_not_make_tracking_look_available() -> None:
     events = [_event(31, 4, "turn-1", now)]
 
     private_only = project_player_journal(4, {"facts": [private.model_dump()]}, events)
-    mixed = project_player_journal(
-        4,
-        {
-            "facts": [
-                private.model_dump(),
-                _fact(
-                    kind="discover",
-                    canonical_id="known",
-                    event_id=32,
-                    turn_id="turn-2",
-                    text="A known clue.",
-                ).model_dump(),
-            ]
-        },
-        events + [_event(32, 4, "turn-2", now + timedelta(minutes=1))],
-    )
+    no_facts = project_player_journal(4, {"facts": []}, events)
 
     assert private_only.entries == []
-    assert private_only.tracking == "legacy_untracked"
-    assert [entry.text for entry in mixed.entries] == ["A known clue."]
-    assert mixed.tracking == "available"
+    assert private_only.tracking == "available"
+    assert no_facts.entries == []
+    assert no_facts.current_place is None
+    assert no_facts.active_goal is None
+    assert no_facts.tracking == "available"
+
+
+def test_session_without_narration_rows_is_available() -> None:
+    assert project_player_journal(4, {"facts": []}, []).tracking == "available"
+
+
+def test_pre_journal_session_with_entries_stays_available() -> None:
+    now = datetime.now(UTC)
+    known = _fact(
+        kind="discover",
+        canonical_id="known",
+        event_id=32,
+        turn_id="turn-2",
+        text="A known clue.",
+    )
+    events = [
+        _event(31, 4, "turn-1", now, tracked=False),
+        _event(32, 4, "turn-2", now + timedelta(minutes=1), tracked=True),
+    ]
+
+    result = project_player_journal(4, {"facts": [known.model_dump()]}, events)
+
+    assert [entry.text for entry in result.entries] == ["A known clue."]
+    assert result.tracking == "available"
+
+
+def test_pre_journal_session_without_entries_stays_legacy() -> None:
+    now = datetime.now(UTC)
+    result = project_player_journal(4, {"facts": []}, [_event(31, 4, "turn-1", now, tracked=False)])
+
+    assert result.entries == []
+    assert result.tracking == "legacy_untracked"
 
 
 def test_private_clock_completion_never_reveals_progress_or_terminal_state() -> None:

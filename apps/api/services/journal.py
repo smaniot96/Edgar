@@ -69,6 +69,16 @@ _ALLOWED_STATUS = {
 }
 
 
+# Narration rows written by journal-aware code carry this version. A session with no entries
+# is legacy only when its first narration row lacks it: a new session can have none yet.
+JOURNAL_TRACKING_VERSION = 1
+
+
+def journal_tracking_marker() -> dict[str, int]:
+    """Payload fields that stamp a narration row as written under journal tracking."""
+    return {"journal_tracking_version": JOURNAL_TRACKING_VERSION}
+
+
 def _fact_event(fact: StoryFact, event_ids: set[int]) -> int | None:
     return fact.event_id if fact.event_id in event_ids else None
 
@@ -426,7 +436,15 @@ def project_player_journal(
         (entry for _, entry in built if entry.category == "goal" and entry.status == "active"),
         None,
     )
-    tracking = "available" if entries or not events else "legacy_untracked"
+    first_payload = (events[0].payload or {}) if events else {}
+    # Entries keep journal-era sessions available; the marker only rescues new sessions that
+    # have no committed facts yet, so unmarked pre-journal sessions with no entries stay legacy.
+    tracked = (
+        not events
+        or bool(entries)
+        or first_payload.get("journal_tracking_version") == JOURNAL_TRACKING_VERSION
+    )
+    tracking = "available" if tracked else "legacy_untracked"
     return JournalRead(
         session_id=session_id,
         tracking=tracking,
