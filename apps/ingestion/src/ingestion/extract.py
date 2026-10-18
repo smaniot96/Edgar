@@ -4,10 +4,13 @@ Page numbers are physical, one-based PDF pages, unchanged from the original cont
 No PDF, index or database is mutated by extraction or by saving a preview.
 """
 
+import csv
+import io
 import json
 import re
+import shutil
 import subprocess
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -17,12 +20,16 @@ import pymupdf4llm
 
 from edgar_core.sources import SourceEdition
 from ingestion.artifacts import ExcludedPage, exclusions_digest, source_digest, text_digest
-from ingestion.layout import native_lines, ocr_stat_header, render_native_page
+from ingestion.layout import Line, native_lines, ocr_stat_header, render_native_page
 from ingestion.quality import check_text, diagnostic_message, has_section_heading, has_stat_record
+from ingestion.text_quality import is_degraded, prefer_ocr, score_text
 
 EXTRACTION_VERSION = 1
 SUMMARY_PAGE_LIMIT = 20
 EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index")
+# Tesseract at the 600 dpi used for raster stat headings in layout.ocr_stat_header.
+OCR_LAYOUT_DPI = 600
+OCR_MIN_CONFIDENCE = 30
 
 
 @dataclass
@@ -146,12 +153,111 @@ def validate_exclusions(
     return sorted(cleaned, key=lambda e: e["page"])
 
 
+def _ocr_page(doc: pymupdf.Document, number: int) -> str:
+    """Full-page Tesseract read through the same route for sparse and degraded pages."""
+    return pymupdf4llm.to_markdown(
+        doc,
+        pages=[number - 1],
+        page_chunks=False,
+        header=False,
+        footer=False,
+        use_ocr=True,
+        force_ocr=True,
+    )
+
+
+def _tesseract_page_text(page: pymupdf.Page) -> str:
+    """Tesseract word boxes at the layout module's raster resolution, in native geometry order.
+
+    The page is read as one piece, so native and OCR text never mix inside a stat block. When
+    the geometry is ambiguous, Tesseract's own block order is kept instead; the caller's text
+    checks and numeric comparison still decide whether that OCR text may replace the native layer.
+    """
+    binary = shutil.which("tesseract")
+    if binary is None:
+        raise RuntimeError("Tesseract with English language data is required for OCR.")
+    pix = page.get_pixmap(dpi=OCR_LAYOUT_DPI)
+    process = subprocess.run(
+        [binary, "stdin", "stdout", "-l", "eng", "--psm", "3", "tsv"],
+        input=pix.tobytes("png"),
+        capture_output=True,
+        timeout=120,
+        check=True,
+    )
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for word in csv.DictReader(io.StringIO(process.stdout.decode()), delimiter="\t"):
+        if word["text"].strip() and float(word["conf"]) >= OCR_MIN_CONFIDENCE:
+            groups[tuple(word[k] for k in ("block_num", "par_num", "line_num"))].append(word)
+    scale = 72 / OCR_LAYOUT_DPI
+    lines = []
+    for words in groups.values():
+        words.sort(key=lambda w: int(w["left"]))
+        x0 = min(int(w["left"]) for w in words)
+        y0 = min(int(w["top"]) for w in words)
+        x1 = max(int(w["left"]) + int(w["width"]) for w in words)
+        y1 = max(int(w["top"]) + int(w["height"]) for w in words)
+        size = (y1 - y0) * scale / 1.2
+        bbox = (x0 * scale, y0 * scale, x1 * scale, y1 * scale)
+        lines.append(Line(" ".join(w["text"] for w in words), bbox, size))
+    try:
+        text, _warnings = render_native_page(lines, page.rect.width)
+    except ValueError:
+        text = "\n".join(line.text for line in lines)
+    return text
+
+
+def _prefer_fresh_ocr(
+    page: pymupdf.Page,
+    lines: list[Line],
+    native_text: str,
+    method: str,
+    scores: dict,
+    warnings: list[str],
+    candidates: list[dict],
+) -> tuple[str, str]:
+    """Replace a degraded native layer with fresh OCR only when OCR is better and passes checks.
+
+    The whole page switches source; native and OCR text are never mixed inside a stat block.
+    Both signature scores are recorded in the bundle whichever source is kept.
+    """
+    native_scores = scores["native_geometry"]
+    try:
+        ocr_text = _tesseract_page_text(page)
+    except Exception as exc:
+        warnings.append("degraded_native_text_layer_ocr_unavailable")
+        candidates.append({"method": "layout_ocr", "rejected": f"unavailable:{type(exc).__name__}"})
+        return native_text, method
+    ocr_scores = score_text(ocr_text)
+    scores["layout_ocr"] = ocr_scores
+    native_numbers = Counter(re.findall(r"\b\d+(?:d\d+)?\b", " ".join(item.text for item in lines)))
+    ocr_numbers = Counter(re.findall(r"\b\d+(?:d\d+)?\b", ocr_text))
+    reasons = []
+    if check_text(ocr_text)["errors"]:
+        reasons.append("ocr_failed_text_checks")
+    if native_numbers - ocr_numbers:
+        reasons.append("ocr_dropped_native_numbers")
+    if not prefer_ocr(native_scores, ocr_scores):
+        reasons.append("ocr_not_better")
+    if reasons:
+        warnings.append("degraded_native_text_layer_kept")
+        candidates.append({"method": "layout_ocr", "rejected": ",".join(reasons), **ocr_scores})
+        return native_text, method
+    # Warnings about the discarded native render (raster headers, spans) no longer apply.
+    warnings.clear()
+    warnings.append("degraded_native_text_layer_replaced_with_ocr")
+    warnings.append("full_page_ocr_review_required")
+    candidates.append({"method": method, "rejected": "degraded_signature", **native_scores})
+    return ocr_text, "layout_ocr"
+
+
 def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Extraction:
     """Extract once; return selected text and rejected-candidate reasons for review.
 
     A substantial native layer is ordered geometrically. Missing raster stat headers are
-    supplemented locally. Sparse native pages fall back to explicit forced OCR; OCR must
-    pass the same text checks. Ambiguous geometry fails closed and remains inspectable.
+    supplemented locally. A native layer with a dense OCR-misreading signature (see
+    `ingestion.text_quality`) is compared with fresh OCR and the better whole page is kept.
+    Sparse native pages fall back to explicit forced OCR; OCR must pass the same text checks.
+    Ambiguous geometry fails closed and remains inspectable.
     `pages` is a physical, one-based subset intended for local QA, never full ingestion.
     """
     path = Path(path)
@@ -166,7 +272,7 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
             page = doc[number - 1]
             lines, duplicates = native_lines(page.get_text("dict"), page.rect.height)
             native_characters = sum(len(item.text) for item in lines)
-            warnings, candidates = [], []
+            warnings, candidates, scores = [], [], {}
             text, method, fatal = "", "native_geometry", []
             blank_page = not lines and not page.get_images() and not page.get_drawings()
             if blank_page:
@@ -188,6 +294,11 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
                     # Retain the native material for diagnosis; never index ambiguous output.
                     text = "\n".join(item.text for item in lines)
                     fatal.append(str(exc))
+                scores["native_geometry"] = score_text(text)
+                if not fatal and is_degraded(scores["native_geometry"]):
+                    text, method = _prefer_fresh_ocr(
+                        page, lines, text, method, scores, warnings, candidates
+                    )
             else:
                 method = "layout_ocr"
                 candidates.append(
@@ -197,16 +308,10 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
                         "rejected": "insufficient_native_text",
                     }
                 )
+                scores["native_geometry"] = score_text("\n".join(item.text for item in lines))
                 try:
-                    text = pymupdf4llm.to_markdown(
-                        doc,
-                        pages=[number - 1],
-                        page_chunks=False,
-                        header=False,
-                        footer=False,
-                        use_ocr=True,
-                        force_ocr=True,
-                    )
+                    text = _ocr_page(doc, number)
+                    scores["layout_ocr"] = score_text(text)
                     warnings.append("full_page_ocr_review_required")
                     # A sparse native layer may still contain authoritative numbers.
                     # Require those to survive OCR; never silently overwrite them.
@@ -227,6 +332,10 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
             quality["native_characters"] = native_characters
             quality["removed_overlapping_spans"] = duplicates
             quality["errors"] = sorted(set(quality["errors"] + fatal))
+            # Both candidate sources are recorded; the selected text is the page's method.
+            quality["source_scores"] = scores
+            if score_text(text)["signature_hits"]:
+                warnings.append("ocr_signature_review_required")
             if page.get_images() and native_characters >= 300:
                 warnings.append("raster_backed_native_layer_completeness_review_required")
             if re.search(r"\b[lI]\d|\b\d+[lI]|\b(?:GO|[lI]d\d+)\b", text):
