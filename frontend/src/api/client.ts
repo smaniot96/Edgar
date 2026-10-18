@@ -259,6 +259,25 @@ export function setCampaignSourceMode(id: number, source_mode: "module" | "homeb
   return sendJson("PATCH", `/api/campaigns/${id}`, { source_mode });
 }
 
+/** EDG-045: 'milestone' grants milestones on won encounters, spent by an explicit level-up. */
+export function setCampaignProgressionMode(id: number, progression_mode: "fixed" | "milestone"): Promise<CampaignRead> {
+  return sendJson("PATCH", `/api/campaigns/${id}`, { progression_mode });
+}
+
+/** EDG-045: 'death_saves' applies the death saving throw rules; 'subdued' keeps the 1 HP continuation. */
+export function setCampaignDeathMode(id: number, death_mode: "subdued" | "death_saves"): Promise<CampaignRead> {
+  return sendJson("PATCH", `/api/campaigns/${id}`, { death_mode });
+}
+
+/** EDG-045: spend one milestone on one level. The request names the level it starts from. */
+export function levelUpCampaignCharacter(
+  campaignId: number,
+  characterId: number,
+  body: import("./types").LevelUpRequestBody,
+): Promise<import("./types").LevelUpRead> {
+  return sendJson("POST", `/api/campaigns/${campaignId}/characters/${characterId}/level-up`, body);
+}
+
 export async function recoverCampaignSource(id: number, slug: string, file: File): Promise<AdventureRead> {
   const form = new FormData();
   form.append("file", file);

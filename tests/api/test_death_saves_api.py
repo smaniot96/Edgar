@@ -143,6 +143,8 @@ async def test_a_long_rest_restores_the_hero_and_clears_the_death_record(
         sid, hp_current=0, stats={"death_saves": {"state": "dying", "successes": 0, "failures": 2}}
     )
 
-    body = await _turn(api_client, sid, "I sleep for the night")
-    assert body["character"]["hp_current"] > 0
+    # The turn starts with the dying hero's death save: a scripted 15 succeeds, so the long rest
+    # then heals to the maximum and clears the record.
+    body = await _turn(api_client, sid, "I sleep for the night", faces=[15])
+    assert body["character"]["hp_current"] == body["character"]["hp_max"] > 0
     assert "death_saves" not in await _stored_stats(sid)
