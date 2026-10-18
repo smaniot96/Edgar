@@ -21,6 +21,8 @@ from edgar_core.story import (
     StoryRef,
     StoryState,
     accept_story_effect,
+    homebrew_name_taken,
+    is_homebrew_effect,
     known_story_name,
     player_known_story as player_known_story,
     story_target_id,
@@ -104,6 +106,8 @@ async def persist_story_effects(
             if existing.model_dump(include=fields) != effect.model_dump(include=fields):
                 raise StoryStateConflict("An accepted story effect cannot be rewritten")
             continue
+        if is_homebrew_effect(effect) and homebrew_name_taken(effect.display_name, facts):
+            raise StoryStateConflict("A homebrew name would overwrite an earned fact")
         target_id = story_target_id(effect.target)
         prior = [f for f in facts if f.fact_id == target_id and f.kind == effect.kind]
         _validate_progression(effect, prior)

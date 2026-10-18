@@ -64,6 +64,8 @@ class JournalOrigin(JournalRecord):
     actor: str | None
     actor_id: str | None = None
     citation: str | None
+    # EDG-169: improvised homebrew facts are labelled, never presented as module text.
+    provenance: Literal["module", "homebrew"] = "module"
 
 
 class JournalEntry(JournalRecord):

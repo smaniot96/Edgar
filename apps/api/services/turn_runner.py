@@ -283,6 +283,8 @@ async def persist_turn(
             ):
                 raise ValueError("Turn state changed during generation")
 
+            from edgar_core.story import is_homebrew_effect
+
             from .story_state import (
                 load_story_state,
                 persist_combat_outcome_facts,
@@ -331,7 +333,10 @@ async def persist_turn(
                 # adjudication receipt is eligible for persistence.
                 raise PreparedAmendmentConflict("Untrusted prepared amendment state")
             effects = adjudication.accepted_story_effects if adjudication else []
-            if effects:
+            # Homebrew consequences are revalidated by persist_story_effects against the locked
+            # ledger; reviewed-manifest revalidation below only covers module consequences.
+            module_effects = [e for e in effects if not is_homebrew_effect(e)]
+            if module_effects:
                 from agent.models.adjudication import AdjudicationResult
                 from agent.nodes.story_effects import validate_story_effects
                 from edgar_core.story import StoryEffect
@@ -343,12 +348,12 @@ async def persist_turn(
                             StoryEffect.model_validate(
                                 effect.model_dump(include=set(StoryEffect.model_fields))
                             )
-                            for effect in effects
+                            for effect in module_effects
                         ],
                     ),
                     {**result, "character": current_character, "story_state": current_story},
                 )
-                if checked.accepted_story_effects != effects:
+                if checked.accepted_story_effects != module_effects:
                     raise ValueError("Story consequences no longer validate")
                 # Validate against current committed ownership before any legacy writes.
                 await apply_story_inventory(

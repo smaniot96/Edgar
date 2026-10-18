@@ -186,12 +186,94 @@ def player_promise_ref(actor: StoryRef, quotation: str) -> StoryRef:
     return actor.model_copy(update={"kind": "promise", "canonical_id": "promise_" + identity[:48]})
 
 
+# EDG-169: homebrew play has no reviewed manifest. Its improvised places, people, clues and
+# threats are sealed under one engine-owned pseudo-collection whose digests are constants, so
+# identity depends only on kind and normalized name, and provenance is never model-supplied.
+HOMEBREW_COLLECTION = "homebrew"
+HOMEBREW_KINDS = {
+    "place": ("learn_place", "scene", "known"),
+    "person": ("encounter", "entity", "encountered"),
+    "clue": ("discover", "entity", "discovered"),
+    "threat": ("discover", "entity", "discovered"),
+}
+_HOMEBREW_SOURCE = hashlib.sha256(b"edgar:homebrew-source:v1").hexdigest()
+_HOMEBREW_MANIFEST = hashlib.sha256(b"edgar:homebrew-manifest:v1").hexdigest()
+
+
+def homebrew_name_key(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def homebrew_target(proposal_kind: str, name: str) -> StoryRef:
+    """Stable canonical identity of a homebrew improvisation, independent of its prose."""
+    digest = hashlib.sha256(homebrew_name_key(name).encode()).hexdigest()[:40]
+    return StoryRef(
+        collection=HOMEBREW_COLLECTION,
+        source_sha256=_HOMEBREW_SOURCE,
+        manifest_sha256=_HOMEBREW_MANIFEST,
+        kind=HOMEBREW_KINDS[proposal_kind][1],
+        canonical_id=f"{proposal_kind}_{digest}",
+    )
+
+
+def homebrew_reference(turn_id: str, target: StoryRef) -> dict:
+    """Engine-owned provenance for one homebrew fact; it is never a player-page citation."""
+    return {
+        "reference_id": hashlib.sha256(
+            f"edgar:homebrew:{turn_id}:{target.canonical_id}".encode()
+        ).hexdigest(),
+        "audience": "homebrew",
+        "provenance": "homebrew",
+        "collection": HOMEBREW_COLLECTION,
+        "source_sha256": _HOMEBREW_SOURCE,
+        "extraction_sha256": _HOMEBREW_SOURCE,
+        "manifest_sha256": _HOMEBREW_MANIFEST,
+    }
+
+
+def is_homebrew_effect(effect: StoryEffect) -> bool:
+    return effect.target.collection == HOMEBREW_COLLECTION
+
+
+def homebrew_name_taken(name: str, facts: list[StoryFact]) -> bool:
+    """A homebrew name may not reuse or overwrite any earned display name in this ledger."""
+    key = homebrew_name_key(name)
+    return any(fact.display_name and homebrew_name_key(fact.display_name) == key for fact in facts)
+
+
 def known_story_name(fact: AcceptedStoryEffect) -> str:
     """A prepared identity is not a learned name until it occurs in earned public text."""
     return (
         fact.display_name
         if fact.display_name and fact.display_name.casefold() in (fact.player_text or "").casefold()
         else ""
+    )
+
+
+def _public_origin(ref: dict, effect: AcceptedStoryEffect) -> bool:
+    if is_homebrew_effect(effect):
+        return (
+            ref.get("audience") == "homebrew"
+            and ref.get("provenance") == "homebrew"
+            and ref.get("collection") == HOMEBREW_COLLECTION
+            and ref.get("source_sha256") == effect.target.source_sha256
+            and ref.get("manifest_sha256") == effect.target.manifest_sha256
+            and all(
+                isinstance(ref.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", ref[key])
+                for key in ("reference_id", "source_sha256", "extraction_sha256")
+            )
+        )
+    return (
+        ref.get("audience") == "player"
+        and all(
+            isinstance(ref.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", ref[key])
+            for key in ("reference_id", "source_sha256", "extraction_sha256")
+        )
+        and ref.get("collection") == effect.target.collection
+        and ref.get("source_sha256") == effect.target.source_sha256
+        and ref.get("manifest_sha256") == effect.target.manifest_sha256
+        and type(ref.get("page")) is int
+        and ref["page"] > 0
     )
 
 
@@ -209,24 +291,17 @@ def player_story_effect(effect: AcceptedStoryEffect) -> dict | None:
                 "page",
                 "page_end",
                 "source_pages",
+                "provenance",
             )
             if key in ref
         }
         for ref in effect.source_refs
-        if ref.get("audience") == "player"
-        and all(
-            isinstance(ref.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", ref[key])
-            for key in ("reference_id", "source_sha256", "extraction_sha256")
-        )
-        and ref.get("collection") == effect.target.collection
-        and ref.get("source_sha256") == effect.target.source_sha256
-        and ref.get("manifest_sha256") == effect.target.manifest_sha256
-        and type(ref.get("page")) is int
-        and ref["page"] > 0
+        if _public_origin(ref, effect)
     ]
     if not origins:
         return None
     return {
+        "provenance": "homebrew" if is_homebrew_effect(effect) else "module",
         "effect_id": effect.effect_id,
         "kind": effect.kind,
         "status": (

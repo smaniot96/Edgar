@@ -153,6 +153,11 @@ def build_narrator_prompt(
         context_parts.append(
             f"Validated story consequences this turn (describe only these as new discoveries or accomplishments): {accepted}"
         )
+        if state.get("source_mode") == "homebrew" and accepted:
+            context_parts.append(
+                "Homebrew play: the validated consequences above are the only new named people, "
+                "places and clues this turn. Use their names exactly as given and invent nothing else new."
+            )
         context_parts.append(f"Engine outcome (final): {adjudication.mechanical_summary}")
         if adjudication.check and adjudication.dc is not None:
             verdict = "success" if adjudication.success else "failure"

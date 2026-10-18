@@ -35,6 +35,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "api" /
 ENGINE_ONLY_ADJUDICATION_FIELDS = {
     "story_effects",
     "accepted_story_effects",
+    "homebrew_proposals",
     "proposed_prepared_amendment",
     "accepted_prepared_amendment",
 }
