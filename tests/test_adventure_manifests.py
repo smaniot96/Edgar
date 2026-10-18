@@ -58,7 +58,7 @@ def source_bundle(tmp_path, monkeypatch):
     draft = compile_manifest(extraction, rules_edition="2014")
     assert all(p.audience == "unreviewed" for p in draft.passages)
     assert draft.opening_scene_id is None
-    chunks = embed.chunk_pages(extraction.text_pages(), source="branching")
+    chunks = embed.chunk_page_runs(extraction.text_pages(), source="branching")
     report = prepare_report(extraction, source_kind="pdf", chunks=chunks)
     save_extraction(extraction, adventure_dir / "branching", readiness=report)
     monkeypatch.setattr(store, "PDF_DIR", pdf_dir)

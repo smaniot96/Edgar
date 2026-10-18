@@ -3,12 +3,14 @@
 import json
 from contextlib import closing
 
+import pymupdf
 import pytest
 from qdrant_client import QdrantClient
 
 from db.vector.embeddings import VECTOR_SIZE
-from db.vector.versions import active_index_read
+from db.vector.versions import active_index_read, read_index_state
 from ingestion import embed
+from ingestion.artifacts import exclusions_digest, source_digest
 from ingestion.extract import ExtractedPage, Extraction, save_extraction
 from ingestion.readiness import (
     IngestionRejected,
@@ -261,3 +263,67 @@ def test_generated_retry_prunes_old_source_only_after_complete_success(tmp_path,
         assert len(current) == 1 and current[0].id not in old_ids
         assert "revised manuscript" in current[0].payload["text"]
         assert current[0].payload["source_pages"] == [1]
+
+
+def test_reviewed_exclusion_is_recorded_in_the_promoted_receipt(tmp_path, monkeypatch):
+    pdf = tmp_path / "book.pdf"
+    with pymupdf.open() as doc:
+        doc.new_page().insert_text((40, 60), "BOOK COVER")
+        doc.new_page().insert_text((40, 60), "Opening paragraph of the rules.")
+        doc.save(pdf)
+    excluded = [{"page": 1, "reason": "cover"}]
+    extraction = Extraction(
+        "book",
+        source_digest(pdf),
+        2,
+        [
+            ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": ["duplicate_word_layer"]}),
+            ExtractedPage(2, "Opening paragraph of the rules.", "native_geometry", {"errors": []}),
+        ],
+        excluded_pages=excluded,
+    )
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    with closing(QdrantClient(":memory:")) as client:
+        monkeypatch.setattr(embed, "get_qdrant_client", lambda: client)
+        monkeypatch.setattr(
+            embed,
+            "get_embeddings",
+            lambda texts: [[1.0] + [0.0] * (VECTOR_SIZE - 1) for _ in texts],
+        )
+        monkeypatch.setattr(client, "create_payload_index", lambda **_: None)
+        count = embed.run_pipeline(
+            pdf,
+            "book_rules",
+            reviewed_extraction=report,
+            save_markdown=False,
+            rules_edition="unspecified",
+        )
+        with active_index_read(client, "book_rules") as active_filter:
+            points = client.scroll("book_rules", scroll_filter=active_filter)[0]
+        assert count == len(points) == 1
+        assert {point.payload["page"] for point in points} == {2}
+        receipt = read_index_state(client, "book_rules")["sources"]["book"]["active"]
+        assert receipt["excluded_pages"] == excluded
+        assert receipt["exclusions_sha256"] == exclusions_digest(excluded)
+
+
+def test_same_pdf_without_the_reviewed_exclusion_stays_blocked(tmp_path, monkeypatch):
+    pdf = tmp_path / "book.pdf"
+    with pymupdf.open() as doc:
+        doc.new_page().insert_text((40, 60), "BOOK COVER")
+        doc.new_page().insert_text((40, 60), "Opening paragraph of the rules.")
+        doc.save(pdf)
+    extraction = Extraction(
+        "book",
+        source_digest(pdf),
+        2,
+        [
+            ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": ["duplicate_word_layer"]}),
+            ExtractedPage(2, "Opening paragraph of the rules.", "native_geometry", {"errors": []}),
+        ],
+    )
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    monkeypatch.setattr(embed, "get_qdrant_client", lambda: pytest.fail("vector client called"))
+    monkeypatch.setattr(embed, "get_embeddings", lambda *_: pytest.fail("provider called"))
+    with pytest.raises(ValueError, match="quality checks failed"):
+        embed.run_pipeline(pdf, "book_rules", reviewed_extraction=report, save_markdown=False)

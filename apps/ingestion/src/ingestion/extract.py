@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -15,12 +16,13 @@ import pymupdf
 import pymupdf4llm
 
 from edgar_core.sources import SourceEdition
-from ingestion.artifacts import source_digest, text_digest
+from ingestion.artifacts import ExcludedPage, exclusions_digest, source_digest, text_digest
 from ingestion.layout import native_lines, ocr_stat_header, render_native_page
-from ingestion.quality import check_text, diagnostic_message
+from ingestion.quality import check_text, diagnostic_message, has_section_heading, has_stat_record
 
 EXTRACTION_VERSION = 1
 SUMMARY_PAGE_LIMIT = 20
+EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index")
 
 
 @dataclass
@@ -44,18 +46,36 @@ class Extraction:
     page_count: int
     pages: list[ExtractedPage]
     rules_edition: SourceEdition = "unspecified"
+    excluded_pages: list[ExcludedPage] = field(default_factory=list)
+
+    def excluded_numbers(self) -> set[int]:
+        return {int(entry["page"]) for entry in self.excluded_pages}
 
     def text_pages(self) -> list[tuple[int, str]]:
-        return [(p.page, p.text) for p in self.pages]
+        """Pages eligible for chunking; reviewed exclusions are never chunked or cited."""
+        excluded = self.excluded_numbers()
+        return [(p.page, p.text) for p in self.pages if p.page not in excluded]
 
     def markdown(self) -> str:
-        return "\n\n".join(f"<!-- PDF page {p.page} -->\n\n{p.text}" for p in self.pages)
+        # Exclusions are part of the reviewed preview, so changing them changes its digest.
+        reasons = {int(entry["page"]): entry["reason"] for entry in self.excluded_pages}
+        blocks = []
+        for p in self.pages:
+            marker = f"<!-- PDF page {p.page} -->"
+            if p.page in reasons:
+                marker = f"<!-- PDF page {p.page} excluded: {reasons[p.page]} (not indexed) -->"
+            blocks.append(f"{marker}\n\n{p.text}")
+        return "\n\n".join(blocks)
 
     def text_sha256(self) -> str:
         return text_digest(self.markdown())
 
     def failing_pages(self) -> dict[int, list[str]]:
-        return {p.page: errors for p in self.pages if (errors := p.errors())}
+        # Excluded pages are reviewed as non-content; every other page is still checked.
+        excluded = self.excluded_numbers()
+        return {
+            p.page: errors for p in self.pages if p.page not in excluded and (errors := p.errors())
+        }
 
     def quality_summary(self) -> list[str]:
         """Bounded, text-free lines: failing pages with codes, then totals per code."""
@@ -69,6 +89,19 @@ class Extraction:
             lines.append(
                 f"... {len(failing) - SUMMARY_PAGE_LIMIT} more pages; see the extraction bundle."
             )
+        if self.excluded_pages:
+            listed = [f"page {e['page']} ({e['reason']})" for e in self.excluded_pages]
+            lines.append(
+                f"Excluded from indexing ({len(listed)}): "
+                + ", ".join(listed[:SUMMARY_PAGE_LIMIT])
+                + ("; more in the extraction bundle" if len(listed) > SUMMARY_PAGE_LIMIT else "")
+            )
+            for entry in self.excluded_pages:
+                excluded = next(p for p in self.pages if p.page == entry["page"])
+                if has_section_heading(excluded.text):
+                    lines.append(
+                        f"page {entry['page']}: excluded page has a section heading; confirm it is not rules text."
+                    )
         lines.append(
             "Totals: " + (", ".join(f"{c} x{n}" for c, n in sorted(totals.items())) or "none")
         )
@@ -82,6 +115,35 @@ class Extraction:
             raise ValueError(
                 f"Extraction quality checks failed: {errors}. Save and inspect the preview before indexing."
             )
+
+
+def validate_exclusions(
+    entries: Sequence[object], pages: list[ExtractedPage], page_count: int
+) -> list[ExcludedPage]:
+    """Reviewed non-content pages: known reasons, extracted pages, never a stat record."""
+    by_number = {p.page: p for p in pages}
+    seen: set[int] = set()
+    cleaned: list[ExcludedPage] = []
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"page", "reason"}
+            or type(entry["page"]) is not int
+        ):
+            raise ValueError("Each excluded page needs a physical page number and a reason.")
+        number: int = entry["page"]
+        reason = entry["reason"]
+        if reason not in EXCLUSION_REASONS:
+            raise ValueError(f"Exclusion reason must be one of: {', '.join(EXCLUSION_REASONS)}.")
+        if not 1 <= number <= page_count or number not in by_number:
+            raise ValueError(f"Excluded page {number} is not an extracted physical PDF page.")
+        if number in seen:
+            raise ValueError(f"Page {number} is excluded more than once.")
+        if has_stat_record(by_number[number].text):
+            raise ValueError(f"Page {number} contains a stat record and cannot be excluded.")
+        seen.add(number)
+        cleaned.append({"page": number, "reason": str(reason)})
+    return sorted(cleaned, key=lambda e: e["page"])
 
 
 def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Extraction:
@@ -198,6 +260,7 @@ def save_extraction(
             "extraction_version": EXTRACTION_VERSION,
             "parser_version": pymupdf4llm.__version__,
             "markdown_sha256": extraction.text_sha256(),
+            "exclusions_sha256": exclusions_digest(extraction.excluded_pages),
         }
     )
     if readiness is not None:
@@ -262,12 +325,16 @@ def load_reviewed_extraction(pdf_path: str | Path | None, report_path: str | Pat
                 }
             )
         )
+    excluded = validate_exclusions(data.get("excluded_pages", []), pages, data["page_count"])
+    if exclusions_digest(excluded) != data.get("exclusions_sha256", exclusions_digest([])):
+        raise ValueError("Excluded pages changed; extract and review the bundle again.")
     extraction = Extraction(
         data["source"],
         data["source_sha256"],
         data["page_count"],
         pages,
         rules_edition=data.get("rules_edition", "unspecified"),
+        excluded_pages=excluded,
     )
     if extraction.text_sha256() != data["markdown_sha256"]:
         raise ValueError("Selected text differs from the reviewed Markdown preview.")

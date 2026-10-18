@@ -51,6 +51,20 @@ def diagnostic_message(code: str) -> str:
     return _DIAGNOSTIC_MESSAGES.get(code, code.replace("_", " "))
 
 
+def has_stat_record(text: str) -> bool:
+    """A page with AC/HP fields or a size/type line is never eligible for exclusion."""
+    return bool(
+        _AC.search(text)
+        or _HP.search(text)
+        or any(SIZE_TYPE.match(line.strip("*_ ")) for line in text.splitlines())
+    )
+
+
+def has_section_heading(text: str) -> bool:
+    """Level-1 or level-2 headings may be rules sections; excluded pages are flagged for review."""
+    return bool(re.search(r"^#{1,2}\s", text, re.M))
+
+
 def letters(text: str) -> str:
     return re.sub(r"[^A-Z]", "", text.upper())
 

@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Literal, NotRequired, Protocol, TypedDict
 
 from edgar_core.sources import SourceEdition
+from ingestion.artifacts import ExcludedPage, exclusions_digest
 from ingestion.quality import diagnostic_message
 
 REPORT_VERSION = 1
@@ -47,6 +48,9 @@ class ExtractionForReadiness(Protocol):
     def rules_edition(self) -> SourceEdition: ...
 
     @property
+    def excluded_pages(self) -> list[ExcludedPage]: ...
+
+    @property
     def source_sha256(self) -> str: ...
 
     def text_pages(self) -> list[tuple[int, str]]: ...
@@ -71,6 +75,8 @@ class ReadinessChunk(TypedDict):
     source_sha256: NotRequired[str]
     extraction_sha256: NotRequired[str]
     rules_edition: NotRequired[SourceEdition]
+    excluded_pages: NotRequired[list[ExcludedPage]]
+    exclusions_sha256: NotRequired[str]
 
 
 class ReadinessPreview(TypedDict, total=False):
@@ -90,6 +96,8 @@ class ReadinessReport(TypedDict):
     page_count: int
     required_pages: list[int]
     covered_pages: list[int]
+    excluded_pages: NotRequired[list[ExcludedPage]]
+    exclusions_sha256: NotRequired[str]
     chunk_count: int
     quality_passed: bool
     warning_count: int
@@ -108,6 +116,8 @@ class ReadinessSummary(TypedDict):
     extraction_sha256: str
     page_count: int
     required_pages: list[int]
+    excluded_pages: NotRequired[list[ExcludedPage]]
+    exclusions_sha256: NotRequired[str]
     chunk_count: int
     quality_passed: bool
     issues: list[ReadinessIssue]
@@ -135,10 +145,12 @@ def prepare_report(
     """Describe the exact extraction and chunk coverage, including rejected output."""
     pages = extraction.text_pages()
     page_count = extraction.page_count
+    excluded = {int(entry["page"]) for entry in extraction.excluded_pages}
     issues: list[ReadinessIssue] = list(extra_issues or [])
     numbers = [n for n, _ in pages]
+    expected = [n for n in range(1, page_count + 1) if n not in excluded]
     if (
-        (source_kind in ("pdf", "generated") and numbers != list(range(1, page_count + 1)))
+        (source_kind in ("pdf", "generated") and numbers != expected)
         or len(set(numbers)) != len(numbers)
         or any(n < 1 for n in numbers)
     ):
@@ -150,6 +162,18 @@ def prepare_report(
         )
     required_pages = [n for n, text in pages if text.strip()]
     covered_pages = sorted({n for c in chunks for n in c.get("source_pages", [])})
+    for chunk in chunks:
+        # Citations may never point into an excluded page, even via a multi-page range.
+        cited = set(_cited_pages(chunk)) & excluded
+        if cited:
+            issues.append(
+                {
+                    "code": "excluded_page_cited",
+                    "page": min(cited),
+                    "message": "A chunk cites a page excluded from indexing. Re-review the exclusion list and chunking.",
+                }
+            )
+            break
     if not required_pages or not chunks:
         issues.append(
             {"code": "empty_extraction", "message": "No usable source text was extracted."}
@@ -162,6 +186,9 @@ def prepare_report(
             }
         )
     for detail in extraction.pages:
+        if detail.page in excluded:
+            # Reviewed as non-content; its diagnostics stay in the bundle, not as blockers.
+            continue
         for error in detail.errors():
             issues.append(
                 {
@@ -210,6 +237,10 @@ def prepare_report(
         "page_count": page_count,
         "required_pages": required_pages,
         "covered_pages": covered_pages,
+        "excluded_pages": [
+            ExcludedPage(page=e["page"], reason=e["reason"]) for e in extraction.excluded_pages
+        ],
+        "exclusions_sha256": exclusions_digest(extraction.excluded_pages),
         "chunk_count": len(chunks),
         "quality_passed": not issues,
         "warning_count": sum(len(p.warnings) for p in extraction.pages),
@@ -236,6 +267,11 @@ def report_summary(report: ReadinessReport) -> ReadinessSummary:
         "warning_count": report["warning_count"],
         "review_note": report["review_note"],
     }
+    # Reports persisted before reviewed exclusions existed carry no exclusion fields.
+    if "excluded_pages" in report:
+        summary["excluded_pages"] = report["excluded_pages"]
+    if "exclusions_sha256" in report:
+        summary["exclusions_sha256"] = report["exclusions_sha256"]
     if report.get("index_version"):
         summary["index_version"] = report["index_version"]
     return summary
@@ -252,8 +288,19 @@ def require_ready(report: ReadinessReport) -> None:
         )
 
 
+def _cited_pages(chunk: ReadinessChunk) -> list[int]:
+    """Every physical page a chunk's text or citation may draw from."""
+    first = chunk["page"]
+    last = chunk.get("page_end", first)
+    return sorted({*chunk.get("source_pages", []), *range(first, last + 1)})
+
+
 def stamp_chunks(chunks: Sequence[ReadinessChunk], report: ReadinessReport) -> None:
     for chunk in chunks:
         chunk["source_sha256"] = report["source_sha256"]
         chunk["extraction_sha256"] = report["extraction_sha256"]
         chunk["rules_edition"] = report["rules_edition"]
+        if report.get("excluded_pages"):
+            # Only reviewed exclusions change index identity; ordinary bundles keep theirs.
+            chunk["excluded_pages"] = report["excluded_pages"]
+            chunk["exclusions_sha256"] = report["exclusions_sha256"]

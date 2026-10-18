@@ -10,16 +10,19 @@ import pymupdf
 import pytest
 
 from ingestion import embed, extract
-from ingestion.chunk import chunk_pages
+from ingestion.artifacts import exclusions_digest, source_digest
+from ingestion.chunk import chunk_page_runs, chunk_pages
 from ingestion.extract import (
     ExtractedPage,
     Extraction,
     extract_document,
     load_reviewed_extraction,
     save_extraction,
+    validate_exclusions,
 )
 from ingestion.layout import Line, native_lines, render_native_page
 from ingestion.quality import check_text, require_separate_stat_chunks
+from ingestion.readiness import prepare_report, require_ready
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "extraction"
 
@@ -704,3 +707,200 @@ def test_clean_extract_cli_replaces_preview_and_writes_summary(tmp_path):
     assert (out / "sample.md").read_text(encoding="utf-8") != "previous good preview\n"
     assert "0 of 2 pages failed quality checks." in (out / "sample.summary.txt").read_text()
     assert not (out / "sample.failed.md").exists()
+
+
+# Reviewed exclusions: non-content pages leave the index while every other page keeps its gates.
+
+
+@pytest.fixture
+def two_page_pdf(tmp_path):
+    path = tmp_path / "book.pdf"
+    with pymupdf.open() as doc:
+        doc.new_page().insert_text((40, 60), "BOOK COVER")
+        doc.new_page().insert_text((40, 60), "Opening paragraph of the rules.")
+        doc.save(path)
+    return path
+
+
+def _book(pdf, *, cover_errors=(), body_errors=(), excluded=None):
+    pages = [
+        ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": list(cover_errors)}),
+        ExtractedPage(
+            2, "Opening paragraph of the rules.", "native_geometry", {"errors": list(body_errors)}
+        ),
+    ]
+    return Extraction("book", source_digest(pdf), 2, pages, excluded_pages=list(excluded or []))
+
+
+@pytest.mark.parametrize(
+    "entries,message",
+    [
+        ([{"page": 1, "reason": "novel"}], "reason must be one of"),
+        ([{"page": 9, "reason": "cover"}], "not an extracted physical PDF page"),
+        ([{"page": 0, "reason": "cover"}], "not an extracted physical PDF page"),
+        ([{"page": 1, "reason": "cover"}, {"page": 1, "reason": "art"}], "more than once"),
+        ([{"page": "1", "reason": "cover"}], "physical page number"),
+        ([{"page": True, "reason": "cover"}], "physical page number"),
+        ([{"page": 1, "reason": "cover", "note": "hidden"}], "physical page number"),
+        ([{"reason": "cover"}], "physical page number"),
+        ([{"page": 2, "reason": "credits"}], "contains a stat record"),
+    ],
+)
+def test_unreviewed_or_invalid_exclusions_are_rejected(two_page_pdf, entries, message):
+    pages = _book(two_page_pdf, body_errors=[]).pages
+    pages[1].text = "Goblin\nSmall humanoid, neutral evil\nArmor Class 15\nHit Points 7"
+    with pytest.raises(ValueError, match=message):
+        validate_exclusions(entries, pages, 2)
+
+
+def test_excluded_cover_passes_while_other_pages_still_gate(two_page_pdf):
+    excluded = validate_exclusions([{"page": 1, "reason": "cover"}], _book(two_page_pdf).pages, 2)
+    book = _book(two_page_pdf, cover_errors=["duplicate_word_layer"], excluded=excluded)
+    book.require_valid()
+    assert book.failing_pages() == {}
+    chunks = chunk_page_runs(book.text_pages(), "book")
+    assert [c["page"] for c in chunks] == [2]
+    result = prepare_report(book, source_kind="pdf", chunks=chunks)
+    require_ready(result)
+    assert result["required_pages"] == [2]
+    assert result["excluded_pages"] == [{"page": 1, "reason": "cover"}]
+    assert result["exclusions_sha256"] == exclusions_digest(excluded)
+
+
+def test_exclusions_never_hide_failures_on_non_excluded_pages(two_page_pdf):
+    excluded = [{"page": 1, "reason": "cover"}]
+    book = _book(
+        two_page_pdf,
+        cover_errors=["duplicate_word_layer"],
+        body_errors=["interleaved_stat_records"],
+        excluded=excluded,
+    )
+    assert book.failing_pages() == {2: ["interleaved_stat_records"]}
+    chunks = chunk_page_runs(book.text_pages(), "book")
+    result = prepare_report(book, source_kind="pdf", chunks=chunks)
+    assert not result["quality_passed"]
+    assert [(i["code"], i.get("page")) for i in result["issues"]] == [("extraction_quality", 2)]
+    with pytest.raises(ValueError, match="quality checks failed"):
+        book.require_valid()
+
+
+def test_excluded_pages_are_never_chunked_or_merged_across_their_gap():
+    pages = [
+        (1, "## Chapter One\n\nAlpha paragraph on the first page."),
+        (2, "Cover-only words that must not appear."),
+        (3, "Omega paragraph on the third page."),
+    ]
+    excluded = [{"page": 2, "reason": "cover"}]
+    extraction = Extraction(
+        "book",
+        "0" * 64,
+        3,
+        [ExtractedPage(n, t, "native_geometry", {"errors": []}) for n, t in pages],
+        excluded_pages=excluded,
+    )
+    chunks = chunk_page_runs(extraction.text_pages(), "book")
+    assert all("Cover-only" not in c["text"] for c in chunks)
+    assert not any(c["page"] <= 2 <= c["page_end"] for c in chunks)
+    assert not any("Alpha" in c["text"] and "Omega" in c["text"] for c in chunks)
+    assert [c["index"] for c in chunks] == list(range(len(chunks)))
+
+
+def test_readiness_rejects_any_chunk_citing_an_excluded_page():
+    chunks = [
+        {"page": 1, "page_end": 3, "source_pages": [1, 3], "text": "Alpha Omega", "section": "S"}
+    ]
+    extraction = Extraction(
+        "book",
+        "0" * 64,
+        3,
+        [ExtractedPage(n, f"text {n}", "native_geometry", {"errors": []}) for n in (1, 2, 3)],
+        excluded_pages=[{"page": 2, "reason": "art"}],
+    )
+    result = prepare_report(extraction, source_kind="pdf", chunks=chunks)
+    assert not result["quality_passed"]
+    assert "excluded_page_cited" in [i["code"] for i in result["issues"]]
+
+
+def test_exclusion_list_is_recorded_and_edits_require_a_new_review(two_page_pdf, tmp_path):
+    excluded = [{"page": 1, "reason": "cover"}]
+    with_exclusion = _book(two_page_pdf, cover_errors=["duplicate_word_layer"], excluded=excluded)
+    without = _book(two_page_pdf, cover_errors=["duplicate_word_layer"])
+    assert with_exclusion.text_sha256() != without.text_sha256()
+    assert exclusions_digest(excluded) != exclusions_digest([])
+
+    _markdown, report = save_extraction(with_exclusion, tmp_path / "preview")
+    assert "excluded: cover (not indexed)" in (tmp_path / "preview" / "book.md").read_text()
+    reviewed = load_reviewed_extraction(two_page_pdf, report)
+    assert reviewed.excluded_pages == excluded
+
+    data = json.loads(report.read_text())
+    data["excluded_pages"] = []
+    report.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="Excluded pages changed"):
+        load_reviewed_extraction(two_page_pdf, report)
+
+    data["exclusions_sha256"] = exclusions_digest([])
+    report.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="Markdown preview|Selected text differs"):
+        load_reviewed_extraction(two_page_pdf, report)
+
+
+def test_exclusion_cannot_be_added_to_a_reviewed_bundle_without_new_review(two_page_pdf, tmp_path):
+    _markdown, report = save_extraction(
+        _book(two_page_pdf, cover_errors=["duplicate_word_layer"]), tmp_path / "preview"
+    )
+    data = json.loads(report.read_text())
+    data["excluded_pages"] = [{"page": 1, "reason": "cover"}]
+    data["exclusions_sha256"] = exclusions_digest(data["excluded_pages"])
+    report.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="Markdown preview|Selected text differs"):
+        load_reviewed_extraction(two_page_pdf, report)
+
+
+_EXCLUDE_CLI_SCRIPT = """
+import sys
+import ingestion.main as cli
+from ingestion.extract import Extraction, ExtractedPage
+
+def fake_extract(path, pages=None):
+    return Extraction("sample", "0" * 64, 2, [
+        ExtractedPage(1, "PRIVATE page one text", "native_geometry", {"errors": []}),
+        ExtractedPage(2, "PRIVATE cover text", "native_geometry", {"errors": ["duplicate_word_layer"]}),
+    ])
+
+cli.extract_document = fake_extract
+sys.argv = ["ingest", sys.argv[1], "--extract-only", "--markdown-dir", sys.argv[2], "--exclude-pages", *sys.argv[3:]]
+cli.main()
+"""
+
+
+def _run_exclude_cli(tmp_path, *exclusions):
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    return out, subprocess.run(
+        [sys.executable, "-c", _EXCLUDE_CLI_SCRIPT, str(pdf), str(out), *exclusions],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_extract_cli_excludes_reviewed_cover_and_reports_it(tmp_path):
+    out, result = _run_exclude_cli(tmp_path, "2:cover")
+    assert result.returncode == 0
+    summary = (out / "sample.summary.txt").read_text()
+    assert "0 of 2 pages failed quality checks." in summary
+    assert "Excluded from indexing (1): page 2 (cover)" in summary
+    assert json.loads((out / "sample.extraction.json").read_text())["excluded_pages"] == [
+        {"page": 2, "reason": "cover"}
+    ]
+    assert "PRIVATE" not in result.stderr
+
+
+@pytest.mark.parametrize("exclusion", ["2:novel", "2", "9:cover", "2:cover:extra"])
+def test_extract_cli_refuses_unreviewed_exclusions_before_writing(tmp_path, exclusion):
+    out, result = _run_exclude_cli(tmp_path, exclusion)
+    assert result.returncode != 0
+    assert not (out / "sample.md").exists()
+    assert "PRIVATE" not in result.stderr

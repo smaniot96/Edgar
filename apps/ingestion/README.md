@@ -85,7 +85,7 @@ docker compose run --rm ingestion /data/my_dm_notes.pdf --campaign-id 1
 docker compose run --rm ingestion /data/player_handbook.pdf --extract-only --pages 73 258 --markdown-dir /output/markdown/phb-samples
 ```
 
-Options: `--collection` / `-c`, `--campaign-id`, `--chunk-size`, `--overlap`, `--extract-only`, `--markdown-dir`, `--no-save-markdown`, `--replace`, `--pages`, `--reviewed-extraction`.
+Options: `--collection` / `-c`, `--campaign-id`, `--chunk-size`, `--overlap`, `--extract-only`, `--markdown-dir`, `--no-save-markdown`, `--replace`, `--pages`, `--exclude-pages`, `--reviewed-extraction`.
 
 ## Re-ingesting after the heading-aware chunker change
 
@@ -145,6 +145,7 @@ activate an index or publish metadata/manuscript files after a newer accepted at
 No live index is replaced by extraction-only inspection.
 
 For sampled offline QA, `--extract-only --pages 73 258` selects physical one-based pages.
+Reviewed non-content pages (cover, credits, art, form, index) can be left out of a rulebook with `--extract-only --exclude-pages 2:cover 3:credits`. Excluded pages are never chunked or cited, are listed in the bundle and summary, and any change to the list is a new bundle that must be reviewed again. A page with a stat record cannot be excluded.
 Sample bundles are inspectable but cannot be used for full indexing. See
 [EXTRACTION_QA.md](EXTRACTION_QA.md) for the five real-page checks and transcription limits.
 

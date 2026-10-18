@@ -133,6 +133,27 @@ def chunk_pages(
     return chunks
 
 
+def chunk_page_runs(
+    pages: list[tuple[int, str]], source: str, chunk_size: int = 1000, overlap: int = 100
+) -> list[ChunkDict]:
+    """Chunk each run of consecutive physical pages separately, so no chunk spans a gap.
+
+    A gap in the reviewed pages marks excluded non-content pages; their text and numbers must
+    never be merged into a chunk or cited through its page range.
+    """
+    runs: list[list[tuple[int, str]]] = []
+    for item in pages:
+        if runs and item[0] == runs[-1][-1][0] + 1:
+            runs[-1].append(item)
+        else:
+            runs.append([item])
+    chunks: list[ChunkDict] = []
+    for run in runs:
+        for chunk in chunk_pages(run, source, chunk_size=chunk_size, overlap=overlap):
+            chunks.append({**chunk, "index": len(chunks)})
+    return chunks
+
+
 # --- parsing ---------------------------------------------------------------------------------
 
 
