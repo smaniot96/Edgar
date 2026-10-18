@@ -365,3 +365,23 @@ it("loads the destination campaign progress when setup route IDs change in place
   expect(container.textContent).not.toContain("A saved playthrough request is retained");
   expect(api.createSession).not.toHaveBeenCalled();
 });
+
+it("ticks only the setup steps actually reached and un-ticks the hero step after going back", async () => {
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  const steps = () => [...container.querySelectorAll('ol[aria-label="First playthrough setup progress"] li')]
+    .map((item) => item.textContent?.slice(0, 1));
+  expect(steps()).toEqual(["0", "0", "0"]);
+
+  await act(async () => {
+    [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Mara Venn"))!.click();
+  });
+  await settle();
+  expect(steps()).toEqual(["✓", "0", "0"]);
+
+  await act(async () => {
+    [...container.querySelectorAll("button")].find((button) => button.textContent === "Back to heroes")!.click();
+  });
+  await settle();
+  expect(steps()).toEqual(["0", "0", "0"]);
+});

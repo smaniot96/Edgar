@@ -26,6 +26,17 @@ const OUTCOME_STYLE: Record<string, string> = {
   fled: "bg-ember-950/50 text-ember-200 border-ember-800",
 };
 
+/** Plain-language source labels for the Source references disclosure (no raw enum values). */
+const EDITION_STATUS_LABEL: Record<string, string> = {
+  compatible: "matches the selected rules edition",
+  incompatible: "different rules edition",
+  unverified: "edition not verified",
+};
+
+function sourceEditionLabel(rulesEdition: string): string {
+  return rulesEdition === "unspecified" ? "edition not stated" : `${rulesEdition} edition`;
+}
+
 const THINKING_LABEL: Record<string, string> = {
   parsing: "The DM is considering your action…",
   retrieving: "The DM is consulting the tomes…",
@@ -101,9 +112,9 @@ const DmRow = memo(function DmRow({
           <Narration text={line.content} />
           {line.citations?.length ? <details className="mt-2 font-sans text-xs text-ink-muted">
             <summary>Source references</summary>
-            <p>References supplied for this turn; ruling evidence was explicitly selected by the adjudicator.</p>
+            <p>Sources used for this turn. Those marked as used for the ruling were chosen by the adjudicator.</p>
             <ul className="mt-1 space-y-1">{line.citations.map((ref) => <li key={ref.reference_id}>
-              {ref.source} · edition {ref.rules_edition} · pages {ref.source_pages.join(", ") || "unknown"} · {ref.edition_status}{line.ruling_citation_ids?.includes(ref.reference_id) ? " · ruling evidence" : ""}
+              {ref.source} · {sourceEditionLabel(ref.rules_edition)} · {ref.source_pages.length ? `pages ${ref.source_pages.join(", ")}` : "page numbers not recorded"} · {EDITION_STATUS_LABEL[ref.edition_status] ?? "edition status unknown"}{line.ruling_citation_ids?.includes(ref.reference_id) ? " · used for the ruling" : ""}
               <details><summary>Version</summary><p className="break-all">Source: {ref.source_sha256 ?? "unknown"}<br />Extraction: {ref.extraction_sha256 ?? "unknown"}</p></details>
             </li>)}</ul>
           </details> : null}

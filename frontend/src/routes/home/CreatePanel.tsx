@@ -194,7 +194,7 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
             <option value="unspecified">Unspecified</option><option value="2014">2014</option><option value="2024">2024</option>
           </select>}
         </Field>
-        <Field label="Adventure PDF" required className="flex-1">
+        <Field label="Adventure PDF" required className="flex-1" hint={file ? `Selected: ${file.name}` : "No file selected"}>
           {(p) => (
             <Input
               {...p}

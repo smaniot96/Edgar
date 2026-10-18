@@ -110,3 +110,27 @@ it("offers paid retry only after a definitive retryable failure", async () => {
     await act(()=>root.unmount()); container.remove(); vi.unstubAllGlobals();
   }
 });
+
+it("labels source references in plain language instead of enum values", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(() => root.render(
+      <MessageList
+        messages={[{
+          id: "turn-3", role: "dm", eventId: 3, content: "The gate opens.",
+          citations: [{ reference_id: "r1", source: "Lost Mine", rules_edition: "unspecified", source_pages: [], source_sha256: null, extraction_sha256: null, edition_status: "unverified" }],
+          ruling_citation_ids: ["r1"],
+        }]}
+        pending={null}
+      />,
+    ));
+    expect(container.textContent).toContain("Lost Mine · edition not stated · page numbers not recorded · edition not verified · used for the ruling");
+    expect(container.textContent).not.toContain("edition unspecified");
+    expect(container.textContent).not.toContain("ruling evidence was explicitly selected");
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+  }
+});

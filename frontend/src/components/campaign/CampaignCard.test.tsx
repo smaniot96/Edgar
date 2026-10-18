@@ -98,7 +98,7 @@ it("keeps a blocked campaign open for saved history and explains the safe next s
   const onPlay = vi.fn();
   await act(() => root.render(<CampaignCard card={card} onPlay={onPlay} onDelete={vi.fn()} opening={false} deleting={false} />));
   expect(container.textContent).toContain("Needs attention");
-  expect(container.textContent).toContain("Ask the campaign host to review and publish the adventure.");
+  expect(container.textContent).toContain("Review and publish the adventure before starting or continuing play.");
   const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("View campaign"))!;
   expect(open.disabled).toBe(false);
   await act(() => open.click());
@@ -119,7 +119,7 @@ it.each([false, true])("never advertises index-only standalone modules as playab
   await act(() => blocked.click());
   expect(onPlay).not.toHaveBeenCalled();
   if (hasProjection) {
-    expect(container.textContent).toContain("Ask the campaign host to review and publish the adventure.");
+    expect(container.textContent).toContain("Review and publish the adventure before starting or continuing play.");
   } else {
     expect(container.textContent).toContain("Campaign readiness could not be checked.");
     await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Check again")!.click());
@@ -144,4 +144,82 @@ it("renders the public cover from a nested UI route and preserves the action aft
   expect(onPlay).toHaveBeenCalledOnce();
   window.history.replaceState({}, "", "/");
   vi.unstubAllEnvs();
+});
+
+function countOf(text: string, needle: string) {
+  return text.split(needle).length - 1;
+}
+
+it("states a failed job's message once on the card, not as both a note and a failure block", async () => {
+  const message = "This adventure has no verified source record, so its review draft cannot be prepared. Start a new campaign with the current preparation pipeline, then remove this one.";
+  const adventure: AdventureRead = {
+    slug: "salt_gate", title: "The Salt Gate", description: null, level_range: null, cover_image: null, status: "failed",
+    job: {
+      version: 1, job_id: "d".repeat(32), kind: "ingestion", state: "failed",
+      stage: "extracting", completed_chapters: 0, total_chapters: null,
+      checkpoint_available: false, retryable: false, retained_work: "source_pdf",
+      action_label: null, explanation: null, source_version: null,
+      failure: { code: "adventure_source_unverified", category: "source", message, recovery_action: "repair_source", retryable: false, support_ref: "ref-1", outcome: "not_committed" },
+    },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  expect(countOf(container.textContent ?? "", message)).toBe(1);
+});
+
+it("states a readiness blocker once when the card's recovery note would repeat it", async () => {
+  const adventure: AdventureRead = { slug: "velmoor", title: "Velmoor", description: null, level_range: null, cover_image: null, status: "ready" };
+  const campaign: CampaignRead = {
+    id: 8, title: "Velmoor", system: "5e", created_by: 1, created_at: "2026-10-14",
+    adventure_collections: ["velmoor"], source_mode: "module", status: "active", ended_at: null,
+    retrieval_degraded: true, play_allowed: false, sources: [],
+    readiness: { play_allowed: false, history_allowed: true, state: "source_missing", primary_action: "recover_source", blockers: [{ code: "source_missing", message: "The bound source is missing.", action: "recover_source" }] },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  expect(countOf(container.textContent ?? "", "The bound source is missing.")).toBe(1);
+  expect(container.textContent).toContain("Restore the bound adventure source before playing.");
+});
+
+it("uses wording that does not assume a separate campaign host in local single-user mode", async () => {
+  const adventure: AdventureRead = { slug: "velmoor", title: "Velmoor", description: null, level_range: null, cover_image: null, status: "ready" };
+  const campaign: CampaignRead = {
+    id: 8, title: "Velmoor", system: "5e", created_by: 1, created_at: "2026-10-14",
+    adventure_collections: ["velmoor"], source_mode: "module", status: "active", ended_at: null,
+    retrieval_degraded: true, play_allowed: false, sources: [],
+    readiness: { play_allowed: false, history_allowed: true, state: "source_missing", primary_action: "recover_source", blockers: [{ code: "source_missing", message: "The bound source is missing.", action: "recover_source" }] },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  expect(container.textContent).not.toContain("campaign host");
+  expect(container.textContent).not.toContain("Ask the");
+});
+
+it("shows Homebrew instead of Ready when a homebrew campaign has no adventure source", async () => {
+  const adventure: AdventureRead = { slug: "chalice", title: "Chalice Of The Mountain God", description: null, level_range: null, cover_image: null, status: "missing" };
+  const campaign: CampaignRead = {
+    id: 9, title: "Chalice Of The Mountain God", system: "5e", created_by: 1, created_at: "2026-10-14",
+    adventure_collections: ["chalice"], source_mode: "homebrew", status: "active", ended_at: null,
+    retrieval_degraded: false, play_allowed: true, sources: [],
+    readiness: { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  const pills = [...container.querySelectorAll("span")].map((span) => span.textContent);
+  expect(pills).toContain("Homebrew");
+  expect(pills).not.toContain("Ready");
+});
+
+it("titles a failed generation without its in-progress placeholder and shows no slug-derived subtitle", async () => {
+  const failed: AdventureRead = { slug: "ai-campaign-20261018", title: "AI campaign (generating…)", description: null, level_range: null, cover_image: null, status: "failed" };
+  await act(() => root.render(<CampaignCard card={buildCards([failed], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  expect(container.querySelector("h3")?.textContent).toBe("AI campaign");
+  expect(container.textContent).not.toContain("generating");
+
+  const module: AdventureRead = { slug: "d_d_5e_lost_mine", title: "D D 5E Lost Mine", description: null, level_range: null, cover_image: null, status: "ready" };
+  const campaign: CampaignRead = {
+    id: 10, title: "Lost Mine of Phandelver", system: "5e", created_by: 1, created_at: "2026-10-14",
+    adventure_collections: ["d_d_5e_lost_mine"], source_mode: "module", status: "active", ended_at: null,
+    retrieval_degraded: false, play_allowed: true, sources: [],
+    readiness: { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([module], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  expect(container.querySelector("h3")?.textContent).toBe("Lost Mine of Phandelver");
+  expect(container.textContent).not.toContain("D D 5E");
 });
