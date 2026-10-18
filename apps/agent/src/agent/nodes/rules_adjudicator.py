@@ -64,6 +64,7 @@ from agent.supported_rules import (
 from db.vector.retrieval import rule_policy
 from edgar_core.log_safety import error_summary
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
+from edgar_core.story import player_story_effect
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,40 @@ def _rules_context(state: AgentState) -> list:
     return eligible_context(
         [c for c in rules_context if rule_policy(c) == "core"],
         state.get("rules_edition", "2014"),
+    )
+
+
+_HOMEBREW_INSTRUCTIONS = (
+    "Homebrew play (no adventure module). You may return homebrew_proposals, at most 3 per turn, "
+    "for NEW places (kind place), named people (kind person), clues (kind clue) or threats (kind "
+    "threat) consistent with the committed facts listed here. A place or person name must appear "
+    "verbatim in its text; the text is the exact player-visible description. Never reuse, rename "
+    "or contradict a committed name or fact. Never include dice, DCs, AC, HP, XP or other numbers, "
+    "and never GM-only notes or secrets. Propose nothing after a failed check or for plain "
+    "conversation and movement with nothing new to find. After a successful Insight, "
+    "Investigation or Perception check, or when the player asks what they notice, propose at "
+    "least one concrete clue or named detail that answers it."
+)
+
+
+def _homebrew_block(state: AgentState) -> str:
+    facts = []
+    for fact in committed_facts(state):
+        public = player_story_effect(fact)
+        if public is not None:
+            facts.append(
+                {
+                    "kind": public["kind"],
+                    "name": public["name"],
+                    "text": public["text"],
+                    "status": public["status"],
+                }
+            )
+    return (
+        "Committed session story facts (already earned; do not contradict or reuse their names): "
+        + json.dumps(facts)
+        + "\n"
+        + _HOMEBREW_INSTRUCTIONS
     )
 
 
@@ -155,6 +190,9 @@ def build_adjudicator_prompt(
             "Eligible canonical story candidates (definitions, not earned facts): "
             + json.dumps(story_candidates(state))
         )
+
+    if state.get("source_mode") == "homebrew" and state.get("manifest_status") == "homebrew":
+        parts.append(_homebrew_block(state))
 
     rules_context = _rules_context(state)
     if rules_context:
@@ -367,6 +405,9 @@ async def adjudicate(
         result = _neutral(check_result, state)
     # These fields are engine-owned even if a provider returns undeclared output fields.
     result.accepted_prepared_amendment = None
+    if in_combat:
+        # Homebrew improvisation never mutates a live combat (EDG-169).
+        result.homebrew_proposals = []
 
     # Declared unsupported mechanics: drop claimed conditions/damage/flags and state the ruling.
     # Runs before the engine's own roll line is stamped on, so engine dice are never stripped.

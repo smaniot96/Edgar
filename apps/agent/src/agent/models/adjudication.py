@@ -19,6 +19,8 @@ consumable actually in inventory).
 Keep field names stable: changing them silently breaks the LLM's structured output schema.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
@@ -70,6 +72,14 @@ class RestRecord(BaseModel):
     hit_dice_recovered: int | None = None  # long rest only: Hit Dice regained
 
 
+class HomebrewProposal(BaseModel):
+    """EDG-169: a homebrew-only improvised fact. The engine validates it before any commit."""
+
+    kind: Literal["place", "person", "clue", "threat"]
+    name: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=600)
+
+
 class FlagUpdate(BaseModel):
     key: str  # snake_case, stable across turns (e.g. "door_unlocked_atrium")
     value: str  # stringified; world_flags.value is varchar
@@ -90,6 +100,17 @@ class AdjudicationResult(BaseModel):
 
     story_effects: list[StoryEffect] = Field(default_factory=list)
     accepted_story_effects: SkipJsonSchema[list[AcceptedStoryEffect]] = Field(default_factory=list)
+    # Homebrew only (EDG-169): model-proposed improvised places, people, clues and threats. The
+    # validator turns accepted ones into homebrew story effects and clears this list.
+    # exclude=True keeps it out of every serialized ruling, frame and golden snapshot.
+    homebrew_proposals: list[HomebrewProposal] = Field(
+        default_factory=list,
+        exclude=True,
+        description=(
+            "Homebrew play only, otherwise empty: new places, named people, clues or threats "
+            "consistent with the committed session facts. Never numbers, dice or secrets."
+        ),
+    )
 
     # A bounded private proposal for a plausible action the prepared backbone did not cover.
     # The API accepts it only after engine validation against the session's exact source,
@@ -119,6 +140,7 @@ class AdjudicationResult(BaseModel):
     @field_validator(
         "story_effects",
         "accepted_story_effects",
+        "homebrew_proposals",
         "flags_set",
         "flags_cleared",
         "conditions",

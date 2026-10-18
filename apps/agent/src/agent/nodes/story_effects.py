@@ -15,6 +15,7 @@ from edgar_core.artifacts import text_digest
 from edgar_core.manifests import require_published, select_scene_context
 from edgar_core.sources import eligible_context, source_citation
 from edgar_core.story import (
+    HOMEBREW_KINDS,
     AcceptedStoryEffect,
     ClockDisclosure,
     StoryEffect,
@@ -22,6 +23,9 @@ from edgar_core.story import (
     StoryRef,
     StoryState,
     accept_story_effect,
+    homebrew_name_key,
+    homebrew_reference,
+    homebrew_target,
     player_promise_ref,
     story_target_id,
 )
@@ -317,6 +321,8 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     The object hook is supplied by the object consequence module; absent it fails closed.
     """
     adj.accepted_story_effects = []
+    if state.get("manifest_status") == "homebrew":
+        return _accept_homebrew(adj, state)
     if state.get("manifest_status") != "reviewed" or not state.get("turn_id"):
         return adj
     candidates = {
@@ -553,6 +559,77 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     # Newly learned knowledge belongs to the session ledger, never campaign WorldFlags.
     adj.flags_set = [flag for flag in adj.flags_set if flag.key not in discovery_flags]
     adj.flags_cleared = [flag for flag in adj.flags_cleared if flag not in discovery_flags]
+    return adj
+
+
+# EDG-169: homebrew proposals are judged only by engine-owned rules here, never by prose alone.
+_HOMEBREW_PER_TURN = 3
+_HOMEBREW_PROPOSAL_LIMIT = 6
+_HOMEBREW_NUMBER = re.compile(r"\b\d*d\d+\b|\b(?:DC|AC|HP|XP|CR)\b|(?<!\w)[+-]\d", re.IGNORECASE)
+_HOMEBREW_PRIVATE = re.compile(
+    r"\b(?:gm|dm)\s+(?:only|note|secret)s?\b|\bspoiler\b|[\[(]\s*(?:gm|dm|secret|private)\b",
+    re.IGNORECASE,
+)
+_HOMEBREW_MARKUP = re.compile(r"[<>\x00-\x08\x0b-\x1f]")
+
+
+def _homebrew_sealed(proposal, turn_id: str, taken: set[str]):
+    """Seal one homebrew proposal into an accepted effect, or return None when it fails."""
+    name = " ".join(proposal.name.split())
+    text = proposal.text.strip()
+    joined = f"{name} {text}"
+    if not name or not text or _HOMEBREW_MARKUP.search(joined):
+        return None
+    if _HOMEBREW_NUMBER.search(joined) or _HOMEBREW_PRIVATE.search(joined):
+        return None
+    # The display name becomes earned only when it is quoted in the player-visible text.
+    if homebrew_name_key(name) not in homebrew_name_key(text) or homebrew_name_key(name) in taken:
+        return None
+    effect_kind, _, status = HOMEBREW_KINDS[proposal.kind]
+    target = homebrew_target(proposal.kind, name)
+    ref = homebrew_reference(turn_id, target)
+    effect = StoryEffect(
+        kind=effect_kind,
+        target=target,
+        status=status,
+        source_reference_ids=[ref["reference_id"]],
+        player_text=text,
+    )
+    return accept_story_effect(
+        effect,
+        turn_id=turn_id,
+        source_refs=[ref],
+        display_name=name,
+    )
+
+
+def _accept_homebrew(adj: AdjudicationResult, state: AgentState) -> AdjudicationResult:
+    """Accept homebrew improvisations only in homebrew play, after a successful outcome.
+
+    A failed check reveals nothing. Module play never reaches this path, so reviewed
+    manifests, retrieval and their invented-fact prohibitions stay unchanged.
+    """
+    proposals = list(adj.homebrew_proposals[:_HOMEBREW_PROPOSAL_LIMIT])
+    adj.homebrew_proposals = []
+    if state.get("source_mode") != "homebrew" or not state.get("turn_id") or not adj.success:
+        return adj
+    facts = committed_facts(state)
+    taken = {homebrew_name_key(f.display_name) for f in facts if f.display_name}
+    character = state.get("character") or {}
+    if character.get("name"):
+        taken.add(homebrew_name_key(str(character["name"])))
+    seen = {f.effect_id for f in facts}
+    accepted: list[AcceptedStoryEffect] = []
+    for proposal in proposals:
+        if len(accepted) >= _HOMEBREW_PER_TURN:
+            break
+        sealed = _homebrew_sealed(proposal, state["turn_id"], taken)
+        if sealed is None or sealed.effect_id in seen:
+            continue
+        seen.add(sealed.effect_id)
+        taken.add(homebrew_name_key(sealed.display_name))
+        accepted.append(sealed)
+    adj.accepted_story_effects = accepted
     return adj
 
 
