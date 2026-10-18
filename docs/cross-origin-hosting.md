@@ -39,7 +39,7 @@ When `EDGAR_ALLOWED_ORIGINS` is set, the policy is:
 - Exact-origin echo. The response carries `Access-Control-Allow-Origin` equal to the request origin, and
   only for origins on the list. `Vary: Origin` is always sent when the policy is active.
 - Methods: `GET`, `POST`, `DELETE`. These are the methods the bundled client uses.
-- Request headers: `Authorization`, `Content-Type`, `Accept`, `X-Request-ID`.
+- Request headers: `Authorization`, `Content-Type`, `Accept`, `X-Request-ID`, `Last-Event-ID` (EDG-047: resumes a session event stream; see `docs/session-broadcast.md`).
 - Exposed response header: `X-Request-ID`. The bundled client reads it. `Retry-After` is not exposed
   because the bundled client does not read it.
 - Preflight cache: 600 seconds, a fixed constant.

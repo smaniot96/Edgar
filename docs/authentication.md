@@ -67,7 +67,9 @@ There is no HTTP self-service signup, password flow or token-management endpoint
 
 ## Player sign-in in the bundled UI (EDG-160)
 
-In token mode the bundled UI sends `Authorization: Bearer <token>` on every API call: JSON requests,
+In token mode the bundled UI sends `Authorization: Bearer <token>` on every API call, including the live session
+channel (`GET /api/sessions/{id}/events`, read with `fetch` streaming so the token never appears in a URL;
+EDG-047, see `docs/session-broadcast.md`): JSON requests,
 the turn stream, uploads, and the images and downloads (session map, artwork, player handouts, cover
 images, journal export, extracted Markdown). A plain link or image cannot send that header, so those
 resources are fetched by the client and shown or saved from a local object URL.

@@ -9,6 +9,7 @@ response never reveals which condition applied.
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
+from redis.asyncio import Redis
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -34,7 +35,7 @@ from ..auth import (
     member_session,
     owned_campaign,
 )
-from ..dependencies import current_user_id, get_session
+from ..dependencies import current_user_id, get_redis, get_session
 from ..schemas.party import (
     InviteAccept,
     InviteAccepted,
@@ -47,6 +48,7 @@ from ..schemas.party import (
     SessionParticipantRead,
 )
 from ..services.character_assignments import load_active_assignment
+from ..services.session_broadcast import notify_access_changed
 
 router = APIRouter(tags=["campaign-membership"])
 
@@ -332,6 +334,14 @@ async def _drop_seats(db, campaign_id: int, user_id: int) -> None:
     )
 
 
+async def _announce_access(db, redis: Redis, campaign_id: int) -> None:
+    """After a membership or seat change commits, wake every open subscriber of the campaign's sessions."""
+    session_ids = (
+        await db.execute(select(SessionModel.id).where(SessionModel.campaign_id == campaign_id))
+    ).scalars().all()
+    await notify_access_changed(redis, list(session_ids))
+
+
 async def _member_read(db, membership: CampaignMembership) -> MemberRead:
     user = await db.get(User, membership.user_id)
     seats = (
@@ -383,6 +393,7 @@ async def change_member_role(
     body: MemberUpdate,
     auth: Auth,
     db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
 ):
     """Owner changes a member between player and spectator.
 
@@ -398,8 +409,10 @@ async def change_member_role(
         membership.role = body.role
         if body.role != PLAYER_ROLE:
             await _drop_seats(db, campaign.id, user_id)
+        campaign_pk = campaign.id
         await db.commit()
         await db.refresh(membership)
+        await _announce_access(db, redis, campaign_pk)
     return await _member_read(db, membership)
 
 
@@ -409,6 +422,7 @@ async def remove_member(
     user_id: int,
     auth: Auth,
     db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
 ):
     """Owner removes a player or spectator. Their seats are freed; their characters are kept."""
     campaign = await owned_campaign(db, campaign_id, auth)
@@ -417,9 +431,11 @@ async def remove_member(
     membership = await _membership_or_404(db, campaign.id, user_id)
     if membership.role == OWNER_ROLE:
         raise HTTPException(status_code=409, detail="Owner memberships cannot be removed here.")
-    await _drop_seats(db, campaign.id, user_id)
+    campaign_pk = campaign.id
+    await _drop_seats(db, campaign_pk, user_id)
     await db.delete(membership)
     await db.commit()
+    await _announce_access(db, redis, campaign_pk)
 
 
 @router.post("/campaigns/{campaign_id}/leave", status_code=204)
@@ -427,6 +443,7 @@ async def leave_campaign(
     campaign_id: int,
     auth: Auth,
     db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
 ):
     """A member leaves on their own. Frees their seats; their characters are kept."""
     campaign = await member_campaign(db, campaign_id, auth)
@@ -438,6 +455,8 @@ async def leave_campaign(
     membership = await _membership_or_404(db, campaign.id, auth.user_id)
     if membership.role == OWNER_ROLE:
         raise HTTPException(status_code=409, detail="Owner memberships cannot leave here.")
-    await _drop_seats(db, campaign.id, auth.user_id)
+    campaign_pk = campaign.id
+    await _drop_seats(db, campaign_pk, auth.user_id)
     await db.delete(membership)
     await db.commit()
+    await _announce_access(db, redis, campaign_pk)
