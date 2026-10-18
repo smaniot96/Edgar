@@ -60,3 +60,26 @@ class SessionParticipantRead(BaseModel):
     character_name: str
     role: Literal["player"]
     joined_at: datetime
+
+
+MemberRole = Literal["player", "spectator"]
+
+
+class MemberSeat(BaseModel):
+    session_id: int
+    character_id: int
+    character_name: str
+
+
+class MemberRead(BaseModel):
+    user_id: int
+    display_name: str | None
+    role: Literal["owner", "player", "spectator"]
+    joined_at: datetime
+    seats: list[MemberSeat]
+
+
+class MemberUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: MemberRole

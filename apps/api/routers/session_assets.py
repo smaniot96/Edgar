@@ -16,7 +16,7 @@ from edgar_core.assets import PlayerMapProjection, project_player_map, render_pl
 from edgar_core.manifests import AdventureManifest
 from edgar_core.story import StoryFact
 
-from ..auth import Auth, owned_session
+from ..auth import Auth, member_session
 from ..dependencies import get_session
 from ..services import adventure_assets
 from ..services.adventure_manifests import campaign_manifests
@@ -30,7 +30,8 @@ router = APIRouter(tags=["session-assets"])
 
 
 async def _session_map_context(session_id: int, db: AsyncSession, auth: Auth) -> dict[str, Any]:
-    session = await owned_session(db, session_id, auth)
+    # Player projection only (EDG-046): the map, map.svg and assets are built from the journal projection.
+    session = await member_session(db, session_id, auth)
     campaign = await get_or_404(db, Campaign, session.campaign_id, "Campaign")
     state = await load_story_state(db, session_id, session.campaign_id)
     facts = [StoryFact.model_validate(raw) for raw in state.get("facts", [])]

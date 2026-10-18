@@ -48,6 +48,13 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _public_body(response) -> dict:
+    """An error body without its per-request support reference, for equality checks."""
+    body = dict(response.json())
+    body.pop("support_ref", None)
+    return body
+
+
 async def _user(db: AsyncSession, email: str) -> User:
     user = User(email=email, display_name=email.split("@")[0])
     db.add(user)
@@ -510,3 +517,295 @@ async def test_adjudicated_writes_land_on_the_acting_pc_only(db_session, table):
     ).scalar_one()
     assert alice_row.hp_current == 20
     assert bob_row.hp_current == 15
+
+
+# Member lifecycle (EDG-046): removal, role change, leaving, and re-admission.
+
+
+async def _join(client: AsyncClient, table, who: str, *, role="player", character=None, session=True):
+    invite = await _invite(client, table, role=role, session=session)
+    response = await _accept(client, who, table, invite["token"], character)
+    assert response.status_code == 200, response.text
+    return invite
+
+
+async def _members(client: AsyncClient, table):
+    response = await client.get(
+        f"/api/campaigns/{table['campaign'].id}/members", headers=_auth(table["tokens"]["alice"])
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def _assert_no_access(client: AsyncClient, table, who: str):
+    token = _auth(table["tokens"][who])
+    cid, sid = table["campaign"].id, table["save"].id
+    assert (await client.get(f"/api/campaigns/{cid}", headers=token)).status_code == 404
+    assert (await client.get(f"/api/sessions/{sid}", headers=token)).status_code == 404
+    assert (await client.get(f"/api/sessions/{sid}/messages", headers=token)).status_code == 404
+    assert (await client.get(f"/api/sessions/{sid}/journal", headers=token)).status_code == 404
+    assert (await client.get(f"/api/sessions/{sid}/map", headers=token)).status_code == 404
+    assert (await client.get(f"/api/sessions/{sid}/participants", headers=token)).status_code == 404
+    assert (await client.post(f"/api/sessions/{sid}/intro", headers=token)).status_code == 404
+    assert (await client.get("/api/campaigns", headers=token)).json() == []
+
+
+@pytest.mark.asyncio
+async def test_owner_removes_a_player_who_loses_reads_turns_and_seat(api_client, table, db_session):
+    await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    alice = _auth(table["tokens"]["alice"])
+    removed = await api_client.delete(
+        f"/api/campaigns/{table['campaign'].id}/members/{table['bob'].id}", headers=alice
+    )
+    assert removed.status_code == 204
+    await _assert_no_access(api_client, table, "bob")
+    assert (await db_session.execute(select(SessionParticipant))).first() is None
+    assert (await db_session.execute(select(CampaignMembership))).first() is None
+    # The character is never deleted, and the owner keeps playing the table.
+    assert await db_session.get(Character, table["bob_pc"].id) is not None
+    assert (await api_client.get(f"/api/sessions/{table['save'].id}", headers=alice)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_owner_removes_a_spectator(api_client, table):
+    await _join(api_client, table, "carol", role="spectator", session=False)
+    removed = await api_client.delete(
+        f"/api/campaigns/{table['campaign'].id}/members/{table['carol'].id}",
+        headers=_auth(table["tokens"]["alice"]),
+    )
+    assert removed.status_code == 204
+    await _assert_no_access(api_client, table, "carol")
+
+
+@pytest.mark.asyncio
+async def test_demoting_a_player_to_spectator_frees_the_seat(api_client, table, db_session):
+    await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    cid, bob = table["campaign"].id, table["bob"].id
+    patched = await api_client.patch(
+        f"/api/campaigns/{cid}/members/{bob}",
+        json={"role": "spectator"},
+        headers=_auth(table["tokens"]["alice"]),
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["role"] == "spectator" and patched.json()["seats"] == []
+    assert (await db_session.execute(select(SessionParticipant))).first() is None
+    bob_token = _auth(table["tokens"]["bob"])
+    # Still a member for reads, but a spectator cannot take the spotlight.
+    assert (await api_client.get(f"/api/sessions/{table['save'].id}", headers=bob_token)).status_code == 200
+    assert (
+        await api_client.post(f"/api/sessions/{table['save'].id}/intro", headers=bob_token)
+    ).status_code == 403
+    promoted = await api_client.patch(
+        f"/api/campaigns/{cid}/members/{bob}",
+        json={"role": "player"},
+        headers=_auth(table["tokens"]["alice"]),
+    )
+    assert promoted.status_code == 200 and promoted.json()["role"] == "player"
+
+
+@pytest.mark.asyncio
+async def test_owner_cannot_be_removed_or_demoted(api_client, table):
+    cid, alice_id = table["campaign"].id, table["alice"].id
+    owner = _auth(table["tokens"]["alice"])
+    assert (
+        await api_client.delete(f"/api/campaigns/{cid}/members/{alice_id}", headers=owner)
+    ).status_code == 409
+    assert (
+        await api_client.patch(
+            f"/api/campaigns/{cid}/members/{alice_id}", json={"role": "spectator"}, headers=owner
+        )
+    ).status_code == 409
+    # The owner still has full access after both refusals.
+    assert (await api_client.get(f"/api/campaigns/{cid}", headers=owner)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_only_the_owner_manages_membership(api_client, table):
+    await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    await _join(api_client, table, "carol", role="spectator", session=False)
+    cid = table["campaign"].id
+    bob = _auth(table["tokens"]["bob"])
+    assert (
+        await api_client.delete(f"/api/campaigns/{cid}/members/{table['carol'].id}", headers=bob)
+    ).status_code == 404
+    assert (
+        await api_client.patch(
+            f"/api/campaigns/{cid}/members/{table['carol'].id}", json={"role": "player"}, headers=bob
+        )
+    ).status_code == 404
+    assert (await api_client.get(f"/api/campaigns/{cid}/members", headers=bob)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_player_leaves_and_frees_only_their_seat(api_client, table, db_session):
+    await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    left = await api_client.post(
+        f"/api/campaigns/{table['campaign'].id}/leave", headers=_auth(table["tokens"]["bob"])
+    )
+    assert left.status_code == 204
+    await _assert_no_access(api_client, table, "bob")
+    assert (await db_session.execute(select(SessionParticipant))).first() is None
+    assert await db_session.get(Character, table["bob_pc"].id) is not None
+
+
+@pytest.mark.asyncio
+async def test_owner_cannot_leave_their_campaign(api_client, table):
+    response = await api_client.post(
+        f"/api/campaigns/{table['campaign'].id}/leave", headers=_auth(table["tokens"]["alice"])
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_removed_member_needs_a_new_invite_and_the_old_token_stays_consumed(api_client, table):
+    cid = table["campaign"].id
+    old = await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    old_token = old and (await _accept_again_token(api_client, table, "bob"))
+    await api_client.delete(
+        f"/api/campaigns/{cid}/members/{table['bob'].id}", headers=_auth(table["tokens"]["alice"])
+    )
+    # The consumed token cannot be replayed to get back in.
+    replay = await _accept(api_client, "bob", table, old_token, table["bob_pc"].id)
+    assert replay.status_code == 404
+    fresh = await _invite(api_client, table)
+    back = await _accept(api_client, "bob", table, fresh["token"], table["bob_pc"].id)
+    assert back.status_code == 200
+    assert back.json()["character_id"] == table["bob_pc"].id
+
+
+async def _accept_again_token(client: AsyncClient, table, who: str) -> str:
+    """Helper for the replay test: the first token is never kept in plaintext by the API, so
+    the test mints its own invite and accepts it, then returns that token."""
+    invite = await _invite(client, table, session=False)
+    assert (await _accept(client, who, table, invite["token"])).status_code == 200
+    return invite["token"]
+
+
+@pytest.mark.asyncio
+async def test_members_list_shows_roles_and_seats_without_emails(api_client, table):
+    await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    rows = await _members(api_client, table)
+    bob_row = next(r for r in rows if r["user_id"] == table["bob"].id)
+    assert bob_row["role"] == "player"
+    assert bob_row["seats"] == [
+        {"session_id": table["save"].id, "character_id": table["bob_pc"].id, "character_name": "Bran"}
+    ]
+    assert all("email" not in r for r in rows)
+
+
+# Concurrency: two simultaneous accepts of one invite (EDG-046).
+
+
+@pytest.mark.asyncio
+async def test_concurrent_accepts_of_one_invite_admit_exactly_one(api_client, table, db_session):
+    import asyncio
+
+    import db.postgres.session as sm
+    from apps.api.dependencies import get_session
+    from apps.api.main import app
+
+    carol_pc = await _character(db_session, table["carol"], "Cora", table["campaign"])
+    invite = await _invite(api_client, table)
+
+    # api_client routes every request through one shared session. The race is only meaningful
+    # with independent connections, so give each request its own session for this test.
+    async def independent_session():
+        async with sm.async_session_factory() as session:
+            yield session
+
+    previous = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = independent_session
+    try:
+        first, second = await asyncio.gather(
+            _accept(api_client, "bob", table, invite["token"], table["bob_pc"].id),
+            _accept(api_client, "carol", table, invite["token"], carol_pc.id),
+        )
+    finally:
+        app.dependency_overrides[get_session] = previous
+    statuses = sorted([first.status_code, second.status_code])
+    assert statuses == [200, 404], (first.text, second.text)
+    loser = first if first.status_code == 404 else second
+    assert loser.json()["detail"] == "Invite not found or no longer valid."
+    seats = (await db_session.execute(select(SessionParticipant))).scalars().all()
+    members = (await db_session.execute(select(CampaignMembership))).scalars().all()
+    assert len(seats) == 1 and len(members) == 1
+    assert seats[0].user_id == members[0].user_id
+
+
+# Item 3: player-projection routes are readable by members; secret-bearing routes stay owner-only.
+
+
+@pytest.mark.asyncio
+async def test_members_read_the_player_journal_and_map(api_client, table):
+    await _join(api_client, table, "carol", role="spectator", session=False)
+    token = _auth(table["tokens"]["carol"])
+    sid = table["save"].id
+    assert (await api_client.get(f"/api/sessions/{sid}/journal", headers=token)).status_code == 200
+    assert (await api_client.get(f"/api/sessions/{sid}/journal/export", headers=token)).status_code == 200
+    # An unknown entry id is the same 404 the owner gets; it is not a session-access refusal.
+    entry = await api_client.get(f"/api/sessions/{sid}/journal/no-such-entry", headers=token)
+    owner_entry = await api_client.get(
+        f"/api/sessions/{sid}/journal/no-such-entry", headers=_auth(table["tokens"]["alice"])
+    )
+    assert entry.status_code == owner_entry.status_code == 404
+    assert _public_body(entry) == _public_body(owner_entry)
+    assert (await api_client.get(f"/api/sessions/{sid}/map", headers=token)).status_code == 200
+    svg = await api_client.get(f"/api/sessions/{sid}/map.svg", headers=token)
+    owner_svg = await api_client.get(f"/api/sessions/{sid}/map.svg", headers=_auth(table["tokens"]["alice"]))
+    assert svg.status_code == owner_svg.status_code
+    asset = await api_client.get(f"/api/sessions/{sid}/assets/no-such-asset", headers=token)
+    owner_asset = await api_client.get(
+        f"/api/sessions/{sid}/assets/no-such-asset", headers=_auth(table["tokens"]["alice"])
+    )
+    assert asset.status_code == owner_asset.status_code == 404
+    assert _public_body(asset) == _public_body(owner_asset)
+
+
+@pytest.mark.asyncio
+async def test_non_members_get_session_not_found_on_projection_routes(api_client, table):
+    dan = _auth(table["tokens"]["dan"])
+    sid = table["save"].id
+    for path in (
+        "/api/sessions/{sid}/journal",
+        "/api/sessions/{sid}/journal/export",
+        "/api/sessions/{sid}/journal/any",
+        "/api/sessions/{sid}/map",
+        "/api/sessions/{sid}/map.svg",
+        "/api/sessions/{sid}/assets/any",
+    ):
+        response = await api_client.get(path.format(sid=sid), headers=dan)
+        missing = await api_client.get(path.format(sid=999999), headers=dan)
+        # A non-member gets exactly what a nonexistent session gets: no existence leak.
+        assert response.status_code == missing.status_code == 404, path
+        assert _public_body(response) == _public_body(missing), path
+
+
+@pytest.mark.asyncio
+async def test_secret_bearing_and_owner_only_routes_stay_owner_only(api_client, table):
+    await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    await _join(api_client, table, "carol", role="spectator", session=False)
+    cid = table["campaign"].id
+    for who in ("bob", "carol"):
+        token = _auth(table["tokens"][who])
+        for path in (
+            f"/api/campaigns/{cid}/npcs",
+            f"/api/campaigns/{cid}/world-flags",
+            f"/api/campaigns/{cid}/characters",
+            f"/api/characters/{table['alice_pc'].id}",
+            f"/api/campaigns/{cid}/invites",
+        ):
+            assert (await api_client.get(path, headers=token)).status_code == 404, (who, path)
+        # Mutations are owner-only too.
+        assert (
+            await api_client.post(
+                f"/api/campaigns/{cid}/world-flags",
+                json={"key": "x", "value": "y"},
+                headers=token,
+            )
+        ).status_code == 404
+        # Session diagnostics are admin-only: a member is refused by the admin gate.
+        assert (
+            await api_client.get(
+                f"/api/sessions/{table['save'].id}/diagnostics/turns", headers=token
+            )
+        ).status_code == 403

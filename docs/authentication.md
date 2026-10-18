@@ -155,9 +155,41 @@ Session roster: `session_participants` holds one seat per user and one per chara
 spotlight character followed by the seated characters, in seat order. The narrator and intro add a
 party line only when there is more than one character, so a single-PC session is unchanged.
 
-Not in M1: removing or demoting a member, a player leaving a seat, spectator presence or broadcast
-(EDG-047), spotlight arbitration beyond the single-holder rule (EDG-048), multi-PC combat (EDG-049)
-and lobby UI (EDG-050).
+Member lifecycle (owner unless noted):
+
+- `GET /api/campaigns/{id}/members`: roster with roles, seats and display names (never emails).
+- `PATCH /api/campaigns/{id}/members/{user_id}` with `{"role": "player" | "spectator"}`. Demoting to
+  spectator frees that member's seats.
+- `DELETE /api/campaigns/{id}/members/{user_id}`: removes a player or spectator and frees their seats.
+- `POST /api/campaigns/{id}/leave` (any member): leaves on their own, with the same effect.
+
+The owner cannot be removed, demoted or leave (409). Owner memberships are not changed here. Seats
+are the only thing freed. Characters are never deleted, and no assignment changes. Removal takes effect
+on the next request, because every `member_*` helper and `turn_session` reads the membership and seat
+rows. A removed member gets 404 on every read and 404 on turns (they are no longer a member). A seated
+player who loses their seat while holding the spotlight blocks turns until the owner moves the
+spotlight with `PATCH /api/sessions/{id}`. An accepted invite stays consumed, so re-admission needs a
+newly issued invite. Outstanding unused invites stay valid until the owner revokes them.
+
+Read projection (EDG-046 item 3): these routes moved from `owned_session` to `member_session`, because
+each returns the same allowlisted player projection the owner's UI shows:
+
+- `GET /api/sessions/{id}/journal`, `.../journal/export`, `.../journal/{entry_id}`: the player journal
+  (`project_player_journal` / `filter_player_journal`).
+- `GET /api/sessions/{id}/map`, `.../map.svg`, `.../assets/{asset_id}`: built from the journal
+  projection through `_session_map_context`.
+- `GET /api/sessions/{id}/messages` and `GET /api/sessions/{id}/combat`, moved to members earlier in
+  this ticket. Messages carry narration, public citations and the stored roll, as the player sees it.
+
+These routes stay owner-only, because they can reveal data a player must not see:
+
+- NPCs (`/campaigns/{id}/npcs`, `/npcs/{id}`). `NPCRead` includes the raw `stat_block` even in the
+  session view, which is DM data. Making them member-readable needs a player-only response model first.
+- World flags, campaign characters and character sheets, invites, and session diagnostics (admin).
+- Every mutation.
+
+Not in M1: spectator presence or broadcast (EDG-047), spotlight arbitration beyond the single-holder
+rule (EDG-048), multi-PC combat (EDG-049) and lobby UI (EDG-050).
 
 ## Protected-route matrix
 

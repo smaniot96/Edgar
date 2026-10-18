@@ -9,7 +9,7 @@ response never reveals which condition applied.
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,10 +25,12 @@ from db.postgres.models import (
 )
 
 from ..auth import (
+    OWNER_ROLE,
     PLAYER_ROLE,
     Auth,
     generate_invite_token,
     hash_token,
+    member_campaign,
     member_session,
     owned_campaign,
 )
@@ -39,6 +41,9 @@ from ..schemas.party import (
     InviteCreate,
     InviteCreated,
     InviteRead,
+    MemberRead,
+    MemberSeat,
+    MemberUpdate,
     SessionParticipantRead,
 )
 from ..services.character_assignments import load_active_assignment
@@ -294,3 +299,145 @@ async def list_session_participants(
         )
         for seat, character_name, display_name in rows
     ]
+
+
+# Member lifecycle (EDG-046). Removal is immediate: every member_* helper and turn_session reads the
+# membership and seat rows on each request, so there is no cache to invalidate. A removed member's
+# seats are deleted (their characters are never touched). Outstanding invites are left for the owner
+# to revoke; an accepted invite stays consumed, so re-admission needs a newly issued invite.
+
+
+async def _membership_or_404(db, campaign_id: int, user_id: int) -> CampaignMembership:
+    row = (
+        await db.execute(
+            select(CampaignMembership).where(
+                CampaignMembership.campaign_id == campaign_id,
+                CampaignMembership.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return row
+
+
+async def _drop_seats(db, campaign_id: int, user_id: int) -> None:
+    """Free every seat the user holds in this campaign's sessions. Characters are not deleted."""
+    campaign_sessions = select(SessionModel.id).where(SessionModel.campaign_id == campaign_id)
+    await db.execute(
+        delete(SessionParticipant).where(
+            SessionParticipant.user_id == user_id,
+            SessionParticipant.session_id.in_(campaign_sessions),
+        )
+    )
+
+
+async def _member_read(db, membership: CampaignMembership) -> MemberRead:
+    user = await db.get(User, membership.user_id)
+    seats = (
+        await db.execute(
+            select(SessionParticipant.session_id, SessionParticipant.character_id, Character.name)
+            .join(Character, Character.id == SessionParticipant.character_id)
+            .join(SessionModel, SessionModel.id == SessionParticipant.session_id)
+            .where(
+                SessionModel.campaign_id == membership.campaign_id,
+                SessionParticipant.user_id == membership.user_id,
+            )
+            .order_by(SessionParticipant.id)
+        )
+    ).all()
+    return MemberRead(
+        user_id=membership.user_id,
+        display_name=user.display_name if user is not None else None,
+        role=membership.role,
+        joined_at=membership.joined_at,
+        seats=[
+            MemberSeat(session_id=sid, character_id=cid, character_name=name)
+            for sid, cid, name in seats
+        ],
+    )
+
+
+@router.get("/campaigns/{campaign_id}/members", response_model=list[MemberRead])
+async def list_members(
+    campaign_id: int,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+):
+    """Owner view of the roster: roles and seats. Display names only, never emails."""
+    campaign = await owned_campaign(db, campaign_id, auth)
+    rows = (
+        await db.execute(
+            select(CampaignMembership)
+            .where(CampaignMembership.campaign_id == campaign.id)
+            .order_by(CampaignMembership.id)
+        )
+    ).scalars()
+    return [await _member_read(db, row) for row in rows]
+
+
+@router.patch("/campaigns/{campaign_id}/members/{user_id}", response_model=MemberRead)
+async def change_member_role(
+    campaign_id: int,
+    user_id: int,
+    body: MemberUpdate,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+):
+    """Owner changes a member between player and spectator.
+
+    Demoting to spectator frees the member's seats, because only players can be seated.
+    """
+    campaign = await owned_campaign(db, campaign_id, auth)
+    if user_id == campaign.created_by:
+        raise HTTPException(status_code=409, detail="The campaign owner's role cannot be changed.")
+    membership = await _membership_or_404(db, campaign.id, user_id)
+    if membership.role == OWNER_ROLE:
+        raise HTTPException(status_code=409, detail="Owner memberships cannot be changed here.")
+    if membership.role != body.role:
+        membership.role = body.role
+        if body.role != PLAYER_ROLE:
+            await _drop_seats(db, campaign.id, user_id)
+        await db.commit()
+        await db.refresh(membership)
+    return await _member_read(db, membership)
+
+
+@router.delete("/campaigns/{campaign_id}/members/{user_id}", status_code=204)
+async def remove_member(
+    campaign_id: int,
+    user_id: int,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+):
+    """Owner removes a player or spectator. Their seats are freed; their characters are kept."""
+    campaign = await owned_campaign(db, campaign_id, auth)
+    if user_id == campaign.created_by:
+        raise HTTPException(status_code=409, detail="The campaign owner cannot be removed.")
+    membership = await _membership_or_404(db, campaign.id, user_id)
+    if membership.role == OWNER_ROLE:
+        raise HTTPException(status_code=409, detail="Owner memberships cannot be removed here.")
+    await _drop_seats(db, campaign.id, user_id)
+    await db.delete(membership)
+    await db.commit()
+
+
+@router.post("/campaigns/{campaign_id}/leave", status_code=204)
+async def leave_campaign(
+    campaign_id: int,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+):
+    """A member leaves on their own. Frees their seats; their characters are kept."""
+    campaign = await member_campaign(db, campaign_id, auth)
+    if auth is None or campaign.created_by == auth.user_id:
+        raise HTTPException(
+            status_code=409,
+            detail="The campaign owner cannot leave. Delete or end the campaign instead.",
+        )
+    membership = await _membership_or_404(db, campaign.id, auth.user_id)
+    if membership.role == OWNER_ROLE:
+        raise HTTPException(status_code=409, detail="Owner memberships cannot leave here.")
+    await _drop_seats(db, campaign.id, auth.user_id)
+    await db.delete(membership)
+    await db.commit()
