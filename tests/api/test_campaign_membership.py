@@ -809,3 +809,27 @@ async def test_secret_bearing_and_owner_only_routes_stay_owner_only(api_client, 
                 f"/api/sessions/{table['save'].id}/diagnostics/turns", headers=token
             )
         ).status_code == 403
+
+
+# The solo spoiler-safe review (EDG-176) applies only to a campaign nobody else has joined.
+
+
+@pytest.mark.asyncio
+async def test_solo_review_applies_only_until_someone_joins(table, db_session):
+    from apps.api.services.campaign_membership import is_solo_campaign, other_member_count
+
+    campaign = table["campaign"]
+    assert await other_member_count(db_session, campaign) == 0
+    assert await is_solo_campaign(db_session, campaign)
+
+    membership = CampaignMembership(
+        campaign_id=campaign.id, user_id=table["bob"].id, role="spectator"
+    )
+    db_session.add(membership)
+    await db_session.commit()
+    assert await other_member_count(db_session, campaign) == 1
+    assert not await is_solo_campaign(db_session, campaign)
+
+    await db_session.delete(membership)
+    await db_session.commit()
+    assert await is_solo_campaign(db_session, campaign)
