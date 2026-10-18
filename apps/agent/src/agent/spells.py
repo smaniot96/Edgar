@@ -53,7 +53,6 @@ from agent.resolution import (
     character_class,
     proficiency_bonus,
     resolve_attack,
-    resolve_check,
 )
 from tools.dice import roll
 
@@ -451,8 +450,9 @@ def resolve_spell(
 ) -> SpellResult:
     """Roll and resolve a planned cast. `target_ac` set means a combat target; None means no foe.
 
-    Outside combat no foe is tracked, so an attack uses the medium DC tier that outside-combat
-    attacks use and a save target has no modifier. Dice are rolled for the record either way.
+    A spell attack is never rolled against a DC: with no target AC nothing is rolled. Outside
+    combat no foe is tracked, so the adjudicator refuses the cast before a slot is spent.
+    A save target has no modifier. Dice are rolled for the record either way.
     """
     spec = plan.spell
     level = _level(character)
@@ -461,9 +461,9 @@ def resolve_spell(
 
     if spec.kind == "attack":
         if target_ac is None:
-            check = resolve_check(character, "spell_attack", rng=rng)
-        else:
-            check = resolve_attack(character, target_ac, spell=True, rng=rng, roll_mode=roll_mode)
+            # No foe is tracked: nothing is rolled and no condition is applied.
+            return result
+        check = resolve_attack(character, target_ac, spell=True, rng=rng, roll_mode=roll_mode)
         result.attack = check
         result.dice_log.extend(check.dice_log)
         if check.success:

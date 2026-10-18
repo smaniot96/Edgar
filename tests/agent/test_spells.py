@@ -36,6 +36,7 @@ FIRE_BOLT = next(s for s in CATALOG if s.name == "Fire Bolt")
 MAGIC_MISSILE = next(s for s in CATALOG if s.name == "Magic Missile")
 SACRED_FLAME = next(s for s in CATALOG if s.name == "Sacred Flame")
 CURE_WOUNDS = next(s for s in CATALOG if s.name == "Cure Wounds")
+GUIDING_BOLT = next(s for s in CATALOG if s.name == "Guiding Bolt")
 
 
 class ScriptedDice(random.Random):
@@ -544,6 +545,36 @@ async def test_out_of_combat_refusal_has_no_effect(fake_llm_schema) -> None:
     assert adj.success is False and "has no access to it" in adj.mechanical_summary
     assert adj.character_update is None and adj.dice_log == []
     assert not any(schema is AdjudicationResult for schema, _ in fake_llm_schema.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I cast Guiding Bolt at the goblin",
+        "If anything hostile appears, I cast Guiding Bolt at it",
+    ],
+)
+async def test_out_of_combat_attack_spell_without_a_target_spends_no_slot_and_rolls_nothing(
+    fake_llm_schema, message
+) -> None:
+    # EDG-171: no foe is established, so the attack is refused before any die or slot. An empty
+    # script fails the test on any roll, including a spell attack rolled against a DC.
+    state = _rules_state(CLERIC, message, ParsedInput(intent="exploration"))
+    with use_rng(ScriptedDice([])):
+        out = await rules_adjudicator_node(state)
+    adj = out["adjudication_result"]
+    assert adj.success is False
+    assert "Guiding Bolt is not cast: no target is established" in adj.mechanical_summary
+    assert adj.character_update is None and adj.dice_log == []
+    assert not any(schema is AdjudicationResult for schema, _ in fake_llm_schema.calls)
+
+
+def test_resolve_spell_never_rolls_a_spell_attack_without_a_target_ac() -> None:
+    plan, refusal = plan_cast(CLERIC, GUIDING_BOLT, requested_slot=1)
+    assert refusal is None and plan is not None
+    result = resolve_spell(CLERIC, plan, rng=ScriptedDice([]))
+    assert result.attack is None and result.damage == 0 and result.dice_log == []
 
 
 def test_long_rest_restores_slots_and_no_model_proposal_sets_them() -> None:
