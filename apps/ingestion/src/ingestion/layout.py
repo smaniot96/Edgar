@@ -57,12 +57,13 @@ def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
 def columns(lines: list[Line], width: float) -> list[list[Line]]:
     """Infer a two-column gutter from line edges, otherwise retain a single column.
 
-    Require substantial vertical overlap and a clear gutter. Wide/spanning lines make the
-    layout ambiguous and are rejected by the caller rather than silently interleaved.
+    Require substantial vertical overlap and a clear gutter. Spanning lines below the column
+    tops are segmented into full-width zones and two-column regions; a zone that cannot be read
+    unambiguously fails closed with its bounding box rather than silently interleaving.
     """
     if not lines:
         return [[]]
-    best = None
+    candidates = []
     for fraction in (0.45, 0.475, 0.5, 0.525, 0.55):
         split = width * fraction
         left = [line for line in lines if line.bbox[2] <= split + 2]
@@ -77,9 +78,9 @@ def columns(lines: list[Line], width: float) -> list[list[Line]]:
             continue
         gutter = min(item.bbox[0] for item in right) - max(item.bbox[2] for item in left)
         score = (len(crossing), -gutter)
-        if gutter >= 5 and (best is None or score < best[0]):
-            best = score, left, right, crossing
-    if best is None:
+        if gutter >= 5:
+            candidates.append((score, left, right, crossing))
+    if not candidates:
         leftish = [item for item in lines if (item.bbox[0] + item.bbox[2]) / 2 < width * 0.45]
         rightish = [item for item in lines if (item.bbox[0] + item.bbox[2]) / 2 > width * 0.55]
         if len(leftish) >= 6 and len(rightish) >= 6:
@@ -89,12 +90,93 @@ def columns(lines: list[Line], width: float) -> list[list[Line]]:
             if overlap > 40:
                 raise ValueError("ambiguous_column_gutter")
         return [lines]
-    _, left, right, crossing = best
+    candidates.sort(key=lambda candidate: candidate[0])
+    _, left, right, crossing = candidates[0]
     # Titles spanning the page are safe only above both columns.
     top = min(item.bbox[1] for item in left + right)
-    if crossing and any(item.bbox[3] > top + 3 for item in crossing):
-        raise ValueError("ambiguous_spanning_column_text")
-    return ([crossing] if crossing else []) + [left, right]
+    if not any(item.bbox[3] > top + 3 for item in crossing):
+        return ([crossing] if crossing else []) + [left, right]
+    # A gutter that cuts through a table or prose can still leave a clean reading under another
+    # candidate split; take the first one that reads without ambiguity, else keep the first error.
+    errors = []
+    for _, left, right, crossing in candidates:
+        try:
+            return _segment(lines, left, right, crossing)
+        except ValueError as exc:
+            errors.append(exc)
+    raise errors[0]
+
+
+def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: list[Line]):
+    """Read spanning lines below the column tops as full-width zones, not as an interleave.
+
+    Vertical runs of lines (gaps of at most 5 pt) holding a spanning line form a zone. A zone is
+    read top to bottom as one block when it is a single row, spanning-only, or a table (see
+    _full_width_zone). Other runs are two-column regions read left then right. A zone that fits
+    none of these fails closed with its bounding box.
+    Symbol-only spanning glyphs, such as a decorative bullet, carry no text and are omitted.
+    """
+    spanning = {id(item) for item in crossing if any(c.isalnum() for c in item.text)}
+    symbols = {id(item) for item in crossing} - spanning
+    left_ids = {id(item) for item in left}
+    runs: list[list[Line]] = []
+    bottom = 0.0
+    for item in sorted((i for i in lines if id(i) not in symbols), key=lambda i: i.bbox[1]):
+        if not runs or item.bbox[1] - bottom > 5:
+            runs.append([])
+        runs[-1].append(item)
+        bottom = max(bottom, item.bbox[3])
+
+    def region_columns(region: list[Line]) -> list[list[Line]]:
+        return [
+            [item for item in region if id(item) in left_ids],
+            [item for item in region if id(item) not in left_ids],
+        ]
+
+    ordered: list[list[Line]] = []
+    region: list[Line] = []
+    for run in runs:
+        if not any(id(item) in spanning for item in run):
+            region.extend(run)
+            continue
+        ordered += region_columns(region)
+        region = []
+        if not _full_width_zone(run, spanning):
+            box = (
+                min(i.bbox[0] for i in run),
+                min(i.bbox[1] for i in run),
+                max(i.bbox[2] for i in run),
+                max(i.bbox[3] for i in run),
+            )
+            raise ValueError(
+                "ambiguous_spanning_column_text band=({:.1f},{:.1f},{:.1f},{:.1f})".format(*box)
+            )
+        ordered.append(run)
+    ordered += region_columns(region)
+    return [column for column in ordered if column]
+
+
+def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
+    """Accept a zone only when reading it row by row cannot mix two column streams.
+
+    A zone is safe when every line spans (a title, label or full-width intro), sits on one
+    baseline, or is a table: at least three rows carry a spanning cell, three quarters of those
+    rows hold three or more cells, and they make up at least a third of the rows. Prose columns
+    cut by a gutter that is too narrow give mostly two-cell rows, so they do not qualify.
+    """
+    rows: list[list[Line]] = []
+    for item in sorted(run, key=lambda i: i.bbox[3]):
+        if rows and abs(rows[-1][0].bbox[3] - item.bbox[3]) <= 2.5:
+            rows[-1].append(item)
+        else:
+            rows.append([item])
+    if len(rows) == 1 or all(id(item) in spanning for item in run):
+        return True
+    span_rows = [row for row in rows if any(id(item) in spanning for item in row)]
+    cells = sum(len(row) >= 3 for row in span_rows)
+    return (
+        len(span_rows) >= 3 and 3 * len(span_rows) >= len(rows) and 4 * cells >= 3 * len(span_rows)
+    )
 
 
 def merge_rows(lines: list[Line]) -> list[Line]:
