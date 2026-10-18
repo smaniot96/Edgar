@@ -1,7 +1,7 @@
 """Explicit progression and death modes (EDG-045) and per-campaign character level.
 
-Revision ID: 18_progression_death_modes
-Revises: 17_api_tokens
+Revision ID: 19_progression_death_modes
+Revises: 18_campaign_membership_invites
 Create Date: 2026-10-18
 
 Campaign settings (both defaulted to the behaviour every existing campaign already has):
@@ -21,8 +21,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "18_progression_death_modes"
-down_revision: str | Sequence[str] | None = "17_api_tokens"
+revision: str = "19_progression_death_modes"
+down_revision: str | Sequence[str] | None = "18_campaign_membership_invites"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
