@@ -1,5 +1,6 @@
 import { useRef } from "react";
 
+import type { CastableSpell } from "../../api/types";
 import { cn } from "../../lib/cn";
 import { abilityModifier, formatModifier, type SheetCharacter } from "./gameState";
 import { HpBar } from "../ui/HpBar";
@@ -13,6 +14,20 @@ function SectionTitle({ children }: { children: string }) {
       {children}
     </h3>
   );
+}
+
+const ORDINALS = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th"];
+
+/** Plain-language cost: a cantrip needs no slot; a leveled spell names the slot it spends. */
+function spellCost(spell: CastableSpell): string {
+  const cost = spell.level === 0 ? "Cantrip" : `${ORDINALS[spell.level - 1] ?? spell.level}-level slot`;
+  return spell.action === "bonus_action" ? `${cost} · bonus action` : cost;
+}
+
+/** "sleight_of_hand" to "Sleight of hand". */
+function skillLabel(skill: string): string {
+  const words = skill.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
@@ -126,6 +141,58 @@ export function CharacterSheet({
             <section aria-label="Resources">
               <SectionTitle>Resources</SectionTitle>
               <ResourceCounters secondWind={c.secondWind} spellSlots={c.spellSlots} />
+            </section>
+          ) : null}
+
+          {c.spells?.length ? (
+            <section aria-label="Spells">
+              <SectionTitle>Spells</SectionTitle>
+              <ul className="space-y-1 text-sm">
+                {c.spells.map((spell) => (
+                  <li key={spell.name} className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 break-words text-ink">{spell.name}</span>
+                    <span className="shrink-0 text-xs text-ink-subtle">{spellCost(spell)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {c.proficiencies?.saving_throws.length || c.proficiencies?.skills.length ? (
+            <section aria-label="Proficiencies">
+              <SectionTitle>Proficiencies</SectionTitle>
+              <dl className="space-y-2 text-sm">
+                {c.proficiencies.saving_throws.length ? (
+                  <div>
+                    <dt className="text-xs text-ink-subtle">Saving throws</dt>
+                    <dd>
+                      <ul className="space-y-0.5 text-ink">
+                        {c.proficiencies.saving_throws.map((save) => (
+                          <li key={save.ability} className="flex justify-between gap-2">
+                            <span>{save.ability}</span>
+                            <span className="font-mono">{formatModifier(save.modifier)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                ) : null}
+                {c.proficiencies.skills.length ? (
+                  <div>
+                    <dt className="text-xs text-ink-subtle">Skills</dt>
+                    <dd>
+                      <ul className="space-y-0.5 text-ink">
+                        {c.proficiencies.skills.map((skill) => (
+                          <li key={skill.skill} className="flex justify-between gap-2">
+                            <span>{skillLabel(skill.skill)}</span>
+                            <span className="font-mono">{formatModifier(skill.modifier)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
             </section>
           ) : null}
 

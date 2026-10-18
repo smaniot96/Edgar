@@ -13,7 +13,7 @@ from ..schemas.character import (
     CharacterUpdate,
     CurrentAssignmentSummary,
 )
-from ..services.character_assignments import resource_view
+from ..services.character_assignments import resource_view, sheet_view
 from ..services.setup_requests import creation_identity, creation_replay
 from ._common import Page
 
@@ -195,6 +195,14 @@ async def list_character_assignments(
                 status="ended" if ended else "active",
                 **resource_view(
                     {"class": character.character_class, "level": character.level, "stats": a.stats}
+                ),
+                **sheet_view(
+                    {
+                        "class": character.character_class,
+                        "level": character.level,
+                        "stats": a.stats,
+                        "inventory": a.inventory,
+                    }
                 ),
             )
         )

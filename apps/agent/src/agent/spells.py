@@ -395,6 +395,20 @@ def cast_request(
     return spell, plan, refusal
 
 
+def castable_spells(character: dict | None) -> list[dict[str, Any]]:
+    """Catalog spells the character's class can cast at its highest slot level, in catalog order.
+
+    A cantrip needs no slot; a leveled spell needs a slot of its own level or higher (`plan_cast`).
+    """
+    cls = character_class(character)
+    highest = max(slot_totals(character), default=0)
+    return [
+        {"name": spell.name, "level": spell.level, "action": spell.action}
+        for spell in CATALOG
+        if cls in spell.classes and spell.level <= highest
+    ]
+
+
 def target_count(spec: SpellSpec, slot_level: int | None) -> int:
     """How many creatures the cast may affect: one, plus one per slot level above the spell's if it scales."""
     return 1 + (max(0, (slot_level or spec.level) - spec.level) if spec.upcast_targets else 0)
