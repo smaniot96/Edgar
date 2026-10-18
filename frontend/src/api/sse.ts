@@ -10,11 +10,14 @@
 export interface SseEvent {
   event: string;
   data: Record<string, unknown>;
+  /** The frame's `id:` field, when the server sent one (the session channel's sequence number). */
+  id?: string;
 }
 
 /** Parse one raw frame body (already split from the stream). Returns null for empty frames. */
 function parseFrame(lines: string[]): SseEvent | null {
   let event = "";
+  let id = "";
   const dataLines: string[] = [];
   let sawField = false;
   for (const ln of lines) {
@@ -26,6 +29,8 @@ function parseFrame(lines: string[]): SseEvent | null {
     if (field === "event") {
       event = value.trim();
       sawField = true;
+    } else if (field === "id") {
+      id = value;
     } else if (field === "data") {
       dataLines.push(value);
       sawField = true;
@@ -45,7 +50,9 @@ function parseFrame(lines: string[]): SseEvent | null {
       data = { raw };
     }
   }
-  return { event: event || "message", data };
+  const frame: SseEvent = { event: event || "message", data };
+  if (id) frame.id = id;
+  return frame;
 }
 
 /**
