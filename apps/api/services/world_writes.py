@@ -152,10 +152,11 @@ async def _apply_character_update(db, character_id: int, campaign_id: int, cu) -
     if cu.hit_dice_spent is not None:
         # Engine-owned Hit Dice ledger (EDG-026): a short rest spends one, a long rest recovers some.
         stats[HIT_DICE_KEY] = {"spent": max(0, int(cu.hit_dice_spent))}
-    if cu.death_saves is not None:
+    death_saves = getattr(cu, "death_saves", None)  # absent on duck-typed updates: no change
+    if death_saves is not None:
         # Engine-owned death record (EDG-045): written as a dict, or {} to clear it.
-        if cu.death_saves:
-            stats[DEATH_SAVES_KEY] = dict(cu.death_saves)
+        if death_saves:
+            stats[DEATH_SAVES_KEY] = dict(death_saves)
         else:
             stats.pop(DEATH_SAVES_KEY, None)
     if ass.hp_current > 0:
