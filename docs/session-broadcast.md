@@ -162,6 +162,20 @@ No stream holds a pooled database connection. Token resolution commits its read 
 the route runs (`require_authentication`). The subscriber opens a short session for each access check,
 identity read and snapshot, and closes it. Turn publishing reads the actor in its own short session.
 
+## Redis requirements and verification
+
+- **Version:** Redis **5.0 or later** (the commands used are XADD with explicit IDs and `MAXLEN`,
+  XREAD with `COUNT` and `BLOCK`, XRANGE with `COUNT`, WATCH/MULTI, and sorted-set commands). Verified
+  against Redis 6.2.24 and 7.4.11. The integration suite asserts the server version at start.
+- **Real-Redis suite:** `tests/api/test_session_channel_real_redis.py` runs only when
+  `EDGAR_TEST_REDIS_URL` is set, so CI is unchanged. It starts separate OS processes, each with its own
+  client, and checks: 200 concurrent publishes give contiguous, unique sequences with stream order equal
+  to sequence order and each publisher's own order kept; a live subscriber gets every event exactly once
+  in order while publishers run; a resume after a cut mid-run replays exactly the missed visible records;
+  MAXLEN trimming past the window forces a snapshot; and a killed worker's presence expires and is
+  announced. Verified on 7.4.11 (four runs) and 6.2.24, with two publishers and with four and eight
+  (the contention settings).
+
 ## Deployment requirements
 
 - Redis is required (already a dependency for turn locks and rate limits). Multiple API workers are
