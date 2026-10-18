@@ -163,7 +163,13 @@ async def player_http_error_handler(request: Request, exc: HTTPException):
         )
     from .services.safe_errors import http_failure_payload
 
-    return JSONResponse(status_code=exc.status_code, content=http_failure_payload(failure, context=detail))
+    # Keep the HTTP headers the route set (e.g. WWW-Authenticate on a 401, EDG-065), which the
+    # safe-error payload would otherwise drop on these paths.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=http_failure_payload(failure, context=detail),
+        headers=exc.headers,
+    )
 
 
 @app.exception_handler(Exception)

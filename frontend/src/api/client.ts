@@ -1,3 +1,4 @@
+import { authorizedFetch } from "./auth";
 import { safeTurnError, GENERIC_SAFE_ERROR, type TurnError } from "./turnStream";
 
 import type {
@@ -44,6 +45,8 @@ function isGatewayFailure(status: number, body: string): boolean {
 }
 
 function fallbackCode(status: number): string {
+  if (status === 401) return "authentication_required";
+  if (status === 403) return "forbidden";
   if (status === 404) return "not_found";
   if (status === 400 || status === 422) return "validation_failed";
   if (status === 409) return "busy";
@@ -88,11 +91,11 @@ export class ApiError extends Error {
   get isOffline(): boolean { return this.offline; }
 }
 
-export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const url = path.startsWith("http") ? path : `${apiBase}${path}`;
+/** Authorized request to a final URL. Every API call in the client ends up here (EDG-160). */
+async function requestOk(url: string, init?: RequestInit): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await authorizedFetch(url, init);
   } catch (err) {
     // Let aborts propagate untouched so callers can ignore them.
     if (err instanceof DOMException && err.name === "AbortError") throw err;
@@ -104,6 +107,18 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
     throw new ApiError(res.status, text, requestId);
   }
   return res;
+}
+
+export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return requestOk(path.startsWith("http") ? path : `${apiBase}${path}`, init);
+}
+
+/**
+ * Binary or resource GET (images, downloads) as a Blob. Browser-navigated URLs cannot carry an
+ * Authorization header, so these are fetched here and shown or saved from an object URL.
+ */
+export async function fetchBlob(url: string, signal?: AbortSignal): Promise<Blob> {
+  return (await requestOk(url, { signal })).blob();
 }
 
 /** Player-facing fixed copy; arbitrary Error messages can contain private input. */

@@ -34,7 +34,7 @@ export type SafeErrorCategory =
   | "source" | "review" | "validation" | "assignment" | "busy"
   | "provider_unavailable" | "rate_limited" | "quota_exceeded"
   | "provider_configuration" | "cancelled" | "interrupted" | "internal"
-  | "not_found";
+  | "not_found" | "authentication" | "forbidden";
 
 export type SafeRecoveryAction =
   | "repair_source" | "review_source" | "fix_input" | "assign_character"
@@ -106,12 +106,16 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   completed: { category: "validation", message: "This campaign is complete. You can read its saved history.", action: "read_history" },
   turn_identity_conflict: { category: "validation", message: "This action identifier already belongs to a different action. Check its saved result before continuing.", action: "check_existing_result" },
   not_found: { category: "not_found", message: "That saved item could not be found. Refresh and check that it is still available.", action: "fix_input" },
+  // Token mode (EDG-065/EDG-160). The server does not say whether a token is missing, revoked or
+  // unknown, so the copy covers all three and points at the one fix the player controls.
+  authentication_required: { category: "authentication", message: "Your access token is missing, revoked or not recognized. Add a current token on the Settings page to continue.", action: "fix_input" },
+  forbidden: { category: "forbidden", message: "This action needs an administrator account, and the access token you are using does not have one.", action: "fix_input" },
 };
 
 const SAFE_CATEGORIES = new Set<SafeErrorCategory>([
   "source", "review", "validation", "assignment", "busy", "provider_unavailable",
   "rate_limited", "quota_exceeded", "provider_configuration", "cancelled", "interrupted",
-  "internal", "not_found",
+  "internal", "not_found", "authentication", "forbidden",
 ]);
 const SAFE_ACTIONS = new Set<SafeRecoveryAction>([
   "repair_source", "review_source", "fix_input", "assign_character", "wait", "retry",

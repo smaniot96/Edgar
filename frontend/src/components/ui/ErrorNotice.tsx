@@ -30,6 +30,12 @@ export function ErrorNotice({
     contact_support: "Share the reference below with support if the problem continues.",
     read_history: "Your saved campaign history remains available to read.",
   };
+  // Token-mode refusals (EDG-160) are about access, not the input, so they get their own next step.
+  const accessStep = safe.category === "authentication"
+    ? "Open Settings and enter a current access token. What you typed is still here."
+    : safe.category === "forbidden"
+      ? "Use an access token for an administrator account, or ask the operator for one."
+      : null;
   return (
     <div
       role="alert"
@@ -47,7 +53,7 @@ export function ErrorNotice({
           </Button>
         ) : null}
       </div>
-      <p className="mt-1 text-xs text-ink-muted">{nextStep[safe.recoveryAction ?? "contact_support"]}</p>
+      <p className="mt-1 text-xs text-ink-muted">{accessStep ?? nextStep[safe.recoveryAction ?? "contact_support"]}</p>
       {safe.supportRef ? <p className="mt-1 text-xs text-ink-subtle">Support reference: {safe.supportRef}</p> : null}
     </div>
   );

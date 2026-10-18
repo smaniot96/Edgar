@@ -1,11 +1,21 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import type { SessionMapRead } from "../../api/types";
 import type { JournalEntry } from "../journal/types";
 import { SessionMapPanel } from "./SessionMapPanel";
+
+// With a token the map is fetched with the bearer token (EDG-160); keep that request pending so
+// these tests exercise the pins and controls while the image is still loading. No token is set here,
+// so the map loads from its plain URL and no fetch is made.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const map: SessionMapRead = {
   session_id: 12,
@@ -213,5 +223,33 @@ it("names the map controls and zoom, and keeps keyboard and reduced-motion users
     HTMLElement.prototype.scrollIntoView = previous;
     vi.unstubAllGlobals();
     localStorage.clear();
+  }
+});
+
+it("keeps the plain handout link and makes no fetch in local mode (no token)", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const withHandout: SessionMapRead = {
+    ...map,
+    artwork: [{
+      asset_id: "handout-1", kind: "player_handout", url: "/api/sessions/12/assets/handout-1",
+      media_type: "application/pdf", sha256: "b".repeat(64), entity_id: null, provenance: {}, profile_settings: {},
+    }],
+  };
+  try {
+    await act(() => root.render(<SessionMapPanel sessionId={12} map={withHandout} loading={false} error={null}
+      onRefresh={vi.fn()} onOpenJournal={vi.fn()} onPrepareTravel={vi.fn()} />));
+    const link = [...container.querySelectorAll("a")].find((a) => a.textContent === "Open player handout");
+    expect(link?.getAttribute("href")).toBe("/api/sessions/12/assets/handout-1");
+    expect(link?.hasAttribute("download")).toBe(false);
+    expect(container.querySelector("button[type='button']")?.textContent).not.toBe("Open player handout");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(container.querySelector("img[src='/api/sessions/12/map.svg?v=" + "a".repeat(64) + "']")).not.toBeNull();
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
   }
 });
