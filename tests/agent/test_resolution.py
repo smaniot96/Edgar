@@ -525,6 +525,8 @@ def test_routine_question_or_movement_rolls_nothing(player_input, check, difficu
         ("I politely ask Odo to compare the ledgers.", "persuasion"),
         ("I descend the cliff with a rope", "athletics"),
         ("I walk up and attack the goblin", "attack"),
+        ("Is the captain telling the truth?", "insight"),
+        ("Does the guard seem nervous?", "insight"),
     ],
 )
 def test_risky_or_contested_actions_still_roll(player_input, check) -> None:

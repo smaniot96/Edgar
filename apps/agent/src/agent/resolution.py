@@ -925,7 +925,8 @@ _RISK_WORDS = re.compile(
     r"deceives|deceiving|deception|bluff|pretend|disguise|steal|steals|threat|threaten|threatens|"
     r"intimidate|force|forces|break|breaks|smash|attack|fight|hurry|run|runs|running|escape|chase|"
     r"pursue|ambush|sabotage|spy|let|allow|convince|persuade|bargain|beg|plead|demand|order|"
-    r"command|sway|bribe)\b",
+    r"command|sway|bribe|truth|true|honest|honesty|trust|trustworthy|suspicious|suspect|secret|"
+    r"secrets|hidden|conceal|conceals|nervous|believe|mislead|misleading|withholding|withhold)\b",
     re.IGNORECASE,
 )
 # A question mark, or asking someone a what/where/who/when/how/why/whether question. "Ask X to do
