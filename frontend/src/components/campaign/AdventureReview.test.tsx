@@ -6,6 +6,7 @@ import {
   ApiError,
   compileAdventureManifest,
   getCampaign,
+  getSoloAdventureReview,
   inspectAdventureManifest,
   publishAdventureManifest,
   saveAdventureManifest,
@@ -20,6 +21,7 @@ vi.mock("../../api/client", async (original) => ({
   saveAdventureManifest: vi.fn(),
   publishAdventureManifest: vi.fn(),
   getCampaign: vi.fn(),
+  getSoloAdventureReview: vi.fn(),
 }));
 
 const blocked: CampaignRead = {
@@ -60,6 +62,8 @@ let root: Root;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
+  // Shared campaigns keep the manual review flow; the solo decision is covered separately.
+  vi.mocked(getSoloAdventureReview).mockResolvedValue({ mode: "shared", state: null, title: null, rules_edition: null, checks: [], warnings: [], counts: null, reviewed_digest: null, reviewer: null });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);

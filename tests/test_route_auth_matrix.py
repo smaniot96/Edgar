@@ -53,6 +53,8 @@ ADMIN_ROUTES = {
     ("GET", "/api/adventures/{slug}/manifest"),
     ("PUT", "/api/adventures/{slug}/manifest"),
     ("POST", "/api/adventures/{slug}/manifest/publish"),
+    ("GET", "/api/adventures/{slug}/manifest/solo-review"),
+    ("POST", "/api/adventures/{slug}/manifest/solo-review/spoiler-opened"),
 }
 
 

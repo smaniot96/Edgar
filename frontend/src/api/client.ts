@@ -8,6 +8,7 @@ import type {
   AdventureJobRead,
   ExtractionPreview,
   ManifestInspection,
+  SoloAdventureReview,
   CampaignCharacterRead,
   CampaignRead,
   CharacterAssignmentHistoryRead,
@@ -271,6 +272,16 @@ export function retryAdventure(slug: string, reviewed?: { reviewed_source_sha256
 /** Host review of a legacy adventure: inspect the current draft (409 when none is compiled). */
 export function inspectAdventureManifest(slug: string, signal?: AbortSignal): Promise<ManifestInspection> {
   return getJson<ManifestInspection>(`/api/adventures/${encodeURIComponent(slug)}/manifest`, signal);
+}
+
+/** Solo host's spoiler-safe review for one campaign; shared campaigns return only the mode. */
+export function getSoloAdventureReview(slug: string, campaignId: number, signal?: AbortSignal): Promise<SoloAdventureReview> {
+  return getJson<SoloAdventureReview>(`/api/adventures/${encodeURIComponent(slug)}/manifest/solo-review?campaign_id=${campaignId}`, signal);
+}
+
+/** Records that a solo host opened the passage-level review. It changes no publication state. */
+export function recordSoloSpoilerReview(slug: string, campaignId: number): Promise<{ recorded: boolean }> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/manifest/solo-review/spoiler-opened?campaign_id=${campaignId}`, {});
 }
 
 export function compileAdventureManifest(slug: string): Promise<ManifestInspection> {
