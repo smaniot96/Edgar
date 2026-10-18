@@ -41,6 +41,10 @@ _DIAGNOSTIC_MESSAGES = {
     "raster_backed_native_layer_completeness_review_required": "This page includes images and text. Check that rules and tables inside images appear in the preview.",
     "source_text_possible_numeric_ocr_ambiguity": "Some source numbers or dice symbols may be ambiguous. Compare them with the PDF before using the rules.",
     "illustration_caption_separated_from_stat_record": "An illustration caption was separated from the stat record. Confirm the creature heading in the preview.",
+    "degraded_native_text_layer_replaced_with_ocr": "The PDF's text layer had recurring OCR misspellings, so this page was re-read with OCR. Compare headings, numbers and tables with the PDF.",
+    "degraded_native_text_layer_kept": "The PDF's text layer had recurring OCR misspellings, but the OCR re-read was not better, so the text layer was kept. Compare the rules text with the PDF.",
+    "degraded_native_text_layer_ocr_unavailable": "The PDF's text layer had recurring OCR misspellings and could not be re-read. Install Tesseract with English data or compare the text with the PDF.",
+    "ocr_signature_review_required": "Known OCR misspellings remain in this page's text. Compare the rules text with the PDF before using it.",
 }
 
 
