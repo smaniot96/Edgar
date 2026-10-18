@@ -33,3 +33,29 @@ def test_validation_messages_remain_available_to_the_host():
     with pytest.raises(HTTPException) as info:
         router._call(_raise(ValueError("2 passages are still unreviewed.")), "some_slug")
     assert info.value.detail["message"] == "2 passages are still unreviewed."
+
+
+def test_unverified_source_gets_its_own_code_and_a_next_step():
+    from apps.api.services.adventure_manifests import ManifestSourceUnverified
+
+    with pytest.raises(HTTPException) as info:
+        router._call(
+            _raise(ManifestSourceUnverified("Source kind is unverified. Recover its canonical extraction first.")),
+            "some_slug",
+        )
+    assert info.value.status_code == 409
+    assert info.value.detail["code"] == "adventure_source_unverified"
+    assert "Recover its canonical extraction" not in info.value.detail["message"]
+    assert "no verified source record" in info.value.detail["message"]
+
+
+def test_unverified_source_reaches_the_host_through_the_safe_error_boundary():
+    from apps.api.services.safe_errors import classify_http_failure, http_failure_payload
+
+    failure = classify_http_failure(
+        409, code="adventure_source_unverified", outcome="not_committed"
+    )
+    payload = http_failure_payload(failure, context={})
+    assert payload["detail"]["code"] == "adventure_source_unverified"
+    assert "no verified source record" in payload["detail"]["message"]
+    assert "retry" not in payload["detail"]["message"].lower()

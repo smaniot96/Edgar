@@ -8,11 +8,17 @@ import {
   publishAdventureManifest,
   saveAdventureManifest,
 } from "../../api/client";
+import { safeFailureFromUnknown } from "../../api/turnStream";
 import type { CampaignRead, ManifestInspection } from "../../api/types";
 import { Button } from "../ui/Button";
 import { ErrorNotice } from "../ui/ErrorNotice";
 
 type Phase = "loading" | "needs_draft" | "draft" | "publishing" | "published" | "error";
+
+/** An adventure without a verified source record can never get a draft, so retrying cannot help. */
+function isUnverifiedSource(error: unknown): boolean {
+  return safeFailureFromUnknown(error).code === "adventure_source_unverified";
+}
 
 interface ReviewCardProps {
   campaignId: number;
@@ -68,7 +74,7 @@ function ReviewCard({ campaignId, slug, title, onUpdated }: ReviewCardProps) {
       .catch((err: unknown) => {
         if (signal?.aborted) return;
         // 409 means no draft has been compiled yet; any other failure is shown safely.
-        if (err instanceof ApiError && err.status === 409) setPhase("needs_draft");
+        if (err instanceof ApiError && err.status === 409 && !isUnverifiedSource(err)) setPhase("needs_draft");
         else {
           setError(err);
           setPhase("error");
@@ -209,8 +215,12 @@ function ReviewCard({ campaignId, slug, title, onUpdated }: ReviewCardProps) {
       {phase === "error" ? (
         <div className="space-y-2">
           <ErrorNotice error={error} />
-          <p className="text-xs text-ink-muted">Reload the saved draft to check its current state before trying again.</p>
-          <Button variant="secondary" size="sm" disabled={busy} onClick={reloadDraft}>Reload saved draft</Button>
+          {isUnverifiedSource(error) ? null : (
+            <>
+              <p className="text-xs text-ink-muted">Reload the saved draft to check its current state before trying again.</p>
+              <Button variant="secondary" size="sm" disabled={busy} onClick={reloadDraft}>Reload saved draft</Button>
+            </>
+          )}
         </div>
       ) : null}
     </div>

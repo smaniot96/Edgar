@@ -11,6 +11,10 @@ from . import adventures_meta as store
 from .campaign_sources import active_metadata, validate_binding
 
 
+class ManifestSourceUnverified(ManifestError):
+    """No verified source kind exists, so no reviewed extraction can be trusted for this adventure."""
+
+
 def _bundle(slug: str):
     from ingestion.extract import load_reviewed_extraction
 
@@ -31,7 +35,7 @@ def _bundle(slug: str):
     ingestion = meta.get("ingestion") or {}
     kind = ingestion.get("source_kind")
     if kind not in ("pdf", "generated", "text"):
-        raise ManifestError("Source kind is unverified. Recover its canonical extraction first.")
+        raise ManifestSourceUnverified("Source kind is unverified. Recover its canonical extraction first.")
     try:
         extraction = load_reviewed_extraction(
             store.source_pdf_path(slug, meta) if kind == "pdf" else None,

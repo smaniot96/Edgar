@@ -55,6 +55,7 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   book_version_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   required_assets_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   preparation_source_invalid: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
+  adventure_source_unverified: { category: "source", message: "This adventure has no verified source record, so its review draft cannot be prepared. Start a new campaign with the current preparation pipeline, then remove this one.", action: "restart_preparation" },
   preparation_failed: { category: "source", message: "Adventure preparation needs attention. Review its setup and restart preparation to continue.", action: "restart_preparation" },
   adventure_manifest_review_required: { category: "review", message: "Review the current adventure material before continuing.", action: "review_source" },
   manifest_review_required: { category: "review", message: "Review the current adventure material before continuing.", action: "review_source" },
