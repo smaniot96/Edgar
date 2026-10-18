@@ -50,7 +50,7 @@ from db.vector.versions import (
 )
 from edgar_core.log_safety import error_summary
 from edgar_core.sources import SourceEdition
-from ingestion.chunk import chunk_pages
+from ingestion.chunk import chunk_page_runs
 from ingestion.extract import (
     ExtractedPage,
     Extraction,
@@ -200,7 +200,7 @@ def _prepare_extraction(
     chunks = (
         prepared_chunks
         if prepared_chunks is not None
-        else chunk_pages(
+        else chunk_page_runs(
             extraction.text_pages(),
             source=extraction.source,
             chunk_size=chunk_size,
@@ -238,6 +238,8 @@ def _chunk_payload(c: dict) -> dict:
         "source_sha256",
         "extraction_sha256",
         "rules_edition",
+        "excluded_pages",
+        "exclusions_sha256",
         "section",
         "chapter",
         "heading_path",
@@ -432,7 +434,14 @@ def _embed_and_upsert(
 
     receipt = {
         key: payloads[0].get(key)
-        for key in ("source_sha256", "extraction_sha256", "manifest_sha256", "rules_edition")
+        for key in (
+            "source_sha256",
+            "extraction_sha256",
+            "manifest_sha256",
+            "rules_edition",
+            "excluded_pages",
+            "exclusions_sha256",
+        )
     }
     receipt["chunk_count"] = len(chunks)
     promote_index(

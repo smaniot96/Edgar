@@ -10,7 +10,12 @@ from db.vector.collections import campaign_lore_collection
 from edgar_core.log_safety import error_summary, redact_text
 from edgar_core.model_profiles import ModelProfileError, validate_provider_configuration
 from ingestion.embed import run_pipeline
-from ingestion.extract import extract_document, save_extraction
+from ingestion.extract import (
+    EXCLUSION_REASONS,
+    extract_document,
+    save_extraction,
+    validate_exclusions,
+)
 from ingestion.paths import default_markdown_dir
 
 
@@ -75,6 +80,13 @@ def main() -> None:
         help="Physical, one-based PDF pages for --extract-only sample review (full indexing requires every page)",
     )
     parser.add_argument(
+        "--exclude-pages",
+        nargs="+",
+        metavar="PAGE:REASON",
+        help="Reviewed non-content pages left out of indexing, e.g. 2:cover 3:credits. "
+        f"Reasons: {', '.join(EXCLUSION_REASONS)}. Requires --extract-only; the bundle records them.",
+    )
+    parser.add_argument(
         "--reviewed-extraction",
         type=Path,
         help="JSON extraction bundle whose selected Markdown text you have visually reviewed; required for rulebooks and --replace",
@@ -104,6 +116,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.pages and not args.extract_only:
         parser.error("--pages is supported only with --extract-only")
+    exclusions = []
+    for item in args.exclude_pages or []:
+        number, separator, reason = item.partition(":")
+        if not args.extract_only or not separator or not number.isdigit():
+            parser.error("--exclude-pages needs --extract-only and entries like PAGE:REASON")
+        exclusions.append({"page": int(number), "reason": reason})
 
     def resolved_collection_name() -> str:
         if args.campaign_id is not None:
@@ -131,6 +149,9 @@ def main() -> None:
             out_dir = args.markdown_dir or default_markdown_dir()
             extraction = extract_document(args.path, pages=args.pages)
             extraction.rules_edition = args.rules_edition or "unspecified"
+            extraction.excluded_pages = validate_exclusions(
+                exclusions, extraction.pages, extraction.page_count
+            )
             # A failed run never replaces the previous preview or bundle; it is saved beside them.
             failed = bool(extraction.failing_pages())
             stem = f"{extraction.source}.failed" if failed else extraction.source
