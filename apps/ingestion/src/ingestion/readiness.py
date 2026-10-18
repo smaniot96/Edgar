@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from typing import Literal, NotRequired, Protocol, TypedDict
 
 from edgar_core.sources import SourceEdition
-from ingestion.artifacts import exclusions_digest
+from ingestion.artifacts import ExcludedPage, exclusions_digest
 from ingestion.quality import diagnostic_message
 
 REPORT_VERSION = 1
@@ -48,7 +48,7 @@ class ExtractionForReadiness(Protocol):
     def rules_edition(self) -> SourceEdition: ...
 
     @property
-    def excluded_pages(self) -> list[dict]: ...
+    def excluded_pages(self) -> list[ExcludedPage]: ...
 
     @property
     def source_sha256(self) -> str: ...
@@ -75,7 +75,7 @@ class ReadinessChunk(TypedDict):
     source_sha256: NotRequired[str]
     extraction_sha256: NotRequired[str]
     rules_edition: NotRequired[SourceEdition]
-    excluded_pages: NotRequired[list[dict]]
+    excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
 
 
@@ -96,7 +96,7 @@ class ReadinessReport(TypedDict):
     page_count: int
     required_pages: list[int]
     covered_pages: list[int]
-    excluded_pages: NotRequired[list[dict]]
+    excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
     chunk_count: int
     quality_passed: bool
@@ -116,7 +116,7 @@ class ReadinessSummary(TypedDict):
     extraction_sha256: str
     page_count: int
     required_pages: list[int]
-    excluded_pages: NotRequired[list[dict]]
+    excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
     chunk_count: int
     quality_passed: bool
@@ -237,7 +237,9 @@ def prepare_report(
         "page_count": page_count,
         "required_pages": required_pages,
         "covered_pages": covered_pages,
-        "excluded_pages": [dict(entry) for entry in extraction.excluded_pages],
+        "excluded_pages": [
+            ExcludedPage(page=e["page"], reason=e["reason"]) for e in extraction.excluded_pages
+        ],
         "exclusions_sha256": exclusions_digest(extraction.excluded_pages),
         "chunk_count": len(chunks),
         "quality_passed": not issues,

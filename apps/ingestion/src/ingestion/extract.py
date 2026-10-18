@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import pymupdf
 import pymupdf4llm
 
 from edgar_core.sources import SourceEdition
-from ingestion.artifacts import exclusions_digest, source_digest, text_digest
+from ingestion.artifacts import ExcludedPage, exclusions_digest, source_digest, text_digest
 from ingestion.layout import native_lines, ocr_stat_header, render_native_page
 from ingestion.quality import check_text, diagnostic_message, has_section_heading, has_stat_record
 
@@ -45,7 +46,7 @@ class Extraction:
     page_count: int
     pages: list[ExtractedPage]
     rules_edition: SourceEdition = "unspecified"
-    excluded_pages: list[dict] = field(default_factory=list)
+    excluded_pages: list[ExcludedPage] = field(default_factory=list)
 
     def excluded_numbers(self) -> set[int]:
         return {int(entry["page"]) for entry in self.excluded_pages}
@@ -116,20 +117,23 @@ class Extraction:
             )
 
 
-def validate_exclusions(entries: list, pages: list[ExtractedPage], page_count: int) -> list[dict]:
+def validate_exclusions(
+    entries: Sequence[object], pages: list[ExtractedPage], page_count: int
+) -> list[ExcludedPage]:
     """Reviewed non-content pages: known reasons, extracted pages, never a stat record."""
     by_number = {p.page: p for p in pages}
     seen: set[int] = set()
-    cleaned = []
+    cleaned: list[ExcludedPage] = []
     for entry in entries:
-        number = entry.get("page") if isinstance(entry, dict) else None
         if (
             not isinstance(entry, dict)
             or set(entry) != {"page", "reason"}
-            or type(number) is not int
+            or type(entry["page"]) is not int
         ):
             raise ValueError("Each excluded page needs a physical page number and a reason.")
-        if entry["reason"] not in EXCLUSION_REASONS:
+        number: int = entry["page"]
+        reason = entry["reason"]
+        if reason not in EXCLUSION_REASONS:
             raise ValueError(f"Exclusion reason must be one of: {', '.join(EXCLUSION_REASONS)}.")
         if not 1 <= number <= page_count or number not in by_number:
             raise ValueError(f"Excluded page {number} is not an extracted physical PDF page.")
@@ -138,7 +142,7 @@ def validate_exclusions(entries: list, pages: list[ExtractedPage], page_count: i
         if has_stat_record(by_number[number].text):
             raise ValueError(f"Page {number} contains a stat record and cannot be excluded.")
         seen.add(number)
-        cleaned.append({"page": number, "reason": entry["reason"]})
+        cleaned.append({"page": number, "reason": str(reason)})
     return sorted(cleaned, key=lambda e: e["page"])
 
 
