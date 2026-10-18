@@ -1,6 +1,7 @@
 """Anonymized captured layout regressions plus isolated generated PDF scenarios."""
 
 import json
+import re
 import subprocess
 import sys
 from dataclasses import asdict
@@ -21,7 +22,7 @@ from ingestion.extract import (
     validate_exclusions,
 )
 from ingestion.layout import Line, native_lines, render_native_page
-from ingestion.quality import check_text, require_separate_stat_chunks
+from ingestion.quality import check_text, diagnostic_message, require_separate_stat_chunks
 from ingestion.readiness import prepare_report, require_ready
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "extraction"
@@ -192,6 +193,87 @@ def test_spanning_prose_across_two_columns_fails_closed():
     lines.append(Line("wide middle paragraph", (30, 85, 480, 95), 10))
     with pytest.raises(ValueError, match="ambiguous_spanning_column_text"):
         render_native_page(lines, 500)
+
+
+def _two_column_block(top, rows, left="left prose", right="right prose"):
+    lines = [
+        Line(f"{left} {i}", (30, top + i * 14, 230, top + i * 14 + 10), 10) for i in range(rows)
+    ]
+    lines += [
+        Line(f"{right} {i}", (280, top + i * 14, 480, top + i * 14 + 10), 10) for i in range(rows)
+    ]
+    return lines
+
+
+def test_full_width_table_band_reads_as_rows_between_column_sections():
+    # Mirrors PHB p.78 / DMG p.22: a table band spanning the gutter sits between column text.
+    table = []
+    for i in range(4):
+        y = 130 + i * 14
+        table += [
+            Line(f"Level {i + 1}", (30, y, 70, y + 10), 9),
+            Line(f"feature {i + 1} spans the gutter", (200, y, 380, y + 10), 9),
+            Line(f"+{i + 2}", (420, y, 440, y + 10), 9),
+        ]
+    lines = _two_column_block(50, 4, "top left", "top right") + table
+    lines += _two_column_block(200, 4, "bottom left", "bottom right")
+    lines.reverse()
+    text, _ = render_native_page(lines, 500)
+    assert "Level 1 feature 1 spans the gutter +2" in text
+    assert text.index("top right 3") < text.index("Level 1") < text.index("Level 4")
+    assert text.index("Level 4") < text.index("bottom left 0") < text.index("bottom right 0")
+
+
+def test_decorative_bullet_is_omitted_and_column_order_is_kept():
+    # Mirrors DMG p.13: a 31-pt bullet has no letters and crosses the gutter beside the text.
+    lines = _two_column_block(50, 4) + _two_column_block(120, 4, "later left", "later right")
+    # Wide enough to straddle every candidate gutter, so the old splitter sees it as spanning.
+    lines.append(Line("\u2022", (215, 50, 315, 102), 31))
+    text, _ = render_native_page(lines, 500)
+    assert "\u2022" not in text
+    assert text.index("left prose 3") < text.index("later left 0") < text.index("right prose 0")
+
+
+def test_tiny_label_strip_above_columns_is_one_row_not_a_gutter_failure():
+    # Mirrors DMG p.21: faction labels inside an illustration sit on one baseline above the text.
+    labels = [
+        Line("ORDER OF THE GAUNTLET", (30, 40, 120, 46), 5),
+        Line("EMERALD ENCLAVE", (200, 40, 290, 46), 5),
+        Line("ZHENTARIM", (380, 40, 440, 46), 5),
+    ]
+    text, _ = render_native_page(labels + _two_column_block(60, 6), 500)
+    assert "## " not in text
+    assert "ORDER OF THE GAUNTLET EMERALD ENCLAVE ZHENTARIM" in text
+    assert text.index("ZHENTARIM") < text.index("left prose 0") < text.index("right prose 0")
+
+
+def test_single_column_intro_below_a_left_only_block_reads_in_order():
+    # Mirrors PHB p.46: a full-width intro sits under a left-only block that sets the column top.
+    lines = [Line("Sidebar note", (30, 30, 120, 40), 9)]
+    lines += [Line(f"intro line {i}", (30, 60 + i * 12, 480, 70 + i * 12), 10) for i in range(3)]
+    lines += _two_column_block(110, 6)
+    text, _ = render_native_page(lines, 500)
+    assert (
+        text.index("Sidebar note")
+        < text.index("intro line 0")
+        < text.index("left prose 0")
+        < text.index("right prose 0")
+    )
+
+
+def test_interleaved_two_column_page_with_wide_lines_still_fails_with_band_bounds():
+    lines = _two_column_block(50, 8)
+    lines.append(Line("wide middle paragraph", (30, 85, 480, 95), 10))
+    lines.append(Line("wide second line", (30, 100, 480, 110), 10))
+    with pytest.raises(ValueError, match=r"ambiguous_spanning_column_text band=\(") as error:
+        render_native_page(lines, 500)
+    x0, y0, x1, y1 = (float(v) for v in re.findall(r"[\d.]+", str(error.value))[-4:])
+    assert y0 <= 85 and y1 >= 110 and x0 <= 30 and x1 >= 480
+
+
+def test_layout_codes_with_band_bounds_keep_their_diagnostic_message():
+    code = "ambiguous_spanning_column_text band=(30.0,50.0,480.0,158.0)"
+    assert diagnostic_message(code) == diagnostic_message("ambiguous_spanning_column_text")
 
 
 def _single_record(name, size_text="Medium plant, neutral evil", top=60, name_size=8.5):

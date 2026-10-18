@@ -48,7 +48,8 @@ def diagnostic_message(code: str) -> str:
     """One player-readable adapter; retain original codes in local diagnostics."""
     if code.startswith("removed_identical_overlapping_spans:"):
         return "Repeated overlapping text spans were removed. Confirm the preview matches the PDF."
-    return _DIAGNOSTIC_MESSAGES.get(code, code.replace("_", " "))
+    # Layout codes can carry a bounding box after the code, e.g. "... band=(...)".
+    return _DIAGNOSTIC_MESSAGES.get(code.split(" ", 1)[0], code.replace("_", " "))
 
 
 def has_stat_record(text: str) -> bool:
