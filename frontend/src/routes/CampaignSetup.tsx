@@ -253,7 +253,8 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
       {progress.stage !== "complete" && !storedSession ? (
         <ol aria-label="First playthrough setup progress" className="mb-5 grid gap-2 sm:grid-cols-3">
           {["Choose a hero", "Assign the hero", "Create a saved playthrough"].map((label, index) => {
-            const done = index === 0 ? progress.characterId != null : index === 1 ? progress.characterId == null || alreadyAssigned : false;
+            // Steps are done by the stage reached, not by stale IDs: "Back to heroes" must un-tick step one.
+            const done = index === 0 ? progress.stage !== "hero" : index === 1 ? progress.stage === "playthrough" && (progress.characterId == null || alreadyAssigned) : false;
             const current = (progress.stage === "hero" && index === 0) || (progress.stage === "assignment" && index === 1) || (progress.stage === "playthrough" && index === 2);
             return <li key={label} aria-current={current ? "step" : undefined} className={`rounded-control border px-3 py-2 text-sm ${current ? "border-ember-500 bg-ember-950/40 text-ink" : done ? "border-success/40 text-success" : "border-line text-ink-muted"}`}>
               <span className="mr-2 font-mono text-xs">{done ? "✓" : `0${index + 1}`}</span>{label}

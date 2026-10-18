@@ -38,9 +38,14 @@ export function usePreparationSetup() {
         <Field label="Hero" required hint={hero ? `Starts at level ${hero.level}` : "Choose a saved character"}>
           {(props) => <select {...props} required value={heroId} onChange={(event) => setHeroId(event.target.value)} className="min-h-11 rounded-control border border-line bg-surface p-2 text-sm">
             <option value="">{characters.loading ? "Loading heroes…" : "Choose a hero"}</option>
-            {(characters.data ?? []).map((character) => <option key={character.id} value={character.id}>
-              {character.name} — level {character.level} {character.character_class}
-            </option>)}
+            {(characters.data ?? []).map((character) => {
+              // A hero already adventuring elsewhere cannot be prepared for a new campaign.
+              const busy = character.current_assignment != null;
+              return <option key={character.id} value={character.id} disabled={busy}>
+                {character.name} — level {character.level} {character.character_class}
+                {busy ? ` (adventuring in ${character.current_assignment?.campaign_title})` : ""}
+              </option>;
+            })}
           </select>}
         </Field>
         <TextField label="Target level (optional)" type="number" min={hero?.level ?? 1} max={20}

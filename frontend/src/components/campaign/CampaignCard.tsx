@@ -7,6 +7,7 @@ import { AdventureCover } from "./AdventureCover";
 import { SavedPlaythroughContext } from "./SavedPlaythroughContext";
 import { ReadinessNotice } from "./ReadinessNotice";
 import { useMode } from "../../dev/ModeContext";
+import { adventureTitleForDisplay } from "../../lib/campaign";
 import type { CardModel } from "../../lib/campaignCards";
 import { isPublicationCommitting, jobFailureHeading, preparationProgress } from "../../lib/adventureJob";
 import { cn } from "../../lib/cn";
@@ -19,10 +20,12 @@ import { cardClasses } from "../ui/styles";
 import { ExtractionPreview } from "./ExtractionPreview";
 import { PreparationRecovery } from "./PreparationRecovery";
 
-function StatusBadge({ state, readiness }: { state: CardModel["state"]; readiness: ReadinessRead | null }) {
+function StatusBadge({ state, readiness, homebrewWithoutSource }: { state: CardModel["state"]; readiness: ReadinessRead | null; homebrewWithoutSource: boolean }) {
   if (state === "ready" && readiness?.play_allowed !== true) {
     return <Pill tone="warning">{readiness ? "Needs attention" : "Readiness unknown"}</Pill>;
   }
+  // Homebrew play has no adventure source behind it, so "Ready" would promise module content.
+  if (state === "ready" && homebrewWithoutSource) return <Pill tone="neutral">Homebrew</Pill>;
   switch (state) {
     case "ready":
       return <Pill tone="success">Ready</Pill>;
@@ -66,8 +69,12 @@ export function CampaignCard({
   const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
   const playable = !!card.campaign || (state === "ready" && card.readiness?.play_allowed === true) || state === "ended";
   const showReadiness = (state === "ready" && card.readiness?.play_allowed !== true) || card.readiness?.play_allowed === false;
-  const showAdventureTitle = name !== adventure.title;
+  const adventureSubtitle = adventureTitleForDisplay(adventure);
+  const showAdventureTitle = adventureSubtitle != null && adventureSubtitle !== name;
+  const homebrewWithoutSource = card.campaign?.source_mode === "homebrew" &&
+    (adventure.slug.startsWith("homebrew_") || adventure.status !== "ready");
   const recoverable = state === "failed" || state === "recovery";
+  const jobFailureShown = job != null && ["interrupted", "failed", "cancelled"].includes(job.state);
   const canRetryJob = job
     ? job.retryable && ["interrupted", "failed", "cancelled"].includes(job.state)
     : recoverable && !!adventure.can_retry;
@@ -112,7 +119,7 @@ export function CampaignCard({
       <div className="flex flex-1 flex-col p-4">
         <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
           <h3 className="min-w-0 line-clamp-3 break-words [overflow-wrap:anywhere] font-display text-xl leading-tight">{name}</h3>
-          <StatusBadge state={state} readiness={card.readiness} />
+          <StatusBadge state={state} readiness={card.readiness} homebrewWithoutSource={homebrewWithoutSource} />
         </div>
         {name.length > 80 ? (
           <details className="mb-1 text-sm">
@@ -121,7 +128,7 @@ export function CampaignCard({
           </details>
         ) : null}
         {showAdventureTitle ? (
-          <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventure.title}</p>
+          <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventureSubtitle}</p>
         ) : null}
         <p className="mb-2 text-xs text-ink-subtle">
           {lastPlayed ? `Last played ${relativeTime(lastPlayed)}` : "Not played yet"}
@@ -149,8 +156,9 @@ export function CampaignCard({
           {isDev && adventure.chunks != null ? <Pill>{adventure.chunks} chunks</Pill> : null}
           {isDev && card.campaign ? <Pill className="font-mono">campaign #{card.campaign.id}</Pill> : null}
         </div>
-        {state === "recovery" ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : failureMessage || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
-        {state === "failed" ? (
+        {/* One message per card: the readiness notice, the job failure block, or this fallback. */}
+        {state === "recovery" && !showReadiness && !jobFailureShown ? <p className="mb-3 text-sm text-warning">{card.campaign ? "The bound adventure source needs recovery. Open the campaign to provide its PDF or choose homebrew play." : failureMessage || "This adventure source needs recovery. Inspect its preview and retry the retained source, or upload a corrected PDF."}</p> : null}
+        {state === "failed" && !showReadiness && !jobFailureShown ? (
           <p className="mb-3 rounded-control bg-danger-soft px-2 py-1.5 text-xs text-danger">
             {failureMessage || (job?.kind === "generation"
               ? "Edgar couldn't finish generating this campaign. Resume the saved chapters or restart generation if retained work is unavailable."
@@ -171,7 +179,7 @@ export function CampaignCard({
             )}
           </div>
         ) : null}
-        {job && ["interrupted", "failed", "cancelled"].includes(job.state) ? (
+        {jobFailureShown ? (
           <div role="status" className="mb-3 rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-ink">
             <p className="font-medium">{jobFailureHeading(job)}</p>
             {job.failure ? <ErrorNotice error={job.failure} className="mt-2" /> : null}

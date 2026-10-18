@@ -1,5 +1,5 @@
 import type { AdventureRead, CampaignRead, ReadinessRead, SessionRead } from "../api/types";
-import { campaignDisplayName } from "./campaign";
+import { campaignDisplayName, stripGenerationPlaceholder } from "./campaign";
 
 export interface CardModel {
   adventure: AdventureRead;
@@ -92,7 +92,7 @@ export function buildCards(
             : "ready";
     const name = campaign
       ? campaignDisplayName(campaign, adventure)
-      : adventure.title;
+      : stripGenerationPlaceholder(adventure.title);
     return { adventure, name, campaign, state, lastPlayed, primarySession, readiness: campaign?.readiness ?? adventure.readiness ?? null };
   });
   // Most recently played first; never-played keep API order after them.

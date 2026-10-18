@@ -6,8 +6,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
-import { deleteCharacter, listCharacters } from "../api/client";
-import type { CharacterListItem } from "../api/types";
+import { deleteCharacter, listAdventures, listCampaigns, listCharacters } from "../api/client";
+import type { CharacterAssignmentRef, CharacterListItem } from "../api/types";
 import { CharacterForm } from "../components/CharacterForm";
 import { Pill } from "../components/Pill";
 import { Button } from "../components/ui/Button";
@@ -16,12 +16,17 @@ import { ErrorNotice, OfflineState } from "../components/ui/ErrorNotice";
 import { Page, PageHeader, SectionTitle } from "../components/ui/Page";
 import { cardClasses } from "../components/ui/styles";
 import { useMode } from "../dev/ModeContext";
+import { campaignDisplayName } from "../lib/campaign";
 import { cn } from "../lib/cn";
 import { useQuery } from "../lib/useQuery";
 
 export default function Characters() {
   const { isDev } = useMode();
   const chars = useQuery("characters", (signal) => listCharacters(signal));
+  // Assignments carry the stored campaign title, which can be a session name ("Solo Session").
+  // Resolve the same campaign name the campaign list shows.
+  const campaigns = useQuery("campaigns", (signal) => listCampaigns(signal));
+  const adventures = useQuery("adventures", (signal) => listAdventures(signal));
   const [actionError, setActionError] = useState<unknown>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
@@ -37,6 +42,13 @@ export default function Characters() {
     } finally {
       setDeletingId(null);
     }
+  }
+
+  function assignedCampaignName(assignment: CharacterAssignmentRef): string {
+    const campaign = campaigns.data?.find((c) => c.id === assignment.campaign_id);
+    if (!campaign) return assignment.campaign_title;
+    const adventure = adventures.data?.find((a) => campaign.adventure_collections.includes(a.slug));
+    return campaignDisplayName(campaign, adventure);
   }
 
   if (chars.error && chars.data === undefined) {
@@ -93,7 +105,7 @@ export default function Characters() {
                         className="inline-block rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400"
                       >
                         <Pill tone="ember" className="hover:underline">
-                          In: {c.current_assignment.campaign_title}
+                          In: {assignedCampaignName(c.current_assignment)}
                         </Pill>
                       </Link>
                     ) : (
