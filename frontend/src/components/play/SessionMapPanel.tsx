@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { apiBase, errorMessage } from "../../api/client";
-import { downloadAuthorized, useAuthorizedObjectUrl } from "../../api/resources";
+import { useAuthorizedObjectUrl } from "../../api/resources";
 import type { SessionMapRead } from "../../api/types";
 import type { JournalEntry } from "../journal/types";
+import { ApiDownloadLink } from "../ui/ApiDownloadLink";
 import { AuthorizedImage } from "../ui/AuthorizedImage";
 import { Button } from "../ui/Button";
 
@@ -15,26 +16,6 @@ const emptyView: SavedView = { sceneId: null, zoom: 1, panLeft: 0, panTop: 0, sc
 function handoutExtension(mediaType: string): string {
   const subtype = mediaType.split("/")[1]?.split("+")[0]?.replace(/[^a-z0-9]/gi, "").toLowerCase() ?? "";
   return subtype.length > 0 && subtype.length <= 8 ? subtype : "bin";
-}
-
-/** A player handout is downloaded through the authorized client (a plain link cannot send the token). */
-function HandoutLink({ url, filename }: { url: string; filename: string }) {
-  const [failed, setFailed] = useState(false);
-  return (
-    <div>
-      <button
-        type="button"
-        className="block w-full p-3 text-left text-sm text-ember-300 underline"
-        onClick={() => {
-          setFailed(false);
-          void downloadAuthorized(url, filename).catch(() => setFailed(true));
-        }}
-      >
-        Open player handout
-      </button>
-      {failed ? <p role="status" className="px-3 pb-3 text-xs text-danger">The handout could not be downloaded. Try again.</p> : null}
-    </div>
-  );
 }
 
 function savedOffset(value: unknown) {
@@ -288,7 +269,9 @@ function SessionMapPanelContent({
                   {asset.media_type.startsWith("image/") ? (
                     <AuthorizedImage url={`${apiBase}${asset.url}`} alt="Artwork connected to a known place or encountered creature" className="max-h-56 w-full object-contain" loading="lazy" />
                   ) : (
-                    <HandoutLink url={`${apiBase}${asset.url}`} filename={`player-handout.${handoutExtension(asset.media_type)}`} />
+                    <ApiDownloadLink url={`${apiBase}${asset.url}`} filename={`player-handout.${handoutExtension(asset.media_type)}`} className="block w-full p-3 text-left text-sm text-ember-300 underline">
+                      Open player handout
+                    </ApiDownloadLink>
                   )}
                   <p className="px-3 pt-2 text-sm text-ink">{artworkLabel(asset.kind)}</p>
                   <p className="px-3 pb-3 text-xs text-ink-muted">Version {asset.sha256.slice(0, 12)}</p>

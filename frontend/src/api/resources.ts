@@ -1,12 +1,13 @@
 /**
- * Images and downloads from the API, fetched with the bearer token (EDG-160).
+ * Images and downloads from the API (EDG-160).
  *
- * A plain `<img src>` or `<a href>` makes a navigation the browser sends without an Authorization
- * header, which token mode refuses. These helpers fetch the bytes through the authorized client and
- * show or save them from an object URL instead.
+ * Without a token (local mode) the plain URL is used exactly as before: `<img src>` and `<a href>`
+ * let the browser load and cache it. With a token the browser cannot send the Authorization header
+ * on those navigations, so the client fetches the bytes and shows or saves them from an object URL.
  */
 import { useEffect, useState } from "react";
 
+import { hasApiToken } from "./auth";
 import { fetchBlob } from "./client";
 
 interface ObjectUrlState {
@@ -19,14 +20,17 @@ interface ObjectUrlState {
 const EMPTY: ObjectUrlState = { forUrl: null, objectUrl: null, error: null };
 
 /**
- * An object URL for an authorized API resource. `url` is the full URL (including any API base);
- * pass null to show nothing. The object URL is revoked when the URL changes or the component unmounts.
+ * The URL to show an API resource at. `url` is the full URL (including any API base); pass null for
+ * nothing. Without a token the plain URL is returned and nothing is fetched. With a token the bytes
+ * are fetched with the header and returned as an object URL, which is revoked when the URL changes
+ * or the component unmounts.
  */
 export function useAuthorizedObjectUrl(url: string | null): { objectUrl: string | null; error: unknown } {
   const [state, setState] = useState<ObjectUrlState>(EMPTY);
+  const authorized = hasApiToken();
 
   useEffect(() => {
-    if (url === null) return;
+    if (url === null || !authorized) return;
     const ctrl = new AbortController();
     let created: string | null = null;
     fetchBlob(url, ctrl.signal)
@@ -43,13 +47,15 @@ export function useAuthorizedObjectUrl(url: string | null): { objectUrl: string 
       ctrl.abort();
       if (created) URL.revokeObjectURL(created);
     };
-  }, [url]);
+  }, [url, authorized]);
 
-  if (url === null || state.forUrl !== url) return { objectUrl: null, error: null };
+  if (url === null) return { objectUrl: null, error: null };
+  if (!authorized) return { objectUrl: url, error: null };
+  if (state.forUrl !== url) return { objectUrl: null, error: null };
   return { objectUrl: state.objectUrl, error: state.error };
 }
 
-/** Save an authorized API resource to the user's downloads under `filename`. */
+/** Save an API resource under `filename`: the authorized client when a token is set, else a plain navigation. */
 export async function downloadAuthorized(url: string, filename: string): Promise<void> {
   const blob = await fetchBlob(url);
   const objectUrl = URL.createObjectURL(blob);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { apiBase } from "../../api/client";
-import { downloadAuthorized } from "../../api/resources";
+import { ApiDownloadLink } from "../ui/ApiDownloadLink";
 import { Pill } from "../../components/Pill";
 import { Button } from "../../components/ui/Button";
 import { EmptyState, LoadingText } from "../../components/ui/EmptyState";
@@ -235,7 +235,6 @@ export function JournalPanel({
   if (category !== "all") params.set("category", category);
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const exportUrl = data ? `${apiBase}/api/sessions/${data.session_id}/journal/export${suffix}` : "";
-  const [exportFailed, setExportFailed] = useState(false);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const entries = useMemo(() => (data?.entries ?? []).filter((entry) => {
     if (category !== "all" && entry.category !== category) return false;
@@ -276,19 +275,14 @@ export function JournalPanel({
           {data ? <p className="mt-1 text-xs text-ink-muted">Session {data.session_id}</p> : null}
         </div>
         {data ? (
-          <div className="flex flex-col items-end gap-1">
-            <button
-              type="button"
-              className="text-sm font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
-              onClick={() => {
-                setExportFailed(false);
-                void downloadAuthorized(exportUrl, `journal-session-${data.session_id}.json`).catch(() => setExportFailed(true));
-              }}
-            >
-              Export JSON
-            </button>
-            {exportFailed ? <p role="status" className="text-xs text-danger">The export could not be downloaded. Try again.</p> : null}
-          </div>
+          <ApiDownloadLink
+            url={exportUrl}
+            filename={`journal-session-${data.session_id}.json`}
+            plainDownload
+            className="text-sm font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200"
+          >
+            Export JSON
+          </ApiDownloadLink>
         ) : null}
       </div>
 
