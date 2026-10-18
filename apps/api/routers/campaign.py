@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from db.postgres.models import Campaign, CharacterAssignment
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
-from ..auth import Auth, campaign_scope, owned_campaign, require_admin
+from ..auth import Auth, campaign_scope, member_campaign, owned_campaign, require_admin
 from ..dependencies import current_user_id, get_redis, get_session
 from ..limits import admit_job
 from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
@@ -52,7 +52,7 @@ async def list_campaigns(
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignRead)
 async def get_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
-    campaign = await owned_campaign(db, campaign_id, auth)
+    campaign = await member_campaign(db, campaign_id, auth)
     return await campaign_read(campaign)
 
 

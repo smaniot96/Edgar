@@ -30,6 +30,7 @@ SIMPLE_REQUEST_ROUTES = {
     ("POST", "/api/adventures/{slug}/cancel"),
     ("POST", "/api/adventures/{slug}/manifest/compile"),
     ("POST", "/api/campaigns/{campaign_id}/end"),
+    ("POST", "/api/campaigns/{campaign_id}/leave"),
     ("POST", "/api/campaigns/{campaign_id}/reopen"),
     ("POST", "/api/seed"),
     ("POST", "/api/sessions/{session_id}/intro"),
@@ -96,7 +97,7 @@ async def client(token_mode_app: Any) -> AsyncIterator[AsyncClient]:
 
 def test_pinned_simple_request_routes_match_the_live_router(token_mode_app: Any) -> None:
     """The nine routes are exactly the POST routes a browser can send cross-site without a preflight."""
-    assert len(SIMPLE_REQUEST_ROUTES) == 9
+    assert len(SIMPLE_REQUEST_ROUTES) == 10
     derived = _simple_request_routes(token_mode_app)
     assert derived == SIMPLE_REQUEST_ROUTES, (
         f"missing from pin: {sorted(derived - SIMPLE_REQUEST_ROUTES)}; "

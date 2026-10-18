@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.postgres.models import EventLog
 
-from ..auth import Auth, owned_session
+from ..auth import Auth, member_session
 from ..dependencies import get_session
 from ..schemas.journal import JournalCategory, JournalEntry, JournalRead
 from ..services.journal import filter_player_journal, project_player_journal
@@ -19,7 +19,8 @@ router = APIRouter(tags=["journal"])
 
 
 async def _read_session_journal(session_id: int, db: AsyncSession, auth: Auth) -> JournalRead:
-    session = await owned_session(db, session_id, auth)
+    # Player projection (EDG-046): members read the same allowlisted journal the owner's UI shows.
+    session = await member_session(db, session_id, auth)
     state = await load_story_state(db, session_id, session.campaign_id)
     result = await db.execute(
         select(EventLog)

@@ -114,14 +114,82 @@ flags are reached through their campaign. Characters are owned by `characters.ow
 - Owned lookups (`owned_campaign`, `owned_session`, `owned_npc`, and `authorize_campaign` /
   `authorize_session` before the turn lock) add the owner filter in token mode. A resource that
   belongs to someone else returns the same 404 as a missing one, so existence does not leak.
-- Lists (`/campaigns`, `/sessions`, `/characters`) return only the caller's rows.
+- Lists (`/campaigns`, `/sessions`, `/characters`) return only the caller's rows, including the
+  campaigns and sessions the caller has joined.
 - The turn and intro endpoints check ownership before they take the per-session lock, so another
   user cannot hold a session's lock.
 - In local mode the helpers do not filter. The queries and 404 messages match the previous
   `get_or_404` calls.
 
-There is no membership table. `campaign_members` belongs to the multiplayer work (EDG-046). Until
-then, a campaign is visible only to its creator.
+## Membership, invites and the session roster (EDG-046)
+
+The creator is the implicit owner of a campaign. Other users join through `campaign_memberships`
+(one row per user and campaign) with one of three roles:
+
+- `owner`: schema-valid for a future co-DM; the M1 API never mints it. Owner access equals creator access.
+- `player`: reads the campaign and its sessions and may take turns while their own seated character
+  holds the spotlight (`sessions.active_character_id`).
+- `spectator`: reads the campaign, its sessions and the roster. It cannot take turns, intro, seat a
+  character, or change anything (those routes return 404 or 403).
+
+Access helpers: `owned_*` (owner only) guards every mutation. `member_campaign` / `member_session`
+admit any member, and `campaign_scope` lists the campaigns a user owns or has joined. `turn_session`
+(the `authorize_session` gate for turns and intros) admits the owner, or a seated player whose
+character is the spotlight holder. Everyone else gets 403 (member) or 404 (non-member).
+
+Invites (`campaign_invites`), owner-managed under `/api/campaigns/{id}/invites`:
+
+- The token is `edginv_` plus 256 random bits. Only its SHA-256 digest is stored. The plaintext is
+  returned once, in the creation response, and never in a list, a log or an error.
+- Single use, expiring (1 to 720 hours, default 72), and revocable (`DELETE`). Acceptance consumes
+  the row in one conditional `UPDATE`, so two concurrent accepts cannot both succeed.
+- Optional `invited_email` restricts acceptance to one account. Optional `session_id` binds the
+  invite to one session. A `player` invite then also seats the accepting user's own character there.
+- `POST /api/invites/accept` requires token-mode authentication (401 in local mode). Every
+  token-level failure (unknown, expired, revoked, used, wrong account) returns the same 404. A
+  character the caller does not own, or one with no active assignment in the campaign, is refused
+  (404 or 422) and does not consume the invite.
+
+Session roster: `session_participants` holds one seat per user and one per character in a session.
+`GET /api/sessions/{id}/participants` lists it for any member. The party the agent sees is the
+spotlight character followed by the seated characters, in seat order. The narrator and intro add a
+party line only when there is more than one character, so a single-PC session is unchanged.
+
+Member lifecycle (owner unless noted):
+
+- `GET /api/campaigns/{id}/members`: roster with roles, seats and display names (never emails).
+- `PATCH /api/campaigns/{id}/members/{user_id}` with `{"role": "player" | "spectator"}`. Demoting to
+  spectator frees that member's seats.
+- `DELETE /api/campaigns/{id}/members/{user_id}`: removes a player or spectator and frees their seats.
+- `POST /api/campaigns/{id}/leave` (any member): leaves on their own, with the same effect.
+
+The owner cannot be removed, demoted or leave (409). Owner memberships are not changed here. Seats
+are the only thing freed. Characters are never deleted, and no assignment changes. Removal takes effect
+on the next request, because every `member_*` helper and `turn_session` reads the membership and seat
+rows. A removed member gets 404 on every read and 404 on turns (they are no longer a member). A seated
+player who loses their seat while holding the spotlight blocks turns until the owner moves the
+spotlight with `PATCH /api/sessions/{id}`. An accepted invite stays consumed, so re-admission needs a
+newly issued invite. Outstanding unused invites stay valid until the owner revokes them.
+
+Read projection (EDG-046 item 3): these routes moved from `owned_session` to `member_session`, because
+each returns the same allowlisted player projection the owner's UI shows:
+
+- `GET /api/sessions/{id}/journal`, `.../journal/export`, `.../journal/{entry_id}`: the player journal
+  (`project_player_journal` / `filter_player_journal`).
+- `GET /api/sessions/{id}/map`, `.../map.svg`, `.../assets/{asset_id}`: built from the journal
+  projection through `_session_map_context`.
+- `GET /api/sessions/{id}/messages` and `GET /api/sessions/{id}/combat`, moved to members earlier in
+  this ticket. Messages carry narration, public citations and the stored roll, as the player sees it.
+
+These routes stay owner-only, because they can reveal data a player must not see:
+
+- NPCs (`/campaigns/{id}/npcs`, `/npcs/{id}`). `NPCRead` includes the raw `stat_block` even in the
+  session view, which is DM data. Making them member-readable needs a player-only response model first.
+- World flags, campaign characters and character sheets, invites, and session diagnostics (admin).
+- Every mutation.
+
+Not in M1: spectator presence or broadcast (EDG-047), spotlight arbitration beyond the single-holder
+rule (EDG-048), multi-PC combat (EDG-049) and lobby UI (EDG-050).
 
 ## Protected-route matrix
 

@@ -40,9 +40,12 @@ from edgar_core.sources import public_citations
 from ..auth import (
     Auth,
     authorize_session,
+    campaign_scope,
+    member_session,
     owned_campaign,
     owned_session,
     require_admin,
+    turn_session,
 )
 from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..limits import admit_turn, record_assumed_call, record_turn_spend
@@ -64,6 +67,7 @@ from ..services.session_messages import (
     load_session_context,
     maybe_update_memory_summary,
 )
+from ..services.session_party import session_party
 from ..services.setup_requests import creation_identity, creation_replay
 from ..services.story_state import load_story_state, session_story_flags
 from ..services.turn_receipts import load_turn_receipt
@@ -223,6 +227,7 @@ async def _load_turn_initial_state(
     character = None
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
+    party = await session_party(db, session)
     npcs = await load_npcs(db, session.campaign_id, session_id)
     npc_summaries = model_context_npcs(npcs, story_state)
 
@@ -253,6 +258,7 @@ async def _load_turn_initial_state(
         "current_scene_id": session.current_scene_id
         or (next(iter(manifests.values()))["opening_scene_id"] if manifests else None),
         "character": character,
+        "party": party,
         "npcs": npc_summaries,
         "combat_captives": await load_combat_captives(db, session_id),
         "memory_summary": memory_summary,
@@ -272,10 +278,9 @@ async def list_sessions(
 ):
     """List sessions of the caller's campaigns. Optional ?campaign_id= filter."""
     q = select(SessionModel)
-    if auth is not None:
-        q = q.join(Campaign, Campaign.id == SessionModel.campaign_id).where(
-            Campaign.created_by == auth.user_id
-        )
+    scope = campaign_scope(auth)
+    if scope is not None:
+        q = q.join(Campaign, Campaign.id == SessionModel.campaign_id).where(scope)
     if campaign_id is not None:
         q = q.where(SessionModel.campaign_id == campaign_id)
     result = await db.execute(q)
@@ -287,7 +292,7 @@ async def list_sessions(
 async def get_session_by_id(
     session_id: int, auth: Auth, db: AsyncSession = Depends(get_session)
 ):
-    session = await owned_session(db, session_id, auth)
+    session = await member_session(db, session_id, auth)
     return await _session_read(session, db)
 
 
@@ -299,7 +304,7 @@ async def get_session_combat(
 
     Lets the client restore the combat HUD after a reload.
     """
-    await owned_session(db, session_id, auth)
+    await member_session(db, session_id, auth)
     return combat_state_public(await load_active_combat(db, session_id))
 
 
@@ -308,7 +313,7 @@ async def list_session_messages(
     session_id: int, auth: Auth, db: AsyncSession = Depends(get_session)
 ):
     """Hydrate chat UI from narration rows in event_log (oldest first)."""
-    await owned_session(db, session_id, auth)
+    await member_session(db, session_id, auth)
 
     ev_result = await db.execute(
         select(EventLog)
@@ -468,7 +473,7 @@ async def _session_intro(session_id: int, auth: Auth, db: AsyncSession, redis: R
     if lock is None:
         raise HTTPException(status_code=409, detail="Session is busy; please retry.")
     try:
-        session = await owned_session(db, session_id, auth)
+        session = await turn_session(db, session_id, auth)
 
         camp_res = await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
         campaign = camp_res.scalar_one_or_none()
@@ -638,12 +643,12 @@ async def get_turn_receipt(
     reported as final while that writer is active. Clients retry only by explicit action.
     """
     response.headers["Cache-Control"] = "private, no-store"
-    await authorize_session(db, session_id, auth)
+    await member_session(db, session_id, auth)
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
         raise HTTPException(status_code=409, detail=classify_error("session_busy").to_payload())
     try:
-        await owned_session(db, session_id, auth)
+        await member_session(db, session_id, auth)
         receipt = await load_turn_receipt(db, session_id, request_id)
         if receipt is None:
             raise HTTPException(
