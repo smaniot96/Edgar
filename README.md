@@ -105,7 +105,10 @@ simulate (`GET /api/rules/supported-scope`):
   the same turn is refused with no roll and no round. Dodge gives attacks against the hero
   disadvantage, and the hero's Dexterity saving throws advantage, until the hero's next turn while
   the hero can act. Stunned, paralyzed or unconscious heroes receive neither Dodge benefit (the
-  book's visibility condition is not applied); the HUD and narration show what the turn spent.
+  book's visibility condition is not applied). Ready (PHB p.194) takes the action and holds one melee
+  attack for a named foe closing into melee; it is made with the hero's reaction when that happens,
+  and the reaction comes back at the start of the hero's next turn (PHB p.191). The HUD and narration
+  show what the turn spent, including the reaction.
 - Two-weapon fighting (PHB p.195): a hero who takes the Attack action with a light melee weapon and
   has a different light melee weapon on the sheet (two copies of one weapon count) and no shield may
   declare an off-hand attack. It is a bonus action, refused with no roll when the bonus action is
@@ -119,9 +122,9 @@ simulate (`GET /api/rules/supported-scope`):
   its turn and then attacks; a ranged-only foe stays at range. A melee attack or grapple cannot reach
   a foe at range and is refused with no roll, with the move that fixes it named. A ranged attack
   made within 5 feet has disadvantage. Leaving a foe's melee band without the Disengage action
-  provokes one opportunity attack from that foe, rolled by the engine with its reaction; a reaction
-  comes back at the start of the foe's own turn. Exact distances, cover, flanking and high ground are
-  not tracked.
+  provokes one opportunity attack from that foe (PHB p.196), rolled by the engine with its reaction;
+  a reaction is not taken again until the start of the creature's own next turn (PHB p.191). Exact
+  distances, cover, flanking and high ground are not tracked.
 - Class features in combat: Fighter Action Surge (one use, two from level 17, restored by a short or
   long rest; it adds one more attack on the same foe in that round), Rogue Sneak Attack (1d6 per two
   rogue levels, once per turn, on a hit with a finesse or ranged weapon that has advantage from an
@@ -190,13 +193,17 @@ simulate (`GET /api/rules/supported-scope`):
   Stored source identity uses the stable combatant ID when available, otherwise the source name. A
   short fear or stun due to expire at an ahead source's turn is checked after that turn, so a
   reapplication still blocks closing in or acting. Any other wording stays declared.
-- Combat maneuvers: in a combat round, a grapple, pin or restrain (rope or hands) and a shove prone
-  are a contested Athletics check against the foe's Dexterity. A won check restrains the foe (its
-  attacks have disadvantage, attacks against it have advantage, its Dexterity saves disadvantage) or
-  knocks it prone (its attacks have disadvantage; attacks against it have advantage from within 5
-  feet and disadvantage from farther away). A declared release ends a restraint; a restraint ends
-  with the foe's defeat or the encounter. These effects are shown in the combat roster and given to
-  the narrator.
+- Combat maneuvers (PHB pp.196-197, Appendix A): in a combat round, against one foe in the melee band,
+  in place of one attack. A grapple, a pin and a binding with rope are one maneuver: the hero's
+  Athletics check is contested by the foe's Strength (Athletics) or Dexterity (Acrobatics), and the
+  foe takes the better of its modifiers. A won check makes the foe grappled, whose speed is 0 and
+  which takes no attack or save penalty (PDF p.291). A shove prone that wins knocks the foe prone: its
+  attacks have disadvantage, and attacks against it have advantage from within 5 feet and
+  disadvantage from farther away (PDF p.293). Restrained (PDF p.293), with its attack and Dexterity
+  save penalties, is applied only from its other sources, never by a player's words. A declared
+  release ends a grapple or restraint; a grapple ends with the foe's defeat or the encounter. A
+  grappled foe does not escape, and the free hand and the size rule are not checked. These effects
+  are shown in the combat roster and given to the narrator.
 - Captives: a foe knocked out in a nonlethal victory stays alive as a captive. The player can release
   it (it is no longer a captive and is never an enemy again) or kill it, but only with an explicit
   lethal declaration in their own words; no dice are rolled. An attack on a captive without that
@@ -204,10 +211,12 @@ simulate (`GET /api/rules/supported-scope`):
   Released, killed and captured foes are recorded in the session story ledger.
 - Not supported: advantage claimed by the player or model without an engine source, shove away and
   other maneuvers, escape contests, spells outside that catalog, other concentration spells, other
-  conditions (charmed, grappled and the rest have no engine effect; frightened and stunned only from
-  the exact wordings above), area effects on more than the hero and save actions whose
-  wording is not read exactly, cover, high ground, flanking, difficult terrain and exact distances,
-  Help, reactions other than opportunity attacks, other bonus actions, and class features other than
+  conditions (charmed and the rest have no engine effect; frightened and stunned only from the exact
+  wordings above), area effects on more than the hero and save actions whose wording is not read
+  exactly, cover, high ground, flanking, difficult terrain and exact distances, Help and Hide (no
+  ally in a solo fight; no hidden state), reactions other than opportunity attacks and a readied melee
+  attack, readied triggers other than a foe closing into melee, readied ranged attacks, spells and
+  moves, other bonus actions, and class features other than
   Second Wind, Action Surge, Sneak Attack and Rage (Divine Smite, Lay on Hands, Bardic Inspiration,
   Channel Divinity, Wild Shape, sorcery and ki points, Flurry of Blows, Stunning Strike,
   Superiority Dice, Martial Arts; Rage's Strength advantage and early end). A declared action of

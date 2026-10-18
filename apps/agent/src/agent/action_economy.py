@@ -128,15 +128,24 @@ def off_hand_refusal(hero: str, *, attacked: bool, pair: bool) -> str | None:
     return None
 
 
-def economy_record(round_num: int, spent: Iterable[Declared], *, dodging: bool) -> dict[str, Any]:
-    """What the turn spent, as stored on the player combatant and mirrored for the client."""
+def economy_record(
+    round_num: int, spent: Iterable[Declared], *, dodging: bool, reaction: str | None = None
+) -> dict[str, Any]:
+    """What the turn spent, as stored on the player combatant and mirrored for the client.
+
+    `reaction` (EDG-044c) names the reaction the hero spent in this round's foe phase, when it was a
+    readied attack; it is additive, and None when the reaction was not used.
+    """
     spent = list(spent)
-    return {
+    record: dict[str, Any] = {
         "round": int(round_num),
         "action": next((d.label for d in spent if d.slot == ACTION), None),
         "bonus_action": next((d.label for d in spent if d.slot == BONUS_ACTION), None),
         "dodging": bool(dodging),
     }
+    if reaction is not None:  # additive: a record with no reaction keeps its earlier shape
+        record["reaction"] = reaction
+    return record
 
 
 def economy_text(combatants: Iterable[Mapping[str, Any]]) -> str | None:
@@ -148,6 +157,8 @@ def economy_text(combatants: Iterable[Mapping[str, Any]]) -> str | None:
     action = record.get("action") or "none"
     bonus = record.get("bonus_action") or "none"
     text = f"Hero's turn (engine-recorded): action used: {action}; bonus action used: {bonus}."
+    if record.get("reaction"):
+        text += f" Reaction used this round: {record['reaction']}."
     if record.get("dodging"):
         text += (
             " The hero is dodging: attacks against the hero have disadvantage until the hero's "

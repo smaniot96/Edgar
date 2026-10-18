@@ -4,20 +4,20 @@
     "version": "1.0.0"
   },
   "play.combat_narrator": {
-    "sha256": "2fcd2aa4777bfc1fb557fcaba31e6636b02187fa3d41d02c23f75718e2d33c4a",
-    "version": "1.0.0"
+    "sha256": "904ed584269d401b60939ce2b9ed2d4e09cff6a28f38000c4cc619cdeff4761a",
+    "version": "1.0.1"
   },
   "play.consequence_planner": {
-    "sha256": "ef230e4c19e0f6c57a7fbb469e620983a4e6961dbda838e3a5d1b7a6f4478b53",
-    "version": "1.0.0"
+    "sha256": "1723443f519e3a6c8d4f752def96d45091c2b8d7a9106598d71f86b22d36e3e4",
+    "version": "1.0.1"
   },
   "play.memory_summarizer": {
     "sha256": "b16f16fbf1d1a8fe63edf5c3428fc1557259bfca70c96aa67a8c1abff541d435",
     "version": "1.0.0"
   },
   "play.narrator": {
-    "sha256": "2fcd2aa4777bfc1fb557fcaba31e6636b02187fa3d41d02c23f75718e2d33c4a",
-    "version": "1.0.0"
+    "sha256": "904ed584269d401b60939ce2b9ed2d4e09cff6a28f38000c4cc619cdeff4761a",
+    "version": "1.0.1"
   },
   "play.parser": {
     "sha256": "5042e74f0a333391a9479590a0d28499b60aff8386a6f52dc7acdbdcea141eee",

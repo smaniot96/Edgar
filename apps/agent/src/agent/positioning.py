@@ -11,8 +11,8 @@ missing value reads as unused). Both are additive JSONB keys on the combatant ro
 Movement is not an action. The hero may change band once per turn at normal speed; the Dash
 action allows a second change in the same turn (2014 PHB, p.192). A creature that leaves a hostile
 creature's melee reach provokes one opportunity attack from that creature, made with its reaction
-(PHB p.195). A reaction is taken once and comes back at the start of the creature's own next turn
-(PHB p.190). The Disengage action stops the provocation for the rest of the turn (PHB p.192).
+(PDF p.196). A reaction is taken once and comes back at the start of the creature's own next turn
+(PDF p.191). The Disengage action stops the provocation for the rest of the turn (PDF p.193).
 
 Ranged attacks made within 5 feet of a hostile creature that can see you have disadvantage (PHB
 p.195), so a ranged attack made from the melee band uses the `within_five_feet` source of
@@ -62,7 +62,7 @@ def initial_band(stats: MonsterStats | None) -> str:
 
 
 def primary_melee_attack(stats: MonsterStats) -> MonsterAttack | None:
-    """The first melee attack listed: the attack an opportunity attack makes (PHB p.195)."""
+    """The first melee attack listed: the attack an opportunity attack makes (PDF p.196)."""
     return next((a for a in stats.attacks if not a.ranged), None)
 
 
@@ -109,7 +109,7 @@ def reach_refusal(hero: str, foe: str) -> str:
 
 
 def start_turn(c: dict) -> None:
-    """A creature's reaction comes back at the start of its own turn (PHB p.190)."""
+    """A creature's reaction comes back at the start of its own turn (PDF p.191)."""
     c["reaction_used"] = False
 
 

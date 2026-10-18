@@ -112,10 +112,10 @@ def test_defeat_ends_the_effects_of_the_defeated_combatant() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("I grapple the raider with my rope", ("restrained", "rope")),
-        ("I pin him to the floor with my hands", ("restrained", "hands")),
-        ("I restrain the goblin with the chain", ("restrained", "rope")),
-        ("I shove the goblin and pin it to the floor", ("restrained", "hands")),
+        ("I grapple the raider with my rope", ("grappled", "rope")),
+        ("I pin him to the floor with my hands", ("grappled", "hands")),
+        ("I restrain the goblin with the chain", ("grappled", "rope")),
+        ("I shove the goblin and pin it to the floor", ("grappled", "hands")),
         ("I shove the raider prone", ("prone", "shove")),
         ("I knock the raider down", ("prone", "shove")),
         ("I trip the goblin", ("prone", "shove")),
@@ -206,9 +206,11 @@ def _summary(out: dict) -> str:
 
 
 @pytest.mark.asyncio
-async def test_won_grapple_restrains_and_the_foe_attacks_at_disadvantage(
+async def test_won_grapple_holds_the_foe_and_its_attacks_are_unchanged(
     fake_llm_schema, fake_retrieval
 ) -> None:
+    """PHB p.196 and Appendix A (PDF p.291): a grapple makes the foe grappled, whose only effect is
+    speed 0. It gives the foe no attack or save penalty, so its attack is a plain d20."""
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     parsed = ParsedInput(intent="combat", target="raider")
     out = await _find_contest(
@@ -219,15 +221,12 @@ async def test_won_grapple_restrains_and_the_foe_attacks_at_disadvantage(
         won=True,
     )
     raider = _foe(out, "Raider")
-    assert effects_of(raider) == [{"kind": "restrained", "source": "hands", "applied_round": 1}]
-    assert "restrains Raider with hands." in _summary(out)
+    assert effects_of(raider) == [{"kind": "grappled", "source": "hands", "applied_round": 1}]
+    assert not has_effect(raider, "restrained")
+    assert "grapples Raider with hands." in _summary(out)
     assert "contest: Eda athletics" in _summary(out)
-    # Restrained creatures still attack (5e), but with disadvantage: the kept die is the lower one.
     attack = _entries(out, "Raider attack")[0]
-    assert attack["roll_mode"] == "disadvantage"
-    assert attack["kept"] == min(attack["rolls"]) and len(attack["rolls"]) == 2
-    assert attack["total"] == attack["kept"] + attack["modifier"]
-    assert "(rolled" in _summary(out) and " at disadvantage vs AC" in _summary(out)
+    assert "roll_mode" not in attack and len(attack["rolls"]) == 1
 
 
 @pytest.mark.asyncio
@@ -252,7 +251,7 @@ async def test_lost_grapple_records_no_effect_and_the_foe_attacks_normally(
 
 
 @pytest.mark.asyncio
-async def test_restraint_persists_across_rounds_and_the_players_attack_gets_advantage(
+async def test_grapple_persists_across_rounds_without_changing_either_attack(
     fake_llm_schema, fake_retrieval
 ) -> None:
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
@@ -274,11 +273,11 @@ async def test_restraint_persists_across_rounds_and_the_players_attack_gets_adva
     with use_rng(random.Random(4)):
         second = await combat_round_node(follow)
     assert effects_of(_foe(second, "Raider")) == [
-        {"kind": "restrained", "source": "rope", "applied_round": 1}
+        {"kind": "grappled", "source": "rope", "applied_round": 1}
     ]
-    player_attack = _entries(second, "attack check")[0]
-    assert player_attack["roll_mode"] == "advantage"
-    assert _entries(second, "Raider attack")[0]["roll_mode"] == "disadvantage"
+    # A grappled foe is not restrained: the hero's attack gets no advantage (PHB p.291, p.293).
+    assert "roll_mode" not in _entries(second, "attack check")[0]
+    assert "roll_mode" not in _entries(second, "Raider attack")[0]
 
 
 @pytest.mark.asyncio
@@ -302,7 +301,7 @@ async def test_declared_release_ends_the_restraint_explicitly(
         seed=2,
     )
     assert effects_of(_foe(released, "Raider")) == []
-    assert "releases Raider; it is no longer restrained." in _summary(released)
+    assert "releases Raider; it is no longer grappled." in _summary(released)
     # No contest is rolled for a release, and the freed foe attacks normally afterwards.
     assert _entries(released, "athletics contest") == []
     assert "mode" not in _entries(released, "Raider attack")[0]
@@ -394,7 +393,7 @@ async def test_two_similarly_named_foes_only_the_named_one_is_restrained(
         parsed,
         won=True,
     )
-    assert has_effect(_foe(out, "Raider 2"), "restrained")
+    assert has_effect(_foe(out, "Raider 2"), "grappled")
     assert effects_of(_foe(out, "Raider")) == []
 
 
@@ -444,7 +443,7 @@ async def test_narration_keeps_a_real_restraint_and_strips_a_claim_without_one(
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     parsed = ParsedInput(intent="combat", target="raider")
     fake_llm_schema.narration = (
-        "You loop your rope round the raider. It is restrained by your rope now. "
+        "You loop your rope round the raider. It is grappled by your rope now. "
         "What do you do next?"
     )
     won = await _find_contest(
@@ -454,7 +453,21 @@ async def test_narration_keeps_a_real_restraint_and_strips_a_claim_without_one(
         parsed,
         won=True,
     )
-    assert "restrained by your rope now" in won["narration"]
+    assert "grappled by your rope now" in won["narration"]
+
+    fake_llm_schema.narration = (
+        "You loop your rope round the raider. It is restrained by your rope now. "
+        "What do you do next?"
+    )
+    kept = await _find_contest(
+        fake_llm_schema,
+        lambda: [_player(init=20, ac=99), _enemy("Raider", init=5)],
+        "I grapple the raider with my rope",
+        parsed,
+        won=True,
+    )
+    assert "restrained by your rope now" not in kept["narration"]  # a grapple is not a restraint
+    assert "What do you do next?" in kept["narration"]
 
     fake_llm_schema.narration = (
         "You loop your rope round the raider. It is pinned to the wall by your rope. "
@@ -492,7 +505,7 @@ async def test_narrator_prompt_carries_the_restraint_from_the_engine(
             "adjudication_result": out["adjudication_result"],
         }
     )[1].content
-    assert 'name "Raider": active, can act; restrained with hands' in prompt
+    assert 'name "Raider": active, can act; grappled by hands' in prompt
 
 
 # --- pure contract helpers used by the narrator/adjudicator boundary -----------------------
@@ -501,10 +514,10 @@ async def test_narrator_prompt_carries_the_restraint_from_the_engine(
 def test_classifier_keeps_unsupported_maneuvers_and_drops_only_applied_ones() -> None:
     text = "I pin the goblin to the floor"
     assert [a.kind for a in classify_unsupported_actions(text)] == ["maneuver"]
-    applied = classify_unsupported_actions(text, applied=EngineApplied(effects=("restrained",)))
+    applied = classify_unsupported_actions(text, applied=EngineApplied(effects=("grappled",)))
     assert applied == ()
     shove_away = classify_unsupported_actions(
-        "I shove the goblin away", applied=EngineApplied(effects=("restrained",))
+        "I shove the goblin away", applied=EngineApplied(effects=("grappled",))
     )
     assert [a.kind for a in shove_away] == ["maneuver"]
 
@@ -516,6 +529,6 @@ def test_sanitizer_strips_only_claims_the_engine_did_not_apply() -> None:
     assert "pinned" not in cleaned and "What now?" in cleaned
     assert "Narrative ruling" in cleaned
     applied = classify_unsupported_actions(
-        "I pin the goblin", applied=EngineApplied(effects=("restrained",))
+        "I pin the goblin", applied=EngineApplied(effects=("grappled",))
     )
     assert apply_narration_boundary(narration, applied) == narration

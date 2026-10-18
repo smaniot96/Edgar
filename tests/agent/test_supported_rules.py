@@ -548,9 +548,9 @@ async def test_supported_contested_maneuver_applies_effect(fake_llm_schema, fake
         won=True,
     )
     assert _foe(out, "Raider")["effects"] == [
-        {"kind": "restrained", "source": "hands", "applied_round": 1}
+        {"kind": "grappled", "source": "hands", "applied_round": 1}
     ]
-    assert _entries(out, "Raider attack")[0]["roll_mode"] == "disadvantage"
+    assert "roll_mode" not in _entries(out, "Raider attack")[0]  # PHB p.291: grappled adds no penalty
 
 
 # --------------------------------------------------------------------------------------------
@@ -803,9 +803,11 @@ def test_each_engine_fact_exempts_its_claim_through_the_applied_value() -> None:
     assert actions_for_state(state) == ()
     assert actions_for_state({**state, "engine_roll_mode": "normal"})
 
-    # A typed effect: a restraint the engine applied keeps its narration and is not declared.
-    pin = {"player_input": "I pin the goblin", "engine_effects": ["restrained"]}
+    # A typed effect: a grapple the engine applied keeps its narration and is not declared. A restraint
+    # is a different condition and does not make a grapple real (PHB p.196, p.293).
+    pin = {"player_input": "I pin the goblin", "engine_effects": ["grappled"]}
     assert actions_for_state(pin) == ()
+    assert actions_for_state({**pin, "engine_effects": ["restrained"]})
     narration = "The goblin is pinned to the wall. What now?"
     assert apply_narration_boundary(narration, actions_for_state(pin)) == narration
     unapplied = {"player_input": "I pin the goblin", "engine_effects": []}

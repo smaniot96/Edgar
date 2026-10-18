@@ -48,8 +48,10 @@ def additional_spell_targets(
 
 
 def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | None:
-    """The restrained foe a player's declared release refers to (the only one when unnamed)."""
-    bound = [e for e in enemies_in_order if has_effect(e, "restrained")]
+    """The grappled or restrained foe a player's declared release refers to (the only one when unnamed)."""
+    bound = [
+        e for e in enemies_in_order if has_effect(e, "grappled") or has_effect(e, "restrained")
+    ]
     for n in named:
         for e in bound:
             if _name_matches(n, e["name"]):

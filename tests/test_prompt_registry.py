@@ -67,8 +67,10 @@ def test_changed_text_without_version_bump_is_a_violation() -> None:
 
 def test_bumped_version_with_changed_text_is_only_a_refresh_request() -> None:
     golden = _golden()
-    changed = PromptEntry("play.narrator", "narrator", "1.0.1", NARRATOR + " ")
-    current = {**prompt_manifest(), "play.narrator": {"version": "1.0.1", "sha256": changed.sha256}}
+    # Bump past the golden version, so the drift is the text change plus the version bump.
+    bumped = f"{golden['play.narrator']['version'].rsplit('.', 1)[0]}.{int(golden['play.narrator']['version'].rsplit('.', 1)[1]) + 1}"
+    changed = PromptEntry("play.narrator", "narrator", bumped, NARRATOR + " ")
+    current = {**prompt_manifest(), "play.narrator": {"version": bumped, "sha256": changed.sha256}}
     problems = manifest_drift(current, golden)
     assert problems == ["play.narrator: differs from the golden manifest (refresh it)"]
 

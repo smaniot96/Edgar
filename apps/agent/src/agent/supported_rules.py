@@ -652,23 +652,26 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="contested_maneuvers",
-        title="Grapple, pin and restrain; shove prone (in combat, contested)",
+        title="Grapple (pin included) and shove prone in combat, contested",
         scope=(
-            "In combat, against one foe, with rope or bare hands. The player's Athletics check is "
-            "contested by the foe's Dexterity check (Acrobatics without proficiency); the higher "
-            "total wins and a tie fails. Success restrains a grappled or pinned foe: its attacks have "
-            "disadvantage, attacks against it have advantage and its Dexterity saves (a spell's, such as "
-            "Sacred Flame's) have disadvantage. Success on a shove prone knocks the "
-            "foe prone: its attacks have disadvantage, and attacks against it have advantage from "
-            "within 5 feet (the melee band) and disadvantage from farther away (PHB, PDF p.293), so a "
-            "ranged attack made within 5 feet has advantage that its own disadvantage cancels. The "
-            "maneuver replaces that turn's attack. A "
-            "restraint ends when the player declares a release, when the foe is defeated, or when the "
-            "encounter ends. A prone foe does not stand up, and a restrained foe makes no escape "
-            "contest; both are fixed for the rest of the encounter."
+            "In combat, against one foe in the melee band, in place of one attack (PHB, PDF p.196). "
+            "The hero's Athletics check is contested by the foe's Strength (Athletics) or Dexterity "
+            "(Acrobatics) check; the foe chooses the better of its two modifiers, and a record does not "
+            "state its Athletics proficiency, so only the modifiers count. The higher total wins and a tie "
+            "fails. A grapple that succeeds makes the foe grappled (PDF p.291): its speed is 0, and the "
+            "grapple gives it no attack, check or save penalty, so its attacks and saves are unchanged. A "
+            "pin and a binding with rope are ruled as a grapple: 2014 has no separate pin rule. A "
+            "restrained foe (PDF p.293) is a different condition, and a grapple never makes one. A shove "
+            "that succeeds knocks the foe prone: its attacks have disadvantage, and attacks against it have "
+            "advantage from within 5 feet and disadvantage from farther away (PDF p.293), so a ranged "
+            "attack made within 5 feet has advantage that its own disadvantage cancels. A grappled foe "
+            "does not escape: the engine does not spend a foe's action on an escape contest. A grapple ends "
+            "when the player declares a release, when the foe is defeated, or when the encounter ends. A "
+            "prone foe does not stand up. Not checked: the hero's free hand (its hands are not tracked) and "
+            "the size rule (no record gives a creature's size). Shoving a foe away is not supported."
         ),
-        implementation="agent.combatants:add_effect",
-        test="tests/agent/test_supported_rules.py::test_supported_contested_maneuver_applies_effect",
+        implementation="agent.combat_player_phase:_maneuver",
+        test="tests/agent/test_combat_effects.py::test_won_grapple_holds_the_foe_and_its_attacks_are_unchanged",
     ),
     Mechanic(
         id="action_economy",
@@ -678,17 +681,38 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
             "declared action from a fixed table: attack, contested maneuver, item use, a catalog "
             "action spell, Dodge, Dash and Disengage use the action; Second Wind, Healing Word, Rage "
             "and the off-hand attack use the bonus action. A second action, or a second bonus action, in the same turn is refused "
-            "with no roll and no round. Dodge (PHB, PDF p.193) gives attacks against the hero "
+            "with no roll and no round. Ready (PDF p.194) is an action too (see readied_action). Dodge (PHB, PDF p.193) gives attacks against the hero "
             "disadvantage, and the hero's Dexterity saving throws advantage (see "
             "monster_save_actions), until the hero's next turn begins. The book's conditions are not "
             "checked: the attacker must be seen for the disadvantage, and the benefit is lost at "
             "speed 0; neither sight nor speed is tracked. Dash "
             "allows a second move in the turn and Disengage stops the opportunity attacks that moves "
             "would provoke (see positioning). The turn's spending is shown in the combat HUD and the "
-            "narration context. Help is not modelled."
+            "narration context. Help and Hide are not modelled (see action_economy_remainder)."
         ),
         implementation="agent.action_economy:refusal_for",
         test="tests/agent/test_action_economy.py::test_second_action_is_refused_before_any_roll",
+    ),
+    Mechanic(
+        id="readied_action",
+        title="Ready: a melee attack held for a closing foe",
+        scope=(
+            "The Ready action (PHB, PDF p.194) takes the hero's action and holds one melee attack. Its "
+            "trigger must name one foe and say that it closes in (for example 'ready an attack when the "
+            "goblin closes in'); the engine reads a foe's move into the hero's melee band on its own turn "
+            "as that trigger. Nothing is rolled when the attack is readied. When the foe closes in, the "
+            "attack is made with the hero's reaction, after the foe's move and before its own attacks (PDF "
+            "p.191), by the engine's ordinary melee attack roll and damage. The reaction is spent until the "
+            "hero's next turn starts, and the readied attack lapses then if the trigger did not occur (the "
+            "PHB gives no duration; this is the engine's reading of 'act later in the round'). A foe with "
+            "only ranged attacks keeps its distance and cannot be readied against. A foe already in melee "
+            "is refused, so is a second readied attack in one turn. Any other trigger, a ranged readied "
+            "attack, a readied spell and a readied move are not executed: the engine asks one question that "
+            "names the nearest supported option, with no roll and no turn spent. A readied attack shows in "
+            "the combat HUD as an effect, and it survives a save and reload with the combat state."
+        ),
+        implementation="agent.readied_action:ready_order",
+        test="tests/agent/test_readied_action.py::test_readied_attack_fires_when_the_foe_closes_in_before_its_own_attack",
     ),
     Mechanic(
         id="two_weapon_fighting",
@@ -731,10 +755,11 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         title="Opportunity attacks (the reaction): leaving a foe's melee reach",
         scope=(
             "When the hero moves from a foe's melee band to range without the Disengage action, that "
-            "foe may make one melee attack against the hero with its reaction: the record's first melee "
-            "attack, rolled and damaged by the engine. A creature has one reaction per round, which comes "
-            "back at the start of its own turn. A foe with no melee attack makes none. No other reaction "
-            "is executed."
+            "foe may make one melee attack against the hero with its reaction (PHB, PDF p.196): the "
+            "record's first melee attack, rolled and damaged by the engine. A creature has one reaction "
+            "per round, which it cannot take again until the start of its own next turn (PDF p.191). A "
+            "foe with no melee attack makes none. No other foe reaction is executed. The hero's own "
+            "reaction is the readied attack (see readied_action)."
         ),
         implementation="agent.graph_combat:combat_round_node",
         test="tests/agent/test_positioning.py::test_leaving_melee_provokes_one_opportunity_attack",
@@ -783,9 +808,8 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     UnsupportedMechanic(
         id="other_conditions",
         title=(
-            "Mechanical effects of other conditions (charmed, grappled, incapacitated and the rest; "
-            "frightened and stunned on a foe; poisoned and paralyzed beyond the effects named in the "
-            "supported list)"
+            "Mechanical effects of other conditions (charmed, incapacitated and the rest; frightened and "
+            "stunned on a foe; poisoned and paralyzed beyond the effects named in the supported list)"
         ),
         boundary=(
             "Such a condition has no engine effect: it does not penalise rolls, speed, actions or senses, "
@@ -807,11 +831,14 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="action_economy_remainder",
-        title="Help, reactions other than opportunity attacks, and other bonus actions",
+        title="Help, Hide, other reactions and bonus actions",
         boundary=(
             "Each turn allows one action and one bonus action, and only Second Wind, Healing Word, Rage "
-            "and the off-hand attack use the bonus action. Help, any reaction other than an "
-            "opportunity attack, and any other bonus action have no engine effect."
+            "and the off-hand attack use the bonus action. Help (PDF p.193) needs an ally, and a solo fight "
+            "has none; Hide (PDF p.193) records no hidden state and no observer, so a declared Hide is an "
+            "ordinary ability check at most. A reaction other than an opportunity attack or a readied melee "
+            "attack (a Shield or Counterspell, say) has no engine effect, and so does any other readied "
+            "trigger, a readied ranged attack, spell or move, and any other bonus action."
         ),
         owner="EDG-044",
     ),
@@ -923,8 +950,8 @@ _RULINGS = {
         "roll uses the plain d20 and the sheet modifier."
     ),
     ACTION_ECONOMY: (
-        "Narrative ruling: this action is not modelled. Help, reactions other than opportunity attacks "
-        "and other bonus actions have no engine effect."
+        "Narrative ruling: this action is not modelled. Help, Hide, reactions other than opportunity "
+        "attacks and a readied melee attack, and other bonus actions have no engine effect."
     ),
     POSITIONING: (
         "Narrative ruling: cover, high ground, flanking and difficult terrain are not modelled. They "
@@ -1033,6 +1060,38 @@ _PARSED_ECONOMY = re.compile(
     re.IGNORECASE,
 )
 
+_MANEUVER_PARTS = 5
+# The maneuver wording each applied effect makes real (see `_maneuver_claim`).
+_MANEUVER_FAMILY = {
+    # A grappled creature's speed is 0, so "can't move" is true of it (PDF p.291).
+    "grappled": frozenset({"grapple", "stuck"}),
+    "restrained": frozenset({"restrain", "stuck"}),
+    "prone": frozenset({"shove", "prone"}),
+}
+
+
+def _maneuver_exclusions(effects: set[str]) -> frozenset[str]:
+    """The maneuver wording the engine's applied effects make real this turn."""
+    return frozenset().union(*(_MANEUVER_FAMILY[e] for e in effects & _MANEUVER_FAMILY.keys()))
+
+
+def _maneuver_claim(exclude: frozenset[str] = frozenset()) -> str:
+    """The maneuver wording of narration. "grapple" is the wording of a grapple (PHB p.196) and
+    "restrain" that of a restraint (PHB p.293): the engine's applied effect exempts only its own."""
+    parts = {
+        "grapple": (
+            r"pinned|pins?\s+(?:him|her|it|them|the\s+\w+)|pinning|grappl\w*|"
+            r"held\s+(?:fast|down|in\s+place|still)"
+        ),
+        "restrain": r"restrain\w*",
+        "shove": r"shov\w*" + _NOT_OBJECT,
+        "prone": r"prone|knocked\s+(?:down|prone|over)",
+        "stuck": r"(?:can|could)(?:n't|\s+not)\s+(?:move|escape|get\s+up|stand)",
+    }
+    words = "|".join(p for name, p in parts.items() if name not in exclude)
+    return r"\b(?:" + words + r")\b"
+
+
 _CLAIM_WORDS = {
     SPELL: (
         r"\b\d+d\d+\b|\bspell\s+slots?\b|\bslots?\b|\bconcentrat\w*|\b(?:"
@@ -1040,13 +1099,7 @@ _CLAIM_WORDS = {
         + r")\b|\bspell\s+(?:hits|strikes|lands|takes hold|binds|damages|heals|restores)\b"
     ),
     FEATURE: r"\b(?:" + _FEATURE_NAMES + r")\b",
-    MANEUVER: (
-        r"\b(?:pinned|pins?\s+(?:him|her|it|them|the\s+\w+)|pinning|restrain\w*|grappl\w*|"
-        r"shov\w*"
-        + _NOT_OBJECT
-        + r"|prone|held\s+(?:fast|down|in\s+place|still)|knocked\s+(?:down|prone|over)|"
-        r"(?:can|could)(?:n't|\s+not)\s+(?:move|escape|get\s+up|stand))\b"
-    ),
+    MANEUVER: _maneuver_claim(),
     CONDITION: _condition_claim(),
     ADVANTAGE: r"\b(?:advantage|disadvantage|with an edge)\b",
     ACTION_ECONOMY: _ACTION_ECONOMY_CLAIM,
@@ -1361,6 +1414,8 @@ def _executed_economy_phrase(
         return True
     if "disengage" in applied.effects and word.startswith("disengag"):
         return True
+    if "readied" in applied.effects and word.startswith("ready"):
+        return True  # EDG-044c: the Ready action the engine recorded this turn
     return "opportunity_attack" in applied.effects and word.startswith("opportunity")
 
 
@@ -1438,17 +1493,24 @@ def _claim_pattern(
     implemented class feature the engine executed (`applied.effects`, EDG-145); those claims are
     not applied to that turn's text.
     """
+    effects = set(applied.effects)
+    exclusions = _maneuver_exclusions(effects)
     if not actions:
-        return None
-    maneuver_applied = bool({"restrained", "prone"} & set(applied.effects))
+        # A supported maneuver the engine applied is not a declared action, but its narration is still
+        # checked: a grapple does not make a restraint or a prone state real (PHB p.196, p.293).
+        if not exclusions or len(exclusions) >= _MANEUVER_PARTS:
+            return None
+        return re.compile(_maneuver_claim(exclusions), re.IGNORECASE)
     patterns = []
     for kind, p in _claim_words(applied).items():
         if applied.executed_spell and kind == SPELL:
             continue
         if kind == ADVANTAGE and applied.roll_mode != "normal":
             continue
-        if kind == MANEUVER and maneuver_applied:
-            continue
+        if kind == MANEUVER and exclusions:
+            if len(exclusions) >= _MANEUVER_PARTS:
+                continue
+            p = _maneuver_claim(exclusions)  # the applied maneuver's own wording is real
         recorded = _RECORDED_CONDITIONS & set(applied.effects)
         if kind == CONDITION and recorded:
             p = _condition_claim(frozenset(recorded))  # the engine's real condition is not a claim
@@ -1559,7 +1621,13 @@ def apply_narration_boundary(
     the player always sees that the declared effect is narrative only.
     """
     if not actions:
-        return narration
+        # No declared action is unsupported, but a supported maneuver's narration is still checked: a
+        # claim of a wording the engine did not apply (a restraint after a grapple) is removed.
+        pattern = _claim_pattern(actions, applied)
+        if pattern is None:
+            return narration
+        body = _strip_claim_sentences(narration, pattern)
+        return body or "*The engine's record governs this turn: only the effects it applied happened.*"
     body = _strip_claim_sentences(narration, _claim_pattern(actions, applied))
     rulings = " ".join(ruling_lines(actions))
     if not body:
