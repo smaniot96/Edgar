@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import type { SessionMapRead } from "../../api/types";
 import type { JournalEntry } from "../journal/types";
 import { SessionMapPanel } from "./SessionMapPanel";
+
+// The map image is fetched with the bearer token (EDG-160). Keep that request pending so these
+// tests exercise the pins and controls while the image is still loading, as before.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const map: SessionMapRead = {
   session_id: 12,

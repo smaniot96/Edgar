@@ -4,7 +4,8 @@ Edgar runs in one of two auth modes, chosen by `EDGAR_AUTH_MODE`. The default is
 app, which is unchanged. The hosting mode adds bearer-token authentication, ownership checks on
 campaign data and operator-only routes. Code: `apps/api/auth.py`; route wiring: `apps/api/main.py`
 and the routers; tests: `tests/test_auth_*.py`, `tests/test_route_auth_matrix.py`,
-`tests/api/test_auth_token_mode.py`.
+`tests/api/test_auth_token_mode.py`, and `tests/api/test_token_mode_cross_site.py` (EDG-160). The bundled
+UI's token handling is in `frontend/src/api/auth.ts`.
 
 ## Modes and settings
 
@@ -63,6 +64,39 @@ Operator commands (run from the repo root with the project environment):
 ```
 
 There is no HTTP self-service signup, password flow or token-management endpoint in this change.
+
+## Player sign-in in the bundled UI (EDG-160)
+
+In token mode the bundled UI sends `Authorization: Bearer <token>` on every API call: JSON requests,
+the turn stream, uploads, and the images and downloads (session map, artwork, player handouts, cover
+images, journal export, extracted Markdown). A plain link or image cannot send that header, so those
+resources are fetched by the client and shown or saved from a local object URL.
+
+Operator steps for a player:
+
+1. Make sure the player has a user row. Only an admin can create one in token mode (`POST /api/users`).
+2. Create a token for that user. It is printed once:
+   `.venv/bin/python -m tools.manage_tokens create --user-id <id> --label "<player name>"`.
+   Give it to the player through a private channel. Do not paste it into a shared chat or a ticket.
+3. The player opens `/ui/`, goes to **Settings**, pastes the token under **Access token**, and selects
+   **Save token**.
+
+Player behaviour:
+
+- The token is kept in `sessionStorage` only. It is scoped to that browser tab, is cleared when the tab
+  closes, and is never written to `localStorage`, a URL, or the logs. The player re-enters it in a new
+  tab. Settings shows only whether a token is set, never its value. **Remove token** clears it.
+- A token the server does not accept shows "Your access token is missing, revoked or not recognized."
+  The server does not say which, on purpose. The next step is a current token on the Settings page.
+  Anything typed in an unsent turn or form is kept.
+- An action that needs an admin (for example adventure uploads or generation, seed, and diagnostics)
+  shows "This action needs an administrator account." It is not a sign-in problem; the player cannot
+  fix it with a different token of their own.
+- Revoke a token with `.venv/bin/python -m tools.manage_tokens revoke --token-id <id>`. The player's
+  next request then gets the sign-in state. A lost token cannot be recovered: create a new one.
+
+Local mode (`EDGAR_AUTH_MODE` unset or `local`) needs no token. The UI sends no `Authorization` header
+unless a token has been saved in the tab.
 
 ## Admin
 
@@ -126,8 +160,8 @@ The steps below are required before exposing the API beyond localhost.
 
 ## Not done in this change
 
-- No UI login. The bundled frontend sends no `Authorization` header, so it cannot run in token mode.
-  Hosting therefore needs a client change first. Until then, a token can be used with the API directly.
+- No UI login with a password or identity provider. The player pastes a token that the operator issued
+  (see "Player sign-in in the bundled UI" above).
 - No password, OAuth or SSO flow, and no signup or self-service token endpoint.
 - No multiplayer membership (`campaign_members`, invites, seats). That is EDG-046.
 - Rate limits and spend caps are not keyed per user here. EDG-066 owns that and can use `principal_for`.

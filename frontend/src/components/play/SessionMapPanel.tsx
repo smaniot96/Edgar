@@ -1,13 +1,41 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { apiBase, errorMessage } from "../../api/client";
+import { downloadAuthorized, useAuthorizedObjectUrl } from "../../api/resources";
 import type { SessionMapRead } from "../../api/types";
 import type { JournalEntry } from "../journal/types";
+import { AuthorizedImage } from "../ui/AuthorizedImage";
 import { Button } from "../ui/Button";
 
 type SavedView = { sceneId: string | null; zoom: number; panLeft: number; panTop: number; scrollTop: number };
 
 const emptyView: SavedView = { sceneId: null, zoom: 1, panLeft: 0, panTop: 0, scrollTop: 0 };
+
+/** A short, safe file extension from a media type ("application/pdf" -> "pdf"). */
+function handoutExtension(mediaType: string): string {
+  const subtype = mediaType.split("/")[1]?.split("+")[0]?.replace(/[^a-z0-9]/gi, "").toLowerCase() ?? "";
+  return subtype.length > 0 && subtype.length <= 8 ? subtype : "bin";
+}
+
+/** A player handout is downloaded through the authorized client (a plain link cannot send the token). */
+function HandoutLink({ url, filename }: { url: string; filename: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        className="block w-full p-3 text-left text-sm text-ember-300 underline"
+        onClick={() => {
+          setFailed(false);
+          void downloadAuthorized(url, filename).catch(() => setFailed(true));
+        }}
+      >
+        Open player handout
+      </button>
+      {failed ? <p role="status" className="px-3 pb-3 text-xs text-danger">The handout could not be downloaded. Try again.</p> : null}
+    </div>
+  );
+}
 
 function savedOffset(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(value, 1_000_000)) : 0;
@@ -101,6 +129,9 @@ function SessionMapPanelContent({
     () => `${apiBase}/api/sessions/${sessionId}/map.svg?v=${encodeURIComponent(sourceVersion)}`,
     [sessionId, sourceVersion],
   );
+  // The map is fetched with the bearer token and shown from an object URL (EDG-160).
+  const mapImage = useAuthorizedObjectUrl(mapUrl);
+  const mapImageFailed = imageFailed || Boolean(mapImage.error);
 
   function updateView(next: Partial<SavedView>) {
     setView((currentView) => ({ ...currentView, ...next }));
@@ -157,13 +188,13 @@ function SessionMapPanelContent({
           <figure ref={mapFigureRef} tabIndex={0} onScroll={(event) => updateView({ panLeft: event.currentTarget.scrollLeft, panTop: event.currentTarget.scrollTop })} className="max-h-[50dvh] overflow-auto rounded-control border border-line bg-[#101827] p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400" aria-label="Schematic map of known places">
             <div className="relative mx-auto transition-[width] duration-150 motion-reduce:transition-none" style={{ width: `${Math.round(view.zoom * 100)}%`, minWidth: `${Math.round(view.zoom * 100)}%` }}>
               <img
-                src={mapUrl}
+                src={mapImage.objectUrl ?? undefined}
                 onLoad={() => { setImageFailed(false); restoreScroll(); }}
                 onError={() => setImageFailed(true)}
                 alt="Schematic map showing only places and connections known in this session. It does not show distance or scale."
                 className="h-auto w-full max-w-none"
               />
-              {!imageFailed && places.map((place, index) => (
+              {!mapImageFailed && places.map((place, index) => (
                 <button key={place.scene_id} type="button" aria-label={`Inspect ${place.title}`} aria-pressed={selected?.scene_id === place.scene_id}
                   onClick={() => updateView({ sceneId: place.scene_id })}
                   className="absolute min-h-11 min-w-11 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-transparent hover:border-ember-300 focus-visible:border-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
@@ -175,7 +206,7 @@ function SessionMapPanelContent({
             <figcaption className="px-2 pb-1 text-xs text-slate-300">Schematic connections only. The map does not show distance or scale.</figcaption>
           </figure>
         ) : null}
-        {imageFailed ? <p className="mt-3 text-sm text-ink-muted" role="status">The map image is unavailable or changed. Refresh the map, or use the known places and routes below.</p> : null}
+        {mapImageFailed ? <p className="mt-3 text-sm text-ink-muted" role="status">The map image is unavailable or changed. Refresh the map, or use the known places and routes below.</p> : null}
         {map?.note ? <p className="mt-3 text-sm text-ink-muted">{map.note}</p> : null}
         {map?.tracking === "legacy_untracked" ? <p className="mt-3 text-sm text-ink-muted">This older session has no recorded place knowledge yet.</p> : null}
 
@@ -255,9 +286,9 @@ function SessionMapPanelContent({
               {map.artwork.map((asset) => (
                 <li key={asset.asset_id} className="overflow-hidden rounded-control border border-line bg-surface">
                   {asset.media_type.startsWith("image/") ? (
-                    <img src={`${apiBase}${asset.url}`} alt="Artwork connected to a known place or encountered creature" className="max-h-56 w-full object-contain" loading="lazy" />
+                    <AuthorizedImage url={`${apiBase}${asset.url}`} alt="Artwork connected to a known place or encountered creature" className="max-h-56 w-full object-contain" loading="lazy" />
                   ) : (
-                    <a className="block p-3 text-sm text-ember-300 underline" href={`${apiBase}${asset.url}`}>Open player handout</a>
+                    <HandoutLink url={`${apiBase}${asset.url}`} filename={`player-handout.${handoutExtension(asset.media_type)}`} />
                   )}
                   <p className="px-3 pt-2 text-sm text-ink">{artworkLabel(asset.kind)}</p>
                   <p className="px-3 pb-3 text-xs text-ink-muted">Version {asset.sha256.slice(0, 12)}</p>

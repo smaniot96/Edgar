@@ -52,10 +52,11 @@ a simple request, and cannot read a response that CORS has not allowed.
 - **Current code (local mode, no authentication).** There are no cookies and no credentials. CORS only
   decides whether a page may read a response. It does not stop a request from reaching the server.
   See the request-mode findings below.
-- **Bearer-token mode (planned in EDG-065, not yet on this base).** The token is sent in the
-  `Authorization` header by the client code. A browser does not add it ambiently. A cross-site form or
-  simple request therefore carries no credential and fails authentication. A separately hosted client
-  then needs only the origin allow-list. `EDGAR_ALLOW_CREDENTIALS` stays off.
+- **Bearer-token mode (EDG-065; bundled UI in EDG-160).** The token is sent in the `Authorization` header
+  by the client code. A browser does not add it ambiently. A cross-site form or simple request therefore
+  carries no credential and fails authentication. A separately hosted client then needs only the origin
+  allow-list. `EDGAR_ALLOW_CREDENTIALS` stays off. `tests/api/test_token_mode_cross_site.py` proves the nine
+  routes in the table below return 401 and reach no handler in token mode without the header.
 
 Cookie sessions would change this. They would need SameSite cookies, Origin checks on unsafe methods,
 or CSRF tokens. None of those is implemented.

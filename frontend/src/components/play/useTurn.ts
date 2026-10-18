@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { apiBase } from "../../api/client";
+import { authorizedFetch } from "../../api/auth";
 import type { TurnResult } from "../../api/types";
 import { consumeTurnStream, parseTurnError, type TurnError } from "../../api/turnStream";
 import { initialTurnState, turnReducer } from "./turnState";
@@ -155,7 +156,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
     const ctrl = new AbortController();
     checkCtrlRef.current = ctrl;
     try {
-      const response = await fetch(receiptUrl(sessionId, requestId), { headers: { accept: "application/json" }, signal: ctrl.signal });
+      const response = await authorizedFetch(receiptUrl(sessionId, requestId), { headers: { accept: "application/json" }, signal: ctrl.signal });
       if (ctrl.signal.aborted) return;
       if (response.status === 200) {
         const result = await readReceipt(response);
@@ -236,7 +237,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
     };
 
     try {
-      const res = await fetch(`${apiBase}/api/sessions/${sessionId}/turn/stream`, {
+      const res = await authorizedFetch(`${apiBase}/api/sessions/${sessionId}/turn/stream`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "text/event-stream" },
         body: JSON.stringify({ message: input, debug: optsRef.current.debug, request_id: requestId }),

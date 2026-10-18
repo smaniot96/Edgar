@@ -1,12 +1,17 @@
 import { useState } from "react";
 
+import { useAuthorizedObjectUrl } from "../../api/resources";
 import { resolveAdventureCoverUrl } from "../../lib/adventureCover";
 
 export function AdventureCover({ coverImage, name }: { coverImage: string | null | undefined; name: string }) {
   const src = resolveAdventureCoverUrl(coverImage);
   const [failedSource, setFailedSource] = useState<string | null>(null);
+  // Covers under /api need the bearer token, so they are shown from an authorized object URL.
+  const fromApi = typeof coverImage === "string" && /^\/?api\//.test(coverImage);
+  const authorized = useAuthorizedObjectUrl(fromApi ? src : null);
+  const shown = fromApi ? authorized.objectUrl : src;
 
-  if (!src || failedSource === src) {
+  if (!shown || failedSource === src || (fromApi && authorized.error)) {
     const initial = name.replace(/^(the|a|an)\s+/i, "").trim().charAt(0).toUpperCase() || "E";
     return (
       <div
@@ -24,7 +29,7 @@ export function AdventureCover({ coverImage, name }: { coverImage: string | null
 
   return (
     <img
-      src={src}
+      src={shown}
       alt=""
       className="h-32 w-full rounded-t-card object-cover"
       onError={() => setFailedSource(src)}

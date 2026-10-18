@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { apiBase, getExtractionPreview } from "../../api/client";
+import { downloadAuthorized } from "../../api/resources";
 import type { ExtractionPreview as Preview } from "../../api/types";
 import { ErrorNotice } from "../ui/ErrorNotice";
 import { Button } from "../ui/Button";
@@ -51,7 +52,16 @@ export function ExtractionPreview({ slug, onUsePreview }: { slug: string; onUseP
           <p className="font-medium">{sample.kind === "scene_candidate" ? "Scene candidate (unreviewed)" : sample.kind === "stat" ? "Stat preview" : "Text preview"} · page {sample.page}</p>
           <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-control bg-surface-sunken p-2 text-xs">{sample.text}</pre>
         </div>)}
-        <a className="block underline" href={`${apiBase}/api/adventures/${encodeURIComponent(slug)}/extraction/markdown`}>Download full extracted Markdown</a>
+        <button
+          type="button"
+          className="block text-left underline"
+          onClick={() => {
+            setError(null);
+            downloadAuthorized(`${apiBase}/api/adventures/${encodeURIComponent(slug)}/extraction/markdown`, `${slug}-extracted.md`).catch((e: unknown) => setError(e));
+          }}
+        >
+          Download full extracted Markdown
+        </button>
         {onUsePreview && preview.source_current && preview.quality_passed ? <div className="space-y-2">
           <p className="text-xs text-ink-muted">After inspecting the full extracted text, use this exact preview to replace the retained PDF's old index.</p>
           <Button size="sm" variant="secondary" loading={indexing} onClick={() => void indexPreview()}>Index inspected PDF preview</Button>
