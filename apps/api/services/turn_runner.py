@@ -87,6 +87,7 @@ from edgar_core.sources import citations_for, public_citations
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
+from .journal import journal_tracking_marker
 from .operational_metrics import observe_committed_turn
 from .roll_record import build_roll_record, roll_status_for
 from .safe_errors import classify_error, log_failure
@@ -402,6 +403,7 @@ async def persist_turn(
                     "turn_id": turn_id,
                     "roll_status": roll_status,
                     "roll": turn_roll,
+                    **journal_tracking_marker(),
                 },
             )
             db.add(narration_event)

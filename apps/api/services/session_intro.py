@@ -32,6 +32,7 @@ from edgar_core.sources import (
 from . import adventure_manifests, campaign_sources
 from .campaign_sources import source_error
 from .character_assignments import character_play_state
+from .journal import journal_tracking_marker
 from .opening_journal import opening_journal_effects
 from .roll_record import ROLL_NO_ROLL
 from .story_state import persist_story_effects
@@ -208,6 +209,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
             # An opening scene rolls no dice; say so rather than leaving it unrecorded.
             "roll_status": ROLL_NO_ROLL,
             "roll": None,
+            **journal_tracking_marker(),
         },
     )
     db.add(event)
