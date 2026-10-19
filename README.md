@@ -82,8 +82,11 @@ The `/turn/stream` endpoint emits Server-Sent Events (`status`, `token`, `adjudi
 Shared tables (token mode, several players in one campaign) take turns through a server-side
 spotlight: only the holder can act, the holder's turn passes it on, and the rules (round robin,
 free-for-all, owner-directed), the timeout and the owner's override are in
-`docs/session-broadcast.md` (EDG-048). Lobby and spotlight UI are not in the browser client yet
-(EDG-050).
+`docs/session-broadcast.md` (EDG-048). The owner also picks a table pacing policy (`relaxed`,
+`standard`, `fast`), visible to everyone, and a player whose turn is not up may queue one intended
+action that is checked again when their turn comes (EDG-051). Lobby and spotlight UI are not in the
+browser client yet (EDG-050); the pacing controls and queued-action composer are ready for it to
+mount (`frontend/src/components/table/`).
 
 ### Rules scope
 

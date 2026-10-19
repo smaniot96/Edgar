@@ -34,6 +34,10 @@ cursor, so live delivery and replay are the same code path.
 | GET | `/api/sessions/{id}/events` | any member | SSE subscription. Resume with `Last-Event-ID: <seq>`. |
 | GET | `/api/sessions/{id}/presence` | any member | Roster now: display name, seated character, `active`/`idle`. |
 | POST | `/api/sessions/{id}/presence` | any member | Report own attention: `{"state": "active" \| "idle"}`. 204. |
+| GET | `/api/sessions/{id}/queue` | any member | The table's queued actions. Text only for the caller's own (EDG-051). |
+| POST | `/api/sessions/{id}/queue` | seated player | Queue ONE intended action while another player holds the spotlight. 201, or 200 for a retry (EDG-051). |
+| PATCH | `/api/sessions/{id}/queue/{action_id}` | its author | Edit it, guarded by `expected_version` (EDG-051). |
+| DELETE | `/api/sessions/{id}/queue/{action_id}` | author or owner | Cancel it. Idempotent, 204 (EDG-051). |
 
 A non-member gets the same 404 as a missing session on all three. Every access check goes through
 the EDG-046 helpers (`member_session`, `campaign_role`). Authorization is re-resolved from the
@@ -81,7 +85,8 @@ The registry in `apps/api/schemas/channel.py` is an allowlist. Publishing an unr
 | `character.state` | private | **that player only** | The acting character's play state and the rest evidence. |
 | `turn.failed` | private | **that player only** | The safe error for the player who submitted the turn. |
 | `presence.joined` / `left` / `idle` / `active` | system | table | `user_id` and the presence state change. |
-| `turn.spotlight_changed` | system | table | The table's spotlight after a change: holder, mode, `version`, `next_up`, `reason` (EDG-048). |
+| `turn.spotlight_changed` | system | table | The table's spotlight after a change: holder, mode, `version`, `next_up`, `reason`, plus (EDG-051) `pacing`, `turn_deadline` and the redacted `queue` (EDG-048). |
+| `turn.queue_changed` | system | table | A queued action was added, edited, cancelled or played (`reason`): the redacted queue and its `revision`. Never the text (EDG-051). |
 | `access.changed` | system | **control** | Internal wake-up. No client ever receives it. |
 
 Audiences, and the one rule that decides delivery (`audience_visible`, used for live and replay alike):
@@ -205,9 +210,105 @@ identity read and snapshot, and closes it. Turn publishing reads the actor in it
 - **Ephemeral narration deltas.** Tokens are not broadcast; members see the committed narration at
   the end of the turn. A live token channel (not stored, not replayed) needs a second Redis
   subscription per connection and is left for a later change.
-- **Spotlight and turn-change events.** `turn_changed` and spotlight arbitration are EDG-048. The
-  spotlight holder is in the snapshot but no event announces a change yet.
+- **Spotlight and turn-change events.** Done in EDG-048 (`turn.spotlight_changed`) and EDG-051
+  (`turn.queue_changed`); the snapshot carries `spotlight_state` including pacing and the queue.
 - **Client UI.** The lobby, roster and "whose turn" UI are EDG-050. The client protocol helper in
   `frontend/src/api/sessionChannel.ts` is the only frontend piece in this change.
 - **Metrics.** Counters for open streams, replay size, slow-consumer closes and publish failures
   belong with the operational metrics (EDG-053 family), not here.
+
+## Table pacing and queued actions (EDG-051)
+
+Shared tables wait on LLM time and on each other. Two server-enforced pieces make that fair and
+visible. Both are inert for solo and single-PC tables (no events, no refusals, no new fields that
+change behaviour): the default `standard` policy is exactly the EDG-048 timeout of 300 s.
+
+### Pacing policy: one per session, visible to everyone
+
+`sessions.pacing_policy`, read by every member in `GET /api/sessions/{id}/spotlight` (`pacing`),
+the channel snapshot and every `turn.spotlight_changed`. Only the owner sets it
+(`PATCH /api/sessions/{id}/spotlight {"pacing": "fast"}`), which also sets the timeout, bumps
+`version` and is announced with `reason: "pacing_changed"`. Sending `pacing` together with
+`timeout_seconds` is a 422. An explicit `timeout_seconds` alone makes the policy `custom`.
+
+| Policy | Idle holder loses the spotlight after | Holder who left the channel | Queued action lasts |
+| --- | --- | --- | --- |
+| `relaxed` (play-by-post) | 3600 s | not passed early | 24 h |
+| `standard` (default) | 300 s | not passed early | 1 h |
+| `fast` (live table) | 60 s | passed after a 20 s reconnect grace (`auto_pass`) | 10 min |
+| `custom` | the owner's value | not passed early | 1 h |
+
+Handover timing is the EDG-048 rule: applied lazily by the next request that takes the table lock
+(`handover_due` and `turn_deadline` tell clients when it is due, so the UI can show a countdown).
+Auto-pass uses EDG-047 presence (a holder with no live connection); a present but idle holder is only
+passed by the timeout. The spotlight `mode` (round robin, free-for-all, owner-directed) is independent
+of the policy, and owner-directed never times out under any policy.
+
+### Queued actions
+
+A seated player (or the owner, for a hero they control) whose turn is not up may queue ONE intended
+action. Rules, all decided under the session-row lock:
+
+- **Only while waiting:** the table must be engaged and someone else must hold the spotlight
+  (`queue_not_needed` if it is your turn or the spotlight is free, `queue_unavailable` on a solo or
+  single-PC table, for spectators and for a dead hero). A retried submit with the same `request_id`
+  returns the same item (200); a second, different one is `queued_action_exists`.
+- **Visibility:** the author gets the text. The table (and the owner) see only that the player has an
+  action queued, its status and expiry, and `next_up[].queued` is true. Intents can be private (a
+  pickpocket), so the text never reaches the channel.
+- **Edit and cancel:** edit needs the item's `expected_version` (a lost update is
+  `queued_action_changed`), is idempotent for a retry, restarts the expiry and re-baselines the item
+  on the situation as it is now. Cancel is idempotent; the author or the owner may cancel.
+- **Playing it:** when the spotlight reaches the author they submit a normal turn
+  (`POST /turn` or `/turn/stream`) with `queued_action_id`, `queued_action_version` and `message`
+  equal to the stored text. The EDG-048 gate runs first (`not_your_spotlight`, `spotlight_stale`,
+  cooldown) and the queued action is validated in the same transaction, before any model call:
+  `queued_action_missing`, `queued_action_changed` (text or version differs),
+  `queued_action_expired`, or `queued_action_stale` when the scene, the combat flag or the hero's life
+  state differs from what the item was queued under, or the player's hero changed. A refused action
+  is never silently executed and is not consumed; the author sees it as `stale` or `expired` and can
+  edit or cancel it. Nothing is spent on a refusal.
+- **Consumed once:** the turn's own commit removes the item, on the locked row, together with the
+  spotlight pass. A second concurrent play finds it gone and its commit is refused
+  (`queued_action_missing`), so a queued action can neither be lost nor produce two turns. An item
+  edited while its turn ran is kept (a newer intent); one cancelled meanwhile makes that turn refuse to
+  commit, honouring the cancel.
+- **Never moves the spotlight:** queueing does not change `spotlight_version`, the holder, the
+  rotation or the cooldowns, and does not take the Redis turn lock (players queue while another
+  player's turn is running). Queue writes lock the session row only. Every change bumps the queue's own
+  `revision`, carried by `turn.queue_changed` and `turn.spotlight_changed`, and clients keep the
+  highest revision they have seen.
+- **Expiry and cleanup:** expiry is evaluated lazily against the policy lifetime (reads hide an
+  expired item from the table and show it to its author as `expired`; the next write purges it). There
+  is no background job. A player who loses the seat (or the hero) loses the item in the same
+  transaction.
+
+Stored in `sessions.queued_actions` as `{"revision", "items": {user_id: item}}` (migration
+`25_table_pacing_queued_actions`; renumber at integration). Code: `services/pacing.py` (policy and
+pure queue rules), `services/queued_actions.py` (locked operations), `routers/session_queue.py`,
+`services/spotlight.py` (validation in `open_turn`, consumption in `apply_turn_commit`). Tests:
+`tests/api/test_table_pacing.py`.
+
+### Rejected alternatives
+
+| Alternative | Why not |
+| --- | --- |
+| Client-side queueing (the client holds the text and fires when the turn arrives) | Order and validity would be the client's, a reload loses it, and nobody else sees it. The server must own it. |
+| The server runs the queued action automatically when the turn arrives | Needs a background worker, spends model calls for a player who may have left, and removes the player's last look at a changed situation. The author confirms with one click; auto-play is possible later behind the same validation. |
+| Several queued actions per player, or a shared turn queue | Invites hoarding and reordering and multiplies stale-state cases. One intent per player is enough for latency, and the rotation stays the only ordering. |
+| A queue that skips the spotlight gate (jump the line) | Queueing would reorder turns, the exact thing it must not do. The queued action is only text until it passes the normal gate. |
+| Re-validating by replaying the whole state | Over-strict (any chat line would stale it) and expensive. The basis is the three facts that change what an intended action means: scene, combat on or off, hero life state. |
+| Broadcasting the text to the table | Intended actions can be secret. The table learns that someone is ready, not what they plan. |
+| A separate queue table | Needs its own locking against the spotlight row for the same invariants. A JSONB value on the already locked session row is atomic with the turn commit with no new lock order. A table is the move if history or analytics are wanted. |
+| Pacing as free numbers only | Players cannot be told "the host chose fast" in plain words, and combinations of timeout, auto-pass and queue lifetime would be untested. Named policies are tested and explainable; `custom` remains for an explicit timeout. |
+| Timer-driven auto-pass on a worker | EDG-048 already settled that handover is applied under the table lock by the next request. A separate clock would race it. Clients get `turn_deadline` for countdowns. |
+| Treating `idle` presence as absent for auto-pass | `idle` is client-reported and unreliable (a player reading is idle). Only a missing connection passes a holder early. |
+
+### Known limits
+
+- Auto-pass and expiry are applied by the next table request, not at the instant the clock passes.
+- A queue event can be published slightly after a spotlight event for the same moment; both carry
+  the queue and clients keep the higher revision.
+- Combat turn order across human PCs (EDG-049) and the combat declaration contract (EDG-182) are not
+  in this change; the combat flag in the staleness basis means a queued action does not survive the
+  start or end of combat.

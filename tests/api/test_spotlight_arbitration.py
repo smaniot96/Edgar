@@ -127,7 +127,7 @@ async def _state(db: AsyncSession, session_id: int) -> SessionModel:
     return session
 
 
-async def _open(db, redis, session_id, user_id: int, *, consumes=True, now=None, version=None):
+async def _open(db, redis, session_id, user_id: int, *, consumes=True, now=None, version=None, queued=None):
     return await spotlight.open_turn(
         db,
         redis,
@@ -136,6 +136,7 @@ async def _open(db, redis, session_id, user_id: int, *, consumes=True, now=None,
         expected_version=version,
         consumes=consumes,
         now=now,
+        queued=queued,
     )
 
 

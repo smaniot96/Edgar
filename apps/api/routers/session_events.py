@@ -159,7 +159,9 @@ class DbSubscriber:
                     own_character = await character_play_state(db, own, session.campaign_id)
             combat = combat_state_public(await load_active_combat(db, session.id))
             # EDG-048: the table's spotlight, so a reconnecting member sees the same next-up order.
-            spotlight_state = await spotlight.public_view(db, self._redis, session.id)
+            spotlight_state = await spotlight.public_view(
+                db, self._redis, session.id, viewer_user_id=viewer.user_id
+            )
         roster = await session_channel.roster(self._redis, self._session_id)
         return {
             "head_seq": head,

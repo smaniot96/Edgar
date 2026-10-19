@@ -51,6 +51,7 @@ from .routers.seed import router as seed_router
 from .routers.session import router as session_router
 from .routers.session_assets import router as session_assets_router
 from .routers.session_events import router as session_events_router
+from .routers.session_queue import router as session_queue_router
 from .routers.user import router as user_router
 from .routers.world_flag import router as world_flag_router
 from .services.safe_errors import classify_error, classify_http_failure, log_failure
@@ -225,6 +226,7 @@ app.include_router(rules_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(seed_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(session_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(session_events_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(session_queue_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(session_assets_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(user_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(world_flag_router, prefix="/api", dependencies=API_AUTH)

@@ -96,6 +96,9 @@ EVENT_TYPES: dict[str, tuple[Channel, str]] = {
     # The turn spotlight changed hands or its rules did (EDG-048): the new holder, the reason, the
     # version and the next-up order, all as the table may read them. Never player-private.
     "turn.spotlight_changed": ("system", AUDIENCE_TABLE),
+    # A queued action was added, edited, cancelled, played or dropped (EDG-051). The queue as the
+    # table may read it: who has one and its status, never the text. Carries a `revision`.
+    "turn.queue_changed": ("system", AUDIENCE_TABLE),
     "presence.joined": ("system", AUDIENCE_TABLE),
     "presence.left": ("system", AUDIENCE_TABLE),
     "presence.idle": ("system", AUDIENCE_TABLE),

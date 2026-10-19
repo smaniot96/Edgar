@@ -136,6 +136,28 @@ _register(
 _register(
     FailureSpec(ErrorCategory.VALIDATION, "spotlight_holder_invalid", "Choose a hero at this table who is able to take the spotlight.", 422, RecoveryAction.FIX_INPUT),
 )
+# Table pacing and queued actions (EDG-051). Fixed messages only.
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "queue_unavailable", "Queued actions are only available to seated players at a table with several heroes.", 409, RecoveryAction.WAIT),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "queue_not_needed", "It is your turn, or the spotlight is free. Act directly instead of queueing.", 409, RecoveryAction.RETRY),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "queued_action_exists", "You already have a queued action. Edit or cancel it first.", 409, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "queued_action_missing", "That queued action no longer exists. Queue it again if you still want it.", 409, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "queued_action_changed", "Your queued action was edited elsewhere. Review it before playing it.", 409, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "queued_action_stale", "The situation changed since you queued this action, so it was not played. Review it, edit it or queue a new one.", 409, RecoveryAction.FIX_INPUT),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "queued_action_expired", "Your queued action expired before your turn, so it was not played. Queue it again if you still want it.", 409, RecoveryAction.FIX_INPUT),
+)
 _register(
     FailureSpec(ErrorCategory.ASSIGNMENT, "hero_dead", "Your hero has died. Add a replacement hero to this campaign, switch the session to them, and release the dead hero from the roster.", 409, RecoveryAction.ASSIGN_CHARACTER),
 )

@@ -7,7 +7,9 @@ a client must quote, and the next-up order. It carries display names and charact
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .pacing import PacingPolicyName, PacingRead, QueueRead
 
 SpotlightMode = Literal["round_robin", "owner_directed", "free_for_all"]
 
@@ -18,6 +20,8 @@ class SpotlightMember(BaseModel):
     user_id: int
     display_name: str | None = None
     present: bool = False
+    # EDG-051: this player has a queued action waiting (next_up only).
+    queued: bool = False
 
 
 class SpotlightHolder(SpotlightMember):
@@ -35,7 +39,11 @@ class SpotlightRead(BaseModel):
     since: datetime | None = None
     # The holder has been idle past the timeout; the next table request applies the handover.
     handover_due: bool = False
+    # EDG-051: when an idle holder loses the spotlight (null when it never times out).
+    turn_deadline: datetime | None = None
     next_up: list[SpotlightMember] = Field(default_factory=list)
+    pacing: PacingRead
+    queue: QueueRead
 
 
 class SpotlightUpdate(BaseModel):
@@ -47,3 +55,11 @@ class SpotlightUpdate(BaseModel):
     timeout_seconds: int | None = Field(default=None, ge=30, le=3600)
     holder_character_id: int | None = Field(default=None, ge=1)
     expected_version: int | None = Field(default=None, ge=0)
+    # EDG-051: a named table pacing policy (sets the timeout). Not combinable with timeout_seconds.
+    pacing: PacingPolicyName | None = None
+
+    @model_validator(mode="after")
+    def _one_timing_source(self) -> "SpotlightUpdate":
+        if self.pacing is not None and self.timeout_seconds is not None:
+            raise ValueError("Choose a pacing policy or an explicit timeout, not both.")
+        return self
