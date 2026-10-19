@@ -595,3 +595,34 @@ async def test_a_busy_table_refuses_a_spotlight_change_without_changing_anything
 
 def test_the_spotlight_event_is_registered_on_the_table_audience() -> None:
     assert EVENT_TYPES[spotlight.EVENT_TYPE] == ("system", AUDIENCE_TABLE)
+
+
+@pytest.mark.asyncio
+async def test_a_due_handover_is_reported_by_reads_and_applied_only_under_the_lock(
+    api_client, table, db_session, redis_client
+):
+    """Lazy timeout: GET reports handover_due and mutates nothing; the next locked request applies it."""
+    await _seat_bob_and_eve(api_client, table, db_session)
+    sid = table["save_id"]
+    start = datetime.now(UTC)
+    session = await _state(db_session, sid)
+    session.spotlight_timeout_seconds = 60
+    session.spotlight_since = start
+    await db_session.commit()
+    await _present(redis_client, sid, table["bob_id"], "bob-1")
+    later = start + timedelta(seconds=120)
+    before = await _state(db_session, sid)
+    version, holder = before.spotlight_version, before.active_character_id
+
+    view = await spotlight.public_view(db_session, redis_client, sid, now=later)
+    assert view["handover_due"] is True
+    assert view["holder"]["character_id"] == table["alice_pc_id"]
+    after_read = await _state(db_session, sid)
+    assert after_read.spotlight_version == version and after_read.active_character_id == holder
+
+    opened = await _open(db_session, redis_client, sid, table["bob_id"], now=later)
+    assert opened.plan.holder == table["bob_pc_id"]
+    applied = await _state(db_session, sid)
+    assert applied.spotlight_version == version + 1
+    late_view = await spotlight.public_view(db_session, redis_client, sid, now=later)
+    assert late_view["handover_due"] is False

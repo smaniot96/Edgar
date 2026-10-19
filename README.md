@@ -79,6 +79,12 @@ curl -N -X POST http://localhost:8000/api/sessions/1/turn/stream \
 
 The `/turn/stream` endpoint emits Server-Sent Events (`status`, `token`, `adjudication`, `done`, `error`); `/turn` returns one JSON. `apps/api/README.md` documents both.
 
+Shared tables (token mode, several players in one campaign) take turns through a server-side
+spotlight: only the holder can act, the holder's turn passes it on, and the rules (round robin,
+free-for-all, owner-directed), the timeout and the owner's override are in
+`docs/session-broadcast.md` (EDG-048). Lobby and spotlight UI are not in the browser client yet
+(EDG-050).
+
 ### Rules scope
 
 The engine simulates a deliberately simplified subset of 5e, and declares what it does not
