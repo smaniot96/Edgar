@@ -1653,3 +1653,19 @@ def test_type_and_ability_row_without_armor_class_and_hit_points_is_incomplete()
     text = "## Sprout\n\nSmall plant, lawful neutral\n\nSTR DEX CON INT WIS CHA\n8 (-1) 10 (+0) 10 (+0) 8 (-1) 11 (+0) 5 (-3)"
     assert "incomplete_stat_fields" in check_text(text)["errors"]
     assert not check_text("## Prose\n\nSmall folk are lawful neutral in most towns.")["errors"]
+
+
+def test_three_column_word_set_index_is_not_read_as_a_table():
+    # Mirrors PHB p.315-317: index entries set word by word touch along a row, so they are
+    # running text in three columns and must keep failing closed rather than read across.
+    from ingestion.layout import _table_band
+
+    lines = []
+    for r in range(20):
+        y = 60 + r * 12
+        for column, x0 in enumerate((40, 200, 360)):
+            for w in range(4):
+                lines.append(
+                    Line(f"w{r}{column}{w}", (x0 + w * 36, y, x0 + w * 36 + 33, y + 10), 8)
+                )
+    assert _table_band(lines) is None

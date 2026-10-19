@@ -284,23 +284,32 @@ def _columns(lines: list[Line], width: float, body_top: bool = False) -> list[li
     # A gutter that cuts through a table or prose can still leave a clean reading under another
     # candidate split; take the first one that reads without ambiguity, else keep the first error.
     errors = []
-    for _, left, right, crossing in candidates:
-        try:
-            return _segment(lines, left, right, crossing)
-        except ValueError as exc:
-            errors.append(exc)
+    for bands in (False, True):
+        for _, left, right, crossing in candidates:
+            try:
+                return _segment(lines, left, right, crossing, bands)
+            except ValueError as exc:
+                if not bands:
+                    errors.append(exc)
     raise errors[0]
 
 
-def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: list[Line]):
-    """Read the page by zones; a zone the plain reading rejects may still be a table band.
+def _segment(
+    lines: list[Line],
+    left: list[Line],
+    right: list[Line],
+    crossing: list[Line],
+    bands: bool = False,
+):
+    """Read the page by zones; with `bands`, a rejected page may still hold a table band.
 
-    The band is found only after the plain reading failed, so no page it accepts changes.
+    Bands are tried only after every candidate split failed to read plainly, so no page that
+    some split reads plainly changes.
     """
     try:
         return _segment_zones(lines, left, right, crossing)
     except ValueError:
-        band = _table_band(lines)
+        band = _table_band(lines) if bands else None
         if band is None:
             raise
         ids = {id(item) for item in band}
@@ -452,6 +461,15 @@ def _anchored_table(items: list[Line]) -> bool:
         sum(any(lo <= item.bbox[0] <= hi for lo, hi in anchors) for item in row) for row in rows
     ]
     # Wrapped continuation rows hold one cell, so judge the share of cells, not of rows.
+    # Cells of a table stand apart. Fragments that touch along a row are words of running text,
+    # such as a three-column index set word by word.
+    touching = sum(
+        right.bbox[0] - left.bbox[2] < 6
+        for row in rows
+        for left, right in itertools.pairwise(sorted(row, key=lambda i: i.bbox[0]))
+    )
+    if 4 * touching > len(items):
+        return False
     # Rows of a table hold several cells; columns of prose or stat boxes mostly give single-line rows.
     if not (
         sum(count >= 2 for count in cells_per_row) >= 3
