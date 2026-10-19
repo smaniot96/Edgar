@@ -7,6 +7,7 @@ stat name/type; native mechanics are never replaced with OCR guesses.
 
 import csv
 import io
+import itertools
 import re
 import shutil
 import statistics
@@ -21,6 +22,14 @@ from ingestion.quality import SIZE_TYPE, STAT_SUBHEADINGS, letters
 ILLUSTRATION_SIZE_RATIO = 0.65
 
 
+class StatHeaderError(ValueError):
+    """A stat record's name or type is unreadable; `text` is the page in reading order without it."""
+
+    def __init__(self, code: str, text: str):
+        super().__init__(code)
+        self.text = text
+
+
 @dataclass
 class Line:
     text: str
@@ -31,6 +40,8 @@ class Line:
     confidence: float = 100.0
     # Small text printed inside an illustration, e.g. an item caption; see native_lines.
     illustration: bool = False
+    # Source spans as (text, bbox, size), kept so that leading noise can be cut from a line.
+    spans: tuple = ()
 
 
 def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
@@ -58,7 +69,14 @@ def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
             if spans:
                 text = "".join(s["text"] for s in spans).strip()
                 if text:
-                    out.append(Line(text, tuple(line["bbox"]), max(s["size"] for s in spans)))
+                    out.append(
+                        Line(
+                            text,
+                            tuple(line["bbox"]),
+                            max(s["size"] for s in spans),
+                            spans=tuple((s["text"], tuple(s["bbox"]), s["size"]) for s in spans),
+                        )
+                    )
     if out and figures:
         body_size = statistics.median(item.size for item in out)
         for item in out:
@@ -75,35 +93,71 @@ def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
 
 
 def columns(lines: list[Line], width: float) -> list[list[Line]]:
-    """Read a page's columns, retrying with drop-cap and illustration handling only on failure.
+    """Read a page's columns; only a page the plain reading rejects is retried with repairs.
 
-    A page the plain reading accepts is never altered. A page it rejects is retried with, in
-    turn, a decorative drop cap merged into its word, the illustration captions set apart, and
-    both; the first reading that succeeds is used, otherwise the plain error is raised.
+    A page the plain reading accepts is never altered. A rejected page is retried with each
+    combination of four repairs, fewest first: a decorative drop cap merged into its word,
+    leading noise spans cut from a line, illustration captions set apart, and titles judged
+    against the first body-size line. The first reading that succeeds is used, otherwise the
+    plain error is raised.
     """
     try:
         return _columns(lines, width)
     except ValueError as plain:
-        merged = merge_drop_caps(lines)
-        captions = [item for item in lines if item.illustration]
-        for body, caption_lines in (
-            (merged, []),
-            ([item for item in lines if not item.illustration], captions),
-            ([item for item in merged if not item.illustration], captions),
-        ):
-            if body is lines or len(body) == len(lines) and not caption_lines:
-                continue
-            try:
-                result = _columns(body, width)
-            except ValueError:
-                continue
-            blocks = _caption_blocks(caption_lines)
-            if blocks and result and min(i.bbox[1] for b in blocks for i in b) > min(
-                i.bbox[1] for b in result for i in b
-            ):
-                return result + blocks
-            return blocks + result
+        for size in range(1, 5):
+            for repairs in itertools.combinations(("drop_caps", "noise", "captions", "body_top"), size):
+                body = lines
+                if "drop_caps" in repairs:
+                    body = merge_drop_caps(body)
+                if "noise" in repairs:
+                    body = strip_leading_noise(body)
+                captions = [item for item in body if item.illustration] if "captions" in repairs else []
+                body = [item for item in body if item not in captions]
+                try:
+                    result = _columns(body, width, body_top="body_top" in repairs)
+                except ValueError:
+                    continue
+                blocks = _caption_blocks(captions)
+                if blocks and result and min(i.bbox[1] for b in blocks for i in b) > min(
+                    i.bbox[1] for b in result for i in b
+                ):
+                    return result + blocks
+                return blocks + result
         raise plain
+
+
+def strip_leading_noise(lines: list[Line]) -> list[Line]:
+    """Cut decorative noise spans from the start of a line, e.g. '-----....,;i;l4 Condition'.
+
+    Only leading spans that together are mostly punctuation, with at least four punctuation
+    characters, and that precede a span opening with a three-letter word are cut. The words are
+    never altered and the line's box shrinks to the kept spans.
+    """
+    result = []
+    for line in lines:
+        keep = 0
+        for index in range(1, len(line.spans)):
+            prefix = "".join(span[0] for span in line.spans[:index]).strip()
+            if (
+                _ornament(prefix)
+                and sum(not c.isalnum() for c in prefix) >= 4
+                and re.match(r"[A-Za-z]{3}", line.spans[index][0].strip())
+            ):
+                keep = index
+                break
+        if keep:
+            kept = line.spans[keep:]
+            text = "".join(span[0] for span in kept).strip()
+            box = (
+                min(span[1][0] for span in kept),
+                min(span[1][1] for span in kept),
+                max(span[1][2] for span in kept),
+                max(span[1][3] for span in kept),
+            )
+            size = max(span[2] for span in kept)
+            line = Line(text, box, size, spans=kept, illustration=line.illustration)
+        result.append(line)
+    return result
 
 
 def _caption_blocks(captions: list[Line]) -> list[list[Line]]:
@@ -165,7 +219,7 @@ def merge_drop_caps(lines: list[Line]) -> list[Line]:
     return result
 
 
-def _columns(lines: list[Line], width: float) -> list[list[Line]]:
+def _columns(lines: list[Line], width: float, body_top: bool = False) -> list[list[Line]]:
     """Infer a two-column gutter from line edges, otherwise retain a single column.
 
     Require substantial vertical overlap and a clear gutter. Spanning lines below the column
@@ -207,7 +261,17 @@ def _columns(lines: list[Line], width: float) -> list[list[Line]]:
     _, left, right, crossing = candidates[0]
     # Titles spanning the page are safe only above both columns.
     top = min(item.bbox[1] for item in left + right)
-    if not any(item.bbox[3] > top + 3 for item in crossing) and not _anchored_table(lines):
+    if body_top:
+        # Skip ornaments and specks of art above the text: the title only needs to clear the
+        # first line of body-size words in either column.
+        size = statistics.median(item.size for item in lines)
+        body = [
+            item.bbox[1]
+            for item in left + right
+            if item.size >= size * 0.7 and any(c.isalnum() for c in item.text) and not _ornament(item.text)
+        ]
+        top = min(body, default=top)
+    if not any(item.bbox[3] > top + 3 for item in crossing):
         return ([crossing] if crossing else []) + [left, right]
     # A gutter that cuts through a table or prose can still leave a clean reading under another
     # candidate split; take the first one that reads without ambiguity, else keep the first error.
@@ -321,8 +385,8 @@ def _segment_zones(lines: list[Line], left: list[Line], right: list[Line], cross
 
     ordered: list[list[Line]] = []
     region: list[Line] = []
-    for run in (part for run in runs for part in _split_table_tail(run, spanning)):
-        if not any(id(item) in spanning for item in run) and not _anchored_table(run):
+    for run in runs:
+        if not any(id(item) in spanning for item in run):
             region.extend(run)
             continue
         ordered += region_columns(region)
@@ -337,7 +401,7 @@ def _segment_zones(lines: list[Line], left: list[Line], right: list[Line], cross
             raise ValueError(
                 "ambiguous_spanning_column_text band=({:.1f},{:.1f},{:.1f},{:.1f})".format(*box)
             )
-        ordered.append([item for item in run if id(item) in spanning or any(c.isalnum() for c in item.text)])
+        ordered.append(run)
     ordered += region_columns(region)
     return [column for column in ordered if column]
 
@@ -381,7 +445,12 @@ def _anchored_table(items: list[Line]) -> bool:
         sum(any(lo <= item.bbox[0] <= hi for lo, hi in anchors) for item in row) for row in rows
     ]
     # Wrapped continuation rows hold one cell, so judge the share of cells, not of rows.
-    if not (sum(count >= 2 for count in cells_per_row) >= 3 and 4 * sum(on_anchor) >= 3 * len(items)):
+    # Rows of a table hold several cells; columns of prose or stat boxes mostly give single-line rows.
+    if not (
+        sum(count >= 2 for count in cells_per_row) >= 3
+        and 2 * sum(count >= 2 for count in cells_per_row) >= len(rows)
+        and 4 * sum(on_anchor) >= 3 * len(items)
+    ):
         return False
     # Table cells are short. Prose lines run the width of a column, so two columns of prose beside
     # a table never qualify, however their line starts line up. A wide notes column is allowed
@@ -391,34 +460,7 @@ def _anchored_table(items: list[Line]) -> bool:
     for lo, hi in anchors:
         cells = [item for item in items if lo <= item.bbox[0] <= hi]
         short += 2 * sum(item.bbox[2] - item.bbox[0] <= span * 0.3 for item in cells) > len(cells)
-    return short >= 2
-
-
-def _split_table_tail(run: list[Line], spanning: set[int]) -> list[list[Line]]:
-    """Split a run that ends in a table block from the prose above it, so each part reads alone.
-
-    Rows with three or more cells form the table; a one-cell row (a table heading) may sit inside
-    it. Two-cell rows are two-column prose and stay above the split.
-    """
-    if not any(id(item) in spanning for item in run):
-        return [run]
-    rows: list[list[Line]] = []
-    for item in sorted(run, key=lambda i: i.bbox[3]):
-        if rows and abs(rows[-1][0].bbox[3] - item.bbox[3]) <= 2.5:
-            rows[-1].append(item)
-        else:
-            rows.append([item])
-    start = len(rows)
-    while start > 0 and (len(rows[start - 1]) >= 3 or len(rows[start - 1]) == 1):
-        start -= 1
-    # Leading one-cell rows are the table heading; the table proper starts at its first 3-cell row.
-    while start < len(rows) and len(rows[start]) < 3:
-        start += 1
-    tail = [item for row in rows[start:] for item in row]
-    head = [item for row in rows[:start] for item in row]
-    if head and sum(len(row) >= 3 for row in rows[start:]) >= 3 and _anchored_table(tail):
-        return [head, tail]
-    return [run]
+    return short >= 2 and len(anchors) - short <= 1
 
 
 def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
@@ -431,8 +473,6 @@ def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
     rows are then also judged on their own. Prose columns cut by a gutter that is too narrow
     give mostly two-cell rows, so they do not qualify.
     """
-    if _anchored_table(run):
-        return True
     rows: list[list[Line]] = []
     for item in sorted(run, key=lambda i: i.bbox[3]):
         if rows and abs(rows[-1][0].bbox[3] - item.bbox[3]) <= 2.5:
@@ -473,7 +513,13 @@ def merge_rows(lines: list[Line]) -> list[Line]:
             max(item.bbox[3] for item in row),
         )
         result.append(
-            Line(text, bbox, max(item.size for item in row), any(item.heading for item in row))
+            Line(
+                text,
+                bbox,
+                max(item.size for item in row),
+                any(item.heading for item in row),
+                illustration=all(item.illustration for item in row),
+            )
         )
     return result
 
@@ -512,6 +558,8 @@ def _raster_header(
             and len(re.findall(r"[A-Za-z]", item.text)) >= 3
             and len(item.text) < 80
             and letters(item.text) not in STAT_SUBHEADINGS
+            # A size/type line read with an accent ("néutral") is not a name.
+            and not re.match(r"^(tiny|small|medium|large|huge|gargantuan)\b", item.text, re.I)
             # OCR case is unreliable ("Twig Blight" reads "Twic BLIGHT"): test the
             # shape on an uppercased copy and keep the original spelling.
             and _title(Line(item.text.upper(), item.bbox, body_size), body_size)
@@ -585,6 +633,9 @@ def render_native_page(
     that produced it, so an operator can check it against the page image.
     """
     warnings = []
+    # A heading or type that no raster read supplies is reported after the page is ordered, so
+    # that its text stays in reading order and only the text-content code fails the page.
+    unread: list[str] = []
     body_size = statistics.median(item.size for item in lines) if lines else 10
     ordered = []
     for column in columns(lines, width):
@@ -667,17 +718,19 @@ def render_native_page(
                     break
             if title is None:
                 if raster_title is None:
-                    raise ValueError("missing_stat_heading")
-                raster_title.heading = True
-                rows.append(raster_title)
-                if recovered is not None:
-                    recovered.append(_recovered_entry(raster_title, "name", chosen))
+                    unread.append("missing_stat_heading")
+                else:
+                    raster_title.heading = True
+                    rows.append(raster_title)
+                    if recovered is not None:
+                        recovered.append(_recovered_entry(raster_title, "name", chosen))
             if size is None:
                 if raster_size is None:
-                    raise ValueError("missing_stat_type")
-                rows.append(raster_size)
-                if recovered is not None:
-                    recovered.append(_recovered_entry(raster_size, "size_type", chosen))
+                    unread.append("missing_stat_type")
+                else:
+                    rows.append(raster_size)
+                    if recovered is not None:
+                        recovered.append(_recovered_entry(raster_size, "size_type", chosen))
             warnings.append("raster_stat_header_ocr_review_required")
         # Some scanned headings (not their surrounding native actions) are absent from
         # the text layer. Inspect only gaps inside a stat column and supplement a known
@@ -719,7 +772,10 @@ def render_native_page(
         if line.heading or (
             previous
             and (
-                line.bbox[1] - previous.bbox[3] > 5 or line.bbox[0] - previous.bbox[0] > width * 0.3
+                line.bbox[1] - previous.bbox[3] > 5
+                or line.bbox[0] - previous.bbox[0] > width * 0.3
+                # Separate captions printed in one illustration are separate paragraphs.
+                or (line.illustration and previous.illustration and line.bbox[1] < previous.bbox[1])
             )
         ):
             if buf:
@@ -737,4 +793,7 @@ def render_native_page(
         previous = line
     if buf:
         paragraphs.append("\n".join(buf))
-    return "\n\n".join(paragraphs), sorted(set(warnings))
+    text = "\n\n".join(paragraphs)
+    if unread:
+        raise StatHeaderError(unread[0], text)
+    return text, sorted(set(warnings))
