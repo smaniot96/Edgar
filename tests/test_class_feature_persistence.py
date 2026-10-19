@@ -31,6 +31,8 @@ def _assignment(
     stats: dict | None = None, *, cls: str = "Barbarian", level: int = 1
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        level=level,  # EDG-045: the assignment owns the level the engine reads
+        milestones_pending=0,
         hp_current=5,
         hp_max=12,
         stats={"conditions": []} if stats is None else stats,
@@ -127,6 +129,7 @@ async def test_class_feature_uses_persist_across_encounters_and_reload(db_sessio
     ass = CharacterAssignment(
         character_id=char.id,
         campaign_id=camp.id,
+        level=1,  # EDG-045: this campaign's level, as seeding from the character sets it
         hp_current=5,
         hp_max=12,
         stats={"conditions": []},  # a legacy row: no class feature key yet

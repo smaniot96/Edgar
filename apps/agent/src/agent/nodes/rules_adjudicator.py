@@ -462,6 +462,7 @@ async def adjudicate(
             parsed=parsed,
             in_combat=in_combat,
             canonical_inventory=state.get("manifest_status") == "reviewed",
+            death_mode=str(state.get("death_mode") or "subdued"),
         )
     if spell_outcome is not None:
         _stamp_spell_outcome(result, spell_outcome, character)

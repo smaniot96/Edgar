@@ -755,6 +755,8 @@ async def test_manual_patch_keeps_class_feature_uses(monkeypatch) -> None:
 
     assignment = SimpleNamespace(
         id=9,
+        level=1,  # EDG-045: the assignment owns the level the engine reads
+        milestones_pending=0,
         hp_current=12,
         hp_max=12,
         stats={

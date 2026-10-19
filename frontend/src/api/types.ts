@@ -187,6 +187,12 @@ export interface CharacterPreset {
   engine_support: string;
 }
 
+/** EDG-045: explicit campaign modes. 'fixed' and 'subdued' are the behaviour of older campaigns. */
+export type ProgressionMode = "fixed" | "milestone";
+export type DeathMode = "subdued" | "death_saves";
+/** A hero's state on the roster: alive, the death-save states, or permanently dead (EDG-045). */
+export type LifeState = "alive" | "dying" | "stable" | "dead";
+
 export interface CampaignCharacterRead {
   assignment_id: number;
   character_id: number;
@@ -195,6 +201,27 @@ export interface CampaignCharacterRead {
   level: number;
   hp_current: number;
   hp_max: number;
+  milestones_pending?: number;
+  life_state?: LifeState;
+}
+
+export interface LevelUpRequestBody {
+  from_level: number;
+  request_id: string;
+  hp_method?: "average" | "roll";
+  ability_increases?: Record<string, number> | null;
+}
+
+export interface LevelUpRead {
+  applied: boolean;
+  from_level: number;
+  to_level: number;
+  hit_points: { amount: number; method: "average" | "roll"; dice: Record<string, unknown> | null; hp_max_before: number; hp_max_after: number };
+  ability_increases: Record<string, number>;
+  features: { name: string; executed: boolean }[];
+  spell_slots: Record<string, number>;
+  milestones_pending: number;
+  character: CampaignCharacterRead;
 }
 
 export interface NPCRead {
@@ -394,6 +421,8 @@ export interface SourceCitation {
 
 export interface CampaignRead {
   rules_edition?: RulesEdition;
+  progression_mode?: ProgressionMode;
+  death_mode?: DeathMode;
   id: number;
   title: string;
   system: string;

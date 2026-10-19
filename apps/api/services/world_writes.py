@@ -32,6 +32,7 @@ from agent.models.adjudication import AdjudicationResult
 from agent.resolution import (
     CLASS_FEATURES_KEY,
     COMPLETION_FLAG,
+    DEATH_SAVES_KEY,
     HIT_DICE_KEY,
     SECOND_WIND_KEY,
     match_inventory_item,
@@ -151,6 +152,16 @@ async def _apply_character_update(db, character_id: int, campaign_id: int, cu) -
     if cu.hit_dice_spent is not None:
         # Engine-owned Hit Dice ledger (EDG-026): a short rest spends one, a long rest recovers some.
         stats[HIT_DICE_KEY] = {"spent": max(0, int(cu.hit_dice_spent))}
+    death_saves = getattr(cu, "death_saves", None)  # absent on duck-typed updates: no change
+    if death_saves is not None:
+        # Engine-owned death record (EDG-045): written as a dict, or {} to clear it.
+        if death_saves:
+            stats[DEATH_SAVES_KEY] = dict(death_saves)
+        else:
+            stats.pop(DEATH_SAVES_KEY, None)
+    if ass.hp_current > 0:
+        # Any healing that leaves the hero above 0 HP ends unconsciousness and its death record.
+        stats.pop(DEATH_SAVES_KEY, None)
     conditions = list(stats.get("conditions", []))
     for name in normalise_conditions(cu.add_conditions):
         if name not in conditions:

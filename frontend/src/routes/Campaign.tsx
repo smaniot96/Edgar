@@ -15,6 +15,8 @@ import {
   isNotFound,
   listSessions,
   reopenCampaign,
+  setCampaignDeathMode,
+  setCampaignProgressionMode,
   setCampaignRulesEdition,
 } from "../api/client";
 import { SourceRecovery } from "../components/campaign/SourceRecovery";
@@ -239,6 +241,18 @@ export default function CampaignView() {
               <option value="2014">D&D 5e · 2014</option><option value="2024">D&D 5e · 2024</option>
             </select>}
           </Field>
+          <Field label="Progression" hint="Milestones are granted when an encounter is won. Each one is spent on an explicit level-up, up to level 5. Fixed keeps the sheet's level.">
+            {(p) => <select {...p} className={controlClasses} value={c.progression_mode ?? "fixed"}
+              onChange={(e) => { void setCampaignProgressionMode(c.id, e.target.value as "fixed" | "milestone").then((updated) => campaign.setData(() => updated)).catch(setActionError); }}>
+              <option value="fixed">Fixed level</option><option value="milestone">Milestones (level up to 5)</option>
+            </select>}
+          </Field>
+          <Field label="Death" hint="Subdued: a defeat leaves the hero unconscious at 1 HP and the story continues. Death saves: the hero makes death saving throws at 0 HP and can die for good. The mode cannot change while a hero is dying.">
+            {(p) => <select {...p} className={controlClasses} value={c.death_mode ?? "subdued"}
+              onChange={(e) => { void setCampaignDeathMode(c.id, e.target.value as "subdued" | "death_saves").then((updated) => campaign.setData(() => updated)).catch(setActionError); }}>
+              <option value="subdued">Subdued at 1 HP (solo continuation)</option><option value="death_saves">Death saving throws (permanent death)</option>
+            </select>}
+          </Field>
           <SourceRecovery campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
           {c.readiness ? <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} /> : null}
           <div className="flex flex-wrap gap-2 border-t border-line pt-3">
@@ -257,7 +271,7 @@ export default function CampaignView() {
         {/* Re-mount on status change so lists refresh after End/Reopen. */}
         <TabPanel idBase="campaign" id={tab} key={`${tab}:${c.status}`} className="pt-5">
           {tab === "sessions" ? <SessionsTab campaignId={c.id} ended={ended} readiness={c.readiness} playAllowed={c.readiness?.play_allowed === true} /> : null}
-          {tab === "characters" ? <CharactersTab campaignId={c.id} /> : null}
+          {tab === "characters" ? <CharactersTab campaignId={c.id} progressionMode={c.progression_mode ?? "fixed"} /> : null}
           {tab === "npcs" ? <NpcsTab campaignId={c.id} /> : null}
           {tab === "world" ? <WorldTab campaignId={c.id} /> : null}
         </TabPanel>

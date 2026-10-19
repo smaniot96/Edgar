@@ -97,6 +97,10 @@ def finalize_round_narration(
         messages = [*messages[:-1], AIMessage(content=text)]
     if pending.outcome == "victory":
         text += "\n\n**Victory!** The way forward is clear."
+    elif pending.outcome == "defeat" and any(
+        c.get("is_player") and c.get("disposition") == "dead" for c in pending.combatants
+    ):
+        text += "\n\n**Dead.** Your hero has died. The story can continue with a new hero."
     elif pending.outcome == "defeat":
         text += "\n\n**Subdued.** You are overwhelmed and knocked unconscious — your story is not over, but you are at the enemy's mercy."
     elif pending.outcome == "fled":

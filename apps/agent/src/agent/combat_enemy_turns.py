@@ -51,6 +51,7 @@ from agent.conditions import (
     spell_condition_sentence,
     start_concentration,
 )
+from agent.death import DEAD, DEATH_MODE_SAVES, record_from, take_damage
 from agent.monster_stats import (
     AttackRider,
     AttackSave,
@@ -71,6 +72,7 @@ from agent.positioning import (
     start_turn,
 )
 from agent.resolution import (
+    DEATH_SAVES_KEY,
     spend_second_wind,
 )
 from agent.spells import (
@@ -98,7 +100,10 @@ class EnemyTurns:
 
     # --- Shared HP bookkeeping (engine only) ---
 
-    def damage_player(self, amount: int) -> None:
+    def damage_player(self, amount: int, *, critical: bool = False) -> None:
+        if self.rec.death_mode == DEATH_MODE_SAVES:
+            self._damage_hero_with_death_saves(amount, critical=critical)
+            return
         self.rec.hp = max(0, self.rec.hp - amount)
         # EDG-043: a caster who falls to 0 HP loses concentration; other damage needs a CON save.
         if self.rec.hp <= 0:
@@ -122,6 +127,37 @@ class EnemyTurns:
                 self.rec.hp = sw.amount
                 self.rec.sw_left -= 1
                 self.rec.log_lines.append(f"{self.rec.hero} digs deep and uses Second Wind, recovering {sw.amount} HP to stay in the fight!")
+
+    def _damage_hero_with_death_saves(self, amount: int, *, critical: bool) -> None:
+        """Damage to the hero under the death rules (EDG-045, agent.death; PHB, PDF p.198)."""
+        rec = self.rec
+        hero_max = int(rec.character.get("hp_max") or rec.player.get("hp_max") or max(1, rec.hp))
+        before = rec.hp
+        out = take_damage(
+            before,
+            hero_max,
+            amount,
+            critical=critical,
+            record=record_from(rec.player.get(DEATH_SAVES_KEY)),
+        )
+        rec.hp = out.hp
+        rec.player[DEATH_SAVES_KEY] = out.record.to_dict() if out.record is not None else None
+        if out.instant_death:
+            rec.dead = True
+            rec.log_lines.append(
+                f"{rec.hero} takes damage that equals or exceeds the hit point maximum and dies outright."
+            )
+        elif out.record is not None and out.record.state == DEAD:
+            rec.dead = True
+            rec.log_lines.append(f"{rec.hero} fails the third death saving throw and dies.")
+        elif out.dropped:
+            rec.log_lines.append(f"{rec.hero} is reduced to 0 HP and falls unconscious.")
+        elif out.failures_added:
+            count = "two failures" if critical else "a failure"
+            rec.log_lines.append(f"{rec.hero} takes damage at 0 HP: {count} on the death saves.")
+        if rec.hp <= 0 and not rec.dead:
+            if ended_spell := drop_concentration(rec.player, rec.enemies):
+                rec.log_lines.append(f"{rec.hero} falls and loses concentration on {ended_spell}.")
 
     def monster_concentration_damage(self, caster: dict, amount: int) -> None:
         """Apply a monster's Constitution concentration save after it takes damage."""
@@ -192,7 +228,14 @@ class EnemyTurns:
         natural = atk.rolls[0]
         paralyzed_crit = within_five_feet and has_effect(self.rec.player, "paralyzed")
         hit = natural == 20 or (natural != 1 and atk.total >= self.rec.player_ac)
-        critical = hit and (natural == 20 or paralyzed_crit)
+        # EDG-045: an unconscious hero (0 HP, death saves) is hit critically from within 5 feet.
+        unconscious_crit = (
+            within_five_feet
+            and self.rec.death_mode == DEATH_MODE_SAVES
+            and self.rec.hp <= 0
+            and not self.rec.dead
+        )
+        critical = hit and (natural == 20 or paralyzed_crit or unconscious_crit)
         if hit:
             if critical:
                 p = parse_dice(expr)
@@ -227,7 +270,7 @@ class EnemyTurns:
                     **({"reaction": "opportunity_attack"} if reaction else {}),
                 }
             )
-            self.damage_player(dmg)
+            self.damage_player(dmg, critical=critical)
             if rider is not None and self.rec.hp > 0:
                 # EDG-043: the exact record's rider on a hit: the hero's save, engine-rolled.
                 rider_roll = rider_save(

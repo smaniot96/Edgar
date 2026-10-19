@@ -4,6 +4,7 @@ import type { CharacterAssignmentHistoryRead, CharacterRead } from "../../api/ty
 import {
   economyLine,
   hitDiceFrom,
+  parseDeathSaves,
   mechanicalEffects,
   mergeTurnCharacter,
   orderCombatants,
@@ -345,3 +346,24 @@ describe("Hit Dice on the sheet (EDG-026)", () => {
   });
 });
 
+describe("death-save view (EDG-045)", () => {
+  it("reads only a valid death record and clamps the counts to three", () => {
+    expect(parseDeathSaves({ death_saves: { state: "dying", successes: 1, failures: 9 } })).toEqual({
+      state: "dying",
+      successes: 1,
+      failures: 3,
+    });
+    expect(parseDeathSaves({ death_saves: { state: "bogus" } })).toBeNull();
+    expect(parseDeathSaves({})).toBeNull();
+    expect(parseDeathSaves(null)).toBeNull();
+  });
+
+  it("is replaced by every turn payload, so healing clears the death state", () => {
+    const dying = mergeTurnCharacter(null, {
+      stats: { death_saves: { state: "dying", successes: 0, failures: 2 } },
+    } as never);
+    expect(dying.deathSaves).toEqual({ state: "dying", successes: 0, failures: 2 });
+    const healed = mergeTurnCharacter(dying, { stats: {}, hp_current: 3 } as never);
+    expect(healed.deathSaves).toBeNull();
+  });
+});

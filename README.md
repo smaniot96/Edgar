@@ -256,7 +256,16 @@ simulate (`GET /api/rules/supported-scope`):
   half-speed cost. Regeneration's 0 HP clause is declared too: an exact creature at 0 HP is defeated
   at once. Stat blocks were checked against real Monster Manual layouts (see
   docs/rules-verification-2014.md).
-- Solo adaptations: defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
+- Campaign modes (EDG-045), stored per campaign and shown in its settings. Progression is `fixed`
+  (the default: the sheet keeps its level) or `milestone`: each won encounter grants one milestone, and
+  an explicit level-up spends it to reach level 5 for fighter, rogue, wizard, cleric and ranger. A
+  level-up adds the class table's fixed hit points (or an engine roll of the die) plus CON, follows the
+  proficiency bonus, Hit Dice and spell slot tables (PHB pp.58, 72, 91, 96, 114), and offers the
+  Ability Score Improvement at level 4 (PHB p.73). Class features the engine does not run are named,
+  not applied. Death is `subdued` (the default: a defeat leaves the hero unconscious at 1 HP) or
+  `death_saves`: the PHB death saving throws, instant death from massive damage, and permanent death,
+  recorded in the story ledger, with a replacement hero as the way on (PHB pp.198-199).
+- Solo adaptations: in the default subdued mode defeat leaves the hero subdued at 1 HP rather than dead, and encounters are
   fitted to a single hero by an engine-enforced budget (`apps/agent/src/agent/encounter_budget.py`) that scales
   with level. Its limits are checked against the 2014 DMG XP thresholds (`apps/agent/src/agent/dmg_thresholds.py`):
   the worst generic roster at every level 1-20 stays at or below that hero's deadly threshold.

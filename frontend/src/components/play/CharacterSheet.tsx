@@ -92,6 +92,15 @@ export function CharacterSheet({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          {c.deathSaves ? (
+            <p role="status" className="text-sm font-medium text-ember-500">
+              {c.deathSaves.state === "dead"
+                ? "Dead. This hero is lost for good; add a replacement hero from the campaign roster."
+                : c.deathSaves.state === "stable"
+                  ? "Stable at 0 HP: unconscious, no more death saves."
+                  : `Dying at 0 HP: ${c.deathSaves.successes}/3 successes, ${c.deathSaves.failures}/3 failures on death saves.`}
+            </p>
+          ) : null}
           <section className="flex items-center gap-3">
             <HpBar current={c.hpCurrent} max={c.hpMax} className="flex-1" />
             {c.ac != null ? (

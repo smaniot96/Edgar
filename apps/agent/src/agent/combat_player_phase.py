@@ -58,6 +58,15 @@ from agent.conditions import (
     spell_condition_sentence,
     start_concentration,
 )
+from agent.death import (
+    DEAD,
+    DEATH_MODE_SAVES,
+    DYING,
+    STABLE,
+    DeathRecord,
+    death_save,
+    record_from,
+)
 from agent.models.parsed_input import ParsedInput
 from agent.monster_stats import (
     adjust_monster_damage,
@@ -68,6 +77,7 @@ from agent.monster_stats import (
 from agent.positioning import MELEE, RANGED, MovePlan, band_of, start_turn
 from agent.readied_action import ReadyOrder
 from agent.resolution import (
+    DEATH_SAVES_KEY,
     SECOND_WIND_REFUSAL,
     CheckResult,
     check_spec,
@@ -169,11 +179,44 @@ def run_player_turn(rec: RoundRecord, inp: PlayerTurnInput) -> PlayerTurnResult:
     )
 
 
+def _death_save_at_turn_start(rec: RoundRecord) -> None:
+    """A hero at 0 HP rolls a death saving throw at the start of its turn (EDG-045, agent.death).
+
+    A stable hero does not roll. The roll is the engine's d20, logged with the round's dice.
+    """
+    record = record_from(rec.player.get(DEATH_SAVES_KEY)) or DeathRecord(DYING)
+    if record.state != DYING:
+        return
+    save = death_save(record)
+    hero = rec.hero
+    rec.dice_log.append(save.dice.to_log(f"{hero} death saving throw"))
+    rec.hp = save.hp
+    rec.player[DEATH_SAVES_KEY] = save.record.to_dict() if save.record is not None else None
+    if save.regained:
+        rec.log_lines.append(
+            f"{hero} rolls a 20 on a death saving throw, regains 1 HP and is conscious again."
+        )
+    elif save.record is not None and save.record.state == DEAD:
+        rec.dead = True
+        rec.log_lines.append(f"{hero} rolls {save.natural} on a death saving throw and dies.")
+    elif save.record is not None and save.record.state == STABLE:
+        rec.log_lines.append(f"{hero} succeeds on a third death saving throw and is stable.")
+    else:
+        verdict = "succeeds" if save.success else "fails"
+        rec.log_lines.append(
+            f"{hero} {verdict} a death saving throw (rolled {save.natural}): "
+            f"{save.record.successes if save.record else 0}/3 successes, "
+            f"{save.record.failures if save.record else 0}/3 failures."
+        )
+
+
 def _start_slot(t: _Turn) -> None:
     rec, inp = t.rec, t.inp
     player, hero, combat_state = rec.player, rec.hero, rec.combat_state
     decl = inp.decl
     inp.turns.before_initiative_slot(player)
+    if rec.death_mode == DEATH_MODE_SAVES and rec.hp <= 0 and not rec.dead:
+        _death_save_at_turn_start(rec)
     # An enemy ahead in initiative may have stunned the hero just now (EDG-043).
     t.player_acted = (
         rec.hp > 0

@@ -22,6 +22,13 @@ export interface SpellSlotRow extends SpellSlotState {
   level: number;
 }
 
+/** A hero's death-save record while dying, stable or dead (EDG-045, agent.death); null when conscious. */
+export interface DeathSaveView {
+  state: "dying" | "stable" | "dead";
+  successes: number;
+  failures: number;
+}
+
 export interface SheetCharacter {
   id: number | null;
   name: string;
@@ -43,6 +50,8 @@ export interface SheetCharacter {
   spells?: CastableSpell[] | null;
   /** Proficient saves and skills with engine modifiers (EDG-173); null on legacy payloads. */
   proficiencies?: SheetProficiencies | null;
+  /** The death-save record (EDG-045); undefined or null when the hero is not dying, stable or dead. */
+  deathSaves?: DeathSaveView | null;
 }
 
 const ABILITY_ORDER = ["STR", "DEX", "CON", "INT", "WIS", "CHA"] as const;
@@ -137,6 +146,20 @@ export function parseStats(stats: Record<string, unknown> | null | undefined): {
 }
 
 /** Second Wind counter from a payload; null when absent or malformed (nothing is invented). */
+/** The sheet's death-save record from its stats, or null when the hero is conscious (EDG-045). */
+export function parseDeathSaves(stats: unknown): DeathSaveView | null {
+  if (!stats || typeof stats !== "object") return null;
+  const v = (stats as Record<string, unknown>).death_saves;
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  if (o.state !== "dying" && o.state !== "stable" && o.state !== "dead") return null;
+  return {
+    state: o.state,
+    successes: Math.max(0, Math.min(3, num(o.successes) ?? 0)),
+    failures: Math.max(0, Math.min(3, num(o.failures) ?? 0)),
+  };
+}
+
 export function parseSecondWind(v: unknown): SecondWindState | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
@@ -240,6 +263,7 @@ export function sheetFromLibrary(
     spellSlots: parseSpellSlots(assignment?.spell_slots),
     spells: parseCastableSpells(assignment?.spells),
     proficiencies: parseProficiencies(assignment?.proficiencies),
+    deathSaves: parseDeathSaves(assignment?.stats),
   };
 }
 
@@ -288,6 +312,8 @@ export function mergeTurnCharacter(
     if (stats.abilities.length) next.abilities = stats.abilities;
     next.conditions = stats.conditions;
     if (stats.ac != null) next.ac = stats.ac;
+    // The death record is replaced by every payload that carries the stats (healing clears it).
+    next.deathSaves = parseDeathSaves(c.stats);
   }
   if (c.inventory && typeof c.inventory === "object") next.inventory = parseInventory(c.inventory);
   const hitDice = hitDiceFrom(c.hit_dice);

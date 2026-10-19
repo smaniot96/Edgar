@@ -89,6 +89,66 @@ class UnsupportedMechanic:
 
 SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
+        id="campaign_modes",
+        title="Campaign modes",
+        scope=(
+            "Two campaign settings are stored, never inferred. progression_mode is 'fixed' (the sheet keeps "
+            "its level; the default, and the behaviour of every campaign created before the modes) or "
+            "'milestone' (see milestone_advancement). death_mode is 'subdued' (the default and the "
+            "behaviour of every earlier campaign: a defeat leaves the hero unconscious at 1 HP and the "
+            "story continues) or 'death_saves' (raw death saving throws at 0 HP, see death_saves). Both "
+            "can be set when a campaign is created and changed while it is active. A change of "
+            "death_mode is refused while the hero is dying or stable. A campaign's modes are shown with "
+            "its settings and sent to every turn."
+        ),
+        implementation="agent.progression:plan_level_up",
+        test="tests/api/test_campaign_modes.py::test_campaign_modes_default_to_the_existing_behaviour",
+    ),
+    Mechanic(
+        id="milestone_advancement",
+        title="Level-up",
+        scope=(
+            "Only in progression_mode 'milestone'. The engine grants one milestone when the active "
+            "encounter ends in a victory, once per encounter, and never past level 5 counting pending "
+            "milestones. Nothing else grants one. A level-up is an explicit player request that names "
+            "the level it starts from, so a stale request is refused and a repeated request_id replays "
+            "the stored result instead of applying twice. It is refused during an open encounter. It "
+            "spends one milestone and raises the level by one, up to level 5, for fighter, rogue, wizard, "
+            "cleric and ranger. Hit points rise by the class table's fixed value (floor(die / 2) + 1, PHB, "
+            "pp.58, 72, 91, 96, 114) or by an engine roll of the hit die, plus the Constitution modifier, "
+            "never below zero; current HP rises by the same amount. The proficiency bonus, Hit Dice total, "
+            "spell slot totals (PHB Wizard and Cleric tables pp.114 and 58, Ranger table p.91) and the "
+            "level-gated features the engine runs (Action Surge at 2, Sneak Attack dice at 3 and 5, Rage "
+            "uses) follow the new level. Ability Score Improvement at level 4 is two points to one score "
+            "or one point to each of two, no score above 20 (PHB, PDF p.73). The level is stored per campaign, "
+            "so a level-up never changes the library character."
+        ),
+        implementation="apps.api.services.advancement:apply_level_up",
+        test="tests/agent/test_progression.py::test_average_hit_points_are_the_class_table_fixed_value",
+    ),
+    Mechanic(
+        id="death_saves",
+        title="Death saves",
+        scope=(
+            "Only in death_mode 'death_saves' (the default 'subdued' keeps the 1 HP continuation). Damage "
+            "that takes the hero from above 0 HP to 0 leaves it unconscious; damage left over that equals or "
+            "exceeds its hit point maximum kills it outright. Damage at 0 HP is one death save failure, two "
+            "from a critical hit, and damage that equals or exceeds the maximum kills outright (PHB, PDF "
+            "pp.198-199). A foe's hit on the unconscious hero from within 5 feet is a critical hit (PHB "
+            "Appendix A). At the start of a turn, a dying hero rolls one d20 (engine dice, no modifier): 10 or "
+            "higher succeeds, a natural 1 counts as two failures, a natural 20 regains 1 HP and "
+            "consciousness. Three successes make it stable (no more rolls, still at 0 HP); three failures "
+            "kill it. Any healing that leaves the hero above 0 HP clears the record. Outside combat the same "
+            "turn-start roll applies at 0 HP and damage at 0 HP is a failure. A hero that dies is recorded "
+            "as dead on its sheet."
+        ),
+        implementation="agent.death:take_damage",
+        test=(
+            "tests/agent/test_death_saves.py::"
+            "test_a_third_failed_save_kills_the_hero_and_the_encounter_is_a_defeat"
+        ),
+    ),
+    Mechanic(
         id="d20_checks",
         title="d20 ability, skill, saving-throw and tool checks",
         scope=(
@@ -843,6 +903,29 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
         owner="EDG-044",
     ),
     UnsupportedMechanic(
+        id="ally_aid",
+        title="Ally aid",
+        boundary=(
+            "Stabilising another creature with a Medicine check (PHB, PDF p.198) and healing a creature at 0 HP by "
+            "an ally's potion or spell have no engine effect. No companion is a combatant in the engine, so only "
+            "the hero's own state is ruled: a dying hero recovers through its own death saves, a healing effect "
+            "on the hero, or a long rest."
+        ),
+        owner="unassigned",
+    ),
+    UnsupportedMechanic(
+        id="advancement_features",
+        title="Unrun features",
+        boundary=(
+            "Extra Attack (fighter and ranger at 5th level), subclass features (Martial, Roguish, Arcane "
+            "and Divine archetypes), Cunning Action, Uncanny Dodge, Channel Divinity, Destroy Undead, the "
+            "fighting styles, Favored Enemy and Natural Explorer are named when a level is gained and have "
+            "no engine effect. A prepared-spell limit is not enforced: every catalog spell of the class "
+            "may be cast within its slots. A level-up never adds a feat."
+        ),
+        owner="unassigned",
+    ),
+    UnsupportedMechanic(
         id="class_features",
         title="Class features other than Second Wind, Action Surge, Sneak Attack and Rage",
         boundary=(
@@ -884,8 +967,9 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
 
 SOLO_ADAPTATIONS: tuple[str, ...] = (
     (
-        "Defeat is subdued, not death: when the player reaches 0 HP in combat, the engine sets "
-        "HP to 1 and the story continues, often with the hero captured or at the enemy's mercy."
+        "Defeat is subdued by default (death_mode 'subdued'): when the player reaches 0 HP in combat, the "
+        "engine sets HP to 1 and the story continues, often with the hero captured or at the enemy's mercy. "
+        "A campaign set to death_mode 'death_saves' follows the death rules instead (see death_saves)."
     ),
     (
         "Encounters are fitted to a solo hero by an engine-enforced budget (agent.encounter_budget) "

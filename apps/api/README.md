@@ -41,6 +41,22 @@ The agent runs; `turn_runner.persist_turn` then opens one short-lived DB session
 
 ## Supported rules scope
 
+Campaign modes (EDG-045) are columns on `campaigns`: `progression_mode` ('fixed' or 'milestone') and
+`death_mode` ('subdued' or 'death_saves'), both defaulted to the behaviour existing campaigns had. They
+are set with the campaign create and patch bodies; a death-mode change is refused while a hero is dying
+or stable, and any mode change is refused for an ended campaign. A character's level in a campaign is
+`character_assignments.level` (backfilled from the library character) and its unspent milestones are
+`milestones_pending`. `POST /api/campaigns/{campaign_id}/characters/{character_id}/level-up` spends one
+milestone: the body names `from_level` (a stale level is refused, 409), a `request_id` (a repeat replays
+the stored record with `applied: false`), `hp_method` ('average' or 'roll') and, at level 4,
+`ability_increases`. It is refused for a fixed campaign, an ended campaign, an open encounter, no
+milestone, or a level at the cap of 5. The record of the last applied level-up is stored in
+`stats["advancement"]`; the hero's death record is `stats["death_saves"]` (state dying, stable or dead,
+with the counts). Both are engine-owned keys that a manual sheet edit cannot overwrite. A dead hero's
+turns are refused with the registered `hero_dead` code; the replacement path is to assign a hero to the
+campaign, switch the session to them (`PATCH /api/sessions/{id}`), and release the dead one. The roster
+row carries `life_state` (alive, dying, stable or dead) and `milestones_pending`.
+
 `GET /api/rules/supported-scope` is read-only and static. It returns the code-owned contract
 (`agent.supported_rules`): the mechanics the engine executes, the rules it does not execute, and
 the solo-play adaptations. A declared action that falls in the unsupported list receives a narrative

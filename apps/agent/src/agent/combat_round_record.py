@@ -36,3 +36,7 @@ class RoundRecord:
     actors: list[dict] = field(default_factory=list)
     round_actors: list[str] = field(default_factory=list)
     lair_done: bool = False
+    # EDG-045: 'subdued' (defeat leaves the hero at 1 HP) or 'death_saves' (agent.death). Set per round.
+    death_mode: str = "subdued"
+    # The hero died this round (death saves or massive damage): the encounter ends in defeat.
+    dead: bool = False

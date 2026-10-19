@@ -25,6 +25,8 @@ from db.postgres.models import (
 
 def _assignment(stats: dict | None = None, cls: str = "Fighter", level: int = 3) -> SimpleNamespace:
     return SimpleNamespace(
+        level=level,  # EDG-045: the assignment owns the level the engine reads
+        milestones_pending=0,
         hp_current=5,
         hp_max=12,
         stats={"conditions": []} if stats is None else stats,
@@ -110,6 +112,7 @@ async def test_hit_dice_persist_across_rests_and_reload(db_session) -> None:
     ass = CharacterAssignment(
         character_id=char.id,
         campaign_id=camp.id,
+        level=2,  # EDG-045: this campaign's level, as seeding from the character sets it
         hp_current=5,
         hp_max=20,
         stats={"conditions": []},  # a legacy row: no Hit Dice key yet

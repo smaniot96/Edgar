@@ -84,6 +84,7 @@ from edgar_core.model_profiles import (
 from edgar_core.safe_errors import OutcomeState, SafeFailure
 from edgar_core.sources import citations_for, public_citations
 
+from .advancement import grant_victory_milestone, victory_just_ended
 from .campaign_completion import maybe_complete_campaign
 from .character_assignments import character_play_state
 from .combat import persist_captive_outcome, persist_combat, persist_combat_npcs
@@ -91,6 +92,7 @@ from .journal import journal_tracking_marker
 from .operational_metrics import observe_committed_turn
 from .roll_record import build_roll_record, roll_status_for
 from .safe_errors import classify_error, log_failure
+from .story_state import record_hero_death_if_dead
 from .world_writes import (
     MissingCharacterAssignmentError,
     apply_adjudication,
@@ -367,12 +369,16 @@ async def persist_turn(
                     },
                 )
 
+            # EDG-045: a won encounter grants a milestone once, on its open-to-victory transition.
+            won_now = await victory_just_ended(db, session_id, new_combat)
             combat_id = None
             if new_combat:
                 combat_id = await persist_combat(db, session_id, new_combat)
                 await persist_combat_npcs(
                     db, session_id, game_session.campaign_id, combat_id, new_combat
                 )
+            if won_now:
+                await grant_victory_milestone(db, campaign, game_session.active_character_id)
 
             if adjudication:
                 discovery_keys = {
@@ -413,6 +419,10 @@ async def persist_turn(
             )
             db.add(narration_event)
             await db.flush()
+            # EDG-045: a hero the engine killed this turn is recorded in the story ledger, once.
+            await record_hero_death_if_dead(
+                db, game_session, event_id=narration_event.id, turn_id=turn_id or ""
+            )
             if accepted_amendment is not None:
                 await append_session_prepared_amendment(
                     db,
