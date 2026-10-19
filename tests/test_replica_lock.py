@@ -70,7 +70,8 @@ async def test_dead_connection_frees_lock(engine):
     await _second(engine, wait="5")
 
 
-async def test_opt_out_allows_and_warns(engine):
+async def test_opt_out_allows_and_warns(engine, monkeypatch):
+    monkeypatch.setattr(replica_lock, "log", structlog.get_logger())
     await start_replica_guard(engine, {})
     with structlog.testing.capture_logs() as logs:
         assert await start_replica_guard(engine, {"EDGAR_ALLOW_MULTIPLE_REPLICAS": "1"}) is None
