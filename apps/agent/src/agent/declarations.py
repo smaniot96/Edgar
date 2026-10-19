@@ -128,3 +128,29 @@ def agreement_question(
         f"I did not find {names} in what {hero} said, so I have not declared it. Say it in plain "
         "words if you mean it, or leave it out. No roll is made and no turn is spent."
     )
+
+
+def completeness_question(
+    actions: Iterable[object], foes: Collection[str], player_input: str, hero: str
+) -> str | None:
+    """One question when a proposed attack has no target among several standing foes.
+
+    Only a typed proposal is checked here: the single-action path keeps its existing choice of the
+    first foe, so its behaviour is unchanged. A foe the player's words name (any word of its name)
+    completes the declaration, and so does the proposal's own target.
+    """
+    names = list(foes)
+    if len(names) < 2:
+        return None
+    text = str(player_input or "").lower()
+    if any(word in text for name in names for word in name.lower().split()):
+        return None
+    for action in actions:
+        if getattr(action, "kind", None) in ("attack", "off_hand_attack", "maneuver") and not getattr(
+            action, "target", None
+        ):
+            return (
+                f"Which foe does {hero} mean: {' or '.join(names)}? No roll is made and no turn is "
+                "spent."
+            )
+    return None

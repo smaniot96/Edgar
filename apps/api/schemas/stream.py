@@ -72,6 +72,8 @@ class CombatStatePublic(_Frame):
     economy: dict[str, Any] | None
     raging: bool
     concentration: str | None
+    # Additive (EDG-182): a multi-part declaration waiting for the player's yes or no, if any.
+    pending_declaration: dict[str, str] | None = None
 
 
 class CombatOutcomeEntryPublic(_Frame):

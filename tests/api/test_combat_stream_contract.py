@@ -608,3 +608,40 @@ async def test_sync_and_stream_ask_the_same_question_for_an_unsupported_proposal
     assert sync["combat_state"]["round"] == 1
     assert streamed["combat_state"]["round"] == 1
     assert _round_payload_or_none(sync) is None and _round_payload_or_none(streamed) is None
+
+
+@pytest.mark.asyncio
+async def test_sync_and_stream_hold_a_multi_part_turn_for_confirmation_identically(
+    narrator, committed, fake_llm_schema
+):
+    """EDG-182: a multi-part typed turn is repeated back on both paths, before any die or narrator call."""
+    proposal = ParsedInput.model_validate(
+        {
+            "intent": "combat",
+            "check": "attack",
+            "target": "goblin",
+            "actions": [
+                {"kind": "move", "text": "close in on the goblin"},
+                {"kind": "attack", "text": "attack it", "target": "goblin"},
+            ],
+        }
+    )
+    fake_llm_schema.responses[ParsedInput] = proposal
+    text = "I close in on the goblin and attack it"
+    sync_model = narrator(ScriptedNarrator(["unused"]))
+    sync_state = _combat_state(enemies=[_enemy("Goblin", hp=500, init=5)], message=text)
+    with use_rng(random.Random(11)):
+        sync = await app.ainvoke(copy.deepcopy(sync_state))
+    stream_model = narrator(ScriptedNarrator(["unused"]))
+    with use_rng(random.Random(11)):
+        events = await stream_events(_combat_state(enemies=[_enemy("Goblin", hp=500, init=5)], message=text))
+    streamed = committed[-1]
+
+    assert sync_model.calls == [] and stream_model.calls == []
+    assert "Confirm before any dice" in sync["narration"]
+    assert done_of(events)["narration"] == sync["narration"] == streamed["narration"]
+    assert sync["adjudication_result"].dice_log == []
+    assert sync["combat_state"]["round"] == 1
+    assert turn_runner.combat_state_public(streamed["combat_state"])["pending_declaration"] == {
+        "summary": sync["narration"]
+    }

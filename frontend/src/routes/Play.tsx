@@ -372,7 +372,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           <PlayToolBar activeTool={activeTool} onToggle={toggleTool} />
           <div className="flex min-h-[min(55%,16rem)] flex-1">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {game.combat ? <CombatHud combat={game.combat} /> : null}
+              {game.combat ? <CombatHud combat={game.combat} onReply={handleQuickReply} /> : null}
 
               {game.loading ? (
                 <div className="flex flex-1 items-center justify-center">

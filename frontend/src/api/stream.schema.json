@@ -568,6 +568,21 @@
               ],
               "title": "Outcome"
             },
+            "pending_declaration": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Pending Declaration"
+            },
             "player_ac": {
               "anyOf": [
                 {
@@ -1490,6 +1505,21 @@
             }
           ],
           "title": "Outcome"
+        },
+        "pending_declaration": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pending Declaration"
         },
         "player_ac": {
           "anyOf": [

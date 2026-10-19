@@ -31,9 +31,9 @@ from agent.class_features import RAGE
 from agent.combat_intent import _RANGED_HINT, _STAND_UP, _is_attack_action, _name_matches
 from agent.combat_targeting import _release_target, additional_spell_targets, select_target
 from agent.combat_view import _ask_player
-from agent.combatants import CombatManeuver, can_act, classify_combat_maneuver
+from agent.combatants import CombatManeuver, can_act, classify_combat_maneuver, is_standing
 from agent.conditions import condition_ends_before_turn, fear_refusal, humanoid_refusal
-from agent.declarations import MANEUVER, MOVE, agreement_question
+from agent.declarations import MANEUVER, MOVE, agreement_question, completeness_question
 from agent.positioning import (
     RANGED,
     MovePlan,
@@ -216,8 +216,12 @@ def declare_action(
             detected.add(MOVE.kind)
         if combat_action is not None:
             detected.add(MANEUVER.kind)
-        proposals = [(a.kind, a.text) for a in getattr(parsed, "actions", None) or []]
-        question = agreement_question(proposals, detected, hero)
+        actions = list(getattr(parsed, "actions", None) or [])
+        question = agreement_question([(a.kind, a.text) for a in actions], detected, hero)
+        if question is None:
+            # EDG-182 completeness: a proposed attack needs a foe when several stand.
+            living = [e["name"] for e in enemies if is_standing(e)]
+            question = completeness_question(actions, living, player_input, hero)
         if question:
             return _ask_player(state, question, combat_state=combat_state)
     target: dict | None = None
