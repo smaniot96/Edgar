@@ -66,7 +66,7 @@ class _DelayedStreamingNarrator:
 
 
 def _done(persisted: dict):
-    async def persist(_session_id, _message, result):
+    async def persist(_session_id, _message, result, **_spotlight):
         persisted["result"] = result
         return {"narration": result.get("narration", "")}
 

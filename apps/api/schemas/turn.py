@@ -19,6 +19,9 @@ class TurnRequest(BaseModel):
     request_id: str | None = Field(
         default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
     )
+    # EDG-048: the spotlight version the client acted on. A mismatch is refused (409) before any
+    # model call. Optional, so clients that do not track the table keep working.
+    spotlight_version: int | None = Field(default=None, ge=0)
     # Developer mode: when true, the stream also emits a `debug` SSE frame (intent, retrieved
     # RAG chunks, full combat internals incl. enemy stats, stage timings, model). Honoured only
     # when the server runs with EDGAR_DEBUG=1; otherwise silently forced off.

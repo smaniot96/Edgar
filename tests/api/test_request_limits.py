@@ -472,7 +472,7 @@ def _turn_stubs(monkeypatch: pytest.MonkeyPatch, *, run_turn_error: bool = True)
             raise RuntimeError("provider said: connection refused at 10.0.0.7")
         return {}
 
-    async def persist_turn(session_id, message, result):
+    async def persist_turn(session_id, message, result, **_spotlight):
         raise RuntimeError("persistence is stubbed in this test")
 
     monkeypatch.setattr(session_routes, "_replayed_turn", no_replay)

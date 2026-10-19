@@ -379,7 +379,12 @@ async def test_simple_request_body_shapes_on_the_turn_route(
     async def missing_session(*_a: Any, **_kw: Any):
         raise HTTPException(status_code=404, detail={"code": "not_found"})
 
+    async def no_spotlight(*_a: Any, **_kw: Any):
+        # EDG-048: the spotlight decision runs before the state loads; this test is about the body shape.
+        return None
+
     monkeypatch.setattr(session_router, "_replayed_turn", no_replay)
+    monkeypatch.setattr(session_router, "_open_spotlight", no_spotlight)
     monkeypatch.setattr(session_router, "_load_turn_initial_state", missing_session)
 
     async with _client(app) as client:
@@ -400,6 +405,7 @@ JSON_BODY_ROUTES = {
     ("PATCH", "/api/characters/{character_id}"),
     ("PATCH", "/api/npcs/{npc_id}"),
     ("PATCH", "/api/sessions/{session_id}"),
+    ("PATCH", "/api/sessions/{session_id}/spotlight"),
     ("PATCH", "/api/users/me"),
     ("POST", "/api/adventures/generate"),
     ("POST", "/api/adventures/{slug}/manifest/publish"),
@@ -465,7 +471,7 @@ def test_every_mutating_route_is_classified_in_the_request_mode_table(load_app) 
     app = load_app()
     classified = JSON_BODY_ROUTES | BODYLESS_POST_ROUTES | MULTIPART_ROUTES | DELETE_ROUTES
     assert _mutating_routes(app) == classified
-    assert len(classified) == 47
+    assert len(classified) == 48
     simple_surface = BODYLESS_POST_ROUTES | MULTIPART_ROUTES
     assert len(simple_surface) == 10
 

@@ -107,7 +107,7 @@ async def test_sse_turn_uses_same_frozen_profiles_for_parser_and_streamed_narrat
     monkeypatch.setattr(turn_runner, "deterministic_narration", lambda _state: None)
     monkeypatch.setattr(turn_runner, "actions_for_state", lambda _state: [])
     monkeypatch.setattr(turn_runner, "build_narrator_prompt", lambda _state: [])
-    monkeypatch.setattr(turn_runner, "persist_turn", lambda *_args: _done())
+    monkeypatch.setattr(turn_runner, "persist_turn", lambda *_args, **_kw: _done())
 
     events = [
         frame
@@ -169,7 +169,7 @@ async def test_sync_combat_and_streamed_narrators_share_their_stage_profile(
             yield "values", {"player_input": "I wait.", "adjudication_result": None}
 
     monkeypatch.setattr(turn_runner, "prepare_app", FakePrepareApp())
-    monkeypatch.setattr(turn_runner, "persist_turn", lambda *_args: _done())
+    monkeypatch.setattr(turn_runner, "persist_turn", lambda *_args, **_kw: _done())
 
     await narrator.narrator_node({"player_input": "I wait."})
     await narrator.narrator_node({"player_input": "I wait.", "combat_state": {"round": 1}})

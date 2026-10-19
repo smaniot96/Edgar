@@ -38,7 +38,7 @@ from db.postgres.models import (
 from ..auth import Auth, campaign_role, member_session
 from ..dependencies import get_redis, get_session
 from ..schemas.channel import PresenceEntry, PresenceUpdate
-from ..services import session_channel
+from ..services import session_channel, spotlight
 from ..services.character_assignments import character_play_state
 from ..services.combat import load_active_combat
 from ..services.session_channel import (
@@ -140,9 +140,9 @@ class DbSubscriber:
             session = await db.get(SessionModel, self._session_id)
             if session is None:
                 return {"head_seq": head, "session_id": self._session_id}
-            spotlight = None
+            holder_state = None
             if session.active_character_id is not None:
-                spotlight = await character_play_state(
+                holder_state = await character_play_state(
                     db, session.active_character_id, session.campaign_id
                 )
             own_character = None
@@ -158,17 +158,20 @@ class DbSubscriber:
                 if own is not None:
                     own_character = await character_play_state(db, own, session.campaign_id)
             combat = combat_state_public(await load_active_combat(db, session.id))
+            # EDG-048: the table's spotlight, so a reconnecting member sees the same next-up order.
+            spotlight_state = await spotlight.public_view(db, self._redis, session.id)
         roster = await session_channel.roster(self._redis, self._session_id)
         return {
             "head_seq": head,
             "session_id": session.id,
             "current_scene_id": session.current_scene_id,
             "spotlight": (
-                {"character_id": spotlight["id"], "character_name": spotlight["name"]}
-                if spotlight is not None
+                {"character_id": holder_state["id"], "character_name": holder_state["name"]}
+                if holder_state is not None
                 else None
             ),
             "combat_state": combat,
+            "spotlight_state": spotlight_state,
             "presence": [entry.model_dump(mode="json") for entry in roster],
             "character": own_character,
         }

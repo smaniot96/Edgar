@@ -136,8 +136,10 @@ The creator is the implicit owner of a campaign. Other users join through `campa
 
 Access helpers: `owned_*` (owner only) guards every mutation. `member_campaign` / `member_session`
 admit any member, and `campaign_scope` lists the campaigns a user owns or has joined. `turn_session`
-(the `authorize_session` gate for turns and intros) admits the owner, or a seated player whose
-character is the spotlight holder. Everyone else gets 403 (member) or 404 (non-member).
+(the `authorize_session` gate for turns and intros) admits the owner and any seated player. Spectators
+and unseated members get 403; non-members get 404. Which seated player may act right now is the
+spotlight's decision (EDG-048): a seated player who does not hold the spotlight gets 409
+`not_your_spotlight` before any model call and without spending anything. See docs/session-broadcast.md.
 
 Invites (`campaign_invites`), owner-managed under `/api/campaigns/{id}/invites`:
 
