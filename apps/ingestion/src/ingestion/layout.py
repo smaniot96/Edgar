@@ -83,6 +83,8 @@ def columns(lines: list[Line], width: float) -> list[list[Line]]:
         if gutter >= 5:
             candidates.append((score, left, right, crossing))
     if not candidates:
+        if _anchored_table(lines):
+            return [lines]
         leftish = [item for item in lines if (item.bbox[0] + item.bbox[2]) / 2 < width * 0.45]
         rightish = [item for item in lines if (item.bbox[0] + item.bbox[2]) / 2 > width * 0.55]
         if len(leftish) >= 6 and len(rightish) >= 6:
@@ -96,7 +98,7 @@ def columns(lines: list[Line], width: float) -> list[list[Line]]:
     _, left, right, crossing = candidates[0]
     # Titles spanning the page are safe only above both columns.
     top = min(item.bbox[1] for item in left + right)
-    if not any(item.bbox[3] > top + 3 for item in crossing):
+    if not any(item.bbox[3] > top + 3 for item in crossing) and not _anchored_table(lines):
         return ([crossing] if crossing else []) + [left, right]
     # A gutter that cuts through a table or prose can still leave a clean reading under another
     # candidate split; take the first one that reads without ambiguity, else keep the first error.
@@ -142,8 +144,8 @@ def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: l
 
     ordered: list[list[Line]] = []
     region: list[Line] = []
-    for run in runs:
-        if not any(id(item) in spanning for item in run):
+    for run in (part for run in runs for part in _split_table_tail(run, spanning)):
+        if not any(id(item) in spanning for item in run) and not _anchored_table(run):
             region.extend(run)
             continue
         ordered += region_columns(region)
@@ -158,7 +160,7 @@ def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: l
             raise ValueError(
                 "ambiguous_spanning_column_text band=({:.1f},{:.1f},{:.1f},{:.1f})".format(*box)
             )
-        ordered.append(run)
+        ordered.append([item for item in run if id(item) in spanning or any(c.isalnum() for c in item.text)])
     ordered += region_columns(region)
     return [column for column in ordered if column]
 
@@ -167,6 +169,69 @@ def _ornament(text: str) -> bool:
     """True for a strip that is mostly punctuation, e.g. a decorative page-header rule."""
     chars = [c for c in text if not c.isspace()]
     return sum(c.isalnum() for c in chars) * 3 < len(chars)
+
+
+def _anchored_table(items: list[Line]) -> bool:
+    """True for a table whose cells share column starts, even when some cells are blank.
+
+    Column starts within 20 pt chain into one anchor, so paragraph indents and two-column prose
+    give only two anchors. A table needs three anchors, each used by three or more rows, and
+    most cells must sit on those anchors and three rows must place two or more cells on them. Blank cells, such as an em dash
+    missing from the text layer, leave no text behind, so nothing is invented.
+    """
+    rows: list[list[Line]] = []
+    for item in sorted(items, key=lambda i: i.bbox[3]):
+        if rows and abs(rows[-1][0].bbox[3] - item.bbox[3]) <= 2.5:
+            rows[-1].append(item)
+        else:
+            rows.append([item])
+    starts = sorted((item.bbox[0], index) for index, row in enumerate(rows) for item in row)
+    clusters: list[list[tuple[float, int]]] = []
+    for start in starts:
+        if clusters and start[0] - clusters[-1][-1][0] <= 20:
+            clusters[-1].append(start)
+        else:
+            clusters.append([start])
+    anchors = [
+        (cluster[0][0], cluster[-1][0])
+        for cluster in clusters
+        if len({index for _, index in cluster}) >= 3
+    ]
+    if len(anchors) < 3 or len(rows) < 3:
+        return False
+    on_anchor = [any(lo <= item.bbox[0] <= hi for lo, hi in anchors) for item in items]
+    cells_per_row = [
+        sum(any(lo <= item.bbox[0] <= hi for lo, hi in anchors) for item in row) for row in rows
+    ]
+    # Wrapped continuation rows hold one cell, so judge the share of cells, not of rows.
+    return sum(count >= 2 for count in cells_per_row) >= 3 and 4 * sum(on_anchor) >= 3 * len(items)
+
+
+def _split_table_tail(run: list[Line], spanning: set[int]) -> list[list[Line]]:
+    """Split a run that ends in a table block from the prose above it, so each part reads alone.
+
+    Rows with three or more cells form the table; a one-cell row (a table heading) may sit inside
+    it. Two-cell rows are two-column prose and stay above the split.
+    """
+    if not any(id(item) in spanning for item in run):
+        return [run]
+    rows: list[list[Line]] = []
+    for item in sorted(run, key=lambda i: i.bbox[3]):
+        if rows and abs(rows[-1][0].bbox[3] - item.bbox[3]) <= 2.5:
+            rows[-1].append(item)
+        else:
+            rows.append([item])
+    start = len(rows)
+    while start > 0 and (len(rows[start - 1]) >= 3 or len(rows[start - 1]) == 1):
+        start -= 1
+    # Leading one-cell rows are the table heading; the table proper starts at its first 3-cell row.
+    while start < len(rows) and len(rows[start]) < 3:
+        start += 1
+    tail = [item for row in rows[start:] for item in row]
+    head = [item for row in rows[:start] for item in row]
+    if not head or sum(len(row) >= 3 for row in rows[start:]) < 3 or not _anchored_table(tail):
+        return [run]
+    return [head, tail]
 
 
 def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
@@ -179,6 +244,8 @@ def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
     rows are then also judged on their own. Prose columns cut by a gutter that is too narrow
     give mostly two-cell rows, so they do not qualify.
     """
+    if _anchored_table(run):
+        return True
     rows: list[list[Line]] = []
     for item in sorted(run, key=lambda i: i.bbox[3]):
         if rows and abs(rows[-1][0].bbox[3] - item.bbox[3]) <= 2.5:
@@ -186,6 +253,9 @@ def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
         else:
             rows.append([item])
     if len(rows) == 1 or all(id(item) in spanning for item in run):
+        return True
+    # A paragraph band with a decorative corner glyph (no letters or digits) is still one band.
+    if all(id(item) in spanning or not any(c.isalnum() for c in item.text) for item in run):
         return True
     span_rows = [row for row in rows if any(id(item) in spanning for item in row)]
     cells = sum(len(row) >= 3 for row in span_rows)
