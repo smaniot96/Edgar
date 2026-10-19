@@ -1,6 +1,7 @@
 """CLI entrypoint for the ingestion pipeline."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -12,11 +13,46 @@ from edgar_core.model_profiles import ModelProfileError, validate_provider_confi
 from ingestion.embed import run_pipeline
 from ingestion.extract import (
     EXCLUSION_REASONS,
+    apply_text_corrections,
     extract_document,
     save_extraction,
     validate_exclusions,
 )
 from ingestion.paths import default_markdown_dir
+
+CORRECTION_SEPARATOR = "=>"
+
+
+def parse_text_correction(item: str) -> dict:
+    """Parse one `PAGE:OLD=>NEW` argument; the first colon and the only `=>` delimit it.
+
+    Quote the whole argument in the shell when the text has spaces, e.g.
+    `--correct-text '5:Armor Class l3=>Armor Class 13'`. Text containing `=>` belongs in a
+    --corrections-file. Raises ValueError with a message that never echoes the text.
+    """
+    number, separator, rest = item.partition(":")
+    old, arrow, new = rest.partition(CORRECTION_SEPARATOR)
+    if not separator or not number.isdigit():
+        raise ValueError("--correct-text needs PAGE:OLD=>NEW with a physical page number.")
+    if not arrow or CORRECTION_SEPARATOR in new or not old or not new:
+        raise ValueError(
+            "--correct-text needs exactly one '=>' between non-empty old and new text; "
+            "use --corrections-file for text that contains '=>'."
+        )
+    return {"page": int(number), "old": old, "new": new}
+
+
+def load_corrections_file(path: Path) -> list[object]:
+    """A JSON list of {page, old, new, note?} objects; never echoes its contents on error."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(
+            f"--corrections-file must be readable UTF-8 JSON ({type(exc).__name__})."
+        ) from None
+    if not isinstance(data, list):
+        raise ValueError("--corrections-file must contain a JSON list of corrections.")
+    return data
 
 
 def _write_redacted(message: str) -> None:
@@ -87,6 +123,22 @@ def main() -> None:
         f"Reasons: {', '.join(EXCLUSION_REASONS)}. Requires --extract-only; the bundle records them.",
     )
     parser.add_argument(
+        "--correct-text",
+        action="append",
+        default=[],
+        metavar="PAGE:OLD=>NEW",
+        help="Reviewed text correction on one physical page: the exact old text must occur once "
+        "on that page and is replaced by the new text (quote the argument when it has spaces). "
+        "Requires --extract-only; the bundle records every correction and its digest.",
+    )
+    parser.add_argument(
+        "--corrections-file",
+        type=Path,
+        metavar="PATH",
+        help='JSON list of reviewed corrections, each {"page", "old", "new"} with an optional '
+        '"note". Same rules as --correct-text; requires --extract-only.',
+    )
+    parser.add_argument(
         "--reviewed-extraction",
         type=Path,
         help="JSON extraction bundle whose selected Markdown text you have visually reviewed; required for rulebooks and --replace",
@@ -122,6 +174,15 @@ def main() -> None:
         if not args.extract_only or not separator or not number.isdigit():
             parser.error("--exclude-pages needs --extract-only and entries like PAGE:REASON")
         exclusions.append({"page": int(number), "reason": reason})
+    if (args.correct_text or args.corrections_file) and not args.extract_only:
+        parser.error("--correct-text and --corrections-file are supported only with --extract-only")
+    corrections: list[object] = []
+    try:
+        corrections = [parse_text_correction(item) for item in args.correct_text]
+        if args.corrections_file is not None:
+            corrections.extend(load_corrections_file(args.corrections_file))
+    except ValueError as exc:
+        parser.error(str(exc))
 
     def resolved_collection_name() -> str:
         if args.campaign_id is not None:
@@ -152,6 +213,13 @@ def main() -> None:
             extraction.excluded_pages = validate_exclusions(
                 exclusions, extraction.pages, extraction.page_count
             )
+            # Corrections are checked against the exclusions above and refused before any write.
+            try:
+                apply_text_corrections(extraction, corrections)
+            except ValueError as exc:
+                # Correction messages name pages and counts only, never the corrected text.
+                logger.error("Correction refused: {}", exc)
+                sys.exit(1)
             # A failed run never replaces the previous preview or bundle; it is saved beside them.
             failed = bool(extraction.failing_pages())
             stem = f"{extraction.source}.failed" if failed else extraction.source

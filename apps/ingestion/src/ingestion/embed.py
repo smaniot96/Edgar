@@ -240,6 +240,9 @@ def _chunk_payload(c: dict) -> dict:
         "rules_edition",
         "excluded_pages",
         "exclusions_sha256",
+        "text_corrections",
+        "corrections_sha256",
+        "corrected_pages",
         "section",
         "chapter",
         "heading_path",
@@ -443,6 +446,10 @@ def _embed_and_upsert(
             "exclusions_sha256",
         )
     }
+    # Reviewed corrections appear in the receipt only when present, so ordinary receipts keep their shape.
+    for key in ("text_corrections", "corrections_sha256"):
+        if payloads[0].get(key) is not None:
+            receipt[key] = payloads[0][key]
     receipt["chunk_count"] = len(chunks)
     promote_index(
         client,

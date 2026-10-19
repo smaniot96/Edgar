@@ -19,7 +19,14 @@ import pymupdf
 import pymupdf4llm
 
 from edgar_core.sources import SourceEdition
-from ingestion.artifacts import ExcludedPage, exclusions_digest, source_digest, text_digest
+from ingestion.artifacts import (
+    ExcludedPage,
+    TextCorrection,
+    corrections_digest,
+    exclusions_digest,
+    source_digest,
+    text_digest,
+)
 from ingestion.layout import Line, native_lines, ocr_stat_header, render_native_page
 from ingestion.quality import check_text, diagnostic_message, has_section_heading, has_stat_record
 from ingestion.text_quality import is_degraded, prefer_ocr, score_text
@@ -31,6 +38,16 @@ EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index")
 # Tesseract at the 600 dpi used for raster stat headings in layout.ocr_stat_header.
 OCR_LAYOUT_DPI = 600
 OCR_MIN_CONFIDENCE = 30
+# Reviewed text corrections are short, exact replacements; anything larger is a new source edit.
+MAX_TEXT_CORRECTIONS_PER_PAGE = 20
+MAX_CORRECTION_CHARS = 200
+TEXT_CORRECTION_WARNING = "reviewed_text_correction"
+# Seam for raster-read headings: a page's `quality[RASTER_RECOVERED_KEY]` is a list of records
+# {"text": <exact text read from the image>, ...}. A correction whose old text equals one of those
+# recorded texts is annotated on that record as `reviewed_correction`, so review lists can show it.
+RASTER_RECOVERED_KEY = "raster_recovered"
+_CORRECTION_KEYS = {"page", "old", "new", "note"}
+_CONTROL_OR_MARKUP = re.compile(r"[\x00-\x1f\x7f-\x9f<>]")
 
 
 @dataclass
@@ -55,6 +72,7 @@ class Extraction:
     pages: list[ExtractedPage]
     rules_edition: SourceEdition = "unspecified"
     excluded_pages: list[ExcludedPage] = field(default_factory=list)
+    text_corrections: list[TextCorrection] = field(default_factory=list)
 
     def excluded_numbers(self) -> set[int]:
         return {int(entry["page"]) for entry in self.excluded_pages}
@@ -67,11 +85,19 @@ class Extraction:
     def markdown(self) -> str:
         # Exclusions are part of the reviewed preview, so changing them changes its digest.
         reasons = {int(entry["page"]): entry["reason"] for entry in self.excluded_pages}
+        # Reviewed text corrections fold their canonical digest into every corrected page marker.
+        corrected = Counter(c["page"] for c in self.text_corrections)
+        corrections_sha = corrections_digest(self.text_corrections) if corrected else ""
         blocks = []
         for p in self.pages:
             marker = f"<!-- PDF page {p.page} -->"
             if p.page in reasons:
                 marker = f"<!-- PDF page {p.page} excluded: {reasons[p.page]} (not indexed) -->"
+            elif p.page in corrected:
+                marker = (
+                    f"<!-- PDF page {p.page} text corrected by review: {corrected[p.page]} "
+                    f"correction(s), corrections sha256 {corrections_sha} -->"
+                )
             blocks.append(f"{marker}\n\n{p.text}")
         return "\n\n".join(blocks)
 
@@ -119,6 +145,15 @@ class Extraction:
                     lines.append(
                         f"page {entry['page']}: excluded page has a section heading; confirm it is not rules text."
                     )
+        if self.text_corrections:
+            per_page = Counter(c["page"] for c in self.text_corrections)
+            listed = [f"page {number} ({n})" for number, n in sorted(per_page.items())]
+            lines.append(
+                f"Text corrected by review ({len(self.text_corrections)} in {len(per_page)} pages): "
+                + ", ".join(listed[:SUMMARY_PAGE_LIMIT])
+                + ("; more in the extraction bundle" if len(listed) > SUMMARY_PAGE_LIMIT else "")
+                + ". Confirm each correction against the PDF page image."
+            )
         lines.append(
             "Totals: " + (", ".join(f"{c} x{n}" for c, n in sorted(totals.items())) or "none")
         )
@@ -187,6 +222,167 @@ def validate_exclusions(
         seen.add(number)
         cleaned.append({"page": number, "reason": str(reason)})
     return sorted(cleaned, key=lambda e: e["page"])
+
+
+def _clean_text_corrections(entries: Sequence[object], page_count: int) -> list[TextCorrection]:
+    """Shape, bounds and canonical order of reviewed corrections; never echoes their text."""
+    seen: set[tuple[int, str]] = set()
+    per_page: Counter[int] = Counter()
+    cleaned: list[TextCorrection] = []
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or not {"page", "old", "new"} <= set(entry) <= _CORRECTION_KEYS
+            or type(entry["page"]) is not int
+        ):
+            raise ValueError(
+                "Each text correction needs a physical page, exact old text and new text."
+            )
+        number: int = entry["page"]
+        old, new, note = entry["old"], entry["new"], entry.get("note")
+        if (
+            not isinstance(old, str)
+            or not isinstance(new, str)
+            or not (note is None or isinstance(note, str))
+        ):
+            raise ValueError(f"Text correction on page {number} must use text values.")
+        if not 1 <= number <= page_count:
+            raise ValueError(f"Corrected page {number} is not an extracted physical PDF page.")
+        if not old or not new:
+            raise ValueError(f"Text correction on page {number} needs non-empty old and new text.")
+        if old == new:
+            raise ValueError(f"Text correction on page {number} does not change the text.")
+        if max(len(old), len(new), len(note or "")) > MAX_CORRECTION_CHARS:
+            raise ValueError(
+                f"Text correction on page {number} exceeds {MAX_CORRECTION_CHARS} characters."
+            )
+        if any(_CONTROL_OR_MARKUP.search(value) for value in (old, new, note or "")):
+            raise ValueError(
+                f"Text correction on page {number} contains control characters or markup."
+            )
+        if (number, old) in seen:
+            raise ValueError(f"Page {number} corrects the same text more than once.")
+        seen.add((number, old))
+        per_page[number] += 1
+        if per_page[number] > MAX_TEXT_CORRECTIONS_PER_PAGE:
+            raise ValueError(
+                f"Page {number} has more than {MAX_TEXT_CORRECTIONS_PER_PAGE} text corrections."
+            )
+        record = TextCorrection(page=number, old=old, new=new)
+        if note is not None:
+            record["note"] = note
+        cleaned.append(record)
+    return sorted(cleaned, key=lambda c: (c["page"], c["old"], c["new"]))
+
+
+def _apply_to_text(text: str, items: list[TextCorrection], number: int) -> str:
+    """Replace each exact old text once; overlapping or ambiguous matches are refused."""
+    spans = []
+    for item in items:
+        # Overlapping lookahead finds every position, so "aa" in "aaa" counts as ambiguous.
+        starts = [m.start() for m in re.finditer(f"(?={re.escape(item['old'])})", text)]
+        if len(starts) != 1:
+            raise ValueError(
+                f"Text correction on page {number} must match its old text exactly once; "
+                f"found {len(starts)} matches."
+            )
+        spans.append((starts[0], starts[0] + len(item["old"]), item["new"]))
+    spans.sort()
+    if any(later[0] < earlier[1] for earlier, later in zip(spans, spans[1:], strict=False)):
+        raise ValueError(f"Text corrections on page {number} overlap; merge them into one.")
+    parts, cursor = [], 0
+    for start, end, new in spans:
+        parts.extend((text[cursor:start], new))
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def apply_text_corrections(
+    extraction: Extraction, entries: Sequence[object]
+) -> list[TextCorrection]:
+    """Apply reviewed corrections to selected text, then re-run the text checks on each corrected page.
+
+    Refused before anything is written: unknown or excluded pages, absent or ambiguous old text,
+    overlapping edits. A corrected page clears its earlier failure codes only when the corrected
+    text passes `check_text`; otherwise its failures are kept and recomputed from the new text.
+    """
+    if extraction.text_corrections:
+        raise ValueError("Text corrections are already applied to this extraction.")
+    corrections = _clean_text_corrections(entries, extraction.page_count)
+    if not corrections:
+        return []
+    by_number = {p.page: p for p in extraction.pages}
+    excluded = extraction.excluded_numbers()
+    grouped: dict[int, list[TextCorrection]] = defaultdict(list)
+    for correction in corrections:
+        number = correction["page"]
+        if number not in by_number:
+            raise ValueError(f"Corrected page {number} is not an extracted physical PDF page.")
+        if number in excluded:
+            raise ValueError(f"Page {number} is excluded from indexing and cannot be corrected.")
+        grouped[number].append(correction)
+    # Compute every corrected text before mutating any page, so a refusal leaves no partial state.
+    corrected_texts = {
+        n: _apply_to_text(by_number[n].text, items, n) for n, items in grouped.items()
+    }
+    for number, new_text in corrected_texts.items():
+        page = by_number[number]
+        original_checks = set(check_text(page.text)["errors"])
+        previous = sorted(set(page.quality.get("errors", [])))
+        page.text = new_text
+        corrected_checks = check_text(new_text)["errors"]
+        if corrected_checks:
+            # Extraction-time failures stay unless re-checked; text failures reflect the new text.
+            retained = set(previous) - original_checks
+            page.quality["errors"] = sorted(retained | set(corrected_checks))
+        else:
+            if previous:
+                page.quality["cleared_by_text_correction"] = previous
+            page.quality["errors"] = []
+        if TEXT_CORRECTION_WARNING not in page.warnings:
+            page.warnings.append(TEXT_CORRECTION_WARNING)
+        for correction in grouped[number]:
+            for record in _raster_records(page, correction["old"]):
+                record["reviewed_correction"] = {"old": correction["old"], "new": correction["new"]}
+    extraction.text_corrections = corrections
+    return corrections
+
+
+def _raster_records(page: ExtractedPage, text: str) -> list[dict]:
+    """Raster-read records of this page whose recorded text is exactly `text`."""
+    records = page.quality.get(RASTER_RECOVERED_KEY, [])
+    return [r for r in records if isinstance(r, dict) and r.get("text") == text]
+
+
+def _verify_applied_corrections(
+    corrections: list[TextCorrection], pages: list[ExtractedPage], excluded: set[int]
+) -> None:
+    """A reviewed bundle's text and raster annotations must match exactly its recorded corrections."""
+    by_number = {p.page: p for p in pages}
+    changed = "Corrected text changed; extract and review the bundle again."
+    for correction in corrections:
+        page = by_number.get(correction["page"])
+        if page is None or correction["page"] in excluded:
+            raise ValueError("Text corrections target an excluded page; extract and review again.")
+        if correction["new"] not in page.text or TEXT_CORRECTION_WARNING not in page.warnings:
+            raise ValueError(changed)
+        expected = {"old": correction["old"], "new": correction["new"]}
+        for record in _raster_records(page, correction["old"]):
+            if record.get("reviewed_correction") != expected:
+                raise ValueError(changed)
+    corrected = {c["page"] for c in corrections}
+    if any((TEXT_CORRECTION_WARNING in p.warnings) != (p.page in corrected) for p in pages):
+        raise ValueError(changed)
+    recorded = {(c["page"], c["old"], c["new"]) for c in corrections}
+    for page in pages:
+        for record in page.quality.get(RASTER_RECOVERED_KEY, []):
+            annotation = record.get("reviewed_correction") if isinstance(record, dict) else None
+            if (
+                annotation is not None
+                and (page.page, annotation.get("old"), annotation.get("new")) not in recorded
+            ):
+                raise ValueError(changed)
 
 
 def _ocr_page(doc: pymupdf.Document, number: int) -> str:
@@ -417,6 +613,11 @@ def save_extraction(
             "exclusions_sha256": exclusions_digest(extraction.excluded_pages),
         }
     )
+    # Corrections are recorded only when present, so ordinary bundles keep their exact shape.
+    if extraction.text_corrections:
+        data["corrections_sha256"] = corrections_digest(extraction.text_corrections)
+    else:
+        data.pop("text_corrections")
     if readiness is not None:
         data["readiness"] = readiness
     for page in data["pages"]:
@@ -498,6 +699,10 @@ def load_reviewed_extraction(pdf_path: str | Path | None, report_path: str | Pat
     excluded = validate_exclusions(data.get("excluded_pages", []), pages, data["page_count"])
     if exclusions_digest(excluded) != data.get("exclusions_sha256", exclusions_digest([])):
         raise ValueError("Excluded pages changed; extract and review the bundle again.")
+    corrections = _clean_text_corrections(data.get("text_corrections", []), data["page_count"])
+    if corrections_digest(corrections) != data.get("corrections_sha256", corrections_digest([])):
+        raise ValueError("Text corrections changed; extract and review the bundle again.")
+    _verify_applied_corrections(corrections, pages, {int(e["page"]) for e in excluded})
     extraction = Extraction(
         data["source"],
         data["source_sha256"],
@@ -505,6 +710,7 @@ def load_reviewed_extraction(pdf_path: str | Path | None, report_path: str | Pat
         pages,
         rules_edition=data.get("rules_edition", "unspecified"),
         excluded_pages=excluded,
+        text_corrections=corrections,
     )
     if extraction.text_sha256() != data["markdown_sha256"]:
         raise ValueError("Selected text differs from the reviewed Markdown preview.")

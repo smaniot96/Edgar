@@ -11,11 +11,13 @@ import pymupdf
 import pytest
 
 from ingestion import embed, extract
-from ingestion.artifacts import exclusions_digest, source_digest
+from ingestion.artifacts import corrections_digest, exclusions_digest, source_digest, text_digest
 from ingestion.chunk import chunk_page_runs, chunk_pages
 from ingestion.extract import (
+    RASTER_RECOVERED_KEY,
     ExtractedPage,
     Extraction,
+    apply_text_corrections,
     extract_document,
     load_reviewed_extraction,
     save_extraction,
@@ -1147,3 +1149,298 @@ def test_extract_cli_refuses_unreviewed_exclusions_before_writing(tmp_path, excl
     assert result.returncode != 0
     assert not (out / "sample.md").exists()
     assert "PRIVATE" not in result.stderr
+
+
+# Reviewed text corrections: exact, unique, recorded and re-checked; never silent.
+
+_CORRECTION = {"page": 2, "old": "Opening paragraph", "new": "Opening passage"}
+
+
+def _text_book(pdf, *, body="Opening paragraph of the rules.", errors=(), excluded=None):
+    pages = [
+        ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": []}),
+        ExtractedPage(2, body, "native_geometry", {"errors": list(errors)}),
+    ]
+    return Extraction("book", source_digest(pdf), 2, pages, excluded_pages=list(excluded or []))
+
+
+@pytest.mark.parametrize(
+    "entries,message",
+    [
+        ([{"page": 2, "old": "absent", "new": "x"}], "exactly once; found 0"),
+        ([{"page": 2, "old": "a", "new": "x"}], "exactly once; found [1-9]"),
+        ([{"page": 9, "old": "Opening", "new": "x"}], "not an extracted physical PDF page"),
+        ([{"page": 2, "old": "Opening", "new": "Opening"}], "does not change the text"),
+        ([{"page": 2, "old": "", "new": "x"}], "non-empty old and new"),
+        ([{"page": 2, "old": "Opening", "new": ""}], "non-empty old and new"),
+        ([{"page": 2, "old": "Opening", "new": "a\nb"}], "control characters or markup"),
+        ([{"page": 2, "old": "Opening", "new": "<b>x</b>"}], "control characters or markup"),
+        ([{"page": 2, "old": "Opening", "new": "x" * 201}], "exceeds 200 characters"),
+        ([{"page": 2, "old": "Opening", "new": "x", "reason": "no"}], "needs a physical page"),
+        ([{"page": "2", "old": "Opening", "new": "x"}], "needs a physical page"),
+        (
+            [
+                {"page": 2, "old": "Opening", "new": "A"},
+                {"page": 2, "old": "Opening", "new": "B"},
+            ],
+            "more than once",
+        ),
+    ],
+)
+def test_invalid_text_corrections_are_refused_before_recording(two_page_pdf, entries, message):
+    extraction = _text_book(two_page_pdf)
+    with pytest.raises(ValueError, match=message):
+        apply_text_corrections(extraction, entries)
+    assert extraction.text_corrections == []
+    assert extraction.pages[1].text == "Opening paragraph of the rules."
+
+
+def test_ambiguous_overlapping_matches_are_refused(two_page_pdf):
+    extraction = _text_book(two_page_pdf, body="aaa rules")
+    with pytest.raises(ValueError, match="exactly once; found 2"):
+        apply_text_corrections(extraction, [{"page": 2, "old": "aa", "new": "bb"}])
+
+
+def test_overlapping_corrections_on_one_page_are_refused(two_page_pdf):
+    extraction = _text_book(two_page_pdf)
+    entries = [
+        {"page": 2, "old": "Opening paragraph", "new": "Opening"},
+        {"page": 2, "old": "paragraph of", "new": "text for"},
+    ]
+    with pytest.raises(ValueError, match="overlap"):
+        apply_text_corrections(extraction, entries)
+
+
+def test_excluded_page_cannot_be_corrected(two_page_pdf):
+    excluded = [{"page": 2, "reason": "art"}]
+    extraction = _text_book(two_page_pdf, excluded=excluded)
+    with pytest.raises(ValueError, match="excluded from indexing"):
+        apply_text_corrections(extraction, [_CORRECTION])
+
+
+def test_correction_is_applied_once_and_recorded_in_the_bundle(two_page_pdf, tmp_path):
+    extraction = _text_book(two_page_pdf, errors=["partial_native_numbers_lost_in_ocr"])
+    apply_text_corrections(extraction, [{**_CORRECTION, "note": "checked p.2"}])
+    page = extraction.pages[1]
+    assert page.text == "Opening passage of the rules."
+    assert page.quality["errors"] == []
+    assert page.quality["cleared_by_text_correction"] == ["partial_native_numbers_lost_in_ocr"]
+    assert "reviewed_text_correction" in page.warnings
+    with pytest.raises(ValueError, match="already applied"):
+        apply_text_corrections(extraction, [_CORRECTION])
+
+    markdown, report = save_extraction(extraction, tmp_path / "preview")
+    text = markdown.read_text()
+    assert "text corrected by review: 1 correction(s)" in text
+    assert corrections_digest(extraction.text_corrections) in text
+    data = json.loads(report.read_text())
+    assert data["text_corrections"] == [
+        {"page": 2, "old": "Opening paragraph", "new": "Opening passage", "note": "checked p.2"}
+    ]
+    assert data["corrections_sha256"] == corrections_digest(extraction.text_corrections)
+    reviewed = load_reviewed_extraction(two_page_pdf, report)
+    assert reviewed.text_corrections == extraction.text_corrections
+    reviewed.require_valid()
+
+
+def test_correction_digest_changes_with_the_list(two_page_pdf):
+    base = _text_book(two_page_pdf)
+    apply_text_corrections(base, [_CORRECTION])
+    other = _text_book(two_page_pdf)
+    apply_text_corrections(other, [{**_CORRECTION, "note": "different review"}])
+    plain = _text_book(two_page_pdf)
+    assert base.text_sha256() != other.text_sha256()
+    assert corrections_digest(base.text_corrections) != corrections_digest(other.text_corrections)
+    assert base.text_sha256() != plain.text_sha256()
+
+
+def test_hand_edited_corrected_text_is_rejected_on_reload(two_page_pdf, tmp_path):
+    extraction = _text_book(two_page_pdf)
+    apply_text_corrections(extraction, [_CORRECTION])
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    data = json.loads(report.read_text())
+    data["pages"][1]["text"] = "Opening paragraph of the rules."
+    data["pages"][1]["text_sha256"] = text_digest(data["pages"][1]["text"])
+    report.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="Corrected text changed"):
+        load_reviewed_extraction(two_page_pdf, report)
+
+
+def test_hand_edited_corrections_list_is_rejected_on_reload(two_page_pdf, tmp_path):
+    extraction = _text_book(two_page_pdf)
+    apply_text_corrections(extraction, [_CORRECTION])
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    data = json.loads(report.read_text())
+    data["text_corrections"] = []
+    report.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="Text corrections changed"):
+        load_reviewed_extraction(two_page_pdf, report)
+
+    # Recomputing only the list digest still changes the Markdown identity.
+    data["corrections_sha256"] = corrections_digest([])
+    report.write_text(json.dumps(data))
+    with pytest.raises(
+        ValueError, match="Markdown preview|Selected text differs|Corrected text changed"
+    ):
+        load_reviewed_extraction(two_page_pdf, report)
+
+
+def test_correction_cannot_be_added_to_a_reviewed_bundle_without_new_review(two_page_pdf, tmp_path):
+    _markdown, report = save_extraction(_text_book(two_page_pdf), tmp_path / "preview")
+    data = json.loads(report.read_text())
+    data["text_corrections"] = [_CORRECTION]
+    data["corrections_sha256"] = corrections_digest(data["text_corrections"])
+    report.write_text(json.dumps(data))
+    with pytest.raises(
+        ValueError, match="Markdown preview|Selected text differs|Corrected text changed"
+    ):
+        load_reviewed_extraction(two_page_pdf, report)
+
+
+def test_ordinary_bundles_keep_their_shape_and_still_load(two_page_pdf, tmp_path):
+    extraction = _text_book(two_page_pdf)
+    markdown, report = save_extraction(extraction, tmp_path / "preview")
+    assert "corrected by review" not in markdown.read_text()
+    data = json.loads(report.read_text())
+    assert "text_corrections" not in data and "corrections_sha256" not in data
+    assert all("reviewed_text_correction" not in p["warnings"] for p in data["pages"])
+    assert load_reviewed_extraction(two_page_pdf, report).text_corrections == []
+
+
+def test_corrected_page_that_still_fails_its_checks_stays_failing(two_page_pdf):
+    body = "Alpha " * 10 + "Beta gamma delta."
+    extraction = _text_book(two_page_pdf, body=body)
+    apply_text_corrections(extraction, [{"page": 2, "old": "Beta", "new": "Omega"}])
+    assert extraction.failing_pages() == {2: ["duplicate_word_layer"]}
+    with pytest.raises(ValueError, match="quality checks failed"):
+        extraction.require_valid()
+
+
+def test_correction_clears_extraction_failure_only_when_corrected_checks_pass(two_page_pdf):
+    body = "The creature Armor Class l3 is recorded here."
+    extraction = _text_book(two_page_pdf, body=body, errors=["partial_native_numbers_lost_in_ocr"])
+    assert extraction.failing_pages() == {2: ["partial_native_numbers_lost_in_ocr"]}
+    apply_text_corrections(extraction, [{"page": 2, "old": "l3", "new": "13"}])
+    assert extraction.failing_pages() == {}
+    assert extraction.pages[1].text == "The creature Armor Class 13 is recorded here."
+
+
+def test_raster_read_heading_is_targeted_and_annotated(two_page_pdf, tmp_path):
+    page2 = ExtractedPage(
+        2,
+        "# Devil\n\nA small fiend rests here.",
+        "native_geometry+raster_headers",
+        {"errors": [], RASTER_RECOVERED_KEY: [{"text": "Devil"}]},
+    )
+    extraction = Extraction(
+        "book",
+        source_digest(two_page_pdf),
+        2,
+        [ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": []}), page2],
+    )
+    apply_text_corrections(
+        extraction, [{"page": 2, "old": "Devil", "new": "Spined Devil", "note": "raster heading"}]
+    )
+    record = extraction.pages[1].quality[RASTER_RECOVERED_KEY][0]
+    assert record == {
+        "text": "Devil",
+        "reviewed_correction": {"old": "Devil", "new": "Spined Devil"},
+    }
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    assert (
+        load_reviewed_extraction(two_page_pdf, report).pages[1].quality[RASTER_RECOVERED_KEY][0]
+        == record
+    )
+
+    data = json.loads(report.read_text())
+    del data["pages"][1]["quality"][RASTER_RECOVERED_KEY][0]["reviewed_correction"]
+    report.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="Corrected text changed"):
+        load_reviewed_extraction(two_page_pdf, report)
+
+
+_CORRECT_CLI_SCRIPT = """
+import sys
+import ingestion.main as cli
+from ingestion.extract import Extraction, ExtractedPage
+
+def fake_extract(path, pages=None):
+    return Extraction("sample", "0" * 64, 2, [
+        ExtractedPage(1, "PRIVATE cover Armor Class l3 text", "native_geometry", {"errors": []}),
+        ExtractedPage(2, "PRIVATE Devil and Devil: the rules", "native_geometry", {"errors": []}),
+    ])
+
+cli.extract_document = fake_extract
+sys.argv = ["ingest", sys.argv[1], "--extract-only", "--markdown-dir", sys.argv[2], *sys.argv[3:]]
+cli.main()
+"""
+
+
+def _run_correct_cli(tmp_path, *args):
+    pdf = tmp_path / "sample.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    return out, subprocess.run(
+        [sys.executable, "-c", _CORRECT_CLI_SCRIPT, str(pdf), str(out), *args],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_correct_text_cli_records_a_colon_and_space_correction(tmp_path):
+    out, result = _run_correct_cli(tmp_path, "--correct-text", "1:Armor Class l3=>Armor Class 13")
+    assert result.returncode == 0, result.stderr
+    data = json.loads((out / "sample.extraction.json").read_text())
+    assert data["text_corrections"] == [
+        {"page": 1, "old": "Armor Class l3", "new": "Armor Class 13"}
+    ]
+    assert "Armor Class 13" in (out / "sample.md").read_text()
+    assert "Text corrected by review (1 in 1 pages)" in (out / "sample.summary.txt").read_text()
+    assert "PRIVATE" not in result.stderr
+
+
+def test_corrections_file_records_many_corrections_with_notes(tmp_path):
+    corrections = tmp_path / "corrections.json"
+    corrections.write_text(
+        json.dumps(
+            [
+                {"page": 1, "old": "Armor Class l3", "new": "Armor Class 13", "note": "p.1 check"},
+                {"page": 2, "old": "Devil and", "new": "Spined Devil and"},
+            ]
+        )
+    )
+    out, result = _run_correct_cli(tmp_path, "--corrections-file", str(corrections))
+    assert result.returncode == 0, result.stderr
+    data = json.loads((out / "sample.extraction.json").read_text())
+    assert [c["page"] for c in data["text_corrections"]] == [1, 2]
+    assert data["text_corrections"][0]["note"] == "p.1 check"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--correct-text", "1:Armor Class=>Armor Class 13", "--correct-text", "1:Armor Class=>x"],
+        ["--correct-text", "1:Armor Class l3=>Armor Class 13", "--correct-text", "2:Missing=>Gone"],
+        ["--correct-text", "1:Armor Class l3"],
+        ["--correct-text", "x:Armor Class l3=>y"],
+        ["--correct-text", "1:a=>b=>c"],
+        ["--correct-text", "1:=>x"],
+        ["--correct-text", "2:Devil=>Imp"],
+        ["--correct-text", "1:Armor Class l3=>Armor Class 13", "--exclude-pages", "1:cover"],
+    ],
+)
+def test_correct_text_cli_refuses_before_writing(tmp_path, args):
+    out, result = _run_correct_cli(tmp_path, *args)
+    assert result.returncode != 0
+    assert not (out / "sample.md").exists()
+    assert not (out / "sample.extraction.json").exists()
+    assert "PRIVATE" not in result.stderr
+
+
+def test_corrections_file_must_be_a_json_list(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"page": 1}')
+    out, result = _run_correct_cli(tmp_path, "--corrections-file", str(bad))
+    assert result.returncode != 0
+    assert not (out / "sample.md").exists()
