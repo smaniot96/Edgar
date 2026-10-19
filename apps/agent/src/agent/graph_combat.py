@@ -114,19 +114,6 @@ from agent.combatants import (
     disposition_of,
     has_effect,
 )
-from agent.party_combat import (
-    PartyRound,
-    hero_row,
-    party_roster,
-    Seat,
-    hero_rows,
-    holder_row,
-    is_party,
-    outcome_of,
-    party_updates,
-    finish_party_fight,
-    settle_party_state,
-)
 from agent.conditions import (
     drop_concentration_if_incapacitated,
     stun_ends_before_turn,
@@ -147,6 +134,19 @@ from agent.nodes.narrator import (
     narrator_request,
 )
 from agent.nodes.rules_adjudicator import adjudicate
+from agent.party_combat import (
+    PartyRound,
+    Seat,
+    finish_party_fight,
+    hero_row,
+    hero_rows,
+    holder_row,
+    is_party,
+    outcome_of,
+    party_roster,
+    party_updates,
+    settle_party_state,
+)
 from agent.positioning import (
     initial_band,
 )
@@ -301,12 +301,12 @@ async def _build_enemy_roster(
         ctx_lines.append("Scene context (for flavour only; do not turn allies into enemies):")
         ctx_lines += [f"- {c.get('text', '')[:300]}" for c in adv_ctx[:2]]
     ctx_lines.append(
-        (
+        
             f"Solo budget for this level-{budget.level} hero (enforced by the engine): {budget.describe()}."
             if party_size <= 1
             else f"Party of {party_size} heroes: the engine fits the foe count to the party "
             f"(the solo limits below grow by one foe per extra hero): {budget.describe()}."
-        )
+        
     )
     ctx_lines.append("Resolved foes and complete source records (the engine applies their stats):")
     ctx_lines += [f"Foe: {c['encounter_name']}\n{c['text']}" for c in monster_ctx]
