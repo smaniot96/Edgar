@@ -74,6 +74,8 @@ class CombatStatePublic(_Frame):
     concentration: str | None
     # Additive (EDG-182): a multi-part declaration waiting for the player's yes or no, if any.
     pending_declaration: dict[str, str] | None = None
+    # Additive (EDG-182): the hero's standing reaction orders (foe and summary), if any.
+    standing_orders: list[dict[str, str]] | None = None
 
 
 class CombatOutcomeEntryPublic(_Frame):

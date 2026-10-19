@@ -276,6 +276,8 @@ async def _load_turn_initial_state(
         # EDG-045: explicit campaign modes (progression_mode, death_mode) the engine reads per turn.
         "progression_mode": campaign.progression_mode,
         "death_mode": campaign.death_mode,
+        # EDG-182: confirm every turn that declares an action, for every hero in the campaign.
+        "combat_always_confirm": bool(campaign.combat_always_confirm),
         "adventure_manifests": manifests,
         "prepared_campaign_overlays": prepared_overlays,
         "prepared_amendment_events": prepared_amendment_events,

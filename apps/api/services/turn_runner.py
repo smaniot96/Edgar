@@ -45,7 +45,7 @@ import structlog
 from sqlalchemy import select
 
 import db.postgres.session as db_session_module
-from agent.combat_confirmation import public_pending
+from agent.combat_confirmation import public_pending, public_standing_orders
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
 from agent.combatants import can_act, concentration_of, disposition_of, stable_id, view_fields
 from agent.graph import app, prepare_app, route_after_input_parser
@@ -591,6 +591,9 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
     # Additive (EDG-182): a multi-part declaration waiting for the player's yes or no, as its summary.
     if pending := public_pending(combat_state.get("combatants") or []):
         public["pending_declaration"] = pending
+    # Additive (EDG-182): the hero's standing reaction orders, each cancellable by a reply.
+    if orders := public_standing_orders(combat_state.get("combatants") or []):
+        public["standing_orders"] = orders
     return public
 
 

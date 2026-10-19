@@ -127,6 +127,7 @@ async def create_campaign(
         rules_edition=body.rules_edition,
         progression_mode=body.progression_mode,
         death_mode=body.death_mode,
+        combat_always_confirm=body.combat_always_confirm,
         title=body.title,
         system=body.system,
         created_by=owner_id,

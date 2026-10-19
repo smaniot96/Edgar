@@ -68,17 +68,17 @@ def test_control_words_are_exact_replies_only() -> None:
     assert control_word("stop confirming") == "always_off"
 
 
-def test_only_multi_part_typed_turns_and_chosen_turns_need_confirmation() -> None:
-    attack = Declaration.__new__(Declaration)  # only the fields the gate reads
-    object.__setattr__(attack, "declared", [])
-    object.__setattr__(attack, "moving", False)
-    object.__setattr__(attack, "is_attack", True)
-    object.__setattr__(attack, "is_spell", False)
-    assert needs_confirmation(attack, always=False, typed=True) is False
-    assert needs_confirmation(attack, always=True, typed=False) is True
-    object.__setattr__(attack, "moving", True)
-    assert needs_confirmation(attack, always=False, typed=True) is True
-    assert needs_confirmation(attack, always=False, typed=False) is False  # legacy path unchanged
+def test_multi_part_and_chosen_turns_need_confirmation_on_every_path() -> None:
+    """The owner rule (EDG-182): the gate is the same for typed and legacy turns."""
+    turn = Declaration.__new__(Declaration)  # only the fields the gate reads
+    object.__setattr__(turn, "declared", [])
+    object.__setattr__(turn, "moving", False)
+    object.__setattr__(turn, "is_attack", True)
+    object.__setattr__(turn, "is_spell", False)
+    assert needs_confirmation(turn, always=False) is False  # a single attack runs at once
+    object.__setattr__(turn, "moving", True)
+    assert needs_confirmation(turn, always=False) is True  # a move beside an attack is two parts
+    assert needs_confirmation(turn, always=True) is True  # the player's always-confirm option
 
 
 @pytest.mark.asyncio
@@ -160,3 +160,27 @@ async def test_a_proposed_attack_with_two_foes_and_no_target_is_one_question(
     assert "Goblin" in out["narration"] and "Wolf" in out["narration"]
     assert _rolled(out) == [] and out["combat_state"]["round"] == 1
     assert PENDING_KEY not in _hero(out["combat_state"])
+
+
+@pytest.mark.asyncio
+async def test_the_campaign_always_confirm_setting_asks_about_a_simple_turn(
+    fake_llm_schema, fake_retrieval
+) -> None:
+    """The campaign setting (EDG-182) is a floor for every hero: a simple attack is repeated back too."""
+    from agent.models.adjudication import AdjudicationResult
+    from tests.agent.test_combat import _state as _combat_state
+
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    state = _combat_state(COMBATANTS(), "I attack the goblin")
+    state["combat_always_confirm"] = True
+    state["parsed_input"] = ATTACK_GOBLIN
+    with use_rng(random.Random(0)):
+        out = await combat_round_node(state)
+    assert out["narration"].startswith("Confirm before any dice")
+    assert _rolled(out) == []
+    plain = _combat_state(COMBATANTS(), "I attack the goblin")
+    plain["combat_always_confirm"] = False
+    plain["parsed_input"] = ATTACK_GOBLIN
+    with use_rng(random.Random(0)):
+        out = await combat_round_node(plain)
+    assert _rolled(out), "a simple turn rolled without the campaign setting"

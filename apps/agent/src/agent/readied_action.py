@@ -52,6 +52,18 @@ _RANGED_WORDS = re.compile(
 )
 
 
+# A standing order (EDG-182): the same Ready, kept after each trigger until the player cancels it. The
+# words are the engine's ruling for "every time", which PHB Ready (p.194) does not give.
+STANDING_PHRASE = re.compile(
+    r"\b(?:whenever|every\s+time|each\s+time|from\s+now\s+on|standing)\b", re.IGNORECASE
+)
+# A reply that cancels a standing order: "cancel the standing order against the goblin", "stop ready".
+CANCEL_ORDER = re.compile(
+    r"^\W*(?:cancel|stop|end|drop|clear)\b[^.;!?]*\b(?:order|orders|standing|readied|ready)\b",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True)
 class ReadyOrder:
     """A validated readied attack: the foe it is held against and the trigger the words gave."""
@@ -61,6 +73,7 @@ class ReadyOrder:
     trigger: str
     weapon_hint: str
     foe: Mapping[str, Any] = field(compare=False, repr=False)
+    standing: bool = False  # kept after it fires, until cancelled (EDG-182)
 
 
 def _named_foes(clause: str, foes: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:

@@ -128,6 +128,7 @@ class AgentState(TypedDict, total=False):
     rules_edition: str
     progression_mode: str  # EDG-045: 'fixed' or 'milestone' (agent.progression)
     death_mode: str  # EDG-045: 'subdued' or 'death_saves' (agent.progression)
+    combat_always_confirm: bool  # EDG-182: the campaign confirms every combat turn that declares an action
     adventure_manifests: dict[str, dict]  # validated manifests from existing adventure metadata
     npcs: list[NpcRecord]  # loaded from DB; used to keep allies out of enemy rosters
     resolved_combat_outcomes: list[CombatOutcomeRecord]  # Session-owned authoritative ended rows

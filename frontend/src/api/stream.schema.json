@@ -635,6 +635,24 @@
                 }
               ],
               "title": "Solo Budget"
+            },
+            "standing_orders": {
+              "anyOf": [
+                {
+                  "items": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Standing Orders"
             }
           },
           "required": [
@@ -1573,6 +1591,24 @@
             }
           ],
           "title": "Solo Budget"
+        },
+        "standing_orders": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Standing Orders"
         }
       },
       "required": [

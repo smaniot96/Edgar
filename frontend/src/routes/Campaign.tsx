@@ -15,6 +15,7 @@ import {
   isNotFound,
   listSessions,
   reopenCampaign,
+  setCampaignCombatAlwaysConfirm,
   setCampaignDeathMode,
   setCampaignProgressionMode,
   setCampaignRulesEdition,
@@ -252,6 +253,10 @@ export default function CampaignView() {
               onChange={(e) => { void setCampaignDeathMode(c.id, e.target.value as "subdued" | "death_saves").then((updated) => campaign.setData(() => updated)).catch(setActionError); }}>
               <option value="subdued">Subdued at 1 HP (solo continuation)</option><option value="death_saves">Death saving throws (permanent death)</option>
             </select>}
+          </Field>
+          <Field label="Combat confirmation" hint="When on, every combat turn that declares an action is repeated back before any dice are rolled, for every hero. Multi-part and conditional turns are always repeated back.">
+            {(p) => <label className="flex items-center gap-2 text-sm"><input {...p} type="checkbox" checked={c.combat_always_confirm === true}
+              onChange={(e) => { void setCampaignCombatAlwaysConfirm(c.id, e.target.checked).then((updated) => campaign.setData(() => updated)).catch(setActionError); }} />Confirm every combat turn</label>}
           </Field>
           <SourceRecovery campaign={c} onUpdated={(updated) => campaign.setData(() => updated)} />
           {c.readiness ? <ReadinessNotice readiness={c.readiness} onRetry={campaign.refetch} /> : null}

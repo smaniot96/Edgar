@@ -423,6 +423,8 @@ export interface CampaignRead {
   rules_edition?: RulesEdition;
   progression_mode?: ProgressionMode;
   death_mode?: DeathMode;
+  /** EDG-182: confirm every combat turn that declares an action, for every hero (additive, default false). */
+  combat_always_confirm?: boolean;
   id: number;
   title: string;
   system: string;
@@ -627,6 +629,8 @@ export interface CombatState {
   economy?: CombatEconomy | null;
   /** A multi-part declaration repeated back, waiting for the player's yes or no (EDG-182, additive). */
   pending_declaration?: { summary: string } | null;
+  /** The hero's standing reaction orders: visible and cancellable (EDG-182, additive). */
+  standing_orders?: { foe: string; summary: string }[] | null;
   /** Fighter Second Wind uses left on the sheet (additive). */
   second_wind_uses_remaining?: number | null;
   initiative_order?: string[];

@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -91,9 +92,11 @@ from agent.combat_narration import (
 )
 from agent.combat_player_phase import (
     PlayerTurnInput,
+    cancel_standing_orders,
     finish_hero_turn,
     fire_readied,
     run_player_turn,
+    standing_order_foes,
 )
 from agent.combat_round_record import RoundRecord
 from agent.combat_setup import (
@@ -110,13 +113,16 @@ from agent.combat_setup import (
 from agent.combat_targeting import select_target as select_target  # re-exported (tests)
 from agent.combat_view import _ask_player, _display, initiative_view, sort_by_initiative
 from agent.combatants import (
+    classify_combat_maneuver,
     has_effect,
 )
 from agent.conditions import (
     drop_concentration_if_incapacitated,
     stun_ends_before_turn,
 )
+from agent.contingency import SplitTurn, split_contingency
 from agent.death import DEATH_MODE_SAVES, DEATH_MODE_SUBDUED
+from agent.declarations import MANEUVER, UNKNOWN, nearest_maneuver, object_is_foe
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model, message_text
 from agent.models.adjudication import AdjudicationResult
@@ -137,9 +143,11 @@ from agent.positioning import (
 )
 from agent.prompts import wrap_player_action
 from agent.provider_trace import traced_call
+from agent.readied_action import CANCEL_ORDER
 from agent.resolution import (
     DEATH_SAVES_KEY,
     initiative_bonus,
+    mentions_item_use,
     second_wind_remaining,
 )
 from agent.state import AgentState
@@ -493,8 +501,30 @@ async def combat_round_node(state: AgentState) -> dict:
     player["hp_max"] = player_hp_max
     player_ac = int(player.get("ac") or combat_state.get("player_ac") or _player_ac(character))
     player["ac"] = player_ac
-    # EDG-182: a reply to a pending confirmation, or the "always confirm" option. No die is rolled here.
+    # EDG-182: cancel a standing order (no roll, no turn spent); a reply to a pending confirmation; or the
+    # "always confirm" option. No die is rolled here.
     confirmed = False
+    if CANCEL_ORDER.search(player_input) and not fled:
+        orders = standing_order_foes(player)
+        named = [f for f in orders if re.search(rf"\b{re.escape(f)}\b", player_input, re.IGNORECASE)]
+        other = [
+            str(c.get("name"))
+            for c in combatants
+            if not c.get("is_player")
+            and str(c.get("name")) not in orders
+            and re.search(rf"\b{re.escape(str(c.get('name')))}\b", player_input, re.IGNORECASE)
+        ]
+        if not orders or (other and not named):
+            who = f" against {other[0]}" if other else ""
+            text = f"{hero} has no standing order{who} to cancel. No roll is made and no turn is spent."
+        elif not named and len(orders) > 1:
+            text = (
+                f"Which standing order do you cancel? ({' or '.join(orders)}). No roll is made and no turn is spent."
+            )
+        else:
+            cancelled = cancel_standing_orders(player, named or orders)
+            text = f"Cancelled the standing order against {', '.join(cancelled)}. No roll is made and no turn is spent."
+        return _ask_player(state, text, combat_state=combat_state)
     word = control_word(player_input)
     if word in ("always_on", "always_off") and not fled:
         player[ALWAYS_KEY] = word == "always_on"
@@ -508,7 +538,8 @@ async def combat_round_node(state: AgentState) -> dict:
         if word == "confirm":
             # The stored declaration, exactly as it was proposed: nothing said after it changes it.
             player_input = str(pending["player_input"])
-            parsed = ParsedInput.model_validate(pending.get("parsed") or {})
+            restored = pending.get("parsed")
+            parsed = ParsedInput.model_validate(restored) if restored is not None else None
             named = _named_targets({**state, "parsed_input": parsed})
             fled = is_flee(player_input)
             confirmed = True
@@ -522,6 +553,53 @@ async def combat_round_node(state: AgentState) -> dict:
             )
         else:
             player.pop(PENDING_KEY, None)  # superseded: this reply is a new declaration
+    # EDG-182 contingencies: the turn's action is read without its "if" clause; the clause is run after
+    # the action. The raw turn is what a pending confirmation stores and replays.
+    raw_input = player_input
+    split = split_contingency(raw_input) if not fled else SplitTurn(main=raw_input, contingency=None, unreadable_if=None)
+    if split.unreadable_if:
+        clause = split.unreadable_if
+        return _ask_player(
+            state,
+            f"The engine cannot read the condition '{clause}', so it is not declared. Say it as 'if it drops' "
+            f"(the foe the attack names goes down) or 'if I fall below 5 HP', then a move. No roll is made and "
+            "no turn is spent.",
+            combat_state=combat_state,
+        )
+    player_input = split.main
+    contingency = split.contingency
+    # EDG-182 nearest mechanic: an action the engine does not read, that has a supported neighbour, is
+    # not run silently. It becomes the same confirmation as any conditional turn, naming the nearest action.
+    if not fled and contingency is None and classify_combat_maneuver(player_input) is None:
+        nearest = nearest_maneuver(player_input)
+        foe_names = [str(c.get("name")) for c in combatants if not c.get("is_player") and c.get("name")]
+        if (
+            nearest is not None
+            and object_is_foe(nearest[0], player_input, foe_names)
+            and not mentions_item_use(parsed, player_input)
+        ):
+            word, rewritten, label = nearest
+            mapped_parsed = parsed
+            if parsed is not None and any(a.kind == UNKNOWN for a in parsed.actions):
+                mapped_parsed = parsed.model_copy(
+                    update={
+                        "actions": [
+                            a.model_copy(update={"kind": MANEUVER.kind, "text": rewritten})
+                            if a.kind == UNKNOWN
+                            else a
+                            for a in parsed.actions
+                        ]
+                    }
+                )
+            summary = (
+                f"Confirm before any dice: {hero} will {rewritten}. '{word}' is not a supported action, so "
+                f"this is the nearest one: {label}. Reply yes to commit, or no to change it. No roll is made "
+                "and no turn is spent until you reply yes."
+            )
+            stored_declaration(
+                player, player_input=rewritten, parsed=mapped_parsed, summary=summary, round_num=round_num
+            )
+            return _ask_player(state, summary, combat_state=combat_state)
     if ended_spell := drop_concentration_if_incapacitated(player, enemies):
         log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
     stun_will_end_before_turn = has_effect(player, "stunned") and stun_ends_before_turn(
@@ -544,6 +622,7 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Decide the player's action BEFORE any dice (agent.combat_declaration, EDG-044) ---
     decl = declare_action(
         state,
+        contingency=contingency,
         character=character,
         player_input=player_input,
         parsed=parsed,
@@ -561,13 +640,11 @@ async def combat_round_node(state: AgentState) -> dict:
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
     # EDG-182: a multi-part turn is repeated back before any die; the stored copy is what runs.
-    typed = bool(getattr(parsed, "actions", None))
-    if not confirmed and not fled and needs_confirmation(
-        decl, always=bool(player.get(ALWAYS_KEY)), typed=typed
-    ):
+    always = bool(player.get(ALWAYS_KEY)) or bool(state.get("combat_always_confirm"))
+    if not confirmed and not fled and needs_confirmation(decl, always=always):
         summary = summary_of(hero, decl)
         stored_declaration(
-            player, player_input=player_input, parsed=parsed, summary=summary, round_num=round_num
+            player, player_input=raw_input, parsed=parsed, summary=summary, round_num=round_num
         )
         return _ask_player(state, summary, combat_state=combat_state)
 

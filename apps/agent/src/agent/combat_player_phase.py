@@ -58,6 +58,7 @@ from agent.conditions import (
     spell_condition_sentence,
     start_concentration,
 )
+from agent.contingency import holds as contingency_holds, not_held_text
 from agent.death import (
     DEAD,
     DEATH_MODE_SAVES,
@@ -74,7 +75,7 @@ from agent.monster_stats import (
     stats_of,
     weapon_damage_type,
 )
-from agent.positioning import MELEE, RANGED, MovePlan, band_of, start_turn
+from agent.positioning import MELEE, RANGED, MovePlan, band_of, plan_moves, start_turn
 from agent.readied_action import ReadyOrder
 from agent.resolution import (
     DEATH_SAVES_KEY,
@@ -165,6 +166,7 @@ def run_player_turn(rec: RoundRecord, inp: PlayerTurnInput) -> PlayerTurnResult:
     _action_surge(t)
     _declared_moves(t)
     _resolve_action(t)
+    _contingency(t)
     return PlayerTurnResult(
         player_acted=t.player_acted,
         player_action=t.player_action,
@@ -231,7 +233,7 @@ def _start_slot(t: _Turn) -> None:
     # not yet triggered lapses here: it was held until the hero's next turn (PDF p.194).
     if player.get("reaction_used"):
         start_turn(player)  # written only when a reaction was spent, so a plain turn's row keeps its shape
-    if release_effect(player, "readied"):
+    if _lapse_readied(player):
         rec.log_lines.append(f"{hero}'s readied attack lapses: its trigger did not occur.")
     if t.player_acted and decl.standing_up and release_effect(player, "prone"):
         rec.log_lines.append(f"{hero} stands up and is no longer prone.")
@@ -314,14 +316,24 @@ def _action_surge(t: _Turn) -> None:
 def _declared_moves(t: _Turn) -> None:
     """Declared moves happen before the action. Leaving a foe's melee band provokes one opportunity
     attack from it, unless the hero took Disengage this turn (PDF p.193, p.196)."""
+    decl = t.inp.decl
+    if not (t.player_acted and not t.rec.fled):
+        return
+    _apply_moves(t, decl.moves, disengage=decl.disengage, dash=decl.dash)
+    if decl.dash:
+        t.rec.round_effects.append("dash")
+    if decl.disengage:
+        t.rec.round_effects.append("disengage")
+
+
+def _apply_moves(t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool) -> None:
+    """Apply a planned move to the foes: bands, recorded distances, and the opportunity attacks it
+    provokes. A foe the fear rule blocks keeps its band and distance (EDG-145)."""
     rec, inp = t.rec, t.inp
     player, hero = rec.player, rec.hero
-    decl = inp.decl
-    moves, disengage, dash = decl.moves, decl.disengage, decl.dash
     log_lines = rec.log_lines
-    if not (t.player_acted and not rec.fled):
-        return
     actual_steps: list[tuple[str, list[dict]]] = []
+    blocked: set[int] = set()
     for band, foes in moves.steps:
         allowed: list[dict] = []
         for foe in foes:
@@ -332,6 +344,7 @@ def _declared_moves(t: _Turn) -> None:
             )
             if refusal_after_enemy_turn:
                 t.runtime_fear_blocked = True
+                blocked.add(id(foe))
                 moves.bands[id(foe)] = band_of(foe)
                 log_lines.append(f"{refusal_after_enemy_turn.split('. ')[0]}; {foe['name']} remains beyond 5 feet.")
                 continue
@@ -352,10 +365,41 @@ def _declared_moves(t: _Turn) -> None:
         if allowed:
             actual_steps.append((band, allowed))
     moves.steps = actual_steps
-    if dash:
-        rec.round_effects.append("dash")
-    if disengage:
-        rec.round_effects.append("disengage")
+    for row, distance in moves.distances:
+        if id(row) not in blocked:
+            row["distance_ft"] = distance  # a feet move's recorded distance (positioning.distance_of)
+
+
+def _contingency(t: _Turn) -> None:
+    """The turn's "if" clause, after its action (EDG-182). The condition is read from the recorded state;
+    a branch that holds is applied through the same path as a declared move, and one that does not hold
+    is logged, so nothing happens silently."""
+    decl, rec = t.inp.decl, t.rec
+    clause = decl.contingency
+    if clause is None or rec.fled or not t.player_acted:
+        return
+    target = decl.target
+    holds_now = contingency_holds(
+        clause,
+        target_standing=is_standing(target) if target is not None else None,
+        hero_hp=rec.hp,
+    )
+    if not holds_now:
+        rec.log_lines.append(not_held_text(clause))
+        return
+    foes = [e for e in rec.enemies if can_act(e)]
+    plan = plan_moves(
+        clause.branch,
+        [],
+        foes,
+        pick=lambda n: None,
+    )
+    if plan.question:
+        rec.log_lines.append(f"{clause.describe()} holds, but the branch could not be carried out: {plan.question}")
+        return
+    rec.log_lines.append(f"{clause.describe()} holds, so {rec.hero} carries on: {clause.branch}.")
+    rec.round_effects.append("contingency")
+    _apply_moves(t, plan, disengage=decl.disengage, dash=decl.dash)
 
 
 def _resolve_action(t: _Turn) -> None:
@@ -627,6 +671,42 @@ def _release(t: _Turn) -> None:
     rec.log_lines.append(t.extra_outcome)
 
 
+def _lapse_readied(player: dict) -> bool:
+    """At the start of the hero's turn an unfired readied attack lapses; a standing order stays (EDG-182)."""
+    before = effects_of(player)
+    after = [e for e in before if not (e["kind"] == "readied" and not e.get("standing"))]
+    if len(after) == len(before):
+        return False
+    player["effects"] = after
+    return True
+
+
+def standing_order_foes(player: dict) -> list[str]:
+    """The foes the hero's standing orders name, in the order they were given."""
+    return [
+        str(e.get("foe_name"))
+        for e in effects_of(player)
+        if e["kind"] == "readied" and e.get("standing") and e.get("foe_name")
+    ]
+
+
+def cancel_standing_orders(player: dict, foes: list[str]) -> list[str]:
+    """Cancel the standing orders against the named foes. Returns the cancelled foes' names. No roll is
+    made and no turn is spent (EDG-182)."""
+    cancelled: list[str] = []
+    kept: list[dict] = []
+    wanted = {f.lower() for f in foes}
+    for entry in effects_of(player):
+        named = str(entry.get("foe_name") or "")
+        if entry["kind"] == "readied" and entry.get("standing") and named.lower() in wanted:
+            cancelled.append(named)
+            continue
+        kept.append(entry)
+    if cancelled:
+        player["effects"] = kept
+    return cancelled
+
+
 def _ready(t: _Turn, order: ReadyOrder) -> None:
     """The Ready action (PDF p.194): the attack is held for its trigger, with no roll now (EDG-044c).
 
@@ -650,12 +730,16 @@ def _ready(t: _Turn, order: ReadyOrder) -> None:
     for entry in player.get("effects") or []:
         if entry.get("kind") == "readied":
             entry["weapon_hint"] = order.weapon_hint  # the weapon the words name, read when it fires
+            entry["standing"] = bool(order.standing)  # kept across triggers until cancelled (EDG-182)
+            entry["foe_name"] = order.foe_name  # the foe a standing order names, for the public view
     rec.round_effects.append("readied")
     t.player_action = {"action": "ready", "target": order.foe_id, "result": "readied"}
     t.extra_outcome = (
         f"{hero} readies an attack: when {order.foe_name} closes in, {hero} attacks with the reaction."
     )
     rec.log_lines.append(t.extra_outcome)
+    if order.standing:
+        rec.log_lines.append(f"{hero}'s standing order holds until {hero} cancels it.")
 
 
 def fire_readied(rec: RoundRecord, turns: EnemyTurns, foe: dict) -> None:
@@ -682,7 +766,9 @@ def fire_readied(rec: RoundRecord, turns: EnemyTurns, foe: dict) -> None:
         or not is_standing(foe)
     ):
         return
-    release_effect(player, "readied")
+    entry_standing = bool(entry.get("standing"))
+    if not entry_standing:
+        release_effect(player, "readied")  # a standing order is kept and fires again next time
     player["reaction_used"] = True
     rec.round_effects.append("readied_attack")
     rec.log_lines.append(f"{foe['name']} closes in, and {rec.hero} makes the readied attack.")

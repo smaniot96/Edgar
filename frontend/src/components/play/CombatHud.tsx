@@ -30,6 +30,7 @@ export function CombatHud({
   const current = rows.find((r) => r.isCurrent);
   const economy = economyLine(combat.economy);
   const pending = combat.ended ? null : (combat.pending_declaration ?? null);
+  const orders = combat.ended ? [] : (combat.standing_orders ?? []);
   return (
     <section
       aria-label="Combat"
@@ -49,6 +50,23 @@ export function CombatHud({
           <p className="mb-1.5 text-[0.7rem] text-ink-muted" aria-label="Hero action economy">
             {economy}
           </p>
+        ) : null}
+        {orders.length > 0 ? (
+          <ul aria-label="Standing orders" className="mb-2 space-y-1 text-sm text-ink">
+            {orders.map((order) => (
+              <li key={order.foe} className="flex flex-wrap items-center gap-2">
+                <span>{order.summary}.</span>
+                <button
+                  type="button"
+                  onClick={() => onReply?.(`cancel the standing order against ${order.foe}`)}
+                  disabled={!onReply}
+                  className="rounded border border-ink-muted/40 px-2 py-0.5 text-xs text-ink-muted disabled:opacity-50"
+                >
+                  Cancel order
+                </button>
+              </li>
+            ))}
+          </ul>
         ) : null}
         {pending ? (
           <div
