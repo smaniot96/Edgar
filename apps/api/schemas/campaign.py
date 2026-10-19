@@ -46,6 +46,7 @@ class CampaignCreate(BaseModel):
     # EDG-045: explicit modes. The defaults keep the behaviour every campaign had before the modes.
     progression_mode: ProgressionMode = DEFAULT_PROGRESSION_MODE
     death_mode: DeathMode = DEFAULT_DEATH_MODE
+    combat_always_confirm: bool = False
 
 
 class CampaignRead(BaseModel):
@@ -63,6 +64,7 @@ class CampaignRead(BaseModel):
     rules_edition: RulesEdition = DEFAULT_RULES_EDITION
     progression_mode: ProgressionMode = DEFAULT_PROGRESSION_MODE
     death_mode: DeathMode = DEFAULT_DEATH_MODE
+    combat_always_confirm: bool = False
     sources: list[SourceRead] = Field(default_factory=list)
     retrieval_degraded: bool = False
     play_allowed: bool = True
@@ -81,6 +83,7 @@ class CampaignUpdate(BaseModel):
     rules_edition: RulesEdition = DEFAULT_RULES_EDITION
     progression_mode: ProgressionMode = DEFAULT_PROGRESSION_MODE
     death_mode: DeathMode = DEFAULT_DEATH_MODE
+    combat_always_confirm: bool = False
 
     reject_nulls = forbid_null(
         "title",
@@ -90,4 +93,5 @@ class CampaignUpdate(BaseModel):
         "rules_edition",
         "progression_mode",
         "death_mode",
+        "combat_always_confirm",
     )

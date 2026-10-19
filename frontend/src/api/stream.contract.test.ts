@@ -135,6 +135,7 @@ const COMBAT_STATE_KEYS: Record<keyof CombatState, true> = {
   second_wind_used: true,
   economy: true,
   pending_declaration: true,
+  standing_orders: true,
   second_wind_uses_remaining: true,
   initiative_order: true,
   initiative: true,

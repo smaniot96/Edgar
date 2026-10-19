@@ -640,7 +640,8 @@ async def combat_round_node(state: AgentState) -> dict:
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
     # EDG-182: a multi-part turn is repeated back before any die; the stored copy is what runs.
-    if not confirmed and not fled and needs_confirmation(decl, always=bool(player.get(ALWAYS_KEY))):
+    always = bool(player.get(ALWAYS_KEY)) or bool(state.get("combat_always_confirm"))
+    if not confirmed and not fled and needs_confirmation(decl, always=always):
         summary = summary_of(hero, decl)
         stored_declaration(
             player, player_input=raw_input, parsed=parsed, summary=summary, round_num=round_num

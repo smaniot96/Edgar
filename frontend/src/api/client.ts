@@ -269,6 +269,11 @@ export function setCampaignDeathMode(id: number, death_mode: "subdued" | "death_
   return sendJson("PATCH", `/api/campaigns/${id}`, { death_mode });
 }
 
+/** EDG-182: confirm every combat turn that declares an action, for every hero in the campaign. */
+export function setCampaignCombatAlwaysConfirm(id: number, combat_always_confirm: boolean): Promise<CampaignRead> {
+  return sendJson("PATCH", `/api/campaigns/${id}`, { combat_always_confirm });
+}
+
 /** EDG-045: spend one milestone on one level. The request names the level it starts from. */
 export function levelUpCampaignCharacter(
   campaignId: number,
