@@ -14,9 +14,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.postgres.session as db_session_module
 from agent.combat_view import sort_by_initiative
