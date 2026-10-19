@@ -85,7 +85,7 @@ docker compose run --rm ingestion /data/my_dm_notes.pdf --campaign-id 1
 docker compose run --rm ingestion /data/player_handbook.pdf --extract-only --pages 73 258 --markdown-dir /output/markdown/phb-samples
 ```
 
-Options: `--collection` / `-c`, `--campaign-id`, `--chunk-size`, `--overlap`, `--extract-only`, `--markdown-dir`, `--no-save-markdown`, `--replace`, `--pages`, `--exclude-pages`, `--reviewed-extraction`.
+Options: `--collection` / `-c`, `--campaign-id`, `--chunk-size`, `--overlap`, `--extract-only`, `--markdown-dir`, `--no-save-markdown`, `--replace`, `--pages`, `--exclude-pages`, `--correct-text`, `--corrections-file`, `--reviewed-extraction`.
 
 ## Re-ingesting after the heading-aware chunker change
 
@@ -146,6 +146,37 @@ No live index is replaced by extraction-only inspection.
 
 For sampled offline QA, `--extract-only --pages 73 258` selects physical one-based pages.
 Reviewed non-content pages (cover, credits, art, form, index) can be left out of a rulebook with `--extract-only --exclude-pages 2:cover 3:credits`. Excluded pages are never chunked or cited, are listed in the bundle and summary, and any change to the list is a new bundle that must be reviewed again. A page with a stat record cannot be excluded.
+
+**Reviewed text corrections** fix a known extraction error (an OCR-misread creature heading such as
+"Devil" for "Spined Devil", or a native glyph error such as "Armor Class l3") that you have checked
+against the PDF page image. Record each one with `--correct-text PAGE:OLD=>NEW` (quote the argument
+when it contains spaces; text containing `=>` must go in a file instead), or with
+`--corrections-file corrections.json` for many entries: a JSON list of `{"page": 5, "old": "...",
+"new": "...", "note": "optional"}` objects. Both need `--extract-only`, e.g.
+`--extract-only --correct-text '5:Armor Class l3=>Armor Class 13'`.
+
+Rules: `PAGE` is the physical page; `OLD` must occur exactly once on that page's selected text
+(a raster-read heading is targeted by its recorded text; add surrounding words if it repeats);
+`NEW` is non-empty; each text is at most 200 characters, with no control characters or `<`/`>`;
+at most 20 corrections per page; no overlapping corrections; excluded pages cannot be corrected.
+Any violation refuses the run before any file is written. Corrections are applied to the selected
+text before the page's checks are re-run on it. A corrected page passes only when the corrected
+text passes the text checks; extraction-time failure codes are then cleared and recorded as
+`cleared_by_text_correction` in the bundle. Otherwise the page stays failing.
+
+Every correction is recorded in the bundle (`text_corrections`, `corrections_sha256`), marked in
+the Markdown preview beside the page, listed in the summary, and stamped into the readiness report,
+each chunk (`text_corrections`, `corrected_pages`) and the index receipt. The corrected page carries a
+`reviewed_text_correction` warning, and a raster-read record whose text was corrected gets a
+`reviewed_correction` annotation. Changing, adding or removing a correction changes the digests and
+requires a new review; hand-editing the bundle text or corrections is rejected on reload. Bundles
+without corrections keep their previous digests and receipts.
+
+Operator workflow: (1) extract a preview without corrections; (2) open the failing page image and
+the page in `<source>.md`; (3) record each correction with `--correct-text` or `--corrections-file`
+and re-run `--extract-only`; (4) review the new `<source>.md` and `<source>.summary.txt`, then pass
+`--reviewed-extraction <source>.extraction.json` to ingestion. A correction never replaces an edit
+you have not checked against the PDF.
 Sample bundles are inspectable but cannot be used for full indexing. See
 [EXTRACTION_QA.md](EXTRACTION_QA.md) for the five real-page checks and transcription limits.
 

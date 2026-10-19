@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from typing import Literal, NotRequired, Protocol, TypedDict
 
 from edgar_core.sources import SourceEdition
-from ingestion.artifacts import ExcludedPage, exclusions_digest
+from ingestion.artifacts import ExcludedPage, TextCorrection, corrections_digest, exclusions_digest
 from ingestion.quality import diagnostic_message
 
 REPORT_VERSION = 1
@@ -51,6 +51,9 @@ class ExtractionForReadiness(Protocol):
     def excluded_pages(self) -> list[ExcludedPage]: ...
 
     @property
+    def text_corrections(self) -> list[TextCorrection]: ...
+
+    @property
     def source_sha256(self) -> str: ...
 
     def text_pages(self) -> list[tuple[int, str]]: ...
@@ -77,6 +80,9 @@ class ReadinessChunk(TypedDict):
     rules_edition: NotRequired[SourceEdition]
     excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
+    text_corrections: NotRequired[list[TextCorrection]]
+    corrections_sha256: NotRequired[str]
+    corrected_pages: NotRequired[list[int]]
 
 
 class ReadinessPreview(TypedDict, total=False):
@@ -98,6 +104,8 @@ class ReadinessReport(TypedDict):
     covered_pages: list[int]
     excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
+    text_corrections: NotRequired[list[TextCorrection]]
+    corrections_sha256: NotRequired[str]
     chunk_count: int
     quality_passed: bool
     warning_count: int
@@ -118,6 +126,8 @@ class ReadinessSummary(TypedDict):
     required_pages: list[int]
     excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
+    text_corrections: NotRequired[list[TextCorrection]]
+    corrections_sha256: NotRequired[str]
     chunk_count: int
     quality_passed: bool
     issues: list[ReadinessIssue]
@@ -228,7 +238,7 @@ def prepare_report(
                     "text": candidate["text"][:2000],
                 }
             )
-    return {
+    report: ReadinessReport = {
         "report_version": REPORT_VERSION,
         "source_kind": source_kind,
         "rules_edition": extraction.rules_edition,
@@ -249,6 +259,11 @@ def prepare_report(
         "previews": samples,
         "scene_preview_reviewed": False,
     }
+    if extraction.text_corrections:
+        # Reviewed corrections are reported only when present; ordinary reports keep their shape.
+        report["text_corrections"] = [TextCorrection(**c) for c in extraction.text_corrections]
+        report["corrections_sha256"] = corrections_digest(extraction.text_corrections)
+    return report
 
 
 def report_summary(report: ReadinessReport) -> ReadinessSummary:
@@ -272,6 +287,9 @@ def report_summary(report: ReadinessReport) -> ReadinessSummary:
         summary["excluded_pages"] = report["excluded_pages"]
     if "exclusions_sha256" in report:
         summary["exclusions_sha256"] = report["exclusions_sha256"]
+    if "corrections_sha256" in report:
+        summary["text_corrections"] = report["text_corrections"]
+        summary["corrections_sha256"] = report["corrections_sha256"]
     if report.get("index_version"):
         summary["index_version"] = report["index_version"]
     return summary
@@ -304,3 +322,11 @@ def stamp_chunks(chunks: Sequence[ReadinessChunk], report: ReadinessReport) -> N
             # Only reviewed exclusions change index identity; ordinary bundles keep theirs.
             chunk["excluded_pages"] = report["excluded_pages"]
             chunk["exclusions_sha256"] = report["exclusions_sha256"]
+        if report.get("text_corrections"):
+            # Corrections are stamped like exclusions; each chunk also names its own corrected pages.
+            chunk["text_corrections"] = report["text_corrections"]
+            chunk["corrections_sha256"] = report["corrections_sha256"]
+            corrected = {c["page"] for c in report["text_corrections"]}
+            cited = sorted(corrected & set(_cited_pages(chunk)))
+            if cited:
+                chunk["corrected_pages"] = cited

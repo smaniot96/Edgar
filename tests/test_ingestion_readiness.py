@@ -10,8 +10,8 @@ from qdrant_client import QdrantClient
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.versions import active_index_read, read_index_state
 from ingestion import embed
-from ingestion.artifacts import exclusions_digest, source_digest
-from ingestion.extract import ExtractedPage, Extraction, save_extraction
+from ingestion.artifacts import corrections_digest, exclusions_digest, source_digest
+from ingestion.extract import ExtractedPage, Extraction, apply_text_corrections, save_extraction
 from ingestion.readiness import (
     IngestionRejected,
     prepare_report,
@@ -327,3 +327,79 @@ def test_same_pdf_without_the_reviewed_exclusion_stays_blocked(tmp_path, monkeyp
     monkeypatch.setattr(embed, "get_embeddings", lambda *_: pytest.fail("provider called"))
     with pytest.raises(ValueError, match="quality checks failed"):
         embed.run_pipeline(pdf, "book_rules", reviewed_extraction=report, save_markdown=False)
+
+
+def _correction_pdf(tmp_path):
+    pdf = tmp_path / "book.pdf"
+    with pymupdf.open() as doc:
+        doc.new_page().insert_text((40, 60), "BOOK COVER")
+        doc.new_page().insert_text((40, 60), "Opening paragraph of the rules.")
+        doc.save(pdf)
+    return pdf
+
+
+def _run_corrected_pipeline(monkeypatch, pdf, report, collection):
+    with closing(QdrantClient(":memory:")) as client:
+        monkeypatch.setattr(embed, "get_qdrant_client", lambda: client)
+        monkeypatch.setattr(
+            embed,
+            "get_embeddings",
+            lambda texts: [[1.0] + [0.0] * (VECTOR_SIZE - 1) for _ in texts],
+        )
+        monkeypatch.setattr(client, "create_payload_index", lambda **_: None)
+        count = embed.run_pipeline(
+            pdf,
+            collection,
+            reviewed_extraction=report,
+            save_markdown=False,
+            rules_edition="unspecified",
+        )
+        with active_index_read(client, collection) as active_filter:
+            points = client.scroll(collection, scroll_filter=active_filter)[0]
+        receipt = read_index_state(client, collection)["sources"]["book"]["active"]
+    return count, points, receipt
+
+
+def test_text_correction_is_recorded_in_the_promoted_receipt_and_payload(tmp_path, monkeypatch):
+    pdf = _correction_pdf(tmp_path)
+    extraction = Extraction(
+        "book",
+        source_digest(pdf),
+        2,
+        [
+            ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": []}),
+            ExtractedPage(2, "Opening paragraph of the rules.", "native_geometry", {"errors": []}),
+        ],
+    )
+    apply_text_corrections(
+        extraction, [{"page": 2, "old": "Opening paragraph", "new": "Opening passage"}]
+    )
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    count, points, receipt = _run_corrected_pipeline(monkeypatch, pdf, report, "book_rules")
+
+    expected = [{"page": 2, "old": "Opening paragraph", "new": "Opening passage"}]
+    assert count == len(points) == 1
+    assert receipt["text_corrections"] == expected
+    assert receipt["corrections_sha256"] == corrections_digest(expected)
+    payload = points[0].payload
+    assert payload["text_corrections"] == expected
+    assert payload["corrected_pages"] == [2]
+    assert "Opening passage" in payload["text"]
+
+
+def test_ordinary_receipt_and_payload_carry_no_correction_fields(tmp_path, monkeypatch):
+    pdf = _correction_pdf(tmp_path)
+    extraction = Extraction(
+        "book",
+        source_digest(pdf),
+        2,
+        [
+            ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": []}),
+            ExtractedPage(2, "Opening paragraph of the rules.", "native_geometry", {"errors": []}),
+        ],
+    )
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+    _count, points, receipt = _run_corrected_pipeline(monkeypatch, pdf, report, "book_rules")
+    assert "text_corrections" not in receipt and "corrections_sha256" not in receipt
+    assert "text_corrections" not in points[0].payload
+    assert "corrected_pages" not in points[0].payload
