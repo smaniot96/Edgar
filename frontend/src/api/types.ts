@@ -870,3 +870,75 @@ export interface TurnResult {
   roll_status?: RollStatus | null;
   roll?: RollRecord | null;
 }
+
+// ── Multiplayer table (EDG-046, EDG-047, EDG-050) ───────────────────────────────
+
+export type MemberRole = "owner" | "player" | "spectator";
+export type InviteRole = "player" | "spectator";
+export type InviteStatus = "active" | "accepted" | "revoked" | "expired";
+
+/** The caller's own standing at a table. `user_id` is null in single-user local mode. */
+export interface LobbyViewer {
+  user_id: number | null;
+  role: MemberRole;
+  character_id: number | null;
+  character_name: string | null;
+}
+
+/** One person at the table (display name only, never an email) and their hero seated here. */
+export interface LobbyMember {
+  user_id: number;
+  display_name: string | null;
+  role: MemberRole;
+  character_id: number | null;
+  character_name: string | null;
+}
+
+export interface SessionLobby {
+  session_id: number;
+  campaign_id: number;
+  viewer: LobbyViewer;
+  members: LobbyMember[];
+}
+
+/** Presence entry from the channel snapshot and join events. */
+export interface PresenceEntry {
+  user_id: number;
+  display_name: string | null;
+  character_id: number | null;
+  character_name: string | null;
+  state: "active" | "idle";
+}
+
+export interface InviteRead {
+  id: number;
+  campaign_id: number;
+  session_id: number | null;
+  role: InviteRole;
+  invited_email: string | null;
+  status: InviteStatus;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+}
+
+/** The creation response is the only place the plaintext token ever appears. */
+export interface InviteCreated extends InviteRead {
+  token: string;
+}
+
+export interface InviteAccepted {
+  campaign_id: number;
+  role: InviteRole;
+  session_id: number | null;
+  character_id: number | null;
+}
+
+export interface MemberRead {
+  user_id: number;
+  display_name: string | null;
+  role: MemberRole;
+  joined_at: string;
+  seats: Array<{ session_id: number; character_id: number; character_name: string }>;
+}

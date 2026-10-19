@@ -13,6 +13,8 @@ import { DevPipeline } from "../components/play/DevPipeline";
 import { PlayRecap } from "../components/play/PlayRecap";
 import { PlayIdeas } from "../components/play/PlayIdeas";
 import { PlayHeader } from "../components/play/PlayHeader";
+import { ReadOnlyComposer, TurnBanner } from "../components/lobby/TurnBanner";
+import { useSessionLobby } from "../components/lobby/useSessionLobby";
 import { PlayToolBar, PlayToolPanel } from "../components/play/PlayTools";
 import { linesFromHistory } from "../components/play/turnState";
 import { useJournal } from "../components/journal/api";
@@ -64,11 +66,24 @@ function PlayNotFound() {
   );
 }
 
+function PlayRevoked() {
+  return (
+    <div className={`${SCREEN} items-center justify-center p-6`}>
+      <EmptyState
+        title="You no longer have access to this table"
+        action={<ButtonLink to="/campaigns">Back to campaigns</ButtonLink>}
+      >
+        The owner may have removed you from the campaign. Ask for a new invite to rejoin.
+      </EmptyState>
+    </div>
+  );
+}
+
 function PlayScreen({ sessionId }: { sessionId: number }) {
   const [searchParams] = useSearchParams();
   const { isDev } = useMode();
   const game = usePlaySession(sessionId);
-  const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign, refreshReadiness } = game;
+  const { applyTurnResult, setCampaignComplete, setSceneId, boot, campaignComplete, campaign, updateCampaign, refreshReadiness, refreshShared } = game;
 
   const {
     draft,
@@ -202,6 +217,34 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const { lines, pending, announcement } = turn.state;
   const hasUncertainAction = lines.some((line) => line.role === "error" && line.uncertain);
 
+  // The shared table (EDG-050): who holds the spotlight, and live commits from other members. A turn
+  // another member committed is re-read as a whole; the viewer's own turn already streamed in.
+  const sharedStaleRef = useRef(false);
+  const refreshAfterSharedTurn = useCallback(() => {
+    sharedStaleRef.current = false;
+    void refreshShared?.();
+    refreshJournal();
+    refreshSessionMap();
+  }, [refreshShared, refreshJournal, refreshSessionMap]);
+  const lobby = useSessionLobby(sessionId, {
+    onTurnFinished: ({ own, outcome }) => {
+      if (own || outcome === "not_committed") return;
+      if (busyRef.current) sharedStaleRef.current = true;
+      else refreshAfterSharedTurn();
+    },
+  });
+  const busyRef = useRef(busy);
+  useEffect(() => {
+    busyRef.current = busy;
+    if (!busy && sharedStaleRef.current) refreshAfterSharedTurn();
+  }, [busy, refreshAfterSharedTurn]);
+  const canAct = lobby.gate.canAct;
+  const tableHref = `/play/${sessionId}/table`;
+  const viewer = lobby.lobby?.viewer ?? null;
+  // Only someone who can act starts the story. Until the roster settles nobody does; a failed roster
+  // read falls back to the solo behaviour so a lobby outage never blocks play.
+  const introAllowed = lobby.loaded && (viewer === null || viewer.user_id === null || viewer.role === "owner" || viewer.character_id !== null);
+
   useEffect(() => {
     const pendingFeedback = pendingJournalFeedbackRef.current;
     if (!pendingFeedback || journal.loading || journal.settledRevision < pendingFeedback.afterRevision) return;
@@ -238,7 +281,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const introRequested = useRef(false);
   useEffect(() => {
     if (!boot || !campaign) return;
-    if (boot.history.length > 0 || boot.campaignEnded || game.readiness?.play_allowed !== true || introRequested.current) return;
+    if (!introAllowed || boot.history.length > 0 || boot.campaignEnded || game.readiness?.play_allowed !== true || introRequested.current) return;
     introRequested.current = true;
     setIntroPending(true);
     (async () => {
@@ -262,20 +305,20 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
         setIntroPending(false);
       }
     })();
-  }, [boot, sessionId, dispatch, setSceneId, campaign, updateCampaign, refreshReadiness, game.readiness?.play_allowed]);
+  }, [boot, sessionId, dispatch, setSceneId, campaign, updateCampaign, refreshReadiness, game.readiness?.play_allowed, introAllowed]);
 
   const handleSend = useCallback(() => {
     const msg = draft.trim();
-    if (!msg || busy || hasUncertainAction || campaignComplete || game.readiness?.play_allowed !== true) return;
+    if (!msg || !canAct || busy || hasUncertainAction || campaignComplete || game.readiness?.play_allowed !== true) return;
     void send(msg, draftRevision);
-  }, [draft, draftRevision, busy, hasUncertainAction, campaignComplete, send, game.readiness?.play_allowed]);
+  }, [draft, draftRevision, canAct, busy, hasUncertainAction, campaignComplete, send, game.readiness?.play_allowed]);
 
   const handleQuickReply = useCallback(
     (text: string) => {
-      if (busy || hasUncertainAction || campaignComplete || game.readiness?.play_allowed !== true) return;
+      if (!canAct || busy || hasUncertainAction || campaignComplete || game.readiness?.play_allowed !== true) return;
       void send(text);
     },
-    [busy, hasUncertainAction, campaignComplete, send, game.readiness?.play_allowed],
+    [canAct, busy, hasUncertainAction, campaignComplete, send, game.readiness?.play_allowed],
   );
 
   const handleRetry = useCallback(
@@ -294,6 +337,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     });
     focusInput();
   }, [dispatch, focusInput, refreshReadiness, setCampaignComplete]);
+
+  if (lobby.revoked) return <PlayRevoked />;
 
   if (game.error) {
     if (isNotFound(game.error)) return <PlayNotFound />;
@@ -338,6 +383,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             isDev={isDev}
             sessionId={sessionId}
             sceneId={game.sceneId}
+            tableHref={tableHref}
           />
           <ReadinessNotice readiness={game.readiness} onRetry={game.refreshReadiness} announce={false} className="mx-3 mt-2 [overflow-wrap:anywhere] sm:mx-4" />
           {game.campaign ? <SourceRecovery campaign={game.campaign} onUpdated={(updated) => {
@@ -356,11 +402,11 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">Place: </span>{journal.data?.current_place ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(journal.data!.current_place!.id)}>{journal.data.current_place.title}</button> : <span className="text-ink-muted">Unknown</span>}</p>
             <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">Goal: </span>{journal.data?.active_goal ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(journal.data!.active_goal!.id)}>{journal.data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}</p>
           </div>
-          <PlayIdeas
+          {canAct ? <PlayIdeas
             data={journal.data}
             hasDraft={draft.trim().length > 0}
             onAppend={(idea) => editDraft(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${idea}`)}
-          />
+          /> : null}
           {journalFeedback ? (
             <p role="status" className="mx-3 my-2 flex shrink-0 items-center justify-between gap-3 rounded-control bg-success-soft px-3 py-2 text-sm text-success sm:mx-4">
               <span>{journalFeedback}</span>
@@ -372,7 +418,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           <PlayToolBar activeTool={activeTool} onToggle={toggleTool} />
           <div className="flex min-h-[min(55%,16rem)] flex-1">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {game.combat ? <CombatHud combat={game.combat} onReply={handleQuickReply} /> : null}
+              {game.combat ? <CombatHud combat={game.combat} onReply={canAct ? handleQuickReply : undefined} /> : null}
 
               {game.loading ? (
                 <div className="flex flex-1 items-center justify-center">
@@ -399,14 +445,21 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                   restoreReady={!game.loading && !!boot && turn.state.historyReady}
                   openEventId={openEventId}
                   onHistoryOpened={clearOpenedHistory}
-                  onQuickReply={campaignComplete || game.readiness?.play_allowed !== true ? undefined : handleQuickReply}
+                  onQuickReply={campaignComplete || !canAct || game.readiness?.play_allowed !== true ? undefined : handleQuickReply}
                 />
               )}
 
               <div ref={composerRef} className="shrink-0">
                 {campaignComplete ? (
                   <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
+                ) : !canAct ? (
+                  <>
+                    <TurnBanner gate={lobby.gate} activity={lobby.activity} tableHref={tableHref} />
+                    <ReadOnlyComposer gate={lobby.gate} />
+                  </>
                 ) : (
+                  <>
+                  <TurnBanner gate={lobby.gate} activity={lobby.activity} tableHref={tableHref} />
                   <ComposerBar
                     inputRef={inputRef}
                     value={draft}
@@ -416,8 +469,9 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
                     busy={busy}
                     canStop={pending?.stage !== "saving"}
                     allowSend={!hasUncertainAction}
-                    disabled={game.loading || introPending || game.readiness?.play_allowed !== true}
+                    disabled={game.loading || introPending || !lobby.loaded || game.readiness?.play_allowed !== true}
                   />
+                  </>
                 )}
               </div>
             </main>
@@ -453,9 +507,9 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
         />
       </div>
 
-      {/* Single polite live region: announces completed narration / errors, not every token. */}
+      {/* Single polite live region: completed narration / errors (not every token), and table changes (turn, arrivals). */}
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {announcement || (game.readiness?.play_allowed === false
+        {announcement || lobby.announcement || (game.readiness?.play_allowed === false
           ? game.readiness.blockers.map((blocker) => blocker.message).join(" ")
           : "")}
       </div>

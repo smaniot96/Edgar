@@ -13,6 +13,7 @@ export function PlayHeader({
   isDev,
   sessionId,
   sceneId,
+  tableHref,
 }: {
   title: string;
   campaignId: number | null;
@@ -22,6 +23,8 @@ export function PlayHeader({
   isDev: boolean;
   sessionId: number;
   sceneId: string | null;
+  /** Link to the multiplayer lobby for this session (EDG-050). */
+  tableHref?: string;
 }) {
   const subtitle = character
     ? [character.className, character.level != null ? `Lv ${character.level}` : null]
@@ -61,6 +64,15 @@ export function PlayHeader({
           </div>
         ) : null}
       </div>
+
+      {tableHref ? (
+        <Link
+          to={tableHref}
+          className="inline-flex min-h-11 shrink-0 items-center rounded-control px-2 text-sm font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 hover:text-ember-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400"
+        >
+          Table
+        </Link>
+      ) : null}
 
       {character ? (
         <button

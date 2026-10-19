@@ -5,6 +5,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CampaignRead, ReadinessRead } from "../api/types";
 import type { JournalRead } from "../components/journal/types";
+import { lobbyFixture, spotlightFixture } from "../components/lobby/fixtures";
+import { turnGate } from "../components/lobby/tableState";
 import Play from "./Play";
 const harness = vi.hoisted(() => ({
   game: null as unknown,
@@ -14,19 +16,26 @@ const harness = vi.hoisted(() => ({
   announcement: "",
   recover: vi.fn(),
   turnOptions: null as null | { onResult?: (result: unknown) => void; onAcknowledged?: (revision: number, requestId: string) => void; onReadinessRejected?: () => void },
+  lobby: null as unknown as Record<string, unknown>,
+  lobbyOptions: null as null | { onTurnFinished?: (info: { own: boolean; outcome: string }) => void },
   journal: { data: null as unknown, loading: false, error: null as unknown, stale: false, settledRevision: 0, refresh: vi.fn() },
 }));
 vi.mock("../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
 vi.mock("../components/play/usePlaySession", () => ({ usePlaySession: () => harness.game }));
 vi.mock("../components/play/useTurn", () => ({ useTurn: (_sessionId: number, options: typeof harness.turnOptions) => { harness.turnOptions = options; return { dispatch: harness.dispatch, send: vi.fn(), stop: vi.fn(), retry: vi.fn(), recover: harness.recover, checkReceipt: vi.fn(), busy: harness.busy, state: { historyReady: harness.historyReady, lines: [{ id: "live", role: "dm", content: "A recently saved turn" }], pending: null, announcement: harness.announcement } }; } }));
+vi.mock("../components/lobby/useSessionLobby", () => ({ useSessionLobby: (_id: number, options: typeof harness.lobbyOptions) => { harness.lobbyOptions = options; return harness.lobby; } }));
 vi.mock("../components/journal/api", () => ({ useJournal: () => harness.journal }));
 vi.mock("../components/MessageList", () => ({ MessageList: (props: { openEventId?: number | null }) => <p data-open-event-id={props.openEventId ?? "none"}>A recently saved turn</p> }));
 const campaign: CampaignRead = { id: 2, title: "Lost module", system: "5e", created_by: 1, created_at: "2026-10-14", adventure_collections: ["lost_module"], source_mode: "module", status: "active", ended_at: null, retrieval_degraded: false, play_allowed: true, sources: [] };
 const ready: ReadinessRead = { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] };
 const blocked: ReadinessRead = { play_allowed: false, history_allowed: true, state: "source_missing", primary_action: "recover_source", blockers: [{ code: "source_missing", message: "The campaign source is missing or has no usable text. Recover the source to continue.", action: "recover_source" }] };
+function lobbyState(viewer?: Parameters<typeof lobbyFixture>[0], spotlight = spotlightFixture(), over: Record<string, unknown> = {}) {
+  const lobby = viewer ? lobbyFixture(viewer) : null;
+  return { lobby, loaded: true, revoked: false, announcement: "", activity: null, spotlight, gate: turnGate(lobby?.viewer ?? null, viewer ? spotlight : null), ...over };
+}
 let container: HTMLDivElement;
 let root: Root;
-beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); localStorage.clear(); harness.busy = false; harness.historyReady = true; harness.announcement = ""; harness.turnOptions = null; harness.journal = { data: null, loading: false, error: null, stale: false, settledRevision: 0, refresh: vi.fn() }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); localStorage.clear(); harness.busy = false; harness.historyReady = true; harness.announcement = ""; harness.turnOptions = null; harness.lobbyOptions = null; harness.lobby = lobbyState(); harness.journal = { data: null, loading: false, error: null, stale: false, settledRevision: 0, refresh: vi.fn() }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(() => root.unmount()); container.remove(); window.history.replaceState({}, "", "/"); vi.unstubAllGlobals(); });
 it("preserves live transcript when readiness changes and disables module actions", async () => {
   const boot = { history: [{ role: "dm" as const, content: "Older boot history", created_at: "2026-10-14" }], campaignEnded: false };
@@ -390,4 +399,92 @@ it("keeps the single polite announcement region outside the inert background whi
   expect(regions[0].closest("[inert], [aria-hidden='true']")).toBeNull();
   expect(container.querySelector("h1")?.textContent).toBe("Lost module");
   expect(container.querySelector('[role="group"][aria-label="Current adventure context"]')).not.toBeNull();
+});
+
+
+// Multiplayer table (EDG-050): the play screen follows the spotlight.
+function renderPlayScreen() {
+  harness.game = { ...gameFixture(), refreshShared: vi.fn() };
+  return act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+}
+
+it("shows a waiting state with who is acting instead of a dead input for a player who does not hold the spotlight", async () => {
+  harness.lobby = lobbyState({ user_id: 2, role: "player", character_id: 12, character_name: "Bran" }, spotlightFixture(), {
+    activity: { actor: { user_id: 1, display_name: "Alice", character_id: 11, character_name: "Ayla" }, stage: "narrating" },
+  });
+  await renderPlayScreen();
+  expect(container.querySelector("textarea")).toBeNull();
+  const banner = container.querySelector('[data-testid="turn-banner"]')!;
+  expect(banner.getAttribute("data-gate")).toBe("waiting");
+  expect(banner.textContent).toContain("Waiting for Alice (Ayla)");
+  expect(banner.textContent).toContain("Alice is narrating");
+  expect(container.querySelector('[data-testid="read-only-composer"]')).not.toBeNull();
+  expect(container.querySelector('a[href="/play/1/table"]')).not.toBeNull();
+});
+
+it("tells the spotlight holder it is their turn and keeps the action input", async () => {
+  harness.lobby = lobbyState({ user_id: 1, role: "player", character_id: 11, character_name: "Ayla" });
+  await renderPlayScreen();
+  expect(container.querySelector('[data-testid="turn-banner"]')!.textContent).toContain("Your turn");
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")!.disabled).toBe(false);
+});
+
+it("gives a spectator a read-only play screen with no action input", async () => {
+  harness.lobby = lobbyState({ user_id: 3, role: "spectator", character_id: null, character_name: null });
+  await renderPlayScreen();
+  expect(container.querySelector("textarea")).toBeNull();
+  expect(container.querySelector('input[type="text"], input:not([type])')).toBeNull();
+  expect(container.querySelector('[data-testid="turn-banner"]')!.textContent).toContain("You are watching");
+  expect(container.querySelector('[data-testid="read-only-composer"]')!.textContent).toContain("Spectating");
+  // The journal and the map stay reachable for a spectator.
+  expect(Array.from(container.querySelectorAll("button")).some((b) => b.textContent === "Journal")).toBe(true);
+  expect(Array.from(container.querySelectorAll("button")).some((b) => b.textContent === "Map")).toBe(true);
+});
+
+it("never starts the story for a spectator", async () => {
+  const fetchSpy = vi.fn<(url: string) => Promise<Response>>(async () => new Response("{}", { status: 200 }));
+  vi.stubGlobal("fetch", fetchSpy);
+  harness.lobby = lobbyState({ user_id: 3, role: "spectator", character_id: null, character_name: null });
+  harness.game = { ...gameFixture(), boot: { history: [], campaignEnded: false }, refreshShared: vi.fn() };
+  await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+  expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("/intro"))).toBe(false);
+});
+
+it("announces table changes in the one polite region", async () => {
+  harness.lobby = lobbyState({ user_id: 2, role: "player", character_id: 12, character_name: "Bran" }, spotlightFixture(), { announcement: "It is now Ayla's turn, played by Alice." });
+  await renderPlayScreen();
+  const regions = container.querySelectorAll('[aria-live="polite"]');
+  expect(regions).toHaveLength(1);
+  expect(regions[0].textContent).toBe("It is now Ayla's turn, played by Alice.");
+});
+
+it("re-reads shared state when another member's turn commits, but not for the viewer's own or a refused one", async () => {
+  harness.lobby = lobbyState({ user_id: 2, role: "player", character_id: 12, character_name: "Bran" });
+  await renderPlayScreen();
+  const refreshShared = (harness.game as { refreshShared: ReturnType<typeof vi.fn> }).refreshShared;
+  await act(() => harness.lobbyOptions!.onTurnFinished!({ own: true, outcome: "committed" }));
+  await act(() => harness.lobbyOptions!.onTurnFinished!({ own: false, outcome: "not_committed" }));
+  expect(refreshShared).not.toHaveBeenCalled();
+  await act(() => harness.lobbyOptions!.onTurnFinished!({ own: false, outcome: "committed" }));
+  expect(refreshShared).toHaveBeenCalledTimes(1);
+  expect(harness.journal.refresh).toHaveBeenCalled();
+});
+
+it("defers the shared re-read while the viewer's own turn is running", async () => {
+  harness.lobby = lobbyState({ user_id: 1, role: "player", character_id: 11, character_name: "Ayla" });
+  harness.busy = true;
+  await renderPlayScreen();
+  const refreshShared = (harness.game as { refreshShared: ReturnType<typeof vi.fn> }).refreshShared;
+  await act(() => harness.lobbyOptions!.onTurnFinished!({ own: false, outcome: "committed" }));
+  expect(refreshShared).not.toHaveBeenCalled();
+  harness.busy = false;
+  await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+  expect(refreshShared).toHaveBeenCalledTimes(1);
+});
+
+it("shows an access-ended screen once the membership is revoked", async () => {
+  harness.lobby = lobbyState({ user_id: 2, role: "player", character_id: 12, character_name: "Bran" }, spotlightFixture(), { revoked: true });
+  await renderPlayScreen();
+  expect(container.textContent).toContain("You no longer have access to this table");
+  expect(container.querySelector("textarea")).toBeNull();
 });

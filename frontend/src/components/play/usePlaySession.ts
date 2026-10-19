@@ -99,6 +99,7 @@ export function usePlaySession(sessionId: number) {
   const [attempt, setAttempt] = useState(0);
   const readinessRevision = useRef(0);
   const refreshCtrl = useRef<AbortController | null>(null);
+  const sharedCtrl = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!Number.isFinite(sessionId) || sessionId < 1) return;
@@ -195,6 +196,37 @@ export function usePlaySession(sessionId: number) {
     }));
   }, []);
 
+  /**
+   * Re-read what the whole table shares (history, scene, combat, the spotlight hero) after another
+   * member's turn committed (EDG-050). Quiet: no loading state, and a failure leaves what is shown.
+   */
+  const refreshShared = useCallback(async () => {
+    sharedCtrl.current?.abort();
+    const ctrl = new AbortController();
+    sharedCtrl.current = ctrl;
+    try {
+      const session = await getSession(sessionId, ctrl.signal);
+      const [combat, history, character] = await Promise.all([
+        loadCombat(sessionId, ctrl.signal),
+        listSessionMessages(sessionId, ctrl.signal),
+        session.active_character_id
+          ? loadCharacter(session.active_character_id, session.campaign_id, ctrl.signal).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      if (ctrl.signal.aborted) return;
+      setState((s) => ({
+        ...s,
+        sceneId: session.current_scene_id,
+        combat,
+        character: character ?? s.character,
+        boot: { history, campaignEnded: s.boot?.campaignEnded ?? false },
+      }));
+    } catch {
+      /* Keep the current view; the next shared turn or a reload catches up. */
+    }
+  }, [sessionId]);
+  useEffect(() => () => sharedCtrl.current?.abort(), [sessionId]);
+
   const setCampaignComplete = useCallback((v: boolean) => {
     setState((s) => ({
       ...s,
@@ -217,5 +249,5 @@ export function usePlaySession(sessionId: number) {
     setState((s) => ({ ...s, campaign }));
   }, []);
 
-  return { ...state, applyTurnResult, setCampaignComplete, setSceneId, reload, refreshReadiness, updateCampaign };
+  return { ...state, applyTurnResult, setCampaignComplete, setSceneId, refreshShared, reload, refreshReadiness, updateCampaign };
 }
