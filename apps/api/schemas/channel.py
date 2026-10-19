@@ -93,6 +93,9 @@ EVENT_TYPES: dict[str, tuple[Channel, str]] = {
     "character.state": ("private", "player"),
     # A failed turn's safe error, for the player who submitted it only.
     "turn.failed": ("private", "player"),
+    # The turn spotlight changed hands or its rules did (EDG-048): the new holder, the reason, the
+    # version and the next-up order, all as the table may read them. Never player-private.
+    "turn.spotlight_changed": ("system", AUDIENCE_TABLE),
     "presence.joined": ("system", AUDIENCE_TABLE),
     "presence.left": ("system", AUDIENCE_TABLE),
     "presence.idle": ("system", AUDIENCE_TABLE),

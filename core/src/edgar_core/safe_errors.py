@@ -120,6 +120,22 @@ _register(
     "assignment_required", "character_assignment_required", "assignment_conflict",
     "choose_character", "character_assignment_conflict",
 )
+# Spotlight arbitration (EDG-048). Fixed messages only: holder names travel on the table channel.
+_register(
+    FailureSpec(ErrorCategory.BUSY, "not_your_spotlight", "It is another player's turn. Wait for the spotlight to pass to you, then try again.", 409, RecoveryAction.WAIT),
+)
+_register(
+    FailureSpec(ErrorCategory.BUSY, "spotlight_unavailable", "Nobody holds the spotlight right now. Wait for the table to hand it over, or ask the host.", 409, RecoveryAction.WAIT),
+)
+_register(
+    FailureSpec(ErrorCategory.BUSY, "spotlight_cooldown", "You have just had the spotlight. Let another player act, then try again shortly.", 409, RecoveryAction.WAIT),
+)
+_register(
+    FailureSpec(ErrorCategory.BUSY, "spotlight_stale", "The table changed before this action arrived. Refresh the table and try again.", 409, RecoveryAction.RETRY),
+)
+_register(
+    FailureSpec(ErrorCategory.VALIDATION, "spotlight_holder_invalid", "Choose a hero at this table who is able to take the spotlight.", 422, RecoveryAction.FIX_INPUT),
+)
 _register(
     FailureSpec(ErrorCategory.ASSIGNMENT, "hero_dead", "Your hero has died. Add a replacement hero to this campaign, switch the session to them, and release the dead hero from the roster.", 409, RecoveryAction.ASSIGN_CHARACTER),
 )

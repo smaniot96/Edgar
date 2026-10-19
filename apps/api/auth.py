@@ -326,12 +326,13 @@ async def member_session(db: AsyncSession, session_id: int, auth: Auth) -> Sessi
 
 
 async def turn_session(db: AsyncSession, session_id: int, auth: Auth) -> SessionModel:
-    """The session a turn or intro may act in (EDG-046).
+    """The session a turn or intro may be submitted to (EDG-046, refined by EDG-048).
 
-    The campaign owner may always act (single-owner behaviour is unchanged). A player may act only
-    when their own seated character is the session's spotlight holder (``active_character_id``);
-    members who are not seated, or seated but not holding the spotlight, get 403. Non-members get
-    the same 404 as a missing session.
+    This is the membership gate only. The campaign owner and any seated player may submit; a
+    spectator, or a member without a seat, gets 403 before any state is read further. Which seated
+    player may act right now is the spotlight's decision (``services.spotlight``), taken under the
+    table lock, so a seated player who does not hold the spotlight gets the 409 spotlight refusal.
+    Non-members get the same 404 as a missing session.
     """
     session = await member_session(db, session_id, auth)
     if auth is None:
@@ -343,13 +344,12 @@ async def turn_session(db: AsyncSession, session_id: int, auth: Auth) -> Session
         select(SessionParticipant.id).where(
             SessionParticipant.session_id == session.id,
             SessionParticipant.user_id == auth.user_id,
-            SessionParticipant.character_id == session.active_character_id,
         )
     )
     if seated is None:
         raise HTTPException(
             status_code=403,
-            detail="Only the player whose character holds the spotlight can act in this session.",
+            detail="Only seated players can take turns in this session. Spectators can read the table.",
         )
     return session
 

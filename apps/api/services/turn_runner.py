@@ -38,6 +38,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -93,6 +94,7 @@ from .journal import journal_tracking_marker
 from .operational_metrics import observe_committed_turn
 from .roll_record import build_roll_record, roll_status_for
 from .safe_errors import classify_error, log_failure
+from .spotlight import SpotlightRefused, SpotlightTurn, apply_turn_commit
 from .story_state import record_hero_death_if_dead
 from .world_writes import (
     MissingCharacterAssignmentError,
@@ -173,13 +175,20 @@ def public_adjudication(adjudication) -> dict | None:
 
 
 async def persist_turn(
-    session_id: int, body_message: str, result: dict[str, Any]
+    session_id: int,
+    body_message: str,
+    result: dict[str, Any],
+    *,
+    spotlight: SpotlightTurn | None = None,
 ) -> dict[str, Any]:
     """Write the whole turn in one transaction and return the `done` payload.
 
     Opens its own short-lived session so the caller never holds a pooled connection across LLM
     calls. The character is read *before* campaign completion closes the assignments, so the
     final turn of a campaign still reports the hero's state. Raises TurnError (after rollback).
+
+    `spotlight` (EDG-048) is the decision the turn was admitted under. It is checked and applied on
+    the locked session row as the last step, so the turn commits only if the spotlight still stands.
     """
     new_combat = result.get("combat_state")
     adjudication = result.get("adjudication_result")
@@ -484,11 +493,17 @@ async def persist_turn(
                 "roll": turn_roll,
             }
             narration_event.payload = {**narration_event.payload, "done": done}
+            apply_turn_commit(game_session, spotlight, now=datetime.now(UTC))
             await db.commit()
         except MissingCharacterAssignmentError as e:
             await db.rollback()
             failure = TurnError("character_not_assigned", outcome="not_committed")
             log_failure("turn_persist_missing_assignment", failure.failure, session_id=session_id)
+            raise failure from e
+        except SpotlightRefused as e:
+            await db.rollback()
+            failure = TurnError(e.code, outcome="not_committed")
+            log_failure("turn_spotlight_refused", failure.failure, session_id=session_id)
             raise failure from e
         except Exception as e:
             await db.rollback()
@@ -736,6 +751,7 @@ async def stream_session_turn(
     debug: bool = False,
     diagnostics: TurnDiagnostics | None = None,
     on_committed: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    spotlight: SpotlightTurn | None = None,
 ) -> AsyncIterator[str]:
     """Stream a turn under one immutable settings snapshot, including the narrator tail.
 
@@ -753,6 +769,7 @@ async def stream_session_turn(
                 debug=debug,
                 diagnostics=diagnostics,
                 on_committed=on_committed,
+                spotlight=spotlight,
             )
         ) as frames:
             async for frame in frames:
@@ -818,6 +835,7 @@ async def _stream_session_turn(
     debug: bool = False,
     diagnostics: TurnDiagnostics | None = None,
     on_committed: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    spotlight: SpotlightTurn | None = None,
 ) -> AsyncIterator[str]:
     t0 = time.monotonic()
     lap_start = t0
@@ -997,7 +1015,7 @@ async def _stream_session_turn(
     state["telemetry_events"] = [*telemetry, finalize_turn_diagnostics(diag, telemetry)]
     state = stage_turn_trace(state, debug=debug, delivery="stream")
     try:
-        done_payload = await persist_turn(session_id, body_message, state)
+        done_payload = await persist_turn(session_id, body_message, state, spotlight=spotlight)
     except TurnError as e:
         yield sse_event("error", e.body())
         return

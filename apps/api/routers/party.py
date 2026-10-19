@@ -35,7 +35,7 @@ from ..auth import (
     member_session,
     owned_campaign,
 )
-from ..dependencies import current_user_id, get_redis, get_session
+from ..dependencies import acquire_turn_lock, current_user_id, get_redis, get_session
 from ..schemas.party import (
     InviteAccept,
     InviteAccepted,
@@ -47,6 +47,7 @@ from ..schemas.party import (
     MemberUpdate,
     SessionParticipantRead,
 )
+from ..services import spotlight
 from ..services.character_assignments import load_active_assignment
 from ..services.session_broadcast import notify_access_changed
 
@@ -163,6 +164,7 @@ async def accept_invite(
     body: InviteAccept,
     auth: Auth,
     db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
 ):
     if auth is None:
         # Local single-user mode has no accounts to join with; acceptance needs an authenticated user.
@@ -225,7 +227,9 @@ async def accept_invite(
             )
         seated_character_id = character.id
 
-    # Consume the invite in one conditional UPDATE, so two concurrent accepts cannot both win.
+    # Consume the invite in one conditional UPDATE, so two concurrent accepts cannot both win. The
+    # consume comes before the table lock: a racing accept waits on this row and then gets the same
+    # generic refusal as any used invite, never a different answer that would reveal the race.
     consumed = (
         await db.execute(
             update(CampaignInvite)
@@ -243,26 +247,44 @@ async def accept_invite(
         await db.rollback()
         raise _invalid_invite()
 
+    # EDG-048: a seat changes the table's rotation, so it is taken under the table lock. A busy table
+    # refuses the accept and rolls the consume back, so the invite stays usable.
     try:
-        if campaign.created_by != auth.user_id:
-            await db.execute(
-                pg_insert(CampaignMembership)
-                .values(campaign_id=campaign.id, user_id=auth.user_id, role=invite.role)
-                .on_conflict_do_nothing(constraint="uq_campaign_membership_user")
-            )
-        if seated_character_id is not None:
-            db.add(
-                SessionParticipant(
-                    session_id=invite.session_id,
-                    user_id=auth.user_id,
-                    character_id=seated_character_id,
-                    role=PLAYER_ROLE,
-                )
-            )
-        await db.commit()
-    except IntegrityError as exc:
+        locks = await _lock_tables(redis, [invite.session_id] if seated_character_id is not None else [])
+    except HTTPException:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="The invite could not be applied.") from exc
+        raise
+    change = None
+    try:
+        try:
+            if campaign.created_by != auth.user_id:
+                await db.execute(
+                    pg_insert(CampaignMembership)
+                    .values(campaign_id=campaign.id, user_id=auth.user_id, role=invite.role)
+                    .on_conflict_do_nothing(constraint="uq_campaign_membership_user")
+                )
+            if seated_character_id is not None:
+                db.add(
+                    SessionParticipant(
+                        session_id=invite.session_id,
+                        user_id=auth.user_id,
+                        character_id=seated_character_id,
+                        role=PLAYER_ROLE,
+                    )
+                )
+                await db.flush()
+                change = await spotlight.on_seat_change(
+                    db, redis, invite.session_id, reason="seat_joined", actor_id=auth.user_id
+                )
+            await db.commit()
+        except IntegrityError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="The invite could not be applied.") from exc
+    finally:
+        for lock in locks:
+            await lock.release()
+    if change is not None and change.announce:
+        await spotlight.announce(redis, invite.session_id, change)
     return InviteAccepted(
         campaign_id=campaign.id,
         role=invite.role,
@@ -332,6 +354,51 @@ async def _drop_seats(db, campaign_id: int, user_id: int) -> None:
             SessionParticipant.session_id.in_(campaign_sessions),
         )
     )
+
+
+async def _lock_tables(redis: Redis, session_ids: list[int]) -> list:
+    """Take the turn lock of each table, in id order. A busy table refuses the change; nothing is held then."""
+    locks = []
+    for session_id in sorted(set(session_ids)):
+        lock = await acquire_turn_lock(session_id, redis)
+        if lock is None:
+            for held in locks:
+                await held.release()
+            raise HTTPException(
+                status_code=409,
+                detail="A turn is in progress at this table. Please retry once it finishes.",
+            )
+        locks.append(lock)
+    return locks
+
+
+async def _release_seats(
+    db,
+    redis: Redis,
+    campaign_id: int,
+    user_id: int,
+    session_ids: list[int],
+    actor_id: int | None,
+) -> list[tuple[int, spotlight.Change]]:
+    """Free a member's seats, then settle each affected table's spotlight, in the caller's transaction.
+
+    The caller holds the table locks for ``session_ids`` (see ``_lock_tables``) and commits. Returns
+    the changes to announce once that commit has landed.
+    """
+    await _drop_seats(db, campaign_id, user_id)
+    changes: list[tuple[int, spotlight.Change]] = []
+    for session_id in session_ids:
+        change = await spotlight.on_seat_change(
+            db, redis, session_id, reason="seat_released", actor_id=actor_id
+        )
+        if change is not None and change.announce:
+            changes.append((session_id, change))
+    return changes
+
+
+async def _announce_changes(redis: Redis, changes: list[tuple[int, spotlight.Change]]) -> None:
+    for session_id, change in changes:
+        await spotlight.announce(redis, session_id, change)
 
 
 async def _announce_access(db, redis: Redis, campaign_id: int) -> None:
@@ -406,14 +473,45 @@ async def change_member_role(
     if membership.role == OWNER_ROLE:
         raise HTTPException(status_code=409, detail="Owner memberships cannot be changed here.")
     if membership.role != body.role:
-        membership.role = body.role
-        if body.role != PLAYER_ROLE:
-            await _drop_seats(db, campaign.id, user_id)
         campaign_pk = campaign.id
-        await db.commit()
+        # Demotion to spectator frees the seats; the spotlight they held is settled in the same commit.
+        session_ids = (
+            await spotlight.sessions_with_seats(db, campaign_pk, user_id)
+            if body.role != PLAYER_ROLE
+            else []
+        )
+        locks = await _lock_tables(redis, session_ids)
+        try:
+            membership.role = body.role
+            changes = []
+            if body.role != PLAYER_ROLE:
+                changes = await _release_seats(
+                    db, redis, campaign_pk, user_id, session_ids, campaign.created_by
+                )
+            await db.commit()
+        finally:
+            for lock in locks:
+                await lock.release()
         await db.refresh(membership)
+        await _announce_changes(redis, changes)
         await _announce_access(db, redis, campaign_pk)
     return await _member_read(db, membership)
+
+
+async def _remove_membership(
+    db, redis: Redis, campaign_id: int, user_id: int, membership, actor_id: int | None
+) -> None:
+    """Delete a membership and its seats, releasing any spotlight the seats held, in one commit (EDG-048)."""
+    session_ids = await spotlight.sessions_with_seats(db, campaign_id, user_id)
+    locks = await _lock_tables(redis, session_ids)
+    try:
+        changes = await _release_seats(db, redis, campaign_id, user_id, session_ids, actor_id)
+        await db.delete(membership)
+        await db.commit()
+    finally:
+        for lock in locks:
+            await lock.release()
+    await _announce_changes(redis, changes)
 
 
 @router.delete("/campaigns/{campaign_id}/members/{user_id}", status_code=204)
@@ -432,9 +530,7 @@ async def remove_member(
     if membership.role == OWNER_ROLE:
         raise HTTPException(status_code=409, detail="Owner memberships cannot be removed here.")
     campaign_pk = campaign.id
-    await _drop_seats(db, campaign_pk, user_id)
-    await db.delete(membership)
-    await db.commit()
+    await _remove_membership(db, redis, campaign_pk, user_id, membership, campaign.created_by)
     await _announce_access(db, redis, campaign_pk)
 
 
@@ -456,7 +552,5 @@ async def leave_campaign(
     if membership.role == OWNER_ROLE:
         raise HTTPException(status_code=409, detail="Owner memberships cannot leave here.")
     campaign_pk = campaign.id
-    await _drop_seats(db, campaign_pk, auth.user_id)
-    await db.delete(membership)
-    await db.commit()
+    await _remove_membership(db, redis, campaign_pk, auth.user_id, membership, None)
     await _announce_access(db, redis, campaign_pk)

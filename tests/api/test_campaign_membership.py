@@ -360,11 +360,13 @@ async def test_seated_player_without_the_spotlight_is_refused_turns(api_client, 
         await _accept(api_client, "bob", table, invite["token"], table["bob_pc"].id)
     ).status_code == 200
     sid = table["save"].id
-    # Alice's character holds the spotlight, so Bob's turn is refused before the lock.
+    # Alice's character holds the spotlight at this two-PC table (EDG-048): Bob is refused with the
+    # spotlight conflict, before any model call and with nothing spent.
     response = await api_client.post(
         f"/api/sessions/{sid}/intro", headers=_auth(table["tokens"]["bob"])
     )
-    assert response.status_code == 403
+    assert response.status_code == 409
+    assert response.json()["code"] == "not_your_spotlight"
 
 
 @pytest.mark.asyncio

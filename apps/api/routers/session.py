@@ -59,7 +59,9 @@ from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..limits import admit_turn, record_assumed_call, record_turn_spend
 from ..schemas.channel import ChannelActor
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
+from ..schemas.spotlight import SpotlightRead, SpotlightUpdate
 from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
+from ..services import spotlight
 from ..services.campaign_sources import source_reads
 from ..services.character_assignments import character_play_state, load_active_assignment
 from ..services.combat import (
@@ -515,6 +517,14 @@ async def _session_intro(session_id: int, auth: Auth, db: AsyncSession, redis: R
         if existing_intro.scalar_one_or_none() is not None:
             return {"started": False}
 
+        # The opening is not a player's action: it may claim a free spotlight, but never passes it on.
+        try:
+            await _open_spotlight(
+                db, redis, session_id, auth, expected_version=None, consumes=False
+            )
+        except spotlight.SpotlightRefused as exc:
+            return _refused(exc)
+
         try:
             payload = await generate_session_intro(db, session)
         finally:
@@ -576,7 +586,11 @@ async def create_session(
 
 @router.patch("/sessions/{session_id}", response_model=SessionRead)
 async def update_session(
-    session_id: int, body: SessionUpdate, auth: Auth, db: AsyncSession = Depends(get_session)
+    session_id: int,
+    body: SessionUpdate,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
 ):
     session = await owned_session(db, session_id, auth)
     update_data = body.model_dump(exclude_unset=True)
@@ -599,11 +613,98 @@ async def update_session(
                 status_code=422,
                 detail="Character has no active assignment in this campaign",
             )
+    # EDG-048: changing the active character is the owner's spotlight hand-over. At a multi-PC table it
+    # goes through the spotlight arbiter (table lock, version, announcement); elsewhere it is the plain
+    # write it always was, plus the holder's idle clock.
+    handover = "active_character_id" in update_data and (
+        new_character_id != session.active_character_id
+    )
+    if handover and await spotlight.is_engaged(db, session_id):
+        lock = await acquire_turn_lock(session_id, redis)
+        if lock is None:
+            return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
+        try:
+            for key, value in update_data.items():
+                if key != "active_character_id":
+                    setattr(session, key, value)
+            change = await spotlight.host_update(
+                db,
+                redis,
+                session_id,
+                owner_id=campaign.created_by,
+                holder=new_character_id,
+            )
+            if change is not None and change.announce:
+                await spotlight.announce(
+                    redis, session_id, change, actor=await _turn_actor(session_id, auth)
+                )
+        except spotlight.SpotlightRefused as exc:
+            return _refused(exc)
+        finally:
+            await lock.release()
+        await db.refresh(session)
+        return await _session_read(session, db)
     for key, value in update_data.items():
         setattr(session, key, value)
+    if handover:
+        session.spotlight_since = datetime.now(UTC)
+        session.spotlight_version = session.spotlight_version + 1
     await db.commit()
     await db.refresh(session)
     return await _session_read(session, db)
+
+
+@router.get("/sessions/{session_id}/spotlight", response_model=SpotlightRead)
+async def get_spotlight(
+    session_id: int,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
+):
+    """The table's spotlight: holder, mode, version and next-up order (EDG-048). Read-only."""
+    await member_session(db, session_id, auth)
+    return await spotlight.public_view(db, redis, session_id)
+
+
+@router.patch("/sessions/{session_id}/spotlight", response_model=SpotlightRead)
+async def update_spotlight(
+    session_id: int,
+    body: SpotlightUpdate,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
+):
+    """Owner sets the mode or timeout, hands the spotlight to a hero, or releases it (EDG-048)."""
+    session = await owned_session(db, session_id, auth)
+    campaign = await get_or_404(db, Campaign, session.campaign_id, "Campaign")
+    holder: Any = (
+        body.holder_character_id
+        if "holder_character_id" in body.model_fields_set
+        else spotlight.UNCHANGED
+    )
+    lock = await acquire_turn_lock(session_id, redis)
+    if lock is None:
+        return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
+    try:
+        change = await spotlight.host_update(
+            db,
+            redis,
+            session_id,
+            owner_id=campaign.created_by,
+            mode=body.mode,
+            timeout_seconds=body.timeout_seconds,
+            holder=holder,
+            expected_version=body.expected_version,
+        )
+        if change is not None and change.announce:
+            await spotlight.announce(
+                redis, session_id, change, actor=await _turn_actor(session_id, auth)
+            )
+    except spotlight.SpotlightRefused as exc:
+        return _refused(exc)
+    finally:
+        await lock.release()
+    return await spotlight.public_view(db, redis, session_id)
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -639,6 +740,44 @@ async def _turn_actor(session_id: int, auth: Auth) -> ChannelActor:
 
 def _turn_error_response(err: TurnError) -> JSONResponse:
     return JSONResponse(status_code=err.status_code, content=err.body())
+
+
+def _refused(exc: spotlight.SpotlightRefused) -> JSONResponse:
+    """A spotlight refusal, as the same safe envelope every other turn refusal uses (EDG-048)."""
+    return _turn_error_response(TurnError(exc.code, outcome="not_committed"))
+
+
+async def _open_spotlight(
+    db: AsyncSession,
+    redis: Redis,
+    session_id: int,
+    auth: Auth,
+    *,
+    expected_version: int | None,
+    consumes: bool,
+) -> spotlight.SpotlightTurn | None:
+    """Decide who may act now (under the turn lock). Announces a claim or hand-over before the turn starts."""
+    opened = await spotlight.open_turn(
+        db, redis, session_id, auth, expected_version=expected_version, consumes=consumes
+    )
+    if opened.change is not None and opened.change.announce:
+        await spotlight.announce(
+            redis, session_id, opened.change, actor=await _turn_actor(session_id, auth)
+        )
+    return opened.plan
+
+
+async def _announce_pass(
+    redis: Redis,
+    session_id: int,
+    plan: spotlight.SpotlightTurn | None,
+    actor: ChannelActor,
+) -> None:
+    """After a turn commits, announce the spotlight it passed on (if its commit moved it)."""
+    if plan is not None and plan.passed_reason is not None:
+        await spotlight.announce(
+            redis, session_id, spotlight.Change(reason=plan.passed_reason, announce=True), actor=actor
+        )
 
 
 def _turn_http_error_response(exc: HTTPException) -> JSONResponse:
@@ -727,6 +866,11 @@ async def session_turn(
     message (409 missing assignment, 503 agent/LLM failure, 500 otherwise); details are logged.
     """
     await authorize_session(db, session_id, auth)
+    try:
+        # Read-only refusal of a non-holder: nothing is admitted, leased or spent.
+        await spotlight.precheck(db, session_id, auth)
+    except spotlight.SpotlightRefused as exc:
+        return _refused(exc)
     admission = await admit_turn(request, redis)
     try:
         return await _session_turn(session_id, body, background_tasks, db, redis, auth)
@@ -754,14 +898,19 @@ async def _session_turn(
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
             return replay
+        # EDG-048: the spotlight decides before the state loads (a claim changes the acting hero).
+        plan = await _open_spotlight(
+            db, redis, session_id, auth, expected_version=body.spotlight_version, consumes=True
+        )
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         if body.request_id is not None:
             initial_state["turn_id"] = body.request_id
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
+        actor = await _turn_actor(session_id, auth)
         broadcast = TurnBroadcast(
             redis,
             session_id,
-            actor=await _turn_actor(session_id, auth),
+            actor=actor,
             turn_id=initial_state.get("turn_id"),
         )
         await broadcast.start(body.message)
@@ -772,10 +921,11 @@ async def _session_turn(
         result = {**initial_state, **await run_turn(initial_state, diagnostics=diagnostics)}
         result = stage_turn_trace(result, debug=body.debug, delivery="sync")
         outcome = "unknown"
-        done = await persist_turn(session_id, body.message, result)
+        done = await persist_turn(session_id, body.message, result, spotlight=plan)
         outcome = "committed"
         observe_committed_turn(result.get("telemetry_events"), diagnostics)
         await broadcast.committed(done)
+        await _announce_pass(redis, session_id, plan, actor)
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 
         adjudication = result.get("adjudication_result")
@@ -802,6 +952,8 @@ async def _session_turn(
         )
     except HTTPException as exc:
         return _turn_http_error_response(exc)
+    except spotlight.SpotlightRefused as exc:
+        return _refused(exc)
     except TurnError as e:
         return _turn_error_response(e)
     except Exception as exc:
@@ -835,6 +987,10 @@ async def session_turn_stream(
     before the body starts never runs that `finally`, so the background task releases it too.
     """
     await authorize_session(db, session_id, auth)
+    try:
+        await spotlight.precheck(db, session_id, auth)
+    except spotlight.SpotlightRefused as exc:
+        return _refused(exc)
     admission = await admit_turn(request, redis)
     try:
         lock = await acquire_turn_lock(session_id, redis)
@@ -855,15 +1011,23 @@ async def session_turn_stream(
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
+        plan = await _open_spotlight(
+            db, redis, session_id, auth, expected_version=body.spotlight_version, consumes=True
+        )
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         if body.request_id is not None:
             initial_state["turn_id"] = body.request_id
+        actor = await _turn_actor(session_id, auth)
         broadcast = TurnBroadcast(
             redis,
             session_id,
-            actor=await _turn_actor(session_id, auth),
+            actor=actor,
             turn_id=initial_state.get("turn_id"),
         )
+    except spotlight.SpotlightRefused as exc:
+        await lock.release()
+        await admission.release()
+        return _refused(exc)
     except HTTPException as exc:
         await lock.release()
         await admission.release()
@@ -872,6 +1036,10 @@ async def session_turn_stream(
         await lock.release()
         await admission.release()
         raise
+
+    async def _committed(done: dict[str, Any]) -> None:
+        await broadcast.committed(done)
+        await _announce_pass(redis, session_id, plan, actor)
 
     await broadcast.start(body.message)
     diagnostics = new_turn_diagnostics(
@@ -892,7 +1060,8 @@ async def session_turn_stream(
                     initial_state=initial_state,
                     debug=body.debug,
                     diagnostics=diagnostics,
-                    on_committed=broadcast.committed,
+                    on_committed=_committed,
+                    spotlight=plan,
                 )
             ) as frames:
                 async for chunk in frames:
