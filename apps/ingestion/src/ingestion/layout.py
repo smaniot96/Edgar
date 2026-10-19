@@ -18,6 +18,9 @@ import pymupdf
 from ingestion.quality import SIZE_TYPE, STAT_SUBHEADINGS, letters
 
 
+ILLUSTRATION_SIZE_RATIO = 0.65
+
+
 @dataclass
 class Line:
     text: str
@@ -26,6 +29,8 @@ class Line:
     heading: bool = False
     # Lowest word confidence on an OCR line; native text is always 100.
     confidence: float = 100.0
+    # Small text printed inside an illustration, e.g. an item caption; see native_lines.
+    illustration: bool = False
 
 
 def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
@@ -33,6 +38,7 @@ def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
     out = []
     seen: dict[str, list[tuple]] = {}
     duplicates = 0
+    figures = [tuple(block["bbox"]) for block in data["blocks"] if block.get("type") == 1]
     for block in data["blocks"]:
         for line in block.get("lines", []):
             spans = []
@@ -53,10 +59,113 @@ def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
                 text = "".join(s["text"] for s in spans).strip()
                 if text:
                     out.append(Line(text, tuple(line["bbox"]), max(s["size"] for s in spans)))
+    if out and figures:
+        body_size = statistics.median(item.size for item in out)
+        for item in out:
+            # A caption is far below body size and sits inside an image; page-sized background
+            # images hold body text too, but at body size, so size alone separates the two.
+            item.illustration = item.size <= body_size * ILLUSTRATION_SIZE_RATIO and any(
+                rect[0] - 2 <= item.bbox[0]
+                and rect[1] - 2 <= item.bbox[1]
+                and item.bbox[2] <= rect[2] + 2
+                and item.bbox[3] <= rect[3] + 2
+                for rect in figures
+            )
     return out, duplicates
 
 
 def columns(lines: list[Line], width: float) -> list[list[Line]]:
+    """Read a page's columns, retrying with drop-cap and illustration handling only on failure.
+
+    A page the plain reading accepts is never altered. A page it rejects is retried with, in
+    turn, a decorative drop cap merged into its word, the illustration captions set apart, and
+    both; the first reading that succeeds is used, otherwise the plain error is raised.
+    """
+    try:
+        return _columns(lines, width)
+    except ValueError as plain:
+        merged = merge_drop_caps(lines)
+        captions = [item for item in lines if item.illustration]
+        for body, caption_lines in (
+            (merged, []),
+            ([item for item in lines if not item.illustration], captions),
+            ([item for item in merged if not item.illustration], captions),
+        ):
+            if body is lines or len(body) == len(lines) and not caption_lines:
+                continue
+            try:
+                result = _columns(body, width)
+            except ValueError:
+                continue
+            blocks = _caption_blocks(caption_lines)
+            if blocks and result and min(i.bbox[1] for b in blocks for i in b) > min(
+                i.bbox[1] for b in result for i in b
+            ):
+                return result + blocks
+            return blocks + result
+        raise plain
+
+
+def _caption_blocks(captions: list[Line]) -> list[list[Line]]:
+    """Group illustration captions into blocks of neighbouring lines, one block per caption."""
+    blocks: list[list[Line]] = []
+    for item in sorted(captions, key=lambda i: (i.bbox[1], i.bbox[0])):
+        for block in blocks:
+            if any(
+                item.bbox[1] - other.bbox[3] <= 6
+                and item.bbox[1] >= other.bbox[1]
+                and item.bbox[0] < other.bbox[2]
+                and other.bbox[0] < item.bbox[2]
+                for other in block
+            ):
+                block.append(item)
+                break
+        else:
+            blocks.append([item])
+    return blocks
+
+
+def merge_drop_caps(lines: list[Line]) -> list[Line]:
+    """Join a tall decorative initial to the first line it introduces ('T' + 'he' -> 'The').
+
+    The initial is a short glyph at least 2.5 times the body size. It must stand left of at least
+    two lines that begin to its right inside its height; the first of those continues the
+    word. Only its letters and digits are kept, so a flourish read as punctuation is dropped,
+    and nothing is guessed: a mis-read initial stays as the source gave it.
+    """
+    if not lines:
+        return lines
+    body_size = statistics.median(item.size for item in lines)
+    result = list(lines)
+    for glyph in lines:
+        if glyph.size < body_size * 2.5 or len(glyph.text) > 4:
+            continue
+        beside = sorted(
+            (
+                item
+                for item in lines
+                if item is not glyph
+                and item.size < glyph.size / 2
+                and item.bbox[1] >= glyph.bbox[1] - 1
+                and item.bbox[3] <= glyph.bbox[3] + 1
+                and glyph.bbox[0] - 3 <= item.bbox[0] <= glyph.bbox[2] + 40
+            ),
+            key=lambda item: item.bbox[1],
+        )
+        if len(beside) < 2 or beside[1].bbox[0] < glyph.bbox[2] - 25:
+            continue
+        first = beside[0]
+        letters_only = "".join(c for c in glyph.text if c.isalnum())
+        merged = Line(
+            letters_only + first.text,
+            (min(glyph.bbox[0], first.bbox[0]), *first.bbox[1:]),
+            first.size,
+        )
+        result = [merged if item is first else item for item in result if item is not glyph]
+    return result
+
+
+def _columns(lines: list[Line], width: float) -> list[list[Line]]:
     """Infer a two-column gutter from line edges, otherwise retain a single column.
 
     Require substantial vertical overlap and a clear gutter. Spanning lines below the column
@@ -112,6 +221,74 @@ def columns(lines: list[Line], width: float) -> list[list[Line]]:
 
 
 def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: list[Line]):
+    """Read the page by zones; a zone the plain reading rejects may still be a table band.
+
+    The band is found only after the plain reading failed, so no page it accepts changes.
+    """
+    try:
+        return _segment_zones(lines, left, right, crossing)
+    except ValueError:
+        band = _table_band(lines)
+        if band is None:
+            raise
+        ids = {id(item) for item in band}
+        top = min(item.bbox[1] for item in band)
+        bottom = max(item.bbox[3] for item in band)
+        parts = []
+        for part in (
+            [i for i in lines if id(i) not in ids and i.bbox[3] <= top + 1],
+            band,
+            [i for i in lines if id(i) not in ids and i.bbox[3] > top + 1],
+        ):
+            if part is band:
+                parts.append([i for i in band if any(c.isalnum() for c in i.text)])
+                continue
+            keep = {id(i) for i in part}
+            parts += _segment_zones(
+                part,
+                [i for i in left if id(i) in keep],
+                [i for i in right if id(i) in keep],
+                [i for i in crossing if id(i) in keep],
+            )
+        return [column for column in parts if column]
+
+
+def _table_rows(lines: list[Line]) -> list[list[Line]]:
+    rows: list[list[Line]] = []
+    for item in sorted(lines, key=lambda i: i.bbox[3]):
+        if rows and abs(rows[-1][0].bbox[3] - item.bbox[3]) <= 2.5:
+            rows[-1].append(item)
+        else:
+            rows.append([item])
+    return rows
+
+
+def _table_band(lines: list[Line]) -> list[Line] | None:
+    """The largest vertical band of whole rows that is an anchored table (see _anchored_table).
+
+    Bands start and end at a visible gap between rows, so prose is never cut mid-paragraph.
+    Blank cells leave rows short but the anchors of the other rows still identify the table.
+    """
+    rows = _table_rows(lines)
+
+    def gap(index: int) -> float:
+        return min(i.bbox[1] for i in rows[index]) - max(i.bbox[3] for i in rows[index - 1])
+
+    starts = [0] + [i for i in range(1, len(rows)) if gap(i) >= 3]
+    ends = [i for i in range(1, len(rows)) if gap(i) >= 3] + [len(rows)]
+    best: list[Line] | None = None
+    for start in starts:
+        for end in reversed(ends):
+            if end - start < 3 or (best and sum(map(len, rows[start:end])) <= len(best)):
+                continue
+            band = [item for row in rows[start:end] for item in row]
+            if _anchored_table(band):
+                best = band
+                break
+    return best
+
+
+def _segment_zones(lines: list[Line], left: list[Line], right: list[Line], crossing: list[Line]):
     """Read spanning lines below the column tops as full-width zones, not as an interleave.
 
     Vertical runs of lines (gaps of at most 5 pt) holding a spanning line form a zone. A zone is
@@ -204,7 +381,17 @@ def _anchored_table(items: list[Line]) -> bool:
         sum(any(lo <= item.bbox[0] <= hi for lo, hi in anchors) for item in row) for row in rows
     ]
     # Wrapped continuation rows hold one cell, so judge the share of cells, not of rows.
-    return sum(count >= 2 for count in cells_per_row) >= 3 and 4 * sum(on_anchor) >= 3 * len(items)
+    if not (sum(count >= 2 for count in cells_per_row) >= 3 and 4 * sum(on_anchor) >= 3 * len(items)):
+        return False
+    # Table cells are short. Prose lines run the width of a column, so two columns of prose beside
+    # a table never qualify, however their line starts line up. A wide notes column is allowed
+    # when at least two other columns hold short cells.
+    span = max(item.bbox[2] for item in items) - min(item.bbox[0] for item in items)
+    short = 0
+    for lo, hi in anchors:
+        cells = [item for item in items if lo <= item.bbox[0] <= hi]
+        short += 2 * sum(item.bbox[2] - item.bbox[0] <= span * 0.3 for item in cells) > len(cells)
+    return short >= 2
 
 
 def _split_table_tail(run: list[Line], spanning: set[int]) -> list[list[Line]]:
@@ -229,9 +416,9 @@ def _split_table_tail(run: list[Line], spanning: set[int]) -> list[list[Line]]:
         start += 1
     tail = [item for row in rows[start:] for item in row]
     head = [item for row in rows[:start] for item in row]
-    if not head or sum(len(row) >= 3 for row in rows[start:]) < 3 or not _anchored_table(tail):
-        return [run]
-    return [head, tail]
+    if head and sum(len(row) >= 3 for row in rows[start:]) >= 3 and _anchored_table(tail):
+        return [head, tail]
+    return [run]
 
 
 def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
