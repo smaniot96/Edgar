@@ -275,3 +275,65 @@ async def test_one_hero_fleeing_leaves_the_fight_to_the_others(adj) -> None:
     assert not cs["ended"]
     assert _by(out, "pc-1")["fled"] is True
     assert holder_character_id(cs) == 2
+
+
+# --- idle default, departed heroes, caps, budget --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_turn_is_the_default_dodge_and_rolls_nothing(adj) -> None:
+    combat = _two_heroes_one_goblin()
+    state = _state(
+        combat,
+        FIGHTER,
+        "I take the Dodge action.",
+        parsed_input=ParsedInput(intent="combat"),
+        combat_skip=True,
+    )
+    with use_rng(ScriptedDice([])):
+        out = await combat_round_node(state)
+    assert _by(out, "pc-1")["action_economy"]["dodging"] is True
+    assert "takes the Dodge action by default" in out["adjudication_result"].mechanical_summary
+    assert holder_character_id(out["combat_state"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_hero_whose_seat_left_is_passed_over_and_the_fight_goes_on(adj) -> None:
+    combat = _two_heroes_one_goblin()
+    # Ilse is no longer at the table (her sheet is not in the party): Eda's request runs the slots
+    # up to the next hero who can act, and that is Eda again in round 2.
+    with use_rng(ScriptedDice([15, 4, 15, 3])):
+        out = await combat_round_node(
+            _state(combat, FIGHTER, "I attack the goblin", party=[FIGHTER])
+        )
+    assert _by(out, "pc-2")["fled"] is True
+    cs = out["combat_state"]
+    assert cs["round"] == 2 and holder_character_id(cs) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_round_cap_ends_a_party_fight_as_a_stalemate(adj) -> None:
+    combat = _two_heroes_one_goblin()
+    combat["round"] = 12
+    wizard = {**WIZARD}
+    # Ilse's turn is the last in round 12; the goblin acts after her and then the cap is reached.
+    combat["current_turn_index"] = 1
+    with use_rng(ScriptedDice([15, 4, 1, 1])):
+        out = await combat_round_node(
+            _state(combat, wizard, "I attack the goblin", party=[wizard, FIGHTER])
+        )
+    cs = out["combat_state"]
+    assert cs["ended"] and cs["outcome"] == "fled" and cs["round"] == 12
+
+
+def test_a_party_widens_the_foe_count_but_never_the_foe_quality() -> None:
+    from agent.encounter_budget import apply_solo_budget, party_budget, solo_budget
+
+    foes = [_enemy(f"Goblin {i}", init=5) for i in range(1, 5)]
+    solo_roster, _ = apply_solo_budget(foes, 1)
+    party_roster, summary = apply_solo_budget(foes, 1, party_size=3)
+    assert len(solo_roster) == solo_budget(1).max_foes == 2
+    assert len(party_roster) == party_budget(1, 3).max_foes == 4
+    assert summary["party_size"] == 3 and summary["xp_check"] is None
+    assert party_budget(1, 9).max_foes == 6
+    assert party_budget(20, 1) == solo_budget(20)
