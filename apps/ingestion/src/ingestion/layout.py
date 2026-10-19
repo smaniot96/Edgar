@@ -190,9 +190,10 @@ def _full_width_zone(run: list[Line], spanning: set[int]) -> bool:
     span_rows = [row for row in rows if any(id(item) in spanning for item in row)]
     cells = sum(len(row) >= 3 for row in span_rows)
     wide = sum(len(row) >= 3 for row in rows)
-    return len(span_rows) >= 3 and (
-        (3 * len(span_rows) >= len(rows) and 4 * cells >= 3 * len(span_rows))
-        or 4 * wide >= 3 * len(rows)
+    # A table whose gutter-crossing cells are few (e.g. one wrapped feature column) still reads
+    # row by row when most of its rows hold three or more cells.
+    return (len(rows) >= 3 and 4 * wide >= 3 * len(rows)) or (
+        len(span_rows) >= 3 and 3 * len(span_rows) >= len(rows) and 4 * cells >= 3 * len(span_rows)
     )
 
 

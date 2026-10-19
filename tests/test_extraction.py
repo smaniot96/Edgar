@@ -469,6 +469,26 @@ def test_table_rows_with_blank_cells_read_as_a_table_band():
     assert "row0 spanning" in text and "row8 spanning" in text
 
 
+def test_table_with_one_gutter_crossing_cell_in_two_rows_reads_row_by_row():
+    # Mirrors PHB p.91 and p.101: a full-width class table whose wide feature cell crosses the
+    # gutter on only two rows. Every row still holds three or more cells, so the rows read in order.
+    table = []
+    for i in range(10):
+        y = 100 + i * 14
+        table += [
+            Line(f"lvl{i}", (30, y, 60, y + 10), 9),
+            Line(f"bonus{i}", (80, y, 110, y + 10), 9),
+            Line(f"feature{i}", (130, y, 180, y + 10), 9),
+            Line(f"slot{i}", (360, y, 380, y + 10), 9),
+            Line(f"slot2_{i}", (420, y, 440, y + 10), 9),
+        ]
+    table += [Line("feature crossing one", (200, 100, 320, 110), 9)]
+    table += [Line("feature crossing two", (200, 114, 320, 124), 9)]
+    text, _ = render_native_page(table, 500)
+    assert text.index("lvl0") < text.index("lvl5") < text.index("lvl9")
+    assert "lvl0 bonus0 feature0" in text or "lvl0 bonus0" in text
+
+
 def test_mixed_two_column_rows_with_few_spanning_cells_still_fail_closed():
     # Negative: prose rows of two cells with a few spanning fragments stay ambiguous.
     lines = [Line(f"left {i}", (30, 50 + i * 14, 230, 60 + i * 14), 10) for i in range(12)]
