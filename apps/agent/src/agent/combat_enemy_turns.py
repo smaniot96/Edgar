@@ -65,7 +65,9 @@ from agent.monster_stats import (
 )
 from agent.positioning import (
     MELEE,
+    MELEE_FEET,
     RANGED,
+    RANGED_START_FEET,
     attacks_from_band,
     band_of,
     primary_melee_attack,
@@ -588,6 +590,8 @@ class EnemyTurns:
             # Its one attack is a melee attack, so at range it closes in first (EDG-044).
             if band_of(e) == RANGED:
                 e["band"] = MELEE
+                if "distance_ft" in e:
+                    e["distance_ft"] = MELEE_FEET
                 self.rec.log_lines.append(f"{e['name']} closes to melee range.")
                 self._foe_closed(e)
             self.enemy_attack(
@@ -605,6 +609,8 @@ class EnemyTurns:
         if band == RANGED and not any(a.ranged for a in plan):
             # A melee-only foe at range spends its movement to close in, then attacks (EDG-044).
             e["band"] = band = MELEE
+            if "distance_ft" in e:
+                e["distance_ft"] = MELEE_FEET
             self.rec.log_lines.append(f"{e['name']} closes to melee range.")
             self._foe_closed(e)
         plan = attacks_from_band(plan, band)
@@ -670,6 +676,8 @@ class EnemyTurns:
         self.exact_attack(e, option.attack, band)
         if option.flight_after and is_standing(e):
             e["band"] = RANGED
+            if "distance_ft" in e:
+                e["distance_ft"] = RANGED_START_FEET
             self.rec.log_lines.append(f"{e['name']} flies away after its Wing Attack.")
 
     def lair_action(self, e: dict) -> None:

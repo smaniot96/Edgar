@@ -352,6 +352,8 @@ def _declared_moves(t: _Turn) -> None:
         if allowed:
             actual_steps.append((band, allowed))
     moves.steps = actual_steps
+    for row, distance in moves.distances:
+        row["distance_ft"] = distance  # a feet move's recorded distance (positioning.distance_of)
     if dash:
         rec.round_effects.append("dash")
     if disengage:

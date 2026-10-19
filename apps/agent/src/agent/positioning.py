@@ -41,6 +41,13 @@ _CLOSE_IN = re.compile(
     r"|\bdash\s+(?:in\s+)?(?:toward|towards|to|at|into)\b",
     re.IGNORECASE,
 )
+# "move 10 feet toward the goblin" and "move 10 feet away": the movement word with its direction.
+_FEET_NUMBER = r"(?:\d+\s*(?:feet|foot|ft\.?)\s+)?"
+_CLOSE_IN_FEET = re.compile(
+    r"\bmove\s+" + _FEET_NUMBER + r"(?:toward|towards|closer\s+to)\b", re.IGNORECASE
+)
+_RETREAT_FEET = re.compile(r"\bmove\s+" + _FEET_NUMBER + r"away\b", re.IGNORECASE)
+_FEET = re.compile(r"(\d+)\s*(?:feet|foot|ft\b)", re.IGNORECASE)
 _RETREAT = re.compile(
     r"\b(?:backs?\s+(?:away|off)|retreats?|retreating|fall(?:s|ing)?\s+back|withdraw(?:s|ing)?|"
     r"keep(?:s|ing)?\s+(?:my|our)\s+distance|step(?:s|ping)?\s+back|move\s+away|pull(?:s|ing)?\s+back)\b"
@@ -76,12 +83,67 @@ def attacks_from_band(plan: Sequence[MonsterAttack], band: str) -> tuple[Monster
     return melee or tuple(plan)
 
 
+# The hero's speed in feet (PHB p.192: most heroes have 30 feet). The sheet records no speed, so the
+# engine uses this value for every hero and says so in the contract; Dash doubles it (PHB p.193).
+HERO_SPEED_FEET = 30
+# The distance a foe at range is taken to stand, when no move has recorded its distance (a ruling:
+# encounters record bands, not distances). A foe at melee stands within 5 feet.
+RANGED_START_FEET = 30
+MELEE_FEET = 5
+
+
 def movement_steps(text: str | None) -> tuple[tuple[str, int], ...]:
     """The hero's declared moves as (destination band, position in the text), in the order stated."""
     body = str(text or "")
     steps = [(MELEE, m.start()) for m in _CLOSE_IN.finditer(body)]
+    steps += [(MELEE, m.start()) for m in _CLOSE_IN_FEET.finditer(body)]
     steps += [(RANGED, m.start()) for m in _RETREAT.finditer(body)]
-    return tuple(sorted(steps, key=lambda step: step[1]))
+    steps += [(RANGED, m.start()) for m in _RETREAT_FEET.finditer(body)]
+    return tuple(sorted(_unique_steps(steps), key=lambda step: step[1]))
+
+
+def _unique_steps(steps: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    """One step per position: "move 10 feet toward" matches both the feet and the plain pattern."""
+    seen: dict[int, tuple[str, int]] = {}
+    for band, pos in steps:
+        seen.setdefault(pos, (band, pos))
+    return list(seen.values())
+
+
+def movement_legs(text: str | None) -> tuple[tuple[str, int, int | None], ...]:
+    """Each declared move with the feet it names: (destination band, position, feet or None).
+
+    A move's feet are the first "N feet" between its position and the next move's.
+    """
+    body = str(text or "")
+    steps = movement_steps(body)
+    legs = []
+    for index, (band, pos) in enumerate(steps):
+        end = steps[index + 1][1] if index + 1 < len(steps) else len(body)
+        feet = _FEET.search(body[pos:end])
+        legs.append((band, pos, int(feet.group(1)) if feet else None))
+    return tuple(legs)
+
+
+def feet_refusal(hero: str, feet: int, *, dash: bool) -> str | None:
+    """The refusal when the declared feet exceed the speed budget. None when they fit."""
+    budget = HERO_SPEED_FEET * (2 if dash else 1)
+    if feet <= budget:
+        return None
+    how = "with Dash" if dash else "at normal speed"
+    return (
+        f"{hero} can move {budget} feet {how} this turn (speed {HERO_SPEED_FEET} feet"
+        f"{', doubled by Dash' if dash else ''}), and this turn declares {feet} feet. Choose a shorter "
+        "move: no roll is made and no turn is spent."
+    )
+
+
+def distance_of(foe: Mapping[str, Any], band: str) -> int:
+    """A foe's recorded distance in feet, or the distance its band implies when none is recorded."""
+    recorded = foe.get("distance_ft")
+    if isinstance(recorded, int) and not isinstance(recorded, bool):
+        return recorded
+    return MELEE_FEET if band == MELEE else RANGED_START_FEET
 
 
 def move_refusal(hero: str, changes: int, *, dash: bool) -> str | None:
@@ -132,6 +194,8 @@ class MovePlan:
     steps: list[tuple[str, list[dict]]] = field(default_factory=list)
     bands: dict[int, str] = field(default_factory=dict)
     question: str | None = None
+    # Foe rows whose recorded distance a feet move changes, with the distance after the move.
+    distances: list[tuple[dict, int]] = field(default_factory=list)
 
 
 def plan_moves(
@@ -162,7 +226,7 @@ def plan_moves(
         named_foe = pick(str(n)) if at >= 0 else None
         if named_foe is not None:
             mentions.append((at, named_foe))
-    for band, pos in movement_steps(text):
+    for band, pos, feet in movement_legs(text):
         after = [m for m in mentions if m[0] > pos]
         before = [m for m in mentions if m[0] <= pos]
         chosen = (
@@ -171,6 +235,27 @@ def plan_moves(
             else (max(before, key=lambda m: m[0]) if before else None)
         )
         target = chosen[1] if chosen else None
+        if feet is not None:
+            # A move in feet is measured from the foe's recorded distance (see `distance_of`).
+            if target is None and len(foes) == 1:
+                target = foes[0]
+            if target is None:
+                names = ", ".join(str(f.get("name")) for f in foes)
+                plan.question = f"Which foe do you move {'toward' if band == MELEE else 'away from'}? ({names})"
+                return plan
+            current = next(
+                (d for row, d in plan.distances if row is target),
+                distance_of(target, bands[id(target)]),
+            )
+            # Closing stops at the melee boundary: the hero does not move into the foe's space.
+            after_move = max(MELEE_FEET, current - feet) if band == MELEE else current + feet
+            plan.distances = [(row, d) for row, d in plan.distances if row is not target]
+            plan.distances.append((target, after_move))
+            new_band = MELEE if after_move <= MELEE_FEET else RANGED
+            if bands[id(target)] != new_band:
+                bands[id(target)] = new_band
+                plan.steps.append((new_band, [target]))
+            continue
         if target is not None:
             changing = [target] if bands[id(target)] != band else []
         elif band == RANGED:

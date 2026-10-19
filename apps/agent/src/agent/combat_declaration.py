@@ -38,7 +38,9 @@ from agent.positioning import (
     RANGED,
     MovePlan,
     band_of,
+    feet_refusal,
     move_refusal,
+    movement_legs,
     movement_steps,
     plan_moves,
     reach_refusal,
@@ -258,6 +260,10 @@ def declare_action(
             )
     # EDG-044: declared moves are free but change band at most once (twice with Dash). Planned on
     # copies only: a refused turn changes no foe and rolls no die.
+    feet_total = sum(f for _b, _p, f in movement_legs(None if fled else moves_text) if f is not None)
+    feet_refused = feet_refusal(hero, feet_total, dash=dash) if feet_total else None
+    if feet_refused:
+        return _ask_player(state, feet_refused, combat_state=combat_state)
     moves = plan_moves(
         None if fled else moves_text,
         named,
