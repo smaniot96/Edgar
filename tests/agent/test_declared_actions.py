@@ -116,7 +116,7 @@ async def test_an_agreeing_proposal_runs_the_turn_as_before(fake_llm_schema, fak
 
 
 @pytest.mark.asyncio
-async def test_the_brief_fixture_is_held_for_a_question_before_any_die(
+async def test_the_brief_fixture_asks_before_any_die_when_its_branch_is_a_second_attack(
     fake_llm_schema, fake_retrieval
 ) -> None:
     # The contingency is registered but not yet executable (EDG-182 increment 1), so the turn is
@@ -127,7 +127,9 @@ async def test_the_brief_fixture_is_held_for_a_question_before_any_die(
         "I move 10 feet toward the goblin and attack it with my longsword, off-hand with my dagger, and if it drops attack the other",
         parsed=ParsedInput.model_validate(MOVE_TWO_WEAPONS_CONTINGENCY),
     )
-    assert "contingency" in out["narration"]
+    # The conditional attack is a second attack: the turn has one action, so the engine refuses that
+    # branch with the ruling (EDG-182 contingencies); nothing is dropped, and nothing rolls.
+    assert "A second attack needs its own action" in out["narration"]
     assert out["adjudication_result"].dice_log == []
     assert out["combat_state"]["round"] == 1
     assert _foe(out, "Goblin")["hp_current"] == 30 and _foe(out, "Other")["hp_current"] == 30

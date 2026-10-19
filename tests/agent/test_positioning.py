@@ -36,6 +36,7 @@ from agent.supported_rules import (
     classify_unsupported_actions,
 )
 from apps.api.services.turn_runner import combat_state_public
+from tests.agent.confirming import confirm_turn
 from tests.agent.test_combat import _enemy, _player, _state
 from tools.dice import use_rng
 
@@ -110,7 +111,8 @@ async def _turn(
     if character is not None:
         state["character"] = character
     with use_rng(random.Random(seed)):
-        return await combat_round_node(state)
+        out = await combat_round_node(state)
+        return await confirm_turn(out, state)
 
 
 def _entries(out: dict, purpose: str) -> list[dict]:
@@ -583,7 +585,7 @@ def test_positioning_moves_into_supported_and_the_remainder_is_narrowed() -> Non
     unsupported = {m.id: m for m in UNSUPPORTED_MECHANICS}
     assert {"positioning", "opportunity_attacks", "action_economy"} <= set(supported)
     assert (
-        "positioning_cover" in unsupported and unsupported["positioning_cover"].owner == "EDG-044"
+        "positioning_cover" in unsupported and unsupported["positioning_cover"].owner == "EDG-182"
     )
     assert "Help" in unsupported["action_economy_remainder"].title
     assert "Dash" not in unsupported["action_economy_remainder"].title

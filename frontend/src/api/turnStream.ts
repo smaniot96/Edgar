@@ -105,6 +105,18 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   campaign_ended: { category: "validation", message: "This campaign is complete. You can read its saved history.", action: "read_history" },
   completed: { category: "validation", message: "This campaign is complete. You can read its saved history.", action: "read_history" },
   turn_identity_conflict: { category: "validation", message: "This action identifier already belongs to a different action. Check its saved result before continuing.", action: "check_existing_result" },
+  // Table pacing (EDG-048, EDG-051): the same fixed copy the server sends.
+  not_your_spotlight: { category: "busy", message: "It is another player's turn. Wait for the spotlight to pass to you, then try again.", action: "wait" },
+  spotlight_unavailable: { category: "busy", message: "Nobody holds the spotlight right now. Wait for the table to hand it over, or ask the host.", action: "wait" },
+  spotlight_cooldown: { category: "busy", message: "You have just had the spotlight. Let another player act, then try again shortly.", action: "wait" },
+  spotlight_stale: { category: "busy", message: "The table changed before this action arrived. Refresh the table and try again.", action: "retry" },
+  queue_unavailable: { category: "validation", message: "Queued actions are only available to seated players at a table with several heroes.", action: "wait" },
+  queue_not_needed: { category: "validation", message: "It is your turn, or the spotlight is free. Act directly instead of queueing.", action: "retry" },
+  queued_action_exists: { category: "validation", message: "You already have a queued action. Edit or cancel it first.", action: "fix_input" },
+  queued_action_missing: { category: "validation", message: "That queued action no longer exists. Queue it again if you still want it.", action: "fix_input" },
+  queued_action_changed: { category: "validation", message: "Your queued action was edited elsewhere. Review it before playing it.", action: "fix_input" },
+  queued_action_stale: { category: "validation", message: "The situation changed since you queued this action, so it was not played. Review it, edit it or queue a new one.", action: "fix_input" },
+  queued_action_expired: { category: "validation", message: "Your queued action expired before your turn, so it was not played. Queue it again if you still want it.", action: "fix_input" },
   not_found: { category: "not_found", message: "That saved item could not be found. Refresh and check that it is still available.", action: "fix_input" },
   // Token mode (EDG-065/EDG-160). The server does not say whether a token is missing, revoked or
   // unknown, so the copy covers all three and points at the one fix the player controls.

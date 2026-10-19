@@ -61,7 +61,7 @@ from ..schemas.channel import ChannelActor
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.spotlight import SpotlightRead, SpotlightUpdate
 from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
-from ..services import spotlight
+from ..services import queued_actions, spotlight
 from ..services.campaign_sources import source_reads
 from ..services.character_assignments import character_play_state, load_active_assignment
 from ..services.combat import (
@@ -276,6 +276,8 @@ async def _load_turn_initial_state(
         # EDG-045: explicit campaign modes (progression_mode, death_mode) the engine reads per turn.
         "progression_mode": campaign.progression_mode,
         "death_mode": campaign.death_mode,
+        # EDG-182: confirm every turn that declares an action, for every hero in the campaign.
+        "combat_always_confirm": bool(campaign.combat_always_confirm),
         "adventure_manifests": manifests,
         "prepared_campaign_overlays": prepared_overlays,
         "prepared_amendment_events": prepared_amendment_events,
@@ -695,6 +697,7 @@ async def update_spotlight(
             timeout_seconds=body.timeout_seconds,
             holder=holder,
             expected_version=body.expected_version,
+            pacing_policy=body.pacing,
         )
         if change is not None and change.announce:
             await spotlight.announce(
@@ -755,10 +758,19 @@ async def _open_spotlight(
     *,
     expected_version: int | None,
     consumes: bool,
+    body: TurnRequest | None = None,
 ) -> spotlight.SpotlightTurn | None:
-    """Decide who may act now (under the turn lock). Announces a claim or hand-over before the turn starts."""
+    """Decide who may act now (under the turn lock). Announces a claim or hand-over before the turn starts.
+
+    A turn that plays a queued action (EDG-051) is validated again inside the same decision.
+    """
+    queued = (
+        spotlight.QueuedClaim(body.queued_action_id, body.queued_action_version, body.message)
+        if body is not None and body.queued_action_id is not None
+        else None
+    )
     opened = await spotlight.open_turn(
-        db, redis, session_id, auth, expected_version=expected_version, consumes=consumes
+        db, redis, session_id, auth, expected_version=expected_version, consumes=consumes, queued=queued
     )
     if opened.change is not None and opened.change.announce:
         await spotlight.announce(
@@ -778,6 +790,8 @@ async def _announce_pass(
         await spotlight.announce(
             redis, session_id, spotlight.Change(reason=plan.passed_reason, announce=True), actor=actor
         )
+    elif plan is not None and plan.queue_consumed:
+        await queued_actions.announce(redis, session_id, "played", actor=actor)
 
 
 def _turn_http_error_response(exc: HTTPException) -> JSONResponse:
@@ -900,7 +914,7 @@ async def _session_turn(
             return replay
         # EDG-048: the spotlight decides before the state loads (a claim changes the acting hero).
         plan = await _open_spotlight(
-            db, redis, session_id, auth, expected_version=body.spotlight_version, consumes=True
+            db, redis, session_id, auth, expected_version=body.spotlight_version, consumes=True, body=body
         )
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         if body.request_id is not None:
@@ -1012,7 +1026,7 @@ async def session_turn_stream(
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
         plan = await _open_spotlight(
-            db, redis, session_id, auth, expected_version=body.spotlight_version, consumes=True
+            db, redis, session_id, auth, expected_version=body.spotlight_version, consumes=True, body=body
         )
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         if body.request_id is not None:

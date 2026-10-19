@@ -41,6 +41,7 @@ from agent.supported_rules import (
     apply_narration_boundary,
     classify_unsupported_actions,
 )
+from tests.agent.confirming import confirm_turn
 from tests.agent.test_spells import ScriptedDice
 from tools.dice import use_rng
 
@@ -283,7 +284,7 @@ async def test_action_surge_adds_one_attack_and_recharges(fake_llm_schema, fake_
 
     state = _state(FIGHTER_2, [dict(safe_ogre)], "I use Action Surge and attack the ogre")
     with use_rng(random.Random(5)):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     adj = out["adjudication_result"]
     assert len(_attack_checks(adj.dice_log)) == 2  # the round's attack and the surged one
     assert "Narrative ruling" not in adj.mechanical_summary  # executed, so no ruling
@@ -293,7 +294,7 @@ async def test_action_surge_adds_one_attack_and_recharges(fake_llm_schema, fake_
     spent = _sheet("Fighter", 2, features={ACTION_SURGE: {"uses_remaining": 0}})
     state = _state(spent, [dict(safe_ogre)], "I use Action Surge and attack the ogre")
     with use_rng(random.Random(5)):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     adj = out["adjudication_result"]
     assert len(_attack_checks(adj.dice_log)) == 1
     assert "Action Surge has no uses left" in adj.mechanical_summary
@@ -304,7 +305,7 @@ async def test_action_surge_adds_one_attack_and_recharges(fake_llm_schema, fake_
         _sheet("Fighter", 1), [dict(safe_ogre)], "I use Action Surge and attack the ogre"
     )
     with use_rng(random.Random(5)):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     assert len(_attack_checks(out["adjudication_result"].dice_log)) == 1
     assert "needs fighter level 2" in out["adjudication_result"].mechanical_summary
 
@@ -322,7 +323,7 @@ async def test_class_gating_refuses_a_feature_the_class_lacks(
         "I go into a rage and attack the ogre",
     )
     with use_rng(random.Random(2)):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     assert "only a barbarian has rage" in out["adjudication_result"].mechanical_summary.lower()
     assert not out["combat_state"].get("raging")
     assert out["adjudication_result"].character_update is None or (
@@ -348,7 +349,7 @@ async def test_sneak_attack_needs_engine_advantage_and_finesse_or_ranged(
     for seed in range(20):
         state = _state(ROGUE_1, [dict(restrained)], "I stab the ogre with my dagger")
         with use_rng(random.Random(seed)):
-            out = await combat_round_node(state)
+            out = await confirm_turn(await combat_round_node(state), state)
         adj = out["adjudication_result"]
         sneak = _purpose(adj.dice_log, "sneak attack")
         hit = _purpose(adj.dice_log, "player damage")
@@ -366,13 +367,13 @@ async def test_sneak_attack_needs_engine_advantage_and_finesse_or_ranged(
     for seed in range(10):
         state = _state(ROGUE_1, [dict(plain)], "I stab the ogre with my dagger")
         with use_rng(random.Random(seed)):
-            out = await combat_round_node(state)
+            out = await confirm_turn(await combat_round_node(state), state)
         assert not _purpose(out["adjudication_result"].dice_log, "sneak attack")
         blade = _state(
             _sheet("Rogue", 1, weapons=("longsword",)), [dict(restrained)], "I hit the ogre"
         )
         with use_rng(random.Random(seed)):
-            out = await combat_round_node(blade)
+            out = await confirm_turn(await combat_round_node(blade), blade)
         assert not _purpose(out["adjudication_result"].dice_log, "sneak attack")
     assert sneak_hits > 0
 
@@ -407,7 +408,7 @@ async def test_rage_adds_damage_uses_recharge_and_ends_with_the_encounter(
     for seed in range(20):
         state = _state(BARBARIAN_1, [dict(ogre)], "I rage and swing the greataxe at the ogre")
         with use_rng(random.Random(seed)):
-            out = await combat_round_node(state)
+            out = await confirm_turn(await combat_round_node(state), state)
         adj = out["adjudication_result"]
         assert out["combat_state"]["raging"] is True
         assert adj.character_update.class_feature_uses == {RAGE: 1}
@@ -423,7 +424,7 @@ async def test_rage_adds_damage_uses_recharge_and_ends_with_the_encounter(
     raging_state = _state(BARBARIAN_1, [dict(ogre)], "I rage again and attack the ogre")
     raging_state["combat_state"]["combatants"][0]["raging"] = True
     with use_rng(random.Random(1)):
-        out = await combat_round_node(raging_state)
+        out = await confirm_turn(await combat_round_node(raging_state), raging_state)
     assert out["adjudication_result"].character_update.class_feature_uses is None
 
     # Exhausted: refused, and no raging flag is set.
@@ -438,10 +439,9 @@ async def test_rage_adds_damage_uses_recharge_and_ends_with_the_encounter(
     rat_turn = ParsedInput(intent="combat", check="attack", target="rat")
     won = None
     for seed in range(20):
+        rat_state = _state(BARBARIAN_1, [dict(weak)], "I rage and attack the rat", parsed=rat_turn)
         with use_rng(random.Random(seed)):
-            won = await combat_round_node(
-                _state(BARBARIAN_1, [dict(weak)], "I rage and attack the rat", parsed=rat_turn)
-            )
+            won = await confirm_turn(await combat_round_node(rat_state), rat_state)
         if won["combat_state"]["ended"]:
             break
     assert won["combat_state"]["ended"] is True
@@ -490,7 +490,7 @@ async def test_rage_halves_physical_damage_taken_outside_heavy_armor(
     # The hero hits (d20 10 against AC 1) for 1d12 = 5; the brute hits (15 + 3 against AC 10) for
     # 1d6 + 1 = 6 before resistance.
     with use_rng(ScriptedDice([10, 5, 15, 5])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     adj = out["adjudication_result"]
     assert adj.character_update.hp_delta == -taken
     assert ("halved by Rage resistance" in adj.mechanical_summary) is (taken == 3)
@@ -509,7 +509,7 @@ async def test_rage_ends_after_one_minute(fake_llm_schema, fake_retrieval) -> No
         state["combat_state"]["round"] = round_num
         state["combat_state"]["combatants"][0].update(raging=True, rage_round=1)
         with use_rng(ScriptedDice([10, 5, 10])):
-            out = await combat_round_node(state)
+            out = await confirm_turn(await combat_round_node(state), state)
         adj = out["adjudication_result"]
         assert _purpose(adj.dice_log, "player damage")[0]["expression"] == expression
         assert out["combat_state"]["raging"] is raging
@@ -530,7 +530,7 @@ async def test_declaring_rage_in_heavy_armor_spends_the_use_for_no_benefit(
         "I rage and swing the greataxe at the ogre",
     )
     with use_rng(ScriptedDice([10, 5, 10])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     adj = out["adjudication_result"]
     assert adj.character_update.class_feature_uses == {RAGE: 1}
     assert "Heavy armor blocks its benefits" in adj.mechanical_summary
@@ -546,7 +546,7 @@ async def test_rage_is_a_bonus_action_beside_the_attack(fake_llm_schema, fake_re
     ogre = _enemy("Ogre", hp=400, ac=1, init=1, attack_bonus=-20)
     state = _state(BARBARIAN_1, [dict(ogre)], "I rage and swing the greataxe at the ogre")
     with use_rng(random.Random(3)):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     economy = out["combat_state"]["economy"]
     assert economy["bonus_action"] == "Rage" and economy["action"] == "attack"
     assert _attack_checks(out["adjudication_result"].dice_log)  # the attack was still rolled
@@ -566,7 +566,7 @@ async def test_rage_does_not_apply_to_a_ranged_attack(fake_llm_schema, fake_retr
             "I rage and shoot the ogre with my longbow",
         )
         with use_rng(random.Random(seed)):
-            out = await combat_round_node(state)
+            out = await confirm_turn(await combat_round_node(state), state)
         for hit in _purpose(out["adjudication_result"].dice_log, "player damage"):
             hits += 1
             # Longbow 1d8 with DEX +2 (14): no Strength bonus and no rage bonus.

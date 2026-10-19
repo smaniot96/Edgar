@@ -25,6 +25,9 @@ def _ogre(*, ac: int = 1, effects: list[dict] | None = None) -> dict:
     return {**_enemy("Ogre", hp=400, ac=ac, init=1, attack_bonus=-20), "effects": effects or []}
 
 
+from tests.agent.confirming import confirm_turn  # noqa: E402
+
+
 async def _turn(sheet: dict, message: str, faces: list[int], *, foe=None, raging=False) -> dict:
     from agent.graph_combat import combat_round_node
 
@@ -34,6 +37,7 @@ async def _turn(sheet: dict, message: str, faces: list[int], *, foe=None, raging
         state["combat_state"]["combatants"][0].update(raging=True, rage_round=1)
     with use_rng(dice := ScriptedDice(faces)):
         out = await combat_round_node(state)
+        out = await confirm_turn(out, state)
     assert not dice.faces, f"the script was not used up: {dice.faces}"
     return out
 

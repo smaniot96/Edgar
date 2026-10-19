@@ -141,6 +141,13 @@ and unseated members get 403; non-members get 404. Which seated player may act r
 spotlight's decision (EDG-048): a seated player who does not hold the spotlight gets 409
 `not_your_spotlight` before any model call and without spending anything. See docs/session-broadcast.md.
 
+Table pacing (EDG-051) adds no role. Any member reads the pacing policy and the queue (`GET
+/api/sessions/{id}/spotlight`, `GET /api/sessions/{id}/queue`); only the owner sets the policy
+(`PATCH /api/sessions/{id}/spotlight`); `POST`, `PATCH` and `DELETE` on `/api/sessions/{id}/queue*`
+need a seat (or the owner), a player edits or cancels only their own queued action, and the owner may
+cancel any. A queued action's text is visible only to its author. Non-members get the same 404 as a
+missing session, spectators and unseated members get 403 on the writes.
+
 Invites (`campaign_invites`), owner-managed under `/api/campaigns/{id}/invites`:
 
 - The token is `edginv_` plus 256 random bits. Only its SHA-256 digest is stored. The plaintext is
@@ -204,7 +211,7 @@ list nor guarded, and if the admin set changes without an update here.
 | --- | --- | --- |
 | Public | `/health`, `/ready` (component statuses only), `/`, `/docs`, `/redoc`, `/openapi.json`, `/ui/*` (static UI) | No credential needed. |
 | Authenticated, shared read | `GET /api/adventures`, `GET /api/adventures/{slug}`, `GET /api/rules/supported-scope`, `GET /api/character-presets`, `GET /api/users/me` (own user), `PATCH /api/users/me` (own user), `POST /api/adventures/{slug}/campaign` (creates a campaign owned by the caller) | Any valid token. Private preparations are hidden from non-admins. |
-| Owner-scoped | `/api/campaigns*` (including `/characters`, `/npcs`, `/world-flags`, `/sources/{slug}/upload`), `/api/sessions*` (including `/turn`, `/turn/stream`, `/intro`, `/turns/{id}`, `/combat`, `/messages`, `/map*`, `/assets/{id}`, `/journal*`), `/api/characters*`, `/api/npcs/{id}` | The caller must own the campaign, session, character or NPC. Others get 404. |
+| Owner-scoped | `/api/campaigns*` (including `/characters`, `/npcs`, `/world-flags`, `/sources/{slug}/upload`), `/api/sessions*` (including `/turn`, `/turn/stream`, `/intro`, `/spotlight`, `/queue*`, `/turns/{id}`, `/combat`, `/messages`, `/map*`, `/assets/{id}`, `/journal*`), `/api/characters*`, `/api/npcs/{id}` | The caller must own the campaign, session, character or NPC. Others get 404. |
 | Admin only | `POST /api/seed` (attaches to the caller's own account), `POST /api/users` (creates accounts, with no first-user gate in token mode), `GET /metrics`, `GET /api/sessions/{id}/diagnostics/{combat,turns,turn-traces}`, every adventure catalogue write: `POST /api/adventures/{upload,generate}`, `POST /api/adventures/{slug}/{retry,cancel,preparation/setup}`, `PATCH`/`DELETE /api/adventures/{slug}`, the manifest routes `/api/adventures/{slug}/manifest*`, extraction previews `GET /api/adventures/{slug}/extraction*`, and source recovery `POST /api/campaigns/{id}/sources/{slug}/upload` (which also requires campaign ownership) | Admin token required (403 otherwise). The diagnostics routes stay behind `EDGAR_DEBUG` (404 when off). |
 
 Failures use the safe-error taxonomy: `authentication_required` (401, with `WWW-Authenticate: Bearer`)

@@ -42,6 +42,18 @@ it("shows a waiting declaration and sends yes or no as the reply", async () => {
   unmount();
 });
 
+it("lists standing orders and cancels one by naming its foe", async () => {
+  const onReply = vi.fn();
+  const withOrder = { ...combat, pending_declaration: null, standing_orders: [{ foe: "Goblin", summary: "Attack Goblin each time it closes in" }] } as unknown as CombatState;
+  const { host, unmount } = render(<CombatHud combat={withOrder} onReply={onReply} />);
+  const list = host.querySelector('[aria-label="Standing orders"]');
+  expect(list?.textContent).toContain("Attack Goblin each time it closes in");
+  const button = Array.from(list?.querySelectorAll("button") ?? [])[0];
+  await act(async () => button.click());
+  expect(onReply.mock.calls).toEqual([["cancel the standing order against Goblin"]]);
+  unmount();
+});
+
 it("shows no confirmation when none is waiting or the encounter has ended", () => {
   const { host, unmount } = render(<CombatHud combat={{ ...combat, pending_declaration: null }} />);
   expect(host.querySelector('[aria-label="Confirm declaration"]')).toBeNull();

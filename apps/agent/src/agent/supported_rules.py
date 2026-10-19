@@ -754,6 +754,51 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         test="tests/agent/test_action_economy.py::test_second_action_is_refused_before_any_roll",
     ),
     Mechanic(
+        id="declared_actions",
+        title="Declared combat actions, confirmed when multi-part",
+                scope=(
+            "A combat turn is a list of declared actions the engine validates against the player's words and state. Multi-part, conditional and standing turns are repeated back and run only on yes; always confirm is a per-hero option."
+        ),
+        implementation="agent.combat_confirmation:needs_confirmation",
+        test="tests/agent/test_declaration_confirmation.py::test_multi_part_and_chosen_turns_need_confirmation_on_every_path",
+    ),
+    Mechanic(
+        id="movement_feet",
+        title="Movement in feet within the speed budget",
+                scope=(
+            "A move may name its feet (PHB PDF p.192-193): speed 30 feet, doubled by Dash, refused over budget. A foe's distance is recorded in feet from 30 at range and 5 in melee (rulings: encounters record bands). Leaving melee by feet provokes."
+        ),
+        implementation="agent.positioning:feet_refusal",
+        test="tests/agent/test_feet_movement.py::test_a_move_of_thirty_feet_closes_into_melee_then_the_attack_is_rolled",
+    ),
+    Mechanic(
+        id="contingencies",
+        title="One if-clause: target down or hit points below a number",
+                scope=(
+            "One if-clause after the action: the foe the attack names goes down, or hit points fall below a number. The branch is a move (PHB PDF p.192); a second attack is refused (PHB PDF p.189). A condition that does not hold is logged, not run."
+        ),
+        implementation="agent.contingency:split_contingency",
+        test="tests/agent/test_contingencies.py::test_a_branch_whose_condition_holds_is_applied_after_the_action",
+    ),
+    Mechanic(
+        id="standing_orders",
+        title="Standing reaction orders",
+                scope=(
+            "A standing order is a Ready kept until cancelled (an engine ruling; PHB Ready is single-use). It fires with the hero's reaction when the foe closes in (PHB PDF p.191, p.194), is listed in the combat view, and a reply naming the foe cancels it."
+        ),
+        implementation="agent.combat_player_phase:cancel_standing_orders",
+        test="tests/agent/test_standing_orders.py::test_a_standing_order_fires_on_the_foes_close_in_and_survives_the_lapse",
+    ),
+    Mechanic(
+        id="nearest_mechanic",
+        title="Grab and push as the nearest maneuver, confirmed",
+                scope=(
+            "'Grab', 'seize' or 'wrestle' a foe reads as the grapple, and 'push' or 'shove' as a knock prone (PHB PDF p.196). The turn is repeated back and runs only on yes; a push away keeps its unsupported ruling."
+        ),
+        implementation="agent.declarations:nearest_maneuver",
+        test="tests/agent/test_nearest_mechanic.py::test_a_grab_is_repeated_back_as_a_grapple_and_runs_only_on_yes",
+    ),
+    Mechanic(
         id="readied_action",
         title="Ready: a melee attack held for a closing foe",
         scope=(
@@ -882,20 +927,31 @@ UNSUPPORTED_MECHANICS: tuple[UnsupportedMechanic, ...] = (
     ),
     UnsupportedMechanic(
         id="positioning_cover",
-        title="Cover, high ground, flanking, difficult terrain and exact distances",
+        title="Cover, high ground, flanking and difficult terrain",
         boundary=(
-            "No cover, elevation, flanking or difficult-terrain modifier is applied. Only the melee and "
-            "ranged bands are recorded: no exact distance in feet is tracked and no movement speed is spent."
+            "No cover, elevation, flanking or difficult-terrain modifier is applied. Naming one is refused with "
+            "its ruling and the nearest supported action (PHB PDF p.197, p.193), and no roll is made. Distances "
+            "are recorded only for moves that name feet (see movement_feet)."
         ),
-        owner="EDG-044",
+        owner="EDG-182",
+    ),
+    UnsupportedMechanic(
+        id="reaction_triggers",
+        title="Other reaction triggers",
+        boundary=(
+            "A readied attack or standing order is triggered only when a foe closes into melee on its own turn. "
+            "Other triggers (a foe leaving reach, a trap, a spoken word), a readied ranged attack, spell or move "
+            "are refused with one question naming the nearest supported option, with no roll and no turn spent."
+        ),
+        owner="EDG-182",
     ),
     UnsupportedMechanic(
         id="action_economy_remainder",
         title="Help, Hide, other reactions and bonus actions",
         boundary=(
             "Each turn allows one action and one bonus action, and only Second Wind, Healing Word, Rage "
-            "and the off-hand attack use the bonus action. Help (PDF p.193) needs an ally, and a solo fight "
-            "has none; Hide (PDF p.193) records no hidden state and no observer, so a declared Hide is an "
+            "and the off-hand attack use the bonus action. Help (PDF p.193) needs an ally, and no combatant in "
+            "this engine is one, so a declared Help is refused with that ruling; Hide (PDF p.193) records no hidden state and no observer, so a declared Hide is an "
             "ordinary ability check at most. A reaction other than an opportunity attack or a readied melee "
             "attack (a Shield or Counterspell, say) has no engine effect, and so does any other readied "
             "trigger, a readied ranged attack, spell or move, and any other bonus action."
