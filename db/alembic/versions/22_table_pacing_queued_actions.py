@@ -1,7 +1,7 @@
 """Table pacing policy and queued intended actions (EDG-051).
 
-Revision ID: 25_table_pacing_queued_actions
-Revises: 20_spotlight_turn_arbitration
+Revision ID: 22_table_pacing_queued_actions
+Revises: 21_combat_always_confirm
 Create Date: 2026-10-19
 
 Session columns (additive; existing sessions get the defaults, which mean exactly what they meant
@@ -10,8 +10,7 @@ queued anything):
   * pacing_policy: 'relaxed', 'standard' (default), 'fast' or 'custom' (an explicit timeout was set).
   * queued_actions: {"revision": n, "items": {"<user_id>": {...}}}, at most one item per player.
 
-The number is deliberately apart from 21 (EDG-182) and 22 to 24 (EDG-049 and others): renumber and
-re-point ``down_revision`` at integration.
+Numbered 22, after 21_combat_always_confirm (EDG-182), at integration.
 """
 
 from collections.abc import Sequence
@@ -20,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "25_table_pacing_queued_actions"
-down_revision: str | Sequence[str] | None = "20_spotlight_turn_arbitration"
+revision: str = "22_table_pacing_queued_actions"
+down_revision: str | Sequence[str] | None = "21_combat_always_confirm"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

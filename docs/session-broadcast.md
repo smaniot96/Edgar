@@ -284,7 +284,7 @@ action. Rules, all decided under the session-row lock:
   transaction.
 
 Stored in `sessions.queued_actions` as `{"revision", "items": {user_id: item}}` (migration
-`25_table_pacing_queued_actions`; renumber at integration). Code: `services/pacing.py` (policy and
+`22_table_pacing_queued_actions`; renumber at integration). Code: `services/pacing.py` (policy and
 pure queue rules), `services/queued_actions.py` (locked operations), `routers/session_queue.py`,
 `services/spotlight.py` (validation in `open_turn`, consumption in `apply_turn_commit`). Tests:
 `tests/api/test_table_pacing.py`.
