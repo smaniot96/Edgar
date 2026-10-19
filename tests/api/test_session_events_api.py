@@ -42,8 +42,8 @@ async def _empty_store(redis_client: FakeAsyncRedis):
     session_stream.reset_drain()
 
 
-PUBLIC = "SECRET-PUBLIC-NARRATION-api-5d1e"
-PRIVATE = "SECRET-PRIVATE-INVENTORY-api-9c2b"
+PUBLIC = "MARKER-PUBLIC-NARRATION-api-5d1e"
+PRIVATE = "MARKER-PRIVATE-INVENTORY-api-9c2b"
 
 
 @pytest.fixture

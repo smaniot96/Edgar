@@ -44,10 +44,10 @@ async def _empty_store(redis_client: FakeAsyncRedis):
     await redis_client.flushdb()
     yield
     session_stream.reset_drain()
-PUBLIC_SECRET = "SECRET-PUBLIC-NARRATION-41c9"
-PRIVATE_SECRET = "SECRET-INVENTORY-7f3a9e"
-REST_SECRET = "SECRET-REST-HIT-DIE-90ab"
-CAROL_SECRET = "SECRET-CAROL-INVENTORY-22de"
+PUBLIC_MARKER = "MARKER-PUBLIC-NARRATION-41c9"
+PRIVATE_MARKER = "MARKER-INVENTORY-7f3a9e"
+REST_MARKER = "MARKER-REST-HIT-DIE-90ab"
+CAROL_MARKER = "MARKER-CAROL-INVENTORY-22de"
 OWNER = Viewer(user_id=10, role="owner")
 BOB = Viewer(user_id=20, role="player")
 CAROL = Viewer(user_id=21, role="player")
@@ -150,7 +150,7 @@ def _stream(redis, subscriber: FakeSubscriber, viewer: Viewer, last_event_id: in
     )
 
 
-def _done(character_name: str, *, with_roll: bool = True, event_id: int = 1, secret: str = PRIVATE_SECRET) -> dict[str, Any]:
+def _done(character_name: str, *, with_roll: bool = True, event_id: int = 1, secret: str = PRIVATE_MARKER) -> dict[str, Any]:
     """The `done` payload the turn runner commits, with secrets in the character and the rest evidence."""
     roll = (
         {
@@ -158,14 +158,14 @@ def _done(character_name: str, *, with_roll: bool = True, event_id: int = 1, sec
             "check": "perception",
             "success": True,
             "dice_result": 17,
-            "rest": {"hit_die": 8, "note": REST_SECRET},
+            "rest": {"hit_die": 8, "note": REST_MARKER},
         }
         if with_roll
         else None
     )
     return {
         "event_id": event_id,
-        "narration": PUBLIC_SECRET,
+        "narration": PUBLIC_MARKER,
         "citations": [{"reference_id": "r1"}],
         "ruling_citation_ids": ["r1"],
         "rules_edition": "2014",
@@ -299,11 +299,11 @@ async def test_committed_turn_splits_public_and_private_data_by_audience(redis_c
     assert by_type["character.state"]["audience"] == f"player:{BOB_ACTOR.user_id}"
 
     table_text = json.dumps([rec for rec in records if rec["audience"] == "table"])
-    assert PRIVATE_SECRET not in table_text
-    assert REST_SECRET not in table_text
-    assert PUBLIC_SECRET in table_text
+    assert PRIVATE_MARKER not in table_text
+    assert REST_MARKER not in table_text
+    assert PUBLIC_MARKER in table_text
     private_text = json.dumps(by_type["character.state"])
-    assert PRIVATE_SECRET in private_text and REST_SECRET in private_text
+    assert PRIVATE_MARKER in private_text and REST_MARKER in private_text
     # The table's roll shows the outcome, never the private rest evidence.
     assert "rest" not in by_type["rolls.committed"]["envelope"]["data"]["roll"]
 
@@ -339,14 +339,14 @@ async def test_frames_outside_the_allowlist_are_never_published(redis_client) ->
     broadcast = TurnBroadcast(redis_client, SID, actor=BOB_ACTOR, turn_id="turn-t")
     await broadcast.start("I look")
     for chunk in (
-        'event: token\ndata: {"text": "partial ' + PRIVATE_SECRET + '"}\n\n',
-        'event: adjudication\ndata: {"reasoning": "' + PRIVATE_SECRET + '"}\n\n',
-        'event: debug\ndata: {"dump": "' + PRIVATE_SECRET + '"}\n\n',
+        'event: token\ndata: {"text": "partial ' + PRIVATE_MARKER + '"}\n\n',
+        'event: adjudication\ndata: {"reasoning": "' + PRIVATE_MARKER + '"}\n\n',
+        'event: debug\ndata: {"dump": "' + PRIVATE_MARKER + '"}\n\n',
     ):
         await broadcast.observe(chunk)
     records = [rec for _seq, rec in await session_channel.read_after(redis_client, SID, 0, block_ms=1)]
     assert [r["envelope"]["type"] for r in records] == ["turn.action"]
-    assert PRIVATE_SECRET not in json.dumps(records)
+    assert PRIVATE_MARKER not in json.dumps(records)
 
 
 @pytest.mark.asyncio
@@ -536,9 +536,9 @@ async def test_private_events_reach_only_the_seated_player_who_acted(redis_clien
     assert any("character.state" in f for f in bob.frames)
     for other in (owner, spectator, carol):
         assert not any("character.state" in f for f in other.frames)
-        assert PRIVATE_SECRET not in "".join(other.frames)
-        assert REST_SECRET not in "".join(other.frames)
-    assert PRIVATE_SECRET in "".join(bob.frames)
+        assert PRIVATE_MARKER not in "".join(other.frames)
+        assert REST_MARKER not in "".join(other.frames)
+    assert PRIVATE_MARKER in "".join(bob.frames)
     for c in collectors:
         await c.stop()
 
@@ -546,10 +546,10 @@ async def test_private_events_reach_only_the_seated_player_who_acted(redis_clien
 @pytest.mark.asyncio
 async def test_spectator_receives_table_channels_and_no_player_or_host_records(redis_client) -> None:
     await session_channel.publish(
-        redis_client, SID, kind="turn.failed", actor=BOB_ACTOR, turn_id="t", data={"message": PRIVATE_SECRET}
+        redis_client, SID, kind="turn.failed", actor=BOB_ACTOR, turn_id="t", data={"message": PRIVATE_MARKER}
     )
     await session_channel.publish(
-        redis_client, SID, kind="narration.committed", actor=BOB_ACTOR, turn_id="t", data={"narration": PUBLIC_SECRET}
+        redis_client, SID, kind="narration.committed", actor=BOB_ACTOR, turn_id="t", data={"narration": PUBLIC_MARKER}
     )
     frames = []
     async with aclosing(_stream(redis_client, FakeSubscriber(SPECTATOR, 30), SPECTATOR, last_event_id=0)) as gen:
@@ -558,8 +558,8 @@ async def test_spectator_receives_table_channels_and_no_player_or_host_records(r
             if any("narration.committed" in f for f in frames):
                 break
     text = "".join(frames)
-    assert PUBLIC_SECRET in text
-    assert PRIVATE_SECRET not in text
+    assert PUBLIC_MARKER in text
+    assert PRIVATE_MARKER not in text
 
 
 @pytest.mark.asyncio
@@ -569,7 +569,7 @@ async def test_host_only_records_reach_the_owner_and_nobody_else(redis_client) -
     record = {
         "audience": "host",
         "envelope": {"seq": 1, "type": "turn.action", "channel": "system", "actor": None, "turn_id": None,
-                     "at": datetime.now(UTC).isoformat(), "data": {"note": PRIVATE_SECRET}},
+                     "at": datetime.now(UTC).isoformat(), "data": {"note": PRIVATE_MARKER}},
     }
     await redis_client.xadd(f"edgar:session:{SID}:log", {"r": json.dumps(record)}, id="1-0")
     await redis_client.set(f"edgar:session:{SID}:seq", 1)
@@ -579,13 +579,13 @@ async def test_host_only_records_reach_the_owner_and_nobody_else(redis_client) -
         async with aclosing(_stream(redis_client, FakeSubscriber(viewer, user_id), viewer, last_event_id=0)) as gen:
             async for frame in gen:
                 out.append(frame)
-                if any(PRIVATE_SECRET in f for f in out) or len(out) >= 4:
+                if any(PRIVATE_MARKER in f for f in out) or len(out) >= 4:
                     break
         return "".join(out)
 
-    assert PRIVATE_SECRET in await take(OWNER, 10)
-    assert PRIVATE_SECRET not in await take(BOB, 20)
-    assert PRIVATE_SECRET not in await take(SPECTATOR, 30)
+    assert PRIVATE_MARKER in await take(OWNER, 10)
+    assert PRIVATE_MARKER not in await take(BOB, 20)
+    assert PRIVATE_MARKER not in await take(SPECTATOR, 30)
 
 
 @pytest.mark.asyncio
@@ -597,7 +597,7 @@ async def test_reconnect_replays_exactly_the_missed_records_the_viewer_may_see(r
     await bob_first.stop()
 
     # While Bob is away: Carol's turn (her private record) and Bob's next turn.
-    await _commit_turn(redis_client, CAROL_ACTOR, "turn-r2", _done("Cass", event_id=2, secret=CAROL_SECRET))
+    await _commit_turn(redis_client, CAROL_ACTOR, "turn-r2", _done("Cass", event_id=2, secret=CAROL_MARKER))
     await _commit_turn(redis_client, BOB_ACTOR, "turn-r3", _done("Bran", event_id=3))
 
     resumed = Collector(_stream(redis_client, FakeSubscriber(BOB, 20), BOB, last_event_id=last_seen))
@@ -617,7 +617,7 @@ async def test_reconnect_replays_exactly_the_missed_records_the_viewer_may_see(r
     assert delivered == expected
     assert not any(_parse(f)["event"] == "snapshot" for f in resumed.frames)
     # Who acted (and as which PC) is public; Carol's private projection and rest evidence are not.
-    assert CAROL_SECRET not in "".join(resumed.frames)
+    assert CAROL_MARKER not in "".join(resumed.frames)
     assert not any('"type":"character.state"' in f and "turn-r2" in f for f in resumed.frames)
     # Bob's own private record for his own turn is his to receive.
     assert any('"type":"character.state"' in f and "turn-r3" in f for f in resumed.frames)
