@@ -61,6 +61,15 @@ from agent.class_features import (
     resource_uses,
 )
 from agent.combat_captives import _captive_result, captive_turn_for_state
+from agent.combat_confirmation import (
+    ALWAYS_KEY,
+    PENDING_KEY,
+    control_word,
+    needs_confirmation,
+    pending_of,
+    stored_declaration,
+    summary_of,
+)
 from agent.combat_declaration import declare_action
 from agent.combat_enemy_turns import EnemyTurns
 from agent.combat_finalise import (
@@ -484,6 +493,35 @@ async def combat_round_node(state: AgentState) -> dict:
     player["hp_max"] = player_hp_max
     player_ac = int(player.get("ac") or combat_state.get("player_ac") or _player_ac(character))
     player["ac"] = player_ac
+    # EDG-182: a reply to a pending confirmation, or the "always confirm" option. No die is rolled here.
+    confirmed = False
+    word = control_word(player_input)
+    if word in ("always_on", "always_off") and not fled:
+        player[ALWAYS_KEY] = word == "always_on"
+        state_word = "on" if word == "always_on" else "off"
+        return _ask_player(
+            state,
+            f"Always confirm is {state_word} for {hero}. No roll is made and no turn is spent.",
+            combat_state=combat_state,
+        )
+    if (pending := pending_of(player)) is not None:
+        if word == "confirm":
+            # The stored declaration, exactly as it was proposed: nothing said after it changes it.
+            player_input = str(pending["player_input"])
+            parsed = ParsedInput.model_validate(pending.get("parsed") or {})
+            named = _named_targets({**state, "parsed_input": parsed})
+            fled = is_flee(player_input)
+            confirmed = True
+            player.pop(PENDING_KEY, None)
+        elif word == "cancel":
+            player.pop(PENDING_KEY, None)
+            return _ask_player(
+                state,
+                f"Cancelled: nothing was rolled and no turn was spent. Say what {hero} does instead.",
+                combat_state=combat_state,
+            )
+        else:
+            player.pop(PENDING_KEY, None)  # superseded: this reply is a new declaration
     if ended_spell := drop_concentration_if_incapacitated(player, enemies):
         log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
     stun_will_end_before_turn = has_effect(player, "stunned") and stun_ends_before_turn(
@@ -522,6 +560,16 @@ async def combat_round_node(state: AgentState) -> dict:
     )
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
+    # EDG-182: a multi-part turn is repeated back before any die; the stored copy is what runs.
+    typed = bool(getattr(parsed, "actions", None))
+    if not confirmed and not fled and needs_confirmation(
+        decl, always=bool(player.get(ALWAYS_KEY)), typed=typed
+    ):
+        summary = summary_of(hero, decl)
+        stored_declaration(
+            player, player_input=player_input, parsed=parsed, summary=summary, round_num=round_num
+        )
+        return _ask_player(state, summary, combat_state=combat_state)
 
     # EDG-045: the death mode of the campaign and the hero's death record (agent.death). The record
     # lives on the hero's combatant row for the encounter; a new encounter takes it from the sheet.

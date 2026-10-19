@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from agent.declarations import normalise_kind
+
 Intent = Literal["combat", "rp", "exploration"]
 Difficulty = Literal["easy", "medium", "hard", "very_hard"]
 
@@ -39,6 +41,39 @@ _DIFFICULTY_ALIASES = {
     "very-hard": "very_hard",
     "veryhard": "very_hard",
 }
+
+
+class ProposedAction(BaseModel):
+    """One declared action the parser proposes for a combat turn (EDG-182). A proposal, not a fact:
+    the engine adopts it only when its own detection of the player's words agrees."""
+
+    kind: str = Field(
+        default="unknown",
+        description=(
+            "One of: attack, off_hand_attack, maneuver, item, spell, dodge, dash, disengage, ready, "
+            "second_wind, rage, move, contingency."
+        ),
+    )
+    text: str | None = Field(
+        default=None, description="The player's own words for this action, quoted or closely kept."
+    )
+    target: str | None = Field(default=None, description="Creature the action targets, if any.")
+    weapon: str | None = Field(default=None, description="Weapon named for an attack, if any.")
+    spell: str | None = Field(default=None, description="Spell named for a spell, if any.")
+    destination: str | None = Field(default=None, description="Where a move goes, e.g. '30 feet north'.")
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _registered_kind(cls, value: object) -> str:
+        return normalise_kind(value)
+
+    @field_validator("text", "target", "weapon", "spell", "destination", mode="before")
+    @classmethod
+    def _short_text(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text[:200] or None
 
 
 class ParsedInput(BaseModel):
@@ -104,6 +139,14 @@ class ParsedInput(BaseModel):
             "it; null when they state neither. Never guess."
         ),
     )
+    actions: list[ProposedAction] = Field(
+        default_factory=list,
+        description=(
+            "Combat only: the ordered declared actions this turn, one entry per action the player's "
+            "words state (movement, attacks, off-hand attack, item, spell, Dodge, Dash, Disengage, "
+            "Ready, Second Wind, Rage, and any if-then condition). Empty when the turn declares none."
+        ),
+    )
     dice_expression: str | None = None  # legacy; e.g. "1d20+3". Engine prefers `check`.
 
     @field_validator("intent", mode="before")
@@ -161,6 +204,11 @@ class ParsedInput(BaseModel):
         if key in {"nonlethal", "non-lethal", "non_lethal"}:
             return "nonlethal"
         return None
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def _null_actions(cls, value: object) -> list:
+        return value if isinstance(value, list) else []
 
     @field_validator("confirms_ending", mode="before")
     @classmethod

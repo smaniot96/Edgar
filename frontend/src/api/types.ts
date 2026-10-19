@@ -625,6 +625,8 @@ export interface CombatState {
   second_wind_used?: boolean;
   /** The hero's last turn (additive); absent or null for legacy payloads. */
   economy?: CombatEconomy | null;
+  /** A multi-part declaration repeated back, waiting for the player's yes or no (EDG-182, additive). */
+  pending_declaration?: { summary: string } | null;
   /** Fighter Second Wind uses left on the sheet (additive). */
   second_wind_uses_remaining?: number | null;
   initiative_order?: string[];

@@ -18,10 +18,18 @@ const DISPOSITION_LABEL: Record<string, string> = {
 };
 
 /** Initiative-ordered combat tracker: every combatant incl. the player, HP, AC, whose turn. */
-export function CombatHud({ combat }: { combat: CombatState }) {
+export function CombatHud({
+  combat,
+  onReply,
+}: {
+  combat: CombatState;
+  /** Sends a reply as the player's next turn (the confirmation's yes or cancel). */
+  onReply?: (text: string) => void;
+}) {
   const rows = orderCombatants(combat);
   const current = rows.find((r) => r.isCurrent);
   const economy = economyLine(combat.economy);
+  const pending = combat.ended ? null : (combat.pending_declaration ?? null);
   return (
     <section
       aria-label="Combat"
@@ -41,6 +49,33 @@ export function CombatHud({ combat }: { combat: CombatState }) {
           <p className="mb-1.5 text-[0.7rem] text-ink-muted" aria-label="Hero action economy">
             {economy}
           </p>
+        ) : null}
+        {pending ? (
+          <div
+            role="group"
+            aria-label="Confirm declaration"
+            className="mb-2 rounded-md border border-ember-300/60 bg-canvas/70 px-3 py-2 text-sm"
+          >
+            <p className="mb-2 text-ink">{pending.summary}</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onReply?.("yes")}
+                disabled={!onReply}
+                className="rounded border border-ember-300 px-3 py-1 text-xs font-semibold text-ember-300 disabled:opacity-50"
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => onReply?.("no")}
+                disabled={!onReply}
+                className="rounded border border-ink-muted/40 px-3 py-1 text-xs text-ink-muted disabled:opacity-50"
+              >
+                Cancel and change
+              </button>
+            </div>
+          </div>
         ) : null}
         <ol className="flex gap-2 overflow-x-auto pb-1">
           {rows.map((c) => (
