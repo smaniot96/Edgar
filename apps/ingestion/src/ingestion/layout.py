@@ -18,7 +18,6 @@ import pymupdf
 
 from ingestion.quality import SIZE_TYPE, STAT_SUBHEADINGS, letters
 
-
 ILLUSTRATION_SIZE_RATIO = 0.65
 
 
@@ -105,21 +104,28 @@ def columns(lines: list[Line], width: float) -> list[list[Line]]:
         return _columns(lines, width)
     except ValueError as plain:
         for size in range(1, 5):
-            for repairs in itertools.combinations(("drop_caps", "noise", "captions", "body_top"), size):
+            for repairs in itertools.combinations(
+                ("drop_caps", "noise", "captions", "body_top"), size
+            ):
                 body = lines
                 if "drop_caps" in repairs:
                     body = merge_drop_caps(body)
                 if "noise" in repairs:
                     body = strip_leading_noise(body)
-                captions = [item for item in body if item.illustration] if "captions" in repairs else []
+                captions = (
+                    [item for item in body if item.illustration] if "captions" in repairs else []
+                )
                 body = [item for item in body if item not in captions]
                 try:
                     result = _columns(body, width, body_top="body_top" in repairs)
                 except ValueError:
                     continue
                 blocks = _caption_blocks(captions)
-                if blocks and result and min(i.bbox[1] for b in blocks for i in b) > min(
-                    i.bbox[1] for b in result for i in b
+                if (
+                    blocks
+                    and result
+                    and min(i.bbox[1] for b in blocks for i in b)
+                    > min(i.bbox[1] for b in result for i in b)
                 ):
                     return result + blocks
                 return blocks + result
@@ -268,7 +274,9 @@ def _columns(lines: list[Line], width: float, body_top: bool = False) -> list[li
         body = [
             item.bbox[1]
             for item in left + right
-            if item.size >= size * 0.7 and any(c.isalnum() for c in item.text) and not _ornament(item.text)
+            if item.size >= size * 0.7
+            and any(c.isalnum() for c in item.text)
+            and not _ornament(item.text)
         ]
         top = min(body, default=top)
     if not any(item.bbox[3] > top + 3 for item in crossing):
