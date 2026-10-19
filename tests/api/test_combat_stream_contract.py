@@ -110,7 +110,7 @@ def committed(monkeypatch) -> list[dict[str, Any]]:
     """`persist_turn` stand-in: records what one commit would have written. Never touches a DB."""
     rows: list[dict[str, Any]] = []
 
-    async def record(session_id, body_message, result):
+    async def record(session_id, body_message, result, **_spotlight):
         rows.append(result)
         return {
             "event_id": len(rows),

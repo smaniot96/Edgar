@@ -329,12 +329,11 @@ async def open_turn(
     Raises ``SpotlightRefused`` (after rollback) when the caller may not act; nothing has been spent
     by then. The caller must hold the turn lock for ``session_id``.
     """
+    if auth is None:
+        # Local single-user mode has no accounts to arbitrate between: no lock, no read, no change.
+        return Opened(plan=None, change=None)
     t = _utc(now)
     session = await _lock_session(db, session_id)
-    if auth is None:
-        # Local single-user mode has no accounts to arbitrate between.
-        await db.commit()
-        return Opened(plan=None, change=None)
     try:
         return await _open_turn(db, redis, session, auth.user_id, expected_version, consumes, t)
     except SpotlightRefused:

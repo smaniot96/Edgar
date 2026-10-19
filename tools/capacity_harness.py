@@ -377,7 +377,9 @@ class Run:
     def chat_factory(self, *_a: Any, **_kw: Any) -> DelayedChat:
         return self.chat
 
-    async def persist(self, session_id: int, body_message: str, result: dict[str, Any]) -> dict[str, Any]:
+    async def persist(
+        self, session_id: int, body_message: str, result: dict[str, Any], *, spotlight: Any = None
+    ) -> dict[str, Any]:
         async with self.factory() as db, db.begin():
             for _ in range(PERSIST_STATEMENTS):
                 await db.execute(None)
