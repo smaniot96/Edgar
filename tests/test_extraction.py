@@ -1219,12 +1219,12 @@ def test_excluded_page_cannot_be_corrected(two_page_pdf):
 
 
 def test_correction_is_applied_once_and_recorded_in_the_bundle(two_page_pdf, tmp_path):
-    extraction = _text_book(two_page_pdf, errors=["partial_native_numbers_lost_in_ocr"])
+    extraction = _text_book(two_page_pdf, errors=["missing_stat_type"])
     apply_text_corrections(extraction, [{**_CORRECTION, "note": "checked p.2"}])
     page = extraction.pages[1]
     assert page.text == "Opening passage of the rules."
     assert page.quality["errors"] == []
-    assert page.quality["cleared_by_text_correction"] == ["partial_native_numbers_lost_in_ocr"]
+    assert page.quality["cleared_by_text_correction"] == ["missing_stat_type"]
     assert "reviewed_text_correction" in page.warnings
     with pytest.raises(ValueError, match="already applied"):
         apply_text_corrections(extraction, [_CORRECTION])
@@ -1318,8 +1318,8 @@ def test_corrected_page_that_still_fails_its_checks_stays_failing(two_page_pdf):
 
 def test_correction_clears_extraction_failure_only_when_corrected_checks_pass(two_page_pdf):
     body = "The creature Armor Class l3 is recorded here."
-    extraction = _text_book(two_page_pdf, body=body, errors=["partial_native_numbers_lost_in_ocr"])
-    assert extraction.failing_pages() == {2: ["partial_native_numbers_lost_in_ocr"]}
+    extraction = _text_book(two_page_pdf, body=body, errors=["missing_stat_type"])
+    assert extraction.failing_pages() == {2: ["missing_stat_type"]}
     apply_text_corrections(extraction, [{"page": 2, "old": "l3", "new": "13"}])
     assert extraction.failing_pages() == {}
     assert extraction.pages[1].text == "The creature Armor Class 13 is recorded here."
@@ -1444,3 +1444,58 @@ def test_corrections_file_must_be_a_json_list(tmp_path):
     out, result = _run_correct_cli(tmp_path, "--corrections-file", str(bad))
     assert result.returncode != 0
     assert not (out / "sample.md").exists()
+
+
+# Clearable versus non-clearable failures: a correction clears only text-content codes.
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "ambiguous_column_gutter",
+        "ambiguous_spanning_column_text",
+        "interleaved_stat_records",
+        "duplicate_word_layer",
+        "duplicate_text_layer",
+        "insufficient_ocr_text_on_nonblank_page",
+        "partial_native_numbers_lost_in_ocr",
+        "some_unknown_future_code",
+    ],
+)
+def test_non_clearable_code_keeps_a_corrected_page_failing(two_page_pdf, code):
+    body = "The creature Armor Class l3 is recorded here."
+    extraction = _text_book(two_page_pdf, body=body, errors=["missing_stat_type", code])
+    apply_text_corrections(extraction, [{"page": 2, "old": "l3", "new": "13"}])
+    # The clearable code stays too: a page that is not cleared keeps its earlier failures.
+    assert extraction.pages[1].quality["errors"] == sorted({code, "missing_stat_type"})
+    assert extraction.pages[1].quality["not_clearable_by_text_correction"] == [code]
+    assert extraction.failing_pages() == {2: sorted({code, "missing_stat_type"})}
+    assert f"page 2: correction cannot clear non-clearable codes {code}" in "\n".join(
+        extraction.quality_summary()
+    )
+    with pytest.raises(ValueError, match="quality checks failed"):
+        extraction.require_valid()
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["missing_stat_heading", "missing_stat_type", "incomplete_stat_fields", "garbage_stat_heading"],
+)
+def test_clearable_text_code_is_cleared_by_a_passing_correction(two_page_pdf, code):
+    body = "The creature Armor Class l3 is recorded here."
+    extraction = _text_book(two_page_pdf, body=body, errors=[code])
+    apply_text_corrections(extraction, [{"page": 2, "old": "l3", "new": "13"}])
+    assert extraction.failing_pages() == {}
+    assert extraction.pages[1].quality["cleared_by_text_correction"] == [code]
+
+
+def test_duplicate_word_layer_cannot_be_cleared_even_when_the_text_now_passes(two_page_pdf):
+    body = "Alpha " * 9 + "delta rules."
+    extraction = _text_book(two_page_pdf, body=body, errors=["duplicate_word_layer"])
+    correction = {"page": 2, "old": ("Alpha " * 9).strip(), "new": "Alpha"}
+    apply_text_corrections(extraction, [correction])
+    assert extraction.pages[1].text == "Alpha delta rules."
+    assert extraction.failing_pages() == {2: ["duplicate_word_layer"]}
+    assert extraction.pages[1].quality["not_clearable_by_text_correction"] == [
+        "duplicate_word_layer"
+    ]

@@ -42,6 +42,17 @@ OCR_MIN_CONFIDENCE = 30
 MAX_TEXT_CORRECTIONS_PER_PAGE = 20
 MAX_CORRECTION_CHARS = 200
 TEXT_CORRECTION_WARNING = "reviewed_text_correction"
+# Text-content failures a reviewed correction may clear, once the corrected text passes
+# `check_text`. Geometry, layout, reading-order and OCR-completeness failures are never clearable;
+# any code not listed here is denied by default.
+TEXT_CORRECTABLE_ERRORS = frozenset(
+    {
+        "missing_stat_heading",
+        "missing_stat_type",
+        "incomplete_stat_fields",
+        "garbage_stat_heading",
+    }
+)
 # Seam for raster-read headings: a page's `quality[RASTER_RECOVERED_KEY]` is a list of records
 # {"text": <exact text read from the image>, ...}. A correction whose old text equals one of those
 # recorded texts is annotated on that record as `reviewed_correction`, so review lists can show it.
@@ -145,6 +156,14 @@ class Extraction:
                     lines.append(
                         f"page {entry['page']}: excluded page has a section heading; confirm it is not rules text."
                     )
+        for page in self.pages:
+            blocked = page.quality.get("not_clearable_by_text_correction")
+            if blocked and page.page not in self.excluded_numbers():
+                lines.append(
+                    f"page {page.page}: correction cannot clear non-clearable codes "
+                    + ", ".join(blocked)
+                    + "; the page stays failing."
+                )
         if self.text_corrections:
             per_page = Counter(c["page"] for c in self.text_corrections)
             listed = [f"page {number} ({n})" for number, n in sorted(per_page.items())]
@@ -331,15 +350,24 @@ def apply_text_corrections(
         original_checks = set(check_text(page.text)["errors"])
         previous = sorted(set(page.quality.get("errors", [])))
         page.text = new_text
-        corrected_checks = check_text(new_text)["errors"]
-        if corrected_checks:
-            # Extraction-time failures stay unless re-checked; text failures reflect the new text.
-            retained = set(previous) - original_checks
-            page.quality["errors"] = sorted(retained | set(corrected_checks))
-        else:
+        corrected_checks = set(check_text(new_text)["errors"])
+        blocked = sorted(c for c in previous if c not in TEXT_CORRECTABLE_ERRORS)
+        if not corrected_checks and not blocked:
+            # Every earlier failure is a clearable text-content code and the corrected text passes.
             if previous:
                 page.quality["cleared_by_text_correction"] = previous
             page.quality["errors"] = []
+            page.quality.pop("not_clearable_by_text_correction", None)
+        else:
+            # Non-clearable codes always stay; text codes reflect the corrected text; other
+            # clearable extraction codes stay because this page has not been cleared.
+            extraction_only = set(previous) - original_checks
+            kept = set(blocked) | corrected_checks | (extraction_only & TEXT_CORRECTABLE_ERRORS)
+            page.quality["errors"] = sorted(kept)
+            if blocked:
+                page.quality["not_clearable_by_text_correction"] = blocked
+            else:
+                page.quality.pop("not_clearable_by_text_correction", None)
         if TEXT_CORRECTION_WARNING not in page.warnings:
             page.warnings.append(TEXT_CORRECTION_WARNING)
         for correction in grouped[number]:
