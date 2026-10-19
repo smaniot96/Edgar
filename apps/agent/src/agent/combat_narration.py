@@ -95,8 +95,13 @@ def finalize_round_narration(
         )
         text = pending.adjudication.mechanical_summary or ""
         messages = [*messages[:-1], AIMessage(content=text)]
+    party = sum(1 for c in pending.combatants if c.get("is_player")) >= 2
     if pending.outcome == "victory":
         text += "\n\n**Victory!** The way forward is clear."
+    elif party and pending.outcome == "defeat":
+        text += "\n\n**The party falls.** Every hero is down; the story is not over, but the party is at the enemy's mercy."
+    elif party and pending.outcome == "fled":
+        text += "\n\n*(The party has left the fight.)*"
     elif pending.outcome == "defeat" and any(
         c.get("is_player") and c.get("disposition") == "dead" for c in pending.combatants
     ):

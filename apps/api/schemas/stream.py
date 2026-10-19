@@ -52,6 +52,10 @@ class CombatantPublic(_Frame):
     can_act: bool
     band: str | None
     reaction_used: bool
+    # Additive (EDG-049), present on a hero of a party fight only.
+    character_id: int | None = None
+    fled: bool | None = None
+    death_saves: dict[str, Any] | None = None
 
 
 class CombatStatePublic(_Frame):
@@ -76,6 +80,9 @@ class CombatStatePublic(_Frame):
     pending_declaration: dict[str, str] | None = None
     # Additive (EDG-182): the hero's standing reaction orders (foe and summary), if any.
     standing_orders: list[dict[str, str]] | None = None
+    # Additive (EDG-049): a fight with two or more heroes, and whose turn it is (a character id).
+    party: bool | None = None
+    current_turn_character_id: int | None = None
 
 
 class CombatOutcomeEntryPublic(_Frame):

@@ -158,6 +158,22 @@ def _strike(
     return f"({target['hp_current']}/{target['hp_max']} HP left)"
 
 
+def _healed_hero(t: _Turn) -> str:
+    """Who a healing effect restores: the named ally of a party fight (EDG-049), else the caster."""
+    ally = t.inp.decl.ally_target
+    return str(ally.get("display_name") or ally["name"]) if ally is not None else t.rec.hero
+
+
+def _apply_heal(t: _Turn, amount: int) -> str:
+    """Restore `amount` HP to the caster, or to the ally the declaration names. Returns the engine's
+    sentence about an ally ('' for the caster, whose sentence the caller already writes)."""
+    rec, ally = t.rec, t.inp.decl.ally_target
+    if ally is None or rec.party is None:
+        rec.hp = min(t.inp.hp_max, rec.hp + amount)
+        return ""
+    return rec.party.heal_ally(ally, amount)
+
+
 def run_player_turn(rec: RoundRecord, inp: PlayerTurnInput) -> PlayerTurnResult:
     """Resolve the hero's declared slot for this round and return what it produced."""
     t = _Turn(rec=rec, inp=inp, declared=inp.decl.declared)
@@ -271,8 +287,8 @@ def _bonus_actions(t: _Turn) -> None:
         heal_result = resolve_spell(character, decl.bonus_spell)
         dice_log += heal_result.dice_log
         t.spell_expended = heal_result.expended
-        rec.hp = min(inp.hp_max, rec.hp + heal_result.healing)
-        t.bonus_text = narrate(heal_result, hero=hero, target=None)
+        ally_note = _apply_heal(t, heal_result.healing)
+        t.bonus_text = (narrate(heal_result, hero=_healed_hero(t), target=None) + ally_note).strip()
         t.bonus_record = {
             "action": "catalog_spell",
             "spell": heal_result.spec.name,
@@ -516,9 +532,12 @@ def _healing_item(t: _Turn, heal_item: str) -> None:
     if heal is not None:
         if heal.dice is not None:
             rec.dice_log.append(heal.dice.to_log(f"healing ({heal_item})"))
-        rec.hp = min(t.inp.hp_max, rec.hp + heal.amount)
+        ally_note = _apply_heal(t, heal.amount)
         t.inventory_used.append(heal_item)
-        t.extra_outcome = f"{hero} uses {heal_item} and regains {heal.amount} HP."
+        if t.inp.decl.ally_target is None:
+            t.extra_outcome = f"{hero} uses {heal_item} and regains {heal.amount} HP."
+        else:
+            t.extra_outcome = f"{hero} uses {heal_item} on {_healed_hero(t)}, restoring {heal.amount} HP.{ally_note}"
         t.player_action = {"action": "item", "item": heal_item, "result": "healed", "healed": heal.amount}
         rec.log_lines.append(t.extra_outcome)
     else:
@@ -583,9 +602,9 @@ def _catalog_spell(t: _Turn, spell_plan: CastPlan) -> None:
         rec.dice_log += spell_result.dice_log
         t.spell_expended = spell_result.expended
         target_name = spell_target["name"] if spell_target else None
-        extra_outcome = narrate(spell_result, hero=hero, target=target_name)
+        extra_outcome = narrate(spell_result, hero=_healed_hero(t), target=target_name)
         if spell_result.healing:
-            rec.hp = min(inp.hp_max, rec.hp + spell_result.healing)
+            extra_outcome = f"{extra_outcome}{_apply_heal(t, spell_result.healing)}"
         if spell_result.damage and spell_target is not None:
             spell_type = spell_plan.spell.damage_type
             dealt, resist_note = adjust_monster_damage(

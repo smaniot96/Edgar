@@ -84,6 +84,7 @@ The registry in `apps/api/schemas/channel.py` is an allowlist. Publishing an unr
 | `turn.finished` | system | table | `outcome`: `committed`, `not_committed` or `unknown`. |
 | `character.state` | private | **that player only** | The acting character's play state and the rest evidence. |
 | `turn.failed` | private | **that player only** | The safe error for the player who submitted the turn. |
+| `combat.turn_changed` | system | table | A shared fight moved on (EDG-049): `round`, `ended`, `outcome`, `current_turn`, `current_turn_character_id`, `skipped_character_id`. Never a declaration. See docs/party-combat.md. |
 | `presence.joined` / `left` / `idle` / `active` | system | table | `user_id` and the presence state change. |
 | `turn.spotlight_changed` | system | table | The table's spotlight after a change: holder, mode, `version`, `next_up`, `reason`, plus (EDG-051) `pacing`, `turn_deadline` and the redacted `queue` (EDG-048). |
 | `turn.queue_changed` | system | table | A queued action was added, edited, cancelled or played (`reason`): the redacted queue and its `revision`. Never the text (EDG-051). |

@@ -549,6 +549,33 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
         test="tests/agent/test_positioning.py::test_standing_up_clears_hero_prone_without_spending_an_action",
     ),
     Mechanic(
+        id="party_combat",
+        title="Shared fight across several human-controlled heroes",
+        scope=(
+            "Two or more heroes at a table (the spotlight holder and the seated players) fight one encounter "
+            "with one initiative order for every hero and every foe; each hero rolls its own d20 plus its "
+            "own Dexterity modifier, and ties go to the higher bonus, then to heroes over foes, then to the "
+            "lower character id. The combat turn holder is the initiative holder, not the free-roam "
+            "spotlight: only the hero whose slot is next may act, its turn resolves, and the engine then runs "
+            "every later slot on its own (foes, heroes that cannot act, a hero that is down) until the next "
+            "hero who can act. Each hero has its own action economy, reaction, conditions, concentration and "
+            "death record. A foe chooses one standing hero per turn with one engine die over the standing "
+            "heroes in initiative order (no die with a single standing hero), and the rest of its attacks go "
+            "to another standing hero when the first falls; a foe never attacks a hero at 0 HP. A hero at 0 HP "
+            "follows the campaign's death mode: death saves roll at the start of that hero's own slot "
+            "automatically, and the subdued mode leaves a downed hero at 1 HP when the fight ends. A "
+            "healing spell or healing potion that names another hero restores that hero, and a hero brought "
+            "above 0 HP is conscious again with its death record cleared. A hero that flees leaves the "
+            "fight alone. The fight ends in victory when no foe stands, in defeat when no hero can act and "
+            "none is dying, as fled when a hero escaped and none can act or at the round cap. An idle holder "
+            "is skipped with the default Dodge by the owner at any time, or by a seated player once the "
+            "holder is overdue or absent from the channel. A one-hero fight is the classic solo fight, "
+            "unchanged. Positions, distances between heroes, area healing and Help are not simulated."
+        ),
+        implementation="agent.party_combat:PartyRound",
+        test="tests/agent/test_party_combat.py::test_each_hero_acts_on_its_own_turn_with_its_own_action_economy",
+    ),
+    Mechanic(
         id="monster_conditions",
         title="Frightened and stunned hero from exact monster text",
         scope=(

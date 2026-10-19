@@ -158,6 +158,16 @@ _register(
 _register(
     FailureSpec(ErrorCategory.VALIDATION, "queued_action_expired", "Your queued action expired before your turn, so it was not played. Queue it again if you still want it.", 409, RecoveryAction.FIX_INPUT),
 )
+# Party combat (EDG-049). Fixed messages only: whose turn it is travels on the table channel.
+_register(
+    FailureSpec(ErrorCategory.BUSY, "combat_turn_locked", "A fight is under way: the initiative order decides whose turn it is, so the spotlight cannot be handed over until it ends.", 409, RecoveryAction.WAIT),
+)
+_register(
+    FailureSpec(ErrorCategory.BUSY, "combat_skip_not_due", "The hero whose turn it is still has time. Wait for the turn timer, or ask the host to skip it.", 409, RecoveryAction.WAIT),
+)
+_register(
+    FailureSpec(ErrorCategory.BUSY, "no_party_combat", "There is no shared fight to advance right now.", 409, RecoveryAction.RETRY),
+)
 _register(
     FailureSpec(ErrorCategory.ASSIGNMENT, "hero_dead", "Your hero has died. Add a replacement hero to this campaign, switch the session to them, and release the dead hero from the roster.", 409, RecoveryAction.ASSIGN_CHARACTER),
 )

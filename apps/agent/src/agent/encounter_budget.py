@@ -281,13 +281,37 @@ def warning_text(check: dict, level: int) -> str:
     )
 
 
-def apply_solo_budget(enemies: list[dict], level: Any) -> tuple[list[dict], dict]:
+def party_budget(level: Any, party_size: int) -> SoloBudget:
+    """The solo budget of a party fight (EDG-049): one more foe per extra hero, at most 6 in all.
+
+    Per-foe bands and ceilings stay those of the level; the total enemy HP grows with the extra foes.
+    Foe quality is never loosened, so an extra hero adds foes, not stronger ones.
+    """
+    base = solo_budget(level)
+    foes = min(6, base.max_foes + max(0, int(party_size) - 1))
+    return SoloBudget(
+        level=base.level,
+        max_foes=foes,
+        boss_hp=base.boss_hp,
+        foe_hp=base.foe_hp,
+        total_hp=base.boss_hp[1] + (foes - 1) * base.foe_hp[1],
+        attack_bonus_max=base.attack_bonus_max,
+        damage_avg_max=base.damage_avg_max,
+    )
+
+
+def apply_solo_budget(
+    enemies: list[dict], level: Any, *, party_size: int = 1
+) -> tuple[list[dict], dict]:
     """Return (roster within budget, summary). Pure: the input list and dicts are not mutated.
+
+    `party_size` (EDG-049) above one widens the foe count (`party_budget`); one hero is the solo budget
+    exactly as before. The DMG threshold check is for one hero, so a party summary carries none.
 
     The summary is `{"level", "adapted", "notes", "xp_check", "warning"}`, ready to persist and show
     the player. `xp_check` and `warning` are None when there is nothing to classify.
     """
-    budget = solo_budget(level)
+    budget = party_budget(level, party_size) if party_size > 1 else solo_budget(level)
     notes: list[str] = []
     if not enemies:
         return [], _summary(budget, notes, None)
@@ -325,7 +349,11 @@ def apply_solo_budget(enemies: list[dict], level: Any) -> tuple[list[dict], dict
         else _clamp_foe(enemies[i], budget, notes, boss=boss_band[i])
         for i in sorted(kept)
     ]
-    return roster, _summary(budget, notes, xp_check(roster, budget.level))
+    check = None if party_size > 1 else xp_check(roster, budget.level)
+    summary = _summary(budget, notes, check)
+    if party_size > 1:
+        summary["party_size"] = int(party_size)
+    return roster, summary
 
 
 def _summary(budget: SoloBudget, notes: list[str], check: dict | None) -> dict:
@@ -351,11 +379,17 @@ def adaptation_sentence(summary: dict) -> str:
     parts: list[str] = []
     notes = summary.get("notes") or []
     if notes:
-        head = (
-            f"Encounter adapted for a solo level {summary['level']} hero: "
-            if summary.get("adapted")
-            else f"Solo level {summary['level']} hero: "
-        )
+        if summary.get("party_size"):
+            who = f"a party of {summary['party_size']} level {summary['level']} heroes"
+            head = (
+                f"Encounter adapted for {who}: " if summary.get("adapted") else f"{who.capitalize()}: "
+            )
+        else:
+            head = (
+                f"Encounter adapted for a solo level {summary['level']} hero: "
+                if summary.get("adapted")
+                else f"Solo level {summary['level']} hero: "
+            )
         parts.append(head + "; ".join(notes) + ".")
     warning = summary.get("warning") or {}
     if warning.get("text"):

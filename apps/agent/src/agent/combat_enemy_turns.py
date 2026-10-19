@@ -7,6 +7,7 @@ before the split, so seeded rounds are unchanged. The round's shared state is `R
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from agent.action_economy import (
     ACTION,
@@ -95,6 +96,8 @@ class EnemyTurns:
         self.rec = rec
         # EDG-044c: told when a foe closes from range into melee on its own turn, before its attacks.
         self.on_closed: Callable[[dict], None] | None = None
+        # EDG-049: the party this round binds a target hero from (agent.party_combat), or None for solo.
+        self.party: Any = None
 
     def _foe_closed(self, e: dict) -> None:
         if self.on_closed is not None:
@@ -617,10 +620,19 @@ class EnemyTurns:
         if not plan:
             self.rec.log_lines.append(f"{e['name']} has no supported attack and takes no action.")
         for attack in plan:
-            if self.rec.hp <= 0:
+            if self.rec.hp <= 0 and not self._retarget(e):
                 break
             self.exact_attack(e, attack, band)
             spend_recharge(e, attack)  # a recharge attack waits for its d6 (no-op for the others)
+
+    def _retarget(self, e: dict) -> bool:
+        """EDG-049: the hero a foe was attacking is down; the rest of its attacks go to another standing hero."""
+        return self.party is not None and self.party.retarget(e, self)
+
+    def _anyone_standing(self) -> bool:
+        if self.party is not None:
+            return bool(self.party.standing())
+        return self.rec.hp > 0
 
     def opportunity_attack(self, e: dict) -> bool:
         """The foe's reaction: one melee attack against the hero as it leaves reach (PDF p.196).
@@ -660,7 +672,9 @@ class EnemyTurns:
     def legendary_action(self, e: dict) -> None:
         """Use at most one option at the end of this other creature's turn (MM, PDF p.12)."""
         stats = stats_of(e)
-        if self.rec.hp <= 0 or stats is None or not stats.legendary or not can_act(e) or e.get("surprised"):
+        if not self._anyone_standing() or stats is None or not stats.legendary or not can_act(e) or e.get("surprised"):
+            return
+        if self.party is not None and self.rec.hp <= 0 and not self.party.retarget(e, self):
             return
         band = band_of(e)
         left = stats.legendary_actions - int(e.get("legendary_spent") or 0)
@@ -681,9 +695,13 @@ class EnemyTurns:
             self.rec.log_lines.append(f"{e['name']} flies away after its Wing Attack.")
 
     def lair_action(self, e: dict) -> None:
-        """Resolve one reviewed lair option at initiative 20, with ties lost."""
+        """Resolve one reviewed lair option at initiative 20, with ties lost.
+
+        At a party table (EDG-049) the option is chosen once and every standing hero makes its own save
+        against one shared damage roll (MM, PDF p.11); a solo round rolls exactly as before.
+        """
         stats = stats_of(e)
-        if self.rec.fled or self.rec.hp <= 0 or stats is None or not stats.lair_actions or not can_act(e) or e.get("surprised"):
+        if self.rec.fled or not self._anyone_standing() or stats is None or not stats.lair_actions or not can_act(e) or e.get("surprised"):
             return
         previous = e.get("lair_last_action") if int(e.get("lair_last_round") or 0) == self.rec.round_num - 1 else None
         option = next((a for a in stats.lair_actions if a.name != previous), None)
@@ -692,6 +710,20 @@ class EnemyTurns:
         e["lair_last_action"] = option.name
         e["lair_last_round"] = self.rec.round_num
         self.note_actor(e)
+        shared = None
+        if self.party is not None and option.damage_dice:
+            shared = roll(option.damage_dice)
+            self.rec.dice_log.append(shared.to_log(f"{e['name']} {option.name} damage"))
+        if self.party is None:
+            self._lair_on_hero(e, option, shared)
+            return
+        for seat in self.party.standing():
+            self.party.bind(seat)
+            self._lair_on_hero(e, option, shared)
+        self.party.unbind()
+
+    def _lair_on_hero(self, e: dict, option: Any, shared: Any) -> None:
+        """The lair option against the bound hero: its save, then the damage and the condition."""
         if save_auto_fails(self.rec.player, option.ability):
             saved, total, mode = False, None, "automatic failure while incapacitated"
         else:
@@ -703,8 +735,10 @@ class EnemyTurns:
             saved = total >= option.dc
         dealt = 0
         if option.damage_dice:
-            damage = roll(option.damage_dice)
-            self.rec.dice_log.append(damage.to_log(f"{e['name']} {option.name} damage"))
+            damage = shared
+            if damage is None:
+                damage = roll(option.damage_dice)
+                self.rec.dice_log.append(damage.to_log(f"{e['name']} {option.name} damage"))
             dealt = damage.total if not saved else damage.total // 2 if option.half_on_success else 0
         self.rec.log_lines.append(
             f"At initiative 20, {e['name']} uses its lair action: {option.name}. "
@@ -721,7 +755,7 @@ class EnemyTurns:
 
     def another_creature_turn_ended(self, actor: dict) -> None:
         """Give every other able foe one legendary-action opportunity at this turn boundary."""
-        if self.rec.fled or self.rec.hp <= 0 or not is_standing(actor):
+        if self.rec.fled or not self._anyone_standing() or not is_standing(actor):
             return
         for e in self.rec.enemies:
             if e is not actor:

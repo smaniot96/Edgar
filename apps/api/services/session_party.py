@@ -28,12 +28,18 @@ async def seated_character_ids(db: AsyncSession, session_id: int) -> list[int]:
     return list(result.scalars().all())
 
 
-async def session_party(db: AsyncSession, session: SessionModel) -> list[dict[str, Any]]:
-    """Play state for every character at the table, the acting character first."""
+async def session_party(
+    db: AsyncSession, session: SessionModel, *, include: list[int] | None = None
+) -> list[dict[str, Any]]:
+    """Play state for every character at the table, the acting character first.
+
+    `include` (EDG-049) adds characters that take part in a running fight although they are not
+    seated, such as the owner's own hero, so the fight never mistakes them for departed.
+    """
     ordered: list[int] = []
     if session.active_character_id is not None:
         ordered.append(session.active_character_id)
-    for character_id in await seated_character_ids(db, session.id):
+    for character_id in [*await seated_character_ids(db, session.id), *(include or [])]:
         if character_id not in ordered:
             ordered.append(character_id)
     party: list[dict[str, Any]] = []
