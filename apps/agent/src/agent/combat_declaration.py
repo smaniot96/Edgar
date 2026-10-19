@@ -33,7 +33,14 @@ from agent.combat_targeting import _release_target, additional_spell_targets, se
 from agent.combat_view import _ask_player
 from agent.combatants import CombatManeuver, can_act, classify_combat_maneuver, is_standing
 from agent.conditions import condition_ends_before_turn, fear_refusal, humanoid_refusal
-from agent.declarations import MANEUVER, MOVE, agreement_question, completeness_question
+from agent.contingency import TARGET_DOWN, Contingency
+from agent.declarations import (
+    CONTINGENCY,
+    MANEUVER,
+    MOVE,
+    agreement_question,
+    completeness_question,
+)
 from agent.positioning import (
     RANGED,
     MovePlan,
@@ -93,6 +100,8 @@ class Declaration:
     attack_ranged: bool
     off_weapon: Weapon | None
     ready: ReadyOrder | None = None  # EDG-044c: a validated readied melee attack, held for its trigger
+    contingency: Contingency | None = None  # EDG-182: the "if" clause that follows the action
+    contingency_moves: MovePlan | None = None  # its branch, planned on the bands before the action
 
 
 def declare_action(
@@ -111,6 +120,7 @@ def declare_action(
     round_num: int,
     cf_left: dict[str, int],
     cf_requested: tuple[str, ...],
+    contingency: Contingency | None = None,
 ) -> Declaration | dict[str, Any]:
     """Resolve the declared action, or return the refusal as the question the player is asked."""
     # --- Decide the player's action BEFORE any dice, so a bad target never burns a round ---
@@ -218,6 +228,8 @@ def declare_action(
             detected.add(MOVE.kind)
         if combat_action is not None:
             detected.add(MANEUVER.kind)
+        if contingency is not None:
+            detected.add(CONTINGENCY.kind)
         actions = list(getattr(parsed, "actions", None) or [])
         question = agreement_question([(a.kind, a.text) for a in actions], detected, hero)
         if question is None:
@@ -260,7 +272,12 @@ def declare_action(
             )
     # EDG-044: declared moves are free but change band at most once (twice with Dash). Planned on
     # copies only: a refused turn changes no foe and rolls no die.
-    feet_total = sum(f for _b, _p, f in movement_legs(None if fled else moves_text) if f is not None)
+    branch_text = contingency.branch if contingency is not None else ""
+    feet_total = sum(
+        f
+        for _b, _p, f in movement_legs(None if fled else f"{moves_text or ''} {branch_text}")
+        if f is not None
+    )
     feet_refused = feet_refusal(hero, feet_total, dash=dash) if feet_total else None
     if feet_refused:
         return _ask_player(state, feet_refused, combat_state=combat_state)
@@ -274,10 +291,26 @@ def declare_action(
     )
     if moves.question:
         return _ask_player(state, moves.question, combat_state=combat_state)
+    branch_plan: MovePlan | None = None
+    if contingency is not None:
+        branch_refusal = _branch_refusal(hero, contingency, is_attack or combat_action is not None)
+        if branch_refusal:
+            return _ask_player(state, branch_refusal, combat_state=combat_state)
+        branch_plan = plan_moves(
+            contingency.branch,
+            named,
+            [e for e in enemies if can_act(e)],
+            pick=lambda n: next(
+                (e for e in enemies if can_act(e) and _name_matches(n, e["name"])), None
+            ),
+        )
+        if branch_plan.question:
+            return _ask_player(state, branch_plan.question, combat_state=combat_state)
     fear_will_end_before_turn = condition_ends_before_turn(
         player, "frightened", before, round_num
     )
-    refused_move = move_refusal(hero, len(moves.steps), dash=dash) or (
+    branch_steps = len(branch_plan.steps) if branch_plan is not None else 0
+    refused_move = move_refusal(hero, len(moves.steps) + branch_steps, dash=dash) or (
         None if fear_will_end_before_turn else fear_refusal(hero, player, moves.steps)
     )
     if refused_move:
@@ -341,4 +374,27 @@ def declare_action(
         attack_ranged=attack_ranged,
         off_weapon=off_weapon,
         ready=ready,
+        contingency=contingency,
+        contingency_moves=branch_plan,
+    )
+
+
+def _branch_refusal(hero: str, contingency: Contingency, attacks: bool) -> str | None:
+    """The refusal of an "if" clause the engine cannot run (EDG-182). None when the branch is a move."""
+    if contingency.condition == TARGET_DOWN and not attacks:
+        return (
+            f"'{contingency.describe()}' needs an attack this turn, to say which foe it means. No roll is "
+            "made and no turn is spent."
+        )
+    if movement_legs(contingency.branch):
+        return None
+    if has_attack_words(contingency.branch):
+        return (
+            f"A second attack needs its own action, and this turn spends one, so the '{contingency.describe()}' "
+            f"clause cannot make it. Attack now, or make the move instead. No roll is made and no turn is spent."
+        )
+    return (
+        f"The engine can run only a move as the 'if' part of a turn, and '{contingency.branch}' is not one. "
+        "Choose: a move (for example 'move 10 feet away'), or say the action on its own. No roll is made "
+        "and no turn is spent."
     )

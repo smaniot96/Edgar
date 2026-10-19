@@ -62,7 +62,7 @@ def needs_confirmation(decl: Declaration, *, always: bool) -> bool:
     if always:
         return bool(decl.declared) or decl.moving or decl.is_attack or decl.is_spell
     parts = len({d.kind for d in decl.declared}) + (1 if decl.moving else 0)
-    return parts >= 2 or (decl.moving and decl.is_attack)
+    return parts >= 2 or (decl.moving and decl.is_attack) or decl.contingency is not None
 
 
 def summary_of(hero: str, decl: Declaration) -> str:
@@ -78,6 +78,8 @@ def summary_of(hero: str, decl: Declaration) -> str:
     if decl.is_spell and decl.spell_plan is not None and decl.spell_plan.spell.name not in steps:
         steps.append(decl.spell_plan.spell.name)
     what = " then ".join(steps) if steps else "take the turn as you described it"
+    if decl.contingency is not None:
+        what += f"; {decl.contingency.describe()}, {decl.contingency.branch}"
     return (
         f"Confirm before any dice: {hero} will {what}. Reply yes to commit, or no to change it. "
         "No roll is made and no turn is spent until you reply yes."

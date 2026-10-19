@@ -116,6 +116,7 @@ from agent.conditions import (
     drop_concentration_if_incapacitated,
     stun_ends_before_turn,
 )
+from agent.contingency import SplitTurn, split_contingency
 from agent.death import DEATH_MODE_SAVES, DEATH_MODE_SUBDUED
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model, message_text
@@ -523,6 +524,21 @@ async def combat_round_node(state: AgentState) -> dict:
             )
         else:
             player.pop(PENDING_KEY, None)  # superseded: this reply is a new declaration
+    # EDG-182 contingencies: the turn's action is read without its "if" clause; the clause is run after
+    # the action. The raw turn is what a pending confirmation stores and replays.
+    raw_input = player_input
+    split = split_contingency(raw_input) if not fled else SplitTurn(main=raw_input, contingency=None, unreadable_if=None)
+    if split.unreadable_if:
+        clause = split.unreadable_if
+        return _ask_player(
+            state,
+            f"The engine cannot read the condition '{clause}', so it is not declared. Say it as 'if it drops' "
+            f"(the foe the attack names goes down) or 'if I fall below 5 HP', then a move. No roll is made and "
+            "no turn is spent.",
+            combat_state=combat_state,
+        )
+    player_input = split.main
+    contingency = split.contingency
     if ended_spell := drop_concentration_if_incapacitated(player, enemies):
         log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
     stun_will_end_before_turn = has_effect(player, "stunned") and stun_ends_before_turn(
@@ -545,6 +561,7 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Decide the player's action BEFORE any dice (agent.combat_declaration, EDG-044) ---
     decl = declare_action(
         state,
+        contingency=contingency,
         character=character,
         player_input=player_input,
         parsed=parsed,
@@ -565,7 +582,7 @@ async def combat_round_node(state: AgentState) -> dict:
     if not confirmed and not fled and needs_confirmation(decl, always=bool(player.get(ALWAYS_KEY))):
         summary = summary_of(hero, decl)
         stored_declaration(
-            player, player_input=player_input, parsed=parsed, summary=summary, round_num=round_num
+            player, player_input=raw_input, parsed=parsed, summary=summary, round_num=round_num
         )
         return _ask_player(state, summary, combat_state=combat_state)
 

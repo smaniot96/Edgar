@@ -58,6 +58,7 @@ from agent.conditions import (
     spell_condition_sentence,
     start_concentration,
 )
+from agent.contingency import holds as contingency_holds, not_held_text
 from agent.death import (
     DEAD,
     DEATH_MODE_SAVES,
@@ -74,7 +75,7 @@ from agent.monster_stats import (
     stats_of,
     weapon_damage_type,
 )
-from agent.positioning import MELEE, RANGED, MovePlan, band_of, start_turn
+from agent.positioning import MELEE, RANGED, MovePlan, band_of, plan_moves, start_turn
 from agent.readied_action import ReadyOrder
 from agent.resolution import (
     DEATH_SAVES_KEY,
@@ -165,6 +166,7 @@ def run_player_turn(rec: RoundRecord, inp: PlayerTurnInput) -> PlayerTurnResult:
     _action_surge(t)
     _declared_moves(t)
     _resolve_action(t)
+    _contingency(t)
     return PlayerTurnResult(
         player_acted=t.player_acted,
         player_action=t.player_action,
@@ -314,14 +316,24 @@ def _action_surge(t: _Turn) -> None:
 def _declared_moves(t: _Turn) -> None:
     """Declared moves happen before the action. Leaving a foe's melee band provokes one opportunity
     attack from it, unless the hero took Disengage this turn (PDF p.193, p.196)."""
+    decl = t.inp.decl
+    if not (t.player_acted and not t.rec.fled):
+        return
+    _apply_moves(t, decl.moves, disengage=decl.disengage, dash=decl.dash)
+    if decl.dash:
+        t.rec.round_effects.append("dash")
+    if decl.disengage:
+        t.rec.round_effects.append("disengage")
+
+
+def _apply_moves(t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool) -> None:
+    """Apply a planned move to the foes: bands, recorded distances, and the opportunity attacks it
+    provokes. A foe the fear rule blocks keeps its band and distance (EDG-145)."""
     rec, inp = t.rec, t.inp
     player, hero = rec.player, rec.hero
-    decl = inp.decl
-    moves, disengage, dash = decl.moves, decl.disengage, decl.dash
     log_lines = rec.log_lines
-    if not (t.player_acted and not rec.fled):
-        return
     actual_steps: list[tuple[str, list[dict]]] = []
+    blocked: set[int] = set()
     for band, foes in moves.steps:
         allowed: list[dict] = []
         for foe in foes:
@@ -332,6 +344,7 @@ def _declared_moves(t: _Turn) -> None:
             )
             if refusal_after_enemy_turn:
                 t.runtime_fear_blocked = True
+                blocked.add(id(foe))
                 moves.bands[id(foe)] = band_of(foe)
                 log_lines.append(f"{refusal_after_enemy_turn.split('. ')[0]}; {foe['name']} remains beyond 5 feet.")
                 continue
@@ -353,11 +366,40 @@ def _declared_moves(t: _Turn) -> None:
             actual_steps.append((band, allowed))
     moves.steps = actual_steps
     for row, distance in moves.distances:
-        row["distance_ft"] = distance  # a feet move's recorded distance (positioning.distance_of)
-    if dash:
-        rec.round_effects.append("dash")
-    if disengage:
-        rec.round_effects.append("disengage")
+        if id(row) not in blocked:
+            row["distance_ft"] = distance  # a feet move's recorded distance (positioning.distance_of)
+
+
+def _contingency(t: _Turn) -> None:
+    """The turn's "if" clause, after its action (EDG-182). The condition is read from the recorded state;
+    a branch that holds is applied through the same path as a declared move, and one that does not hold
+    is logged, so nothing happens silently."""
+    decl, rec = t.inp.decl, t.rec
+    clause = decl.contingency
+    if clause is None or rec.fled or not t.player_acted:
+        return
+    target = decl.target
+    holds_now = contingency_holds(
+        clause,
+        target_standing=is_standing(target) if target is not None else None,
+        hero_hp=rec.hp,
+    )
+    if not holds_now:
+        rec.log_lines.append(not_held_text(clause))
+        return
+    foes = [e for e in rec.enemies if can_act(e)]
+    plan = plan_moves(
+        clause.branch,
+        [],
+        foes,
+        pick=lambda n: None,
+    )
+    if plan.question:
+        rec.log_lines.append(f"{clause.describe()} holds, but the branch could not be carried out: {plan.question}")
+        return
+    rec.log_lines.append(f"{clause.describe()} holds, so {rec.hero} carries on: {clause.branch}.")
+    rec.round_effects.append("contingency")
+    _apply_moves(t, plan, disengage=decl.disengage, dash=decl.dash)
 
 
 def _resolve_action(t: _Turn) -> None:
