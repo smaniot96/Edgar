@@ -587,6 +587,12 @@ export interface Combatant {
   band?: string | null;
   /** Whether the foe's reaction is spent (EDG-044, an opportunity attack this round). */
   reaction_used?: boolean | null;
+  /** A hero's character id in a fight with several heroes (EDG-049, additive). */
+  character_id?: number | null;
+  /** A hero's death saves in a party fight (EDG-049, additive). */
+  death_saves?: Record<string, unknown> | null;
+  /** The hero left the fight (EDG-049, additive). */
+  fled?: boolean | null;
 }
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | null;
@@ -642,6 +648,9 @@ export interface CombatState {
   /** Name of the combatant whose turn it is (if provided). */
   current_turn?: string | null;
   player_ac?: number | null;
+  /** A fight with two or more heroes; whose turn it is is `current_turn_character_id` (EDG-049, additive). */
+  party?: boolean | null;
+  current_turn_character_id?: number | null;
   combatants: Combatant[];
 }
 

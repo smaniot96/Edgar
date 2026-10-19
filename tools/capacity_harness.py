@@ -378,7 +378,7 @@ class Run:
         return self.chat
 
     async def persist(
-        self, session_id: int, body_message: str, result: dict[str, Any], *, spotlight: Any = None
+        self, session_id: int, body_message: str, result: dict[str, Any], *, spotlight: Any = None, side: Any = None
     ) -> dict[str, Any]:
         async with self.factory() as db, db.begin():
             for _ in range(PERSIST_STATEMENTS):

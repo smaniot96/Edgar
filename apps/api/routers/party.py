@@ -29,10 +29,10 @@ from ..auth import (
     OWNER_ROLE,
     PLAYER_ROLE,
     Auth,
+    campaign_role,
     generate_invite_token,
     hash_token,
     member_campaign,
-    campaign_role,
     member_session,
     owned_campaign,
 )

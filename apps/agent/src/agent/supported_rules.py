@@ -550,7 +550,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     ),
     Mechanic(
         id="party_combat",
-        title="Shared fight across several human-controlled heroes",
+        title="Party fight",
         scope=(
             "Two or more heroes at a table (the spotlight holder and the seated players) fight one encounter "
             "with one initiative order for every hero and every foe; each hero rolls its own d20 plus its "

@@ -143,6 +143,8 @@ const COMBAT_STATE_KEYS: Record<keyof CombatState, true> = {
   current_turn_index: true,
   current_turn: true,
   player_ac: true,
+  party: true,
+  current_turn_character_id: true,
   combatants: true,
 };
 
@@ -162,6 +164,9 @@ const COMBATANT_KEYS: Record<keyof Combatant, true> = {
   effects: true,
   band: true,
   reaction_used: true,
+  character_id: true,
+  death_saves: true,
+  fled: true,
 };
 
 const TURN_CHARACTER_KEYS: Record<keyof TurnCharacter, true> = {
