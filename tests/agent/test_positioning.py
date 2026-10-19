@@ -36,6 +36,7 @@ from agent.supported_rules import (
     classify_unsupported_actions,
 )
 from apps.api.services.turn_runner import combat_state_public
+from tests.agent.confirming import confirm_turn
 from tests.agent.test_combat import _enemy, _player, _state
 from tools.dice import use_rng
 
@@ -110,7 +111,8 @@ async def _turn(
     if character is not None:
         state["character"] = character
     with use_rng(random.Random(seed)):
-        return await combat_round_node(state)
+        out = await combat_round_node(state)
+        return await confirm_turn(out, state)
 
 
 def _entries(out: dict, purpose: str) -> list[dict]:

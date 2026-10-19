@@ -45,6 +45,7 @@ from agent.supported_rules import (
     apply_narration_boundary,
     classify_unsupported_actions,
 )
+from tests.agent.confirming import confirm_turn
 from tests.agent.test_concentration import _entries, _exact_foe, _next_round, _state, _summary
 from tests.agent.test_monster_riders import SPITTER_TEXT
 from tests.agent.test_monster_save_actions import DRAKE_TEXT
@@ -452,7 +453,7 @@ async def test_frightful_presence_frightens_the_hero_once_and_it_repeats_the_sav
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     state = _state("I wait and watch", [_exact_foe(WYRM_TEXT, "Dread Wyrm", hp=115)], WAIT)
     with use_rng(ScriptedDice([4, 1, 1, 1])):
-        first = await combat_round_node(state)
+        first = await confirm_turn(await combat_round_node(state), state)
     assert effects_of(_hero_row(first)) == [
         {
             "kind": "frightened",
@@ -478,7 +479,7 @@ async def test_frightful_presence_frightens_the_hero_once_and_it_repeats_the_sav
         round_num=2,
     )
     with use_rng(ScriptedDice([18, 3, 15, 1, 1, 1])):
-        second = await combat_round_node(follow)
+        second = await confirm_turn(await combat_round_node(follow), follow)
     assert _entries(second, "attack check")[0]["roll_mode"] == "disadvantage"
     assert _entries(second, "attack check")[0]["rolls"] == [18, 3]
     assert (
@@ -498,7 +499,7 @@ async def test_a_success_against_frightful_presence_records_nothing(
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     state = _state("I wait and watch", [_exact_foe(WYRM_TEXT, "Dread Wyrm", hp=115)], WAIT)
     with use_rng(ScriptedDice([12, 1, 1, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     assert effects_of(_hero_row(out)) == []
     assert "succeeds on the WIS save" in _summary(out) and "is not frightened." in _summary(out)
     assert out["combat_state"]["combatants"][1]["recharge_spent"] == ["Frightful Presence"]
@@ -523,7 +524,7 @@ async def test_an_impaired_hero_rolls_ability_checks_at_disadvantage_in_combat(
         "Spitter",
     )
     with use_rng(ScriptedDice([17, 4, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     check = _entries(out, "perception check")[0]
     assert check["roll_mode"] == "disadvantage" and check["kept"] == 4
 
@@ -542,7 +543,7 @@ async def test_a_frightened_hero_cannot_close_in_on_the_source(
         "frightened",
         "Dread Wyrm",
     )
-    out = await combat_round_node(state)
+    out = await confirm_turn(await combat_round_node(state), state)
     assert "frightened of Dread Wyrm and cannot willingly move closer" in out["narration"]
     assert out["adjudication_result"].dice_log == []
     assert out["combat_state"]["round"] == 1
@@ -565,7 +566,7 @@ async def test_fear_applied_by_an_ahead_foe_blocks_close_in_after_its_turn_witho
         ParsedInput(intent="combat", check="attack", target="straw stalker"),
     )
     with use_rng(ScriptedDice([15, 1, 1, 3])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
 
     summary = _summary(out)
     assert "Dara is frightened of Straw Stalker and cannot willingly move closer" in summary
@@ -590,13 +591,13 @@ async def test_a_failed_same_source_short_rider_refreshes_through_the_sources_ne
     }
     state = _state("I wait and watch", [stalker], WAIT)
     with use_rng(ScriptedDice([15, 1, 1, 1])):
-        first = await combat_round_node(state)
+        first = await confirm_turn(await combat_round_node(state), state)
     assert effects_of(_hero_row(first))[0]["applied_round"] == 1
 
     follow = _next_round(first, "I wait and watch", WAIT, round_num=2)
     follow["character"] = {**follow["character"], "hp_current": _hero_row(first)["hp_current"]}
     with use_rng(ScriptedDice([15, 2, 2, 1])):
-        second = await combat_round_node(follow)
+        second = await confirm_turn(await combat_round_node(follow), follow)
 
     effects = effects_of(_hero_row(second))
     assert len(effects) == 1
@@ -621,7 +622,7 @@ async def test_a_hero_can_close_in_after_an_ahead_sources_short_fear_expires(
     }
     first_state = _state("I wait and watch", [stalker], WAIT)
     with use_rng(ScriptedDice([15, 1, 1, 3])):
-        first = await combat_round_node(first_state)
+        first = await confirm_turn(await combat_round_node(first_state), first_state)
     assert [effect["kind"] for effect in effects_of(_hero_row(first))] == ["frightened"]
 
     follow = _next_round(
@@ -632,7 +633,7 @@ async def test_a_hero_can_close_in_after_an_ahead_sources_short_fear_expires(
     )
     follow["character"] = {**follow["character"], "hp_current": _hero_row(first)["hp_current"]}
     with use_rng(ScriptedDice([1, 10, 3])):
-        second = await combat_round_node(follow)
+        second = await confirm_turn(await combat_round_node(follow), follow)
 
     assert "Dara is no longer frightened." in _summary(second)
     assert _entries(second, "attack check")
@@ -659,7 +660,7 @@ async def test_a_persisted_stun_ending_with_an_ahead_foe_does_not_discard_the_he
     )
 
     with use_rng(ScriptedDice([1, 1, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
 
     assert "Dara is no longer stunned." in _summary(out)
     assert _entries(out, "attack check")
@@ -685,7 +686,7 @@ async def test_a_flee_declaration_waits_for_a_persisted_stuns_source_turn_to_end
     )
 
     with use_rng(ScriptedDice([1, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
 
     assert _entries(out, "Spitter Hand Crossbow attack")
     assert "Dara is no longer stunned." in _summary(out)
@@ -717,7 +718,7 @@ async def test_a_flee_does_not_escape_if_the_ahead_source_reapplies_stun(
     )
 
     with use_rng(ScriptedDice([15, 18, 1, 1, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
 
     assert "is stunned." in _summary(out)
     assert "Dara flees the fight." not in _summary(out)
@@ -740,7 +741,7 @@ async def test_dodge_does_not_cancel_advantage_after_a_later_foe_stuns_the_hero(
     state = _state("I take the dodge action", [stalker, goblin], WAIT)
 
     with use_rng(ScriptedDice([15, 18, 1, 1, 1, 3, 12, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
 
     first = _entries(out, "Straw Stalker Claw attack")[0]
     second = _entries(out, "Goblin attack")[0]
@@ -767,7 +768,7 @@ async def test_mind_blast_stuns_the_hero_and_the_foe_attacks_with_advantage(
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     state = _state("I wait and watch", [_exact_foe(EATER_TEXT, "Mind-Eater", hp=30)], WAIT)
     with use_rng(ScriptedDice([5, 3, 4])):
-        first = await combat_round_node(state)
+        first = await confirm_turn(await combat_round_node(state), state)
     assert _hero_row(first)["hp_current"] == 5
     assert effects_of(_hero_row(first)) == [
         {
@@ -788,7 +789,7 @@ async def test_mind_blast_stuns_the_hero_and_the_foe_attacks_with_advantage(
     follow = _next_round(first, "I attack the mind-eater", ATTACK, round_num=2)
     follow["character"] = {**follow["character"], "hp_current": 5}  # the sheet carries the damage
     with use_rng(ScriptedDice([4, 3, 2, 15, 2])):
-        second = await combat_round_node(follow)
+        second = await confirm_turn(await combat_round_node(follow), follow)
     assert "Dara is stunned and cannot act." in _summary(second)
     assert _entries(second, "attack check") == []
     assert (
@@ -818,7 +819,7 @@ async def test_the_hero_acts_again_once_the_repeat_save_ends_the_stun(
         dc=13,
     )
     with use_rng(ScriptedDice([15, 6, 20, 1, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     summary = _summary(out)
     assert "Dara is stunned and cannot act." in summary
     assert (
@@ -842,7 +843,7 @@ async def test_a_foe_ahead_of_the_hero_in_initiative_stuns_it_before_its_turn(
     eater = {**_exact_foe(EATER_TEXT, "Mind-Eater", hp=30), "init": 20}
     state = _state("I attack the mind-eater", [eater], ATTACK)
     with use_rng(ScriptedDice([5, 3, 4, 4])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     assert _entries(out, "attack check") == []
     assert "Dara is stunned and cannot act." in _summary(out)
     assert [e["kind"] for e in effects_of(_hero_row(out))] == ["stunned"]
@@ -862,7 +863,7 @@ async def test_a_stunned_hero_cannot_flee(fake_llm_schema, fake_retrieval) -> No
     with use_rng(
         ScriptedDice([1, 1])
     ):  # The incapacitated hero cannot impose close-range disadvantage; both advantage dice miss.
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     assert not out["combat_state"]["ended"]
     assert "Dara is stunned and cannot act." in _summary(out)
 
@@ -879,7 +880,7 @@ async def test_a_stunned_hero_fails_a_dexterity_save_without_a_roll(
         "Ember Drake",
     )
     with use_rng(ScriptedDice([3, 4])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
     assert _entries(out, "Dara DEX save (Cinder Breath)") == []
     assert (
         "Dara fails the DEX save against Ember Drake's Cinder Breath (automatic failure while "
@@ -907,7 +908,7 @@ async def test_stun_ends_concentration_after_damage_save_succeeds(
     # The eater attacks with its claw after the blast; advantage against the stunned hero is 2, 2,
     # then 1 on its damage die.
     with use_rng(ScriptedDice([5, 3, 4, 8, 1, 2, 2, 1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
 
     assert "Dara keeps concentration on Hold Person (rolled 10 vs DC 10)." in _summary(out)
     assert "Dara's concentration on Hold Person ends while incapacitated." in _summary(out)
@@ -939,7 +940,7 @@ async def test_a_persisted_stun_drops_concentration_when_combat_is_loaded(
     }
 
     with use_rng(ScriptedDice([1])):
-        out = await combat_round_node(state)
+        out = await confirm_turn(await combat_round_node(state), state)
 
     assert "Dara's concentration on Hold Person ends while incapacitated." in _summary(out)
     assert _hero_row(out).get("concentration") is None
@@ -962,7 +963,7 @@ async def test_a_rider_frightens_until_the_end_of_the_attackers_next_turn_when_i
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
     state = _state("I wait and watch", [_exact_foe(STALKER_TEXT, "Straw Stalker", hp=36)], WAIT)
     with use_rng(ScriptedDice([15, 2, 3, 4])):
-        first = await combat_round_node(state)
+        first = await confirm_turn(await combat_round_node(state), state)
     assert _hero_row(first)["hp_current"] == 6
     assert effects_of(_hero_row(first)) == [
         {
@@ -986,7 +987,7 @@ async def test_a_rider_frightens_until_the_end_of_the_attackers_next_turn_when_i
     )
     follow["character"] = {**follow["character"], "hp_current": 6}
     with use_rng(ScriptedDice([18, 3, 1])):
-        second = await combat_round_node(follow)
+        second = await confirm_turn(await combat_round_node(follow), follow)
     assert _entries(second, "attack check")[0]["roll_mode"] == "disadvantage"
     assert "Dara is no longer frightened." in _summary(second)
     assert effects_of(_hero_row(second)) == []
@@ -1003,13 +1004,13 @@ async def test_a_rider_from_a_foe_ahead_of_the_hero_ends_before_the_heros_next_t
     target = ParsedInput(intent="combat", check="attack", target="straw stalker")
     state = _state("I attack the straw stalker", [stalker], target)
     with use_rng(ScriptedDice([15, 2, 3, 4, 18, 3])):
-        first = await combat_round_node(state)
+        first = await confirm_turn(await combat_round_node(state), state)
     assert _entries(first, "attack check")[0]["roll_mode"] == "disadvantage"
     assert [e["kind"] for e in effects_of(_hero_row(first))] == ["frightened"]
 
     follow = _next_round(first, "I attack the straw stalker", target, round_num=2)
     follow["character"] = {**follow["character"], "hp_current": 6}
     with use_rng(ScriptedDice([1, 1])):
-        second = await combat_round_node(follow)
+        second = await confirm_turn(await combat_round_node(follow), follow)
     assert _entries(second, "attack check")[0]["rolls"] == [1]  # a single die: no disadvantage
     assert effects_of(_hero_row(second)) == []

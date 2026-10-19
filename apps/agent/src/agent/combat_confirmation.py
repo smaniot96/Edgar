@@ -52,17 +52,15 @@ def pending_of(player: dict) -> dict[str, Any] | None:
     return pending if isinstance(pending, dict) and pending.get("player_input") else None
 
 
-def needs_confirmation(decl: Declaration, *, always: bool, typed: bool) -> bool:
-    """True when the turn must be repeated back before any die.
+def needs_confirmation(decl: Declaration, *, always: bool) -> bool:
+    """True when the turn must be repeated back before any die (owner rule, EDG-182).
 
-    A multi-part turn is confirmed when the parser proposed it as a typed list (`typed`). The legacy
-    path, a turn with no typed list, keeps its behaviour unchanged. A player who chose "always
-    confirm" is asked about any turn that declares an action, typed or not.
+    A multi-part turn (two or more actions, or a move beside an action) and a conditional turn (a
+    contingency or a standing order) are confirmed on every path, typed or legacy. A player who chose
+    "always confirm" is asked about any turn that declares an action.
     """
     if always:
         return bool(decl.declared) or decl.moving or decl.is_attack or decl.is_spell
-    if not typed:
-        return False
     parts = len({d.kind for d in decl.declared}) + (1 if decl.moving else 0)
     return parts >= 2 or (decl.moving and decl.is_attack)
 
@@ -90,7 +88,8 @@ def stored_declaration(player: dict, *, player_input: str, parsed: Any, summary:
     """Hold the declaration on the hero's combatant row, for confirmation or cancellation."""
     player[PENDING_KEY] = {
         "player_input": player_input,
-        "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else {},
+        # None stays None: a turn with no parser output takes the legacy path when it is restored.
+        "parsed": parsed.model_dump() if hasattr(parsed, "model_dump") else None,
         "summary": summary,
         "round": round_num,
     }

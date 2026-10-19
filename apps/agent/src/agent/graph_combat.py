@@ -508,7 +508,8 @@ async def combat_round_node(state: AgentState) -> dict:
         if word == "confirm":
             # The stored declaration, exactly as it was proposed: nothing said after it changes it.
             player_input = str(pending["player_input"])
-            parsed = ParsedInput.model_validate(pending.get("parsed") or {})
+            restored = pending.get("parsed")
+            parsed = ParsedInput.model_validate(restored) if restored is not None else None
             named = _named_targets({**state, "parsed_input": parsed})
             fled = is_flee(player_input)
             confirmed = True
@@ -561,10 +562,7 @@ async def combat_round_node(state: AgentState) -> dict:
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
     # EDG-182: a multi-part turn is repeated back before any die; the stored copy is what runs.
-    typed = bool(getattr(parsed, "actions", None))
-    if not confirmed and not fled and needs_confirmation(
-        decl, always=bool(player.get(ALWAYS_KEY)), typed=typed
-    ):
+    if not confirmed and not fled and needs_confirmation(decl, always=bool(player.get(ALWAYS_KEY))):
         summary = summary_of(hero, decl)
         stored_declaration(
             player, player_input=player_input, parsed=parsed, summary=summary, round_num=round_num

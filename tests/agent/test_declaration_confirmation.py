@@ -68,17 +68,17 @@ def test_control_words_are_exact_replies_only() -> None:
     assert control_word("stop confirming") == "always_off"
 
 
-def test_only_multi_part_typed_turns_and_chosen_turns_need_confirmation() -> None:
-    attack = Declaration.__new__(Declaration)  # only the fields the gate reads
-    object.__setattr__(attack, "declared", [])
-    object.__setattr__(attack, "moving", False)
-    object.__setattr__(attack, "is_attack", True)
-    object.__setattr__(attack, "is_spell", False)
-    assert needs_confirmation(attack, always=False, typed=True) is False
-    assert needs_confirmation(attack, always=True, typed=False) is True
-    object.__setattr__(attack, "moving", True)
-    assert needs_confirmation(attack, always=False, typed=True) is True
-    assert needs_confirmation(attack, always=False, typed=False) is False  # legacy path unchanged
+def test_multi_part_and_chosen_turns_need_confirmation_on_every_path() -> None:
+    """The owner rule (EDG-182): the gate is the same for typed and legacy turns."""
+    turn = Declaration.__new__(Declaration)  # only the fields the gate reads
+    object.__setattr__(turn, "declared", [])
+    object.__setattr__(turn, "moving", False)
+    object.__setattr__(turn, "is_attack", True)
+    object.__setattr__(turn, "is_spell", False)
+    assert needs_confirmation(turn, always=False) is False  # a single attack runs at once
+    object.__setattr__(turn, "moving", True)
+    assert needs_confirmation(turn, always=False) is True  # a move beside an attack is two parts
+    assert needs_confirmation(turn, always=True) is True  # the player's always-confirm option
 
 
 @pytest.mark.asyncio
