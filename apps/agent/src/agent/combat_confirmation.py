@@ -62,7 +62,8 @@ def needs_confirmation(decl: Declaration, *, always: bool) -> bool:
     if always:
         return bool(decl.declared) or decl.moving or decl.is_attack or decl.is_spell
     parts = len({d.kind for d in decl.declared}) + (1 if decl.moving else 0)
-    return parts >= 2 or (decl.moving and decl.is_attack) or decl.contingency is not None
+    standing = decl.ready is not None and decl.ready.standing
+    return parts >= 2 or (decl.moving and decl.is_attack) or decl.contingency is not None or standing
 
 
 def summary_of(hero: str, decl: Declaration) -> str:
@@ -80,6 +81,8 @@ def summary_of(hero: str, decl: Declaration) -> str:
     what = " then ".join(steps) if steps else "take the turn as you described it"
     if decl.contingency is not None:
         what += f"; {decl.contingency.describe()}, {decl.contingency.branch}"
+    if decl.ready is not None and decl.ready.standing:
+        what = f"keep a standing order to attack {decl.ready.foe_name} each time it closes in (until you cancel it)"
     return (
         f"Confirm before any dice: {hero} will {what}. Reply yes to commit, or no to change it. "
         "No roll is made and no turn is spent until you reply yes."
@@ -95,6 +98,18 @@ def stored_declaration(player: dict, *, player_input: str, parsed: Any, summary:
         "summary": summary,
         "round": round_num,
     }
+
+
+def public_standing_orders(combatants: list[dict]) -> list[dict[str, str]]:
+    """The hero's standing reaction orders, visible and cancellable (EDG-182): the foe each names."""
+    from agent.combatants import effects_of
+
+    player = next((c for c in combatants if c.get("is_player")), None)
+    return [
+        {"foe": str(e["foe_name"]), "summary": f"Attack {e['foe_name']} each time it closes in"}
+        for e in effects_of(player or {})
+        if e["kind"] == "readied" and e.get("standing") and e.get("foe_name")
+    ]
 
 
 def public_pending(combatants: list[dict]) -> dict[str, str] | None:

@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -91,9 +92,11 @@ from agent.combat_narration import (
 )
 from agent.combat_player_phase import (
     PlayerTurnInput,
+    cancel_standing_orders,
     finish_hero_turn,
     fire_readied,
     run_player_turn,
+    standing_order_foes,
 )
 from agent.combat_round_record import RoundRecord
 from agent.combat_setup import (
@@ -138,6 +141,7 @@ from agent.positioning import (
 )
 from agent.prompts import wrap_player_action
 from agent.provider_trace import traced_call
+from agent.readied_action import CANCEL_ORDER
 from agent.resolution import (
     DEATH_SAVES_KEY,
     initiative_bonus,
@@ -494,8 +498,30 @@ async def combat_round_node(state: AgentState) -> dict:
     player["hp_max"] = player_hp_max
     player_ac = int(player.get("ac") or combat_state.get("player_ac") or _player_ac(character))
     player["ac"] = player_ac
-    # EDG-182: a reply to a pending confirmation, or the "always confirm" option. No die is rolled here.
+    # EDG-182: cancel a standing order (no roll, no turn spent); a reply to a pending confirmation; or the
+    # "always confirm" option. No die is rolled here.
     confirmed = False
+    if CANCEL_ORDER.search(player_input) and not fled:
+        orders = standing_order_foes(player)
+        named = [f for f in orders if re.search(rf"\b{re.escape(f)}\b", player_input, re.IGNORECASE)]
+        other = [
+            str(c.get("name"))
+            for c in combatants
+            if not c.get("is_player")
+            and str(c.get("name")) not in orders
+            and re.search(rf"\b{re.escape(str(c.get('name')))}\b", player_input, re.IGNORECASE)
+        ]
+        if not orders or (other and not named):
+            who = f" against {other[0]}" if other else ""
+            text = f"{hero} has no standing order{who} to cancel. No roll is made and no turn is spent."
+        elif not named and len(orders) > 1:
+            text = (
+                f"Which standing order do you cancel? ({' or '.join(orders)}). No roll is made and no turn is spent."
+            )
+        else:
+            cancelled = cancel_standing_orders(player, named or orders)
+            text = f"Cancelled the standing order against {', '.join(cancelled)}. No roll is made and no turn is spent."
+        return _ask_player(state, text, combat_state=combat_state)
     word = control_word(player_input)
     if word in ("always_on", "always_off") and not fled:
         player[ALWAYS_KEY] = word == "always_on"

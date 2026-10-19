@@ -7,7 +7,7 @@ question the player is asked, with no roll, no round and no state change. Everyt
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from agent.action_economy import (
@@ -54,6 +54,7 @@ from agent.positioning import (
 )
 from agent.readied_action import (
     READY_PHRASE,
+    STANDING_PHRASE,
     ReadyOrder,
     foe_is_beyond_reach,
     movement_text,
@@ -328,7 +329,8 @@ def declare_action(
                 "made and no turn is spent.",
                 combat_state=combat_state,
             )
-        ready = order
+        standing = bool(STANDING_PHRASE.search(player_input))
+        ready = replace(order, standing=standing) if standing else order
     # A melee attack or grapple cannot reach a foe beyond 5 feet; a ranged weapon or spell can.
     attack_weapon = choose_weapon(
         character, player_input, prefer_ranged=bool(_RANGED_HINT.search(player_input))
