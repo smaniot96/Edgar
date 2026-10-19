@@ -33,6 +33,7 @@ from agent.combat_targeting import _release_target, additional_spell_targets, se
 from agent.combat_view import _ask_player
 from agent.combatants import CombatManeuver, can_act, classify_combat_maneuver
 from agent.conditions import condition_ends_before_turn, fear_refusal, humanoid_refusal
+from agent.declarations import MANEUVER, MOVE, agreement_question
 from agent.positioning import (
     RANGED,
     MovePlan,
@@ -207,6 +208,18 @@ def declare_action(
     refusal = refusal_for(declared, hero)
     if refusal:
         return _ask_player(state, refusal, combat_state=combat_state)
+    # EDG-182: the parser's proposed action list is adopted only where the engine detected the same
+    # action. A disagreement is one question, asked before any target, roll or turn spend.
+    if not fled:
+        detected = {d.kind for d in declared}
+        if moving:
+            detected.add(MOVE.kind)
+        if combat_action is not None:
+            detected.add(MANEUVER.kind)
+        proposals = [(a.kind, a.text) for a in getattr(parsed, "actions", None) or []]
+        question = agreement_question(proposals, detected, hero)
+        if question:
+            return _ask_player(state, question, combat_state=combat_state)
     target: dict | None = None
     release_target: dict | None = None
     if combat_action is not None and combat_action.kind == "release":

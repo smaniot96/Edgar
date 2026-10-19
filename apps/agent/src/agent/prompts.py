@@ -39,6 +39,7 @@ Return:
 - confirms_ending: true ONLY if the player explicitly agrees to end the adventure/campaign now (typically answering a question about concluding the story). Otherwise false.
 - resolution_policy_id: an exact collection-qualified key from the reviewed current-scene action choices only when the player's stated approach matches that choice; otherwise null. Never invent or expose a key.
 - recall_fact_id: an exact fact_id from the session-earned public clues only when the player explicitly asks to reread/quote/recall that clue; otherwise null. Never select a clue merely because it is the only one.
+- actions: in combat, the ordered list of actions the player's words state, one entry each: kind (attack, off_hand_attack, maneuver, item, spell, dodge, dash, disengage, ready, second_wind, rage, move or contingency), text (the player's words), and target, weapon, spell or destination when named. List only what the player states; never add an action they did not say. Empty outside combat.
 - entities: optional extra details (e.g. {{"weapon": "longsword"}}). When the player explicitly names a spell or class feature, include "spell" or "feature" with its canonical English rulebook name; preserve qualifiers and do not infer an unmentioned spell or feature.
 
 Do NOT invent dice expressions, modifiers or DCs; the engine computes them from the character sheet."""

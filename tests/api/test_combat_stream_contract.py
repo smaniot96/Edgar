@@ -573,3 +573,38 @@ async def test_combat_stream_retry_replays_receipt_without_second_narration(
     assert scripted.calls == ["astream"]
     assert await _count_events(sid, "narration") == 1
     assert await _count_events(sid, TURN_DIAGNOSTICS_EVENT) == 1
+
+
+def _round_payload_or_none(result: dict[str, Any]) -> None:
+    """A refused proposal runs no combat round, so it emits no round telemetry."""
+    assert not [e for e in result.get("telemetry_events") or [] if e.get("event_type") == COMBAT_ROUND_EVENT]
+    return None
+
+
+@pytest.mark.asyncio
+async def test_sync_and_stream_ask_the_same_question_for_an_unsupported_proposal(
+    narrator, committed, fake_llm_schema
+):
+    """EDG-182: a proposed action the player did not declare is one question, identical on both paths.
+
+    Neither path rolls a die, spends the round or calls the narrator.
+    """
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(
+        intent="combat", check="attack", target="goblin", actions=[{"kind": "dodge", "text": "dodge"}]
+    )
+    enemies = [_enemy("Goblin", hp=500, init=5)]
+    sync_model = narrator(ScriptedNarrator(["unused"]))
+    with use_rng(random.Random(11)):
+        sync = await app.ainvoke(copy.deepcopy(_combat_state(enemies=enemies)))
+    stream_model = narrator(ScriptedNarrator(["unused"]))
+    with use_rng(random.Random(11)):
+        events = await stream_events(_combat_state(enemies=[_enemy("Goblin", hp=500, init=5)]))
+    streamed = committed[-1]
+
+    assert sync_model.calls == [] and stream_model.calls == []
+    assert "No roll is made" in sync["narration"]
+    assert done_of(events)["narration"] == sync["narration"] == streamed["narration"]
+    assert sync["adjudication_result"].dice_log == []
+    assert sync["combat_state"]["round"] == 1
+    assert streamed["combat_state"]["round"] == 1
+    assert _round_payload_or_none(sync) is None and _round_payload_or_none(streamed) is None

@@ -54,7 +54,7 @@
   "prompt_provenance": {
     "model_calls": 0,
     "prompt_source": "apps/agent/src/agent/prompts.py",
-    "prompt_sha256": "6d781cfd18d8654ee2aad5e515280823276517364c9feca9bb44c57ccd5e2f26",
+    "prompt_sha256": "262ea5b7a49e97c1518915087495de1291658ce40ef6b548994f0add2c9cea1e",
     "note": "Recorded for change detection only. The offline harness invokes deterministic retrieval and engine code; no prompt or language model is invoked."
   },
   "passages": [
