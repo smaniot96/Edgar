@@ -26,6 +26,7 @@ from ingestion.text_quality import is_degraded, prefer_ocr, score_text
 
 EXTRACTION_VERSION = 1
 SUMMARY_PAGE_LIMIT = 20
+RASTER_ITEMS_PER_PAGE = 6
 EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index")
 # Tesseract at the 600 dpi used for raster stat headings in layout.ocr_stat_header.
 OCR_LAYOUT_DPI = 600
@@ -84,6 +85,14 @@ class Extraction:
             p.page: errors for p in self.pages if p.page not in excluded and (errors := p.errors())
         }
 
+    def raster_review(self) -> list[dict]:
+        """Every heading or type line read from a raster, in page order, for operator review."""
+        return [
+            {"page": p.page, **entry}
+            for p in self.pages
+            for entry in p.quality.get("raster_recovered", [])
+        ]
+
     def quality_summary(self) -> list[str]:
         """Bounded, text-free lines: failing pages with codes, then totals per code."""
         failing = self.failing_pages()
@@ -96,6 +105,7 @@ class Extraction:
             lines.append(
                 f"... {len(failing) - SUMMARY_PAGE_LIMIT} more pages; see the extraction bundle."
             )
+        lines += self._raster_review_lines()
         if self.excluded_pages:
             listed = [f"page {e['page']} ({e['reason']})" for e in self.excluded_pages]
             lines.append(
@@ -112,6 +122,32 @@ class Extraction:
         lines.append(
             "Totals: " + (", ".join(f"{c} x{n}" for c, n in sorted(totals.items())) or "none")
         )
+        return lines
+
+    def _raster_review_lines(self) -> list[str]:
+        """Bounded review lines for raster-read text; the full list is in the review sidecar."""
+        by_page: dict[int, list[dict]] = {}
+        for entry in self.raster_review():
+            by_page.setdefault(entry["page"], []).append(entry)
+        if not by_page:
+            return []
+        items = sum(len(entries) for entries in by_page.values())
+        lines = [
+            f"Raster-read headings to verify against the page image ({len(by_page)} pages, "
+            f"{items} items; every item is in the raster-review sidecar):"
+        ]
+        for page, entries in list(by_page.items())[:SUMMARY_PAGE_LIMIT]:
+            shown = [
+                f'{e["kind"]} "{e["text"]}" (conf {e["confidence"]}, crop {e["crop_index"]})'
+                for e in entries[:RASTER_ITEMS_PER_PAGE]
+            ]
+            more = len(entries) - len(shown)
+            tail = f"; ... {more} more" if more else ""
+            lines.append(f"page {page}: " + "; ".join(shown) + tail)
+        if len(by_page) > SUMMARY_PAGE_LIMIT:
+            lines.append(
+                f"... {len(by_page) - SUMMARY_PAGE_LIMIT} more pages; see the raster-review sidecar."
+            )
         return lines
 
     def require_valid(self) -> None:
@@ -272,7 +308,7 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
             page = doc[number - 1]
             lines, duplicates = native_lines(page.get_text("dict"), page.rect.height)
             native_characters = sum(len(item.text) for item in lines)
-            warnings, candidates, scores = [], [], {}
+            warnings, candidates, scores, recovered = [], [], {}, []
             text, method, fatal = "", "native_geometry", []
             blank_page = not lines and not page.get_images() and not page.get_drawings()
             if blank_page:
@@ -285,6 +321,7 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
                         header_ocr=lambda bbox, source_page=page: ocr_stat_header(
                             source_page, bbox
                         ),
+                        recovered=recovered,
                     )
                     if warnings:
                         method = "native_geometry+raster_headers"
@@ -294,11 +331,15 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
                     # Retain the native material for diagnosis; never index ambiguous output.
                     text = "\n".join(item.text for item in lines)
                     fatal.append(str(exc))
+                    recovered = []
                 scores["native_geometry"] = score_text(text)
                 if not fatal and is_degraded(scores["native_geometry"]):
                     text, method = _prefer_fresh_ocr(
                         page, lines, text, method, scores, warnings, candidates
                     )
+                    if method == "layout_ocr":
+                        # The raster-read native render was discarded with its warnings.
+                        recovered.clear()
             else:
                 method = "layout_ocr"
                 candidates.append(
@@ -328,6 +369,10 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
                         f"OCR unavailable or failed ({type(exc).__name__}); install Tesseract with English language data and retry"
                     )
             quality = check_text(text)
+            if recovered:
+                # Every raster-read heading or type line is listed for operator review, always.
+                quality["raster_recovered"] = recovered
+                warnings.append("raster_stat_header_ocr_review_required")
             quality["blank_page"] = blank_page
             quality["native_characters"] = native_characters
             quality["removed_overlapping_spans"] = duplicates
@@ -377,6 +422,22 @@ def save_extraction(
     for page in data["pages"]:
         page["text_sha256"] = text_digest(page["text"])
     report.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # The full raster-read list for operator review; absent when nothing was read from a raster.
+    review = output_dir / f"{stem}.raster-review.json"
+    entries = extraction.raster_review()
+    if entries:
+        review_data = {
+            "source": extraction.source,
+            "source_sha256": extraction.source_sha256,
+            "markdown_sha256": extraction.text_sha256(),
+            "entries": entries,
+        }
+        review.write_text(
+            json.dumps(review_data, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    elif review.exists():
+        review.unlink()
     return markdown, report
 
 

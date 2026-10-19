@@ -476,6 +476,55 @@ def test_mixed_two_column_rows_with_few_spanning_cells_still_fail_closed():
         render_native_page(lines, 500)
 
 
+def test_raster_recovered_name_is_recorded_with_confidence_and_crop():
+    # Operator review: a name read from an image is listed with its OCR text, confidence and crop.
+    lines = _single_record(None, size_text="Medium fiend, any evil alignment")
+    recovered: list[dict] = []
+    text, warnings = render_native_page(
+        lines,
+        500,
+        header_ocr=lambda bbox: [Line("CAMBION", (40, 48, 110, 58), confidence=41.0)],
+        recovered=recovered,
+    )
+    assert text.startswith("## Cambion\n\nMedium fiend, any evil alignment")
+    assert recovered == [{"text": "CAMBION", "kind": "name", "confidence": 41, "crop_index": 0}]
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_extraction_lists_raster_reads_and_writes_a_full_sidecar(tmp_path):
+    page = ExtractedPage(
+        3,
+        "## Devil\n\nSmall fiend (devil), lawful evil",
+        "native_geometry+raster_headers",
+        {
+            "errors": [],
+            "raster_recovered": [
+                {"text": "Devil", "kind": "name", "confidence": 41, "crop_index": 3},
+                {"text": "Small fiend", "kind": "size_type", "confidence": 96, "crop_index": 3},
+            ],
+        },
+        ["raster_stat_header_ocr_review_required"],
+    )
+    extraction = Extraction("book", "a" * 64, 3, [page])
+    summary = "\n".join(extraction.quality_summary())
+    assert "Raster-read headings to verify against the page image (1 pages, 2 items" in summary
+    assert 'page 3: name "Devil" (conf 41, crop 3)' in summary
+    markdown, report = save_extraction(extraction, tmp_path)
+    sidecar = json.loads((tmp_path / "book.raster-review.json").read_text(encoding="utf-8"))
+    assert [e["text"] for e in sidecar["entries"]] == ["Devil", "Small fiend"]
+    assert sidecar["entries"][0]["page"] == 3
+
+
+def test_bundles_without_raster_reads_have_no_review_lines_or_sidecar(tmp_path):
+    # Additive: a page with no raster-read text adds no key, no summary line and no sidecar.
+    page = ExtractedPage(1, "Plain prose.", "native_geometry", {"errors": []}, [])
+    extraction = Extraction("book", "a" * 64, 1, [page])
+    assert not any("Raster-read" in line for line in extraction.quality_summary())
+    assert "raster_recovered" not in extraction.pages[0].quality
+    save_extraction(extraction, tmp_path)
+    assert not (tmp_path / "book.raster-review.json").exists()
+
+
 @pytest.fixture
 def native_pdf(tmp_path):
     path = tmp_path / "prepared.pdf"

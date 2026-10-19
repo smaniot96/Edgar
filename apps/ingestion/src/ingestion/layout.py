@@ -24,6 +24,8 @@ class Line:
     bbox: tuple[float, float, float, float]
     size: float = 0
     heading: bool = False
+    # Lowest word confidence on an OCR line; native text is always 100.
+    confidence: float = 100.0
 
 
 def native_lines(data: dict, height: float) -> tuple[list[Line], int]:
@@ -301,14 +303,29 @@ def ocr_stat_header(page, bbox: tuple[float, float, float, float]) -> list[Line]
                     bbox[0] + x1 * scale,
                     bbox[1] + y1 * scale,
                 ),
+                confidence=min(float(w["conf"]) for w in words),
             )
         )
     return result
 
 
+def _recovered_entry(line: Line, kind: str, crop: int) -> dict:
+    return {
+        "text": line.text,
+        "kind": kind,
+        "confidence": round(line.confidence),
+        "crop_index": crop,
+    }
+
+
 def render_native_page(
-    lines: list[Line], width: float, *, header_ocr=None
+    lines: list[Line], width: float, *, header_ocr=None, recovered: list[dict] | None = None
 ) -> tuple[str, list[str]]:
+    """Render a native page; `recovered` collects every heading or type line read from a raster.
+
+    Each record carries the OCR text as read, its kind, its lowest word confidence and the crop
+    that produced it, so an operator can check it against the page image.
+    """
     warnings = []
     body_size = statistics.median(item.size for item in lines) if lines else 10
     ordered = []
@@ -373,16 +390,19 @@ def render_native_page(
             # next. Later crops are tried only when the earlier ones yield no usable header; the
             # last two sit just above a native size line when one is present.
             near = size.bbox[1] if size is not None else top
-            for box in (
-                (left - 2, max(0, top - 60), right + 2, top),
-                (left - 12, max(0, top - 60), right + 12, top),
-                (left - 12, max(0, top - 45), right + 12, top),
-                (left - 12, max(0, top - 72), right + 12, top),
-                (left - 12, max(0, near - 40), right + 12, near),
-                (left - 12, max(0, near - 30), right + 12, near),
+            for crop, box in enumerate(
+                (
+                    (left - 2, max(0, top - 60), right + 2, top),
+                    (left - 12, max(0, top - 60), right + 12, top),
+                    (left - 12, max(0, top - 45), right + 12, top),
+                    (left - 12, max(0, top - 72), right + 12, top),
+                    (left - 12, max(0, near - 40), right + 12, near),
+                    (left - 12, max(0, near - 30), right + 12, near),
+                )
             ):
                 supplements = header_ocr(box)
                 raster_size, raster_title = _raster_header(supplements, size, body_size, top)
+                chosen = crop
                 if (title is not None or raster_title is not None) and (
                     size is not None or raster_size is not None
                 ):
@@ -392,10 +412,14 @@ def render_native_page(
                     raise ValueError("missing_stat_heading")
                 raster_title.heading = True
                 rows.append(raster_title)
+                if recovered is not None:
+                    recovered.append(_recovered_entry(raster_title, "name", chosen))
             if size is None:
                 if raster_size is None:
                     raise ValueError("missing_stat_type")
                 rows.append(raster_size)
+                if recovered is not None:
+                    recovered.append(_recovered_entry(raster_size, "size_type", chosen))
             warnings.append("raster_stat_header_ocr_review_required")
         # Some scanned headings (not their surrounding native actions) are absent from
         # the text layer. Inspect only gaps inside a stat column and supplement a known
@@ -427,6 +451,8 @@ def render_native_page(
                         supplement.heading = True
                         rows.append(supplement)
                         warnings.append("raster_stat_subheading_ocr_review_required")
+                        if recovered is not None:
+                            recovered.append(_recovered_entry(supplement, "subheading", 0))
         ordered.extend(sorted(rows, key=lambda item: (item.bbox[1], item.bbox[0])))
     paragraphs = []
     buf = []
