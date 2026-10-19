@@ -22,6 +22,11 @@ class TurnRequest(BaseModel):
     # EDG-048: the spotlight version the client acted on. A mismatch is refused (409) before any
     # model call. Optional, so clients that do not track the table keep working.
     spotlight_version: int | None = Field(default=None, ge=0)
+    # EDG-051: play the caller's queued action. `message` must equal its text and `queued_action_version`
+    # (optional) its version, or the turn is refused before any model call. The server validates it
+    # again against the current situation and consumes it in the turn's own commit.
+    queued_action_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    queued_action_version: int | None = Field(default=None, ge=1)
     # Developer mode: when true, the stream also emits a `debug` SSE frame (intent, retrieved
     # RAG chunks, full combat internals incl. enemy stats, stage timings, model). Honoured only
     # when the server runs with EDGAR_DEBUG=1; otherwise silently forced off.

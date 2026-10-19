@@ -38,6 +38,10 @@ class Session(Base):
             "spotlight_timeout_seconds BETWEEN 30 AND 3600",
             name="sessions_spotlight_timeout_valid",
         ),
+        CheckConstraint(
+            "pacing_policy IN ('relaxed', 'standard', 'fast', 'custom')",
+            name="sessions_pacing_policy_valid",
+        ),
     )
     creation_request_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     creation_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -70,6 +74,14 @@ class Session(Base):
     )
     # Free-for-all cooldowns: character id (as text) -> ISO time the cooldown ends.
     spotlight_cooldowns: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # Table pacing (EDG-051): the named policy the whole table sees, and the one queued intended
+    # action each waiting player may hold: {"revision": n, "items": {"<user_id>": {...}}}.
+    pacing_policy: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'standard'")
+    )
+    queued_actions: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 

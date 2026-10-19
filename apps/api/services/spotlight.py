@@ -58,7 +58,7 @@ from db.postgres.models import (
 )
 
 from ..schemas.channel import ChannelActor
-from . import session_channel
+from . import pacing, session_channel
 from .character_assignments import character_play_state
 from .safe_errors import classify_error, log_failure
 
@@ -128,6 +128,15 @@ class Table:
         return None
 
 
+@dataclass(frozen=True)
+class QueuedClaim:
+    """A turn that plays the caller's queued action (EDG-051): validated again under the table lock."""
+
+    action_id: str
+    version: int | None
+    message: str
+
+
 @dataclass
 class SpotlightTurn:
     """The spotlight decision for one turn, taken under the table lock before the model runs.
@@ -143,6 +152,11 @@ class SpotlightTurn:
     consumes: bool
     pass_to: int | None = None
     passed_reason: str | None = None
+    # EDG-051: the queued action this turn plays, consumed by the turn's own commit.
+    queued_user: int | None = None
+    queued_id: str | None = None
+    queued_version: int | None = None
+    queue_consumed: bool = False
 
 
 @dataclass(frozen=True)
@@ -204,6 +218,23 @@ def _prune_cooldowns(session: SessionModel, now: datetime) -> None:
         except (TypeError, ValueError):
             continue
     session.spotlight_cooldowns = kept
+
+
+def _pass_due(session: SessionModel, table: Table, now: datetime) -> str | None:
+    """Why the holder loses the spotlight now: 'timeout', 'auto_pass' (fast policy, holder left) or None."""
+    if _timed_out(session, now):
+        return "timeout"
+    holder = table.members.get(session.active_character_id) if session.active_character_id else None
+    since = session.spotlight_since
+    if (
+        pacing.auto_pass(session)
+        and holder is not None
+        and since is not None
+        and holder.controller_id not in table.present
+        and now - since >= pacing.AUTO_PASS_GRACE
+    ):
+        return "auto_pass"
+    return None
 
 
 def _timed_out(session: SessionModel, now: datetime) -> bool:
@@ -323,6 +354,7 @@ async def open_turn(
     expected_version: int | None,
     consumes: bool,
     now: datetime | None = None,
+    queued: QueuedClaim | None = None,
 ) -> Opened:
     """Decide who may act now, under the table lock. Commits its own transaction.
 
@@ -330,12 +362,14 @@ async def open_turn(
     by then. The caller must hold the turn lock for ``session_id``.
     """
     if auth is None:
+        if queued is not None:
+            raise SpotlightRefused("queue_unavailable")
         # Local single-user mode has no accounts to arbitrate between: no lock, no read, no change.
         return Opened(plan=None, change=None)
     t = _utc(now)
     session = await _lock_session(db, session_id)
     try:
-        return await _open_turn(db, redis, session, auth.user_id, expected_version, consumes, t)
+        return await _open_turn(db, redis, session, auth.user_id, expected_version, consumes, t, queued)
     except SpotlightRefused:
         await db.rollback()
         raise
@@ -349,9 +383,12 @@ async def _open_turn(
     expected_version: int | None,
     consumes: bool,
     now: datetime,
+    queued: QueuedClaim | None = None,
 ) -> Opened:
     table = await load_table(db, redis, session, now=now, present_extra={caller})
     if not table.engaged():
+        if queued is not None:
+            raise SpotlightRefused("queue_unavailable")
         _apply_rotation(session, table)
         await db.commit()
         return Opened(plan=None, change=None)
@@ -364,18 +401,19 @@ async def _open_turn(
     holder = old_holder
     reason: str | None = None
 
-    # A holder who is idle past the timeout loses the spotlight unless the holder is the one acting now.
+    # A holder who is idle past the timeout (or, on the fast policy, has left the table) loses the
+    # spotlight unless the holder is the one acting now.
+    due = _pass_due(session, table, now) if holder is not None else None
     if (
-        holder is not None
-        and _timed_out(session, now)
+        due is not None
         and table.members.get(holder) is not None
         and table.members[holder].controller_id != caller
     ):
         target = _pick(table, holder)
         if target is not None:
-            holder, reason = target, "timeout"
+            holder, reason = target, due
         elif mode == MODE_FREE_FOR_ALL:
-            holder, reason = None, "timeout"
+            holder, reason = None, due
 
     if holder is not None and not _eligible(table, holder):
         holder, reason = None, reason or "released"
@@ -396,6 +434,24 @@ async def _open_turn(
             raise SpotlightRefused("spotlight_cooldown")
         holder, reason = seat, "claimed"
 
+    queued_user: int | None = None
+    if queued is not None:
+        # The caller holds the spotlight now. Validate the queued action against the current
+        # situation; a refusal rolls everything back, so nothing is spent and nothing is consumed.
+        current = await pacing.basis_of(db, session, holder)
+        code = pacing.check_claim(
+            pacing.get_item(session, caller),
+            action_id=queued.action_id,
+            version=queued.version,
+            message=queued.message,
+            holder=holder,
+            current=current,
+            now=now,
+        )
+        if code is not None:
+            raise SpotlightRefused(code)
+        queued_user = caller
+
     if holder != old_holder:
         version += 1
     # Whoever holds the spotlight now is acting now (a claim, a hand-over or the holder's own turn),
@@ -414,6 +470,9 @@ async def _open_turn(
         mode=mode,
         consumes=consumes,
         pass_to=pass_to,
+        queued_user=queued_user,
+        queued_id=queued.action_id if queued is not None else None,
+        queued_version=queued.version if queued is not None else None,
     )
     await db.commit()
     change = Change(reason=reason, announce=True) if reason is not None else None
@@ -430,6 +489,12 @@ def apply_turn_commit(session: SessionModel, plan: SpotlightTurn | None, *, now:
         return None
     if session.spotlight_version != plan.version or session.active_character_id != plan.holder:
         raise SpotlightRefused("spotlight_stale")
+    if plan.queued_user is not None and plan.queued_id is not None:
+        outcome = pacing.consume(session, plan.queued_user, plan.queued_id, plan.queued_version)
+        if outcome == "gone":
+            # Played by another turn or cancelled while this one ran: never commit it a second time.
+            raise SpotlightRefused("queued_action_missing")
+        plan.queue_consumed = outcome == "consumed"
     if plan.mode == MODE_ROUND_ROBIN:
         if plan.pass_to is None or plan.pass_to == plan.holder:
             return None
@@ -462,7 +527,8 @@ async def precheck(db: AsyncSession, session_id: int, auth: Any, *, now: datetim
     if session is None or session.active_character_id is None:
         return
     table = await load_table(db, None, session, now=_utc(now))
-    if not table.engaged() or _timed_out(session, _utc(now)):
+    if not table.engaged() or _timed_out(session, _utc(now)) or pacing.auto_pass(session):
+        # An auto-pass policy depends on presence, which only the locked open_turn reads.
         return
     member = table.members.get(session.active_character_id)
     if member is not None and member.eligible and member.controller_id != auth.user_id:
@@ -480,13 +546,14 @@ async def host_update(
     holder: Any = UNCHANGED,
     expected_version: int | None = None,
     now: datetime | None = None,
+    pacing_policy: str | None = None,
 ) -> Change | None:
     """Owner change: mode, timeout, or hand the spotlight to a hero (``None`` releases it). Caller holds the lock."""
     t = _utc(now)
     session = await _lock_session(db, session_id)
     try:
         return await _host_update(
-            db, redis, session, owner_id, mode, timeout_seconds, holder, expected_version, t
+            db, redis, session, owner_id, mode, timeout_seconds, holder, expected_version, t, pacing_policy
         )
     except SpotlightRefused:
         await db.rollback()
@@ -503,6 +570,7 @@ async def _host_update(
     holder: Any,
     expected_version: int | None,
     now: datetime,
+    pacing_policy: str | None = None,
 ) -> Change | None:
     if expected_version is not None and expected_version != session.spotlight_version:
         raise SpotlightRefused("spotlight_stale")
@@ -537,7 +605,14 @@ async def _host_update(
             new_holder = holder
     if mode is not None:
         session.spotlight_mode = mode
-    if timeout_seconds is not None:
+    old_policy = session.pacing_policy
+    if pacing_policy is not None:
+        session.pacing_policy = pacing_policy
+        session.spotlight_timeout_seconds = pacing.preset(pacing_policy).timeout_seconds
+    elif timeout_seconds is not None and timeout_seconds != old_timeout:
+        # An explicit timeout is no longer any named policy.
+        session.pacing_policy = pacing.POLICY_CUSTOM
+    if timeout_seconds is not None and pacing_policy is None:
         session.spotlight_timeout_seconds = timeout_seconds
     current_mode = session.spotlight_mode
 
@@ -550,6 +625,8 @@ async def _host_update(
             new_holder = target
     if mode is not None and mode != old_mode and reason is None:
         reason = "mode_changed"
+    if pacing_policy is not None and session.pacing_policy != old_policy and reason is None:
+        reason = "pacing_changed"
     if timeout_seconds is not None and timeout_seconds != old_timeout and reason is None:
         reason = "settings_changed"
     if new_holder != old_holder and reason is None:
@@ -599,7 +676,13 @@ async def on_seat_change(
         target = _pick(table, None)
         if target is not None:
             holder = target
+    # A player who lost the seat (or the character) loses the queued action that went with it.
+    dropped = pacing.prune_unseated(
+        session, {cid: member.controller_id for cid, member in table.members.items()}
+    )
     if holder == old_holder and table.rotation == old_order:
+        if dropped:
+            return Change(reason="queue_changed", announce=table.engaged())
         return None
     if holder != old_holder:
         session.spotlight_since = t if holder is not None else None
@@ -630,7 +713,12 @@ async def is_engaged(db: AsyncSession, session_id: int) -> bool:
 
 
 async def public_view(
-    db: AsyncSession, redis: Redis, session_id: int, *, now: datetime | None = None
+    db: AsyncSession,
+    redis: Redis,
+    session_id: int,
+    *,
+    now: datetime | None = None,
+    viewer_user_id: int | None = None,
 ) -> dict[str, Any]:
     """The table's public spotlight: holder, rule, version, next-up order. Read-only."""
     t = _utc(now)
@@ -638,6 +726,8 @@ async def public_view(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     table = await load_table(db, redis, session, now=t)
+    queue = await _queue_view(db, session, table, t, viewer_user_id)
+    queued_users = {item["user_id"] for item in queue["items"] if item["status"] != "expired"}
     holder_view = None
     holder = table.holder
     if holder is not None and holder in table.members:
@@ -647,7 +737,16 @@ async def public_view(
     for character_id in _after(table.rotation, holder):
         member = table.members[character_id]
         if member.eligible:
-            next_up.append(_member_view(member, table))
+            view = _member_view(member, table)
+            view["queued"] = member.controller_id in queued_users
+            next_up.append(view)
+    deadline = None
+    if (
+        holder is not None
+        and session.spotlight_since is not None
+        and session.spotlight_mode != MODE_OWNER_DIRECTED
+    ):
+        deadline = session.spotlight_since + timedelta(seconds=session.spotlight_timeout_seconds)
     return {
         "session_id": session.id,
         "engaged": table.engaged(),
@@ -656,9 +755,25 @@ async def public_view(
         "timeout_seconds": session.spotlight_timeout_seconds,
         "holder": holder_view,
         "since": session.spotlight_since.isoformat() if session.spotlight_since is not None else None,
-        "handover_due": _timed_out(session, t),
+        "handover_due": _pass_due(session, table, t) is not None,
+        # When an idle holder loses the spotlight (null when it never times out or nobody holds it).
+        "turn_deadline": deadline.isoformat() if deadline is not None else None,
         "next_up": next_up,
+        "pacing": pacing.pacing_view(session),
+        "queue": queue,
     }
+
+
+async def _queue_view(
+    db: AsyncSession, session: SessionModel, table: Table, now: datetime, viewer_user_id: int | None
+) -> dict[str, Any]:
+    items = (session.queued_actions or {}).get("items") if isinstance(session.queued_actions, dict) else None
+    current: dict[int, dict[str, Any]] = {}
+    for item in (items or {}).values():
+        character_id = item.get("character_id")
+        if isinstance(character_id, int) and character_id not in current:
+            current[character_id] = await pacing.basis_of(db, session, character_id)
+    return pacing.queue_view(session, table.members, current, now, viewer_user_id=viewer_user_id)
 
 
 def _member_view(member: Member, table: Table, *, eligible: bool | None = None) -> dict[str, Any]:
@@ -721,6 +836,7 @@ __all__ = [
     "MODE_OWNER_DIRECTED",
     "MODE_ROUND_ROBIN",
     "Change",
+    "QueuedClaim",
     "SpotlightRefused",
     "SpotlightTurn",
     "UNCHANGED",
