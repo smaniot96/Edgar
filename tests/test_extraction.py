@@ -217,15 +217,18 @@ def test_two_animal_records_under_one_heading_still_fail():
     assert "interleaved_stat_records" in check_text(_ANIMAL_RECORD + "\n\n" + second)["errors"]
 
 
-def test_non_numeric_hit_points_formula_fails_closed():
-    # Mirrors DMG p.164 Avatar of Death: HP is a formula, not a number, so the record is not
-    # recovered as complete and keeps its failure.
+def test_hit_points_formula_counts_as_a_hit_points_field():
+    # Mirrors DMG p.164 Avatar of Death: HP is a formula ("half the hit point maximum of its
+    # summoner"), a real stat field. It must not fail as incomplete, and a record still needs one.
     text = (
         "## Avatar of Death\n\nMedium undead, neutral evil\n\nArmor Class 20\n"
         "Hit Points half the hit point maximum of its summoner\nSpeed 60 ft., fly 60 ft. (hover)\n\n"
         "## ACTIONS\n\nReaping Scythe. The avatar sweeps its spectral scythe."
     )
-    assert "incomplete_stat_fields" in check_text(text)["errors"]
+    assert check_text(text)["errors"] == []
+    assert "incomplete_stat_fields" in check_text(
+        text.replace("Hit Points half the hit point maximum of its summoner\n", "")
+    )["errors"]
 
 
 def test_object_records_with_colon_fields_and_a_size_line_are_not_stat_records():
