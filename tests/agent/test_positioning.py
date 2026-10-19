@@ -585,7 +585,7 @@ def test_positioning_moves_into_supported_and_the_remainder_is_narrowed() -> Non
     unsupported = {m.id: m for m in UNSUPPORTED_MECHANICS}
     assert {"positioning", "opportunity_attacks", "action_economy"} <= set(supported)
     assert (
-        "positioning_cover" in unsupported and unsupported["positioning_cover"].owner == "EDG-044"
+        "positioning_cover" in unsupported and unsupported["positioning_cover"].owner == "EDG-182"
     )
     assert "Help" in unsupported["action_economy_remainder"].title
     assert "Dash" not in unsupported["action_economy_remainder"].title
