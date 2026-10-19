@@ -43,6 +43,8 @@ export interface SpotlightMember {
   user_id: number;
   display_name: string | null;
   present: boolean;
+  /** EDG-051: this player has a queued action waiting (next_up only). */
+  queued?: boolean;
 }
 
 export interface SpotlightState {
@@ -54,7 +56,12 @@ export interface SpotlightState {
   holder: (SpotlightMember & { eligible?: boolean }) | null;
   since: string | null;
   handover_due: boolean;
+  /** EDG-051: when an idle holder loses the spotlight (null when it never times out). */
+  turn_deadline?: string | null;
   next_up: SpotlightMember[];
+  /** EDG-051: the table's pacing policy and queued actions (see `api/tablePacing.ts`). */
+  pacing?: import("./tablePacing").PacingState;
+  queue?: import("./tablePacing").QueueState;
 }
 
 /** Data of a `turn.spotlight_changed` envelope: the state as committed, plus why it changed. */
