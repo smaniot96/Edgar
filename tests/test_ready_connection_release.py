@@ -175,3 +175,13 @@ async def test_schema_behind_head_keeps_the_same_body(monkeypatch, revision):
         "checks": {"postgres": "ok", "schema": "unavailable", "redis": "ok", "qdrant": "ok"},
     }
     assert held == [False]
+
+
+def test_ready_reports_replica_lock_only_when_enforced(monkeypatch):
+    from apps.api import replica_lock
+
+    assert replica_lock.replica_lock_state() is None
+    monkeypatch.setattr(replica_lock, "_active", type("L", (), {"state": "held"})())
+    assert replica_lock.replica_lock_state() == "ok"
+    monkeypatch.setattr(replica_lock, "_active", type("L", (), {"state": "lost"})())
+    assert replica_lock.replica_lock_state() == "unavailable"

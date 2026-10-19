@@ -27,6 +27,9 @@ EDGAR_ROOT = Path(__file__).resolve().parents[1]
 # unset, so CI (no .env) would otherwise fail every LLM-path test, and local runs must never
 # reach the real OpenAI API with the developer's key.
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-ci")
+# EDG-074: the suite starts many app lifespans (some without a database); the single-replica guard
+# has its own tests (tests/test_replica_lock.py) that remove this opt-out.
+os.environ.setdefault("EDGAR_ALLOW_MULTIPLE_REPLICAS", "1")
 
 # Locally a missing Docker daemon skips the DB-backed tests; under CI it is a hard failure so
 # the suite can never go green by silently skipping them.
