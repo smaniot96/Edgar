@@ -835,3 +835,39 @@ async def test_solo_review_applies_only_until_someone_joins(table, db_session):
     await db_session.delete(membership)
     await db_session.commit()
     assert await is_solo_campaign(db_session, campaign)
+
+
+# Lobby roster (EDG-050): the member-readable table summary.
+
+
+@pytest.mark.asyncio
+async def test_lobby_is_readable_by_every_role_and_hides_outsiders(api_client, table):
+    await _join(api_client, table, "bob", character=table["bob_pc"].id)
+    sid = table["save"].id
+    carol_invite = await _invite(api_client, table, role="spectator", session=False)
+    assert (await _accept(api_client, "carol", table, carol_invite["token"])).status_code == 200
+
+    bob = await api_client.get(f"/api/sessions/{sid}/lobby", headers=_auth(table["tokens"]["bob"]))
+    assert bob.status_code == 200
+    body = bob.json()
+    assert body["viewer"] == {
+        "user_id": table["bob"].id,
+        "role": "player",
+        "character_id": table["bob_pc"].id,
+        "character_name": "Bran",
+    }
+    by_user = {m["user_id"]: m for m in body["members"]}
+    assert by_user[table["alice"].id]["role"] == "owner"
+    assert by_user[table["bob"].id]["character_name"] == "Bran"
+    assert by_user[table["carol"].id]["role"] == "spectator"
+    assert by_user[table["carol"].id]["character_id"] is None
+    assert "email" not in bob.text and "alice@example.test" not in bob.text
+
+    carol = await api_client.get(f"/api/sessions/{sid}/lobby", headers=_auth(table["tokens"]["carol"]))
+    assert carol.status_code == 200 and carol.json()["viewer"]["role"] == "spectator"
+    alice = await api_client.get(f"/api/sessions/{sid}/lobby", headers=_auth(table["tokens"]["alice"]))
+    assert alice.json()["viewer"]["role"] == "owner"
+
+    dan = await api_client.get(f"/api/sessions/{sid}/lobby", headers=_auth(table["tokens"]["dan"]))
+    missing = await api_client.get("/api/sessions/999999/lobby", headers=_auth(table["tokens"]["dan"]))
+    assert dan.status_code == 404 and _public_body(dan) == _public_body(missing)

@@ -127,6 +127,7 @@ export default function SessionsTab({
                         <PlayIcon className="h-3 w-3" /> {session.readiness?.play_allowed === true ? "Continue" : "Read story"}
                       </Button>
                     ) : null}
+                    <ButtonLink size="sm" variant="secondary" to={`/play/${session.id}/table`} aria-label={`Open the table for Playthrough ${session.number}`}>Table</ButtonLink>
                     <details className="relative">
                       <summary className="inline-flex min-h-9 cursor-pointer list-none items-center rounded-control border border-line px-3 text-sm text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">More</summary>
                       <div className="absolute right-0 z-10 mt-1 rounded-control border border-line bg-surface-raised p-2 shadow-lg">
