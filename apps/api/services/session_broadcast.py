@@ -4,7 +4,10 @@ A turn publishes only from an explicit allowlist. Committed output is split by a
 
 * ``turn.action``, ``turn.stage``, ``narration.committed``, ``rolls.committed``, ``state.committed``
   and ``turn.finished`` go to the table (owner, players and spectators).
-* ``character.state`` and ``turn.failed`` go only to the seated player who acted.
+* ``character.state`` and ``turn.failed`` go only to the seated player who acted. In a party fight
+  (EDG-049) ``character.state`` also goes, once per hero the turn changed, to that hero's own
+  controller and nobody else; ``state.committed`` then omits the acting hero's pending declaration, and
+  ``combat.turn_changed`` tells the table whose turn is next.
 
 Not published at all: streamed narration tokens (uncommitted text), the adjudication frame (it can
 carry engine reasoning), the ``debug`` frame (developer diagnostics), and the roll's private
@@ -25,6 +28,7 @@ from apps.api.schemas.channel import ChannelActor
 from apps.api.services.safe_errors import classify_error, log_failure
 
 from . import session_channel
+from .turn_runner import table_combat_state
 
 log = structlog.get_logger()
 
@@ -66,6 +70,8 @@ class TurnBroadcast:
         self._actor = actor
         self._turn_id = turn_id
         self._open = False
+        # EDG-049: the hero whose idle turn this was, when the turn is the default Dodge of a skip.
+        self.skipped_character_id: int | None = None
 
     async def _emit(self, event_type: str, data: dict[str, Any]) -> None:
         try:
@@ -107,8 +113,12 @@ class TurnBroadcast:
             await self._emit("turn.failed", {"code": body.get("code"), "message": body.get("message")})
             await self.finish(_outcome(body.get("outcome")))
 
-    async def committed(self, done: dict[str, Any]) -> None:
-        """Publish the committed turn: narration, dice, shared state, then the player's own state."""
+    async def committed(self, done: dict[str, Any], side: dict[str, Any] | None = None) -> None:
+        """Publish the committed turn: narration, dice, shared state, then the player's own state.
+
+        `side` (EDG-049) holds the other heroes' sheets a party fight changed; each goes only to its own
+        controller.
+        """
         if not self._open:
             return
         await self._emit(
@@ -130,10 +140,23 @@ class TurnBroadcast:
             "state.committed",
             {
                 "current_scene_id": done.get("current_scene_id"),
-                "combat_state": done.get("combat_state"),
+                "combat_state": table_combat_state(done.get("combat_state")),
                 "campaign_complete": done.get("campaign_complete"),
             },
         )
+        combat = done.get("combat_state") or {}
+        if combat.get("party"):
+            await self._emit(
+                "combat.turn_changed",
+                {
+                    "round": combat.get("round"),
+                    "ended": bool(combat.get("ended")),
+                    "outcome": combat.get("outcome"),
+                    "current_turn": combat.get("current_turn"),
+                    "current_turn_character_id": combat.get("current_turn_character_id"),
+                    "skipped_character_id": self.skipped_character_id,
+                },
+            )
         await self._emit(
             "character.state",
             {
@@ -141,8 +164,38 @@ class TurnBroadcast:
                 "rest": (roll or {}).get("rest"),
             },
         )
+        for other in (side or {}).get("party_sheets") or []:
+            await self._emit_private_sheet(other)
         self._open = False
         await self._emit_finished("committed", done.get("event_id"))
+
+    async def _emit_private_sheet(self, other: dict[str, Any]) -> None:
+        """One other hero's changed sheet, addressed to the account that controls it (audience: that player)."""
+        sheet = other.get("character") or {}
+        try:
+            await asyncio.wait_for(
+                session_channel.publish(
+                    self._redis,
+                    self._session_id,
+                    kind="character.state",
+                    actor=ChannelActor(
+                        user_id=other.get("user_id"),
+                        character_id=other.get("character_id"),
+                        character_name=sheet.get("name"),
+                    ),
+                    turn_id=self._turn_id,
+                    data={"character": sheet, "rest": None},
+                ),
+                timeout=_PUBLISH_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            log_failure(
+                "session_channel_publish_failed",
+                classify_error("internal_fault"),
+                level="warning",
+                session_id=self._session_id,
+                turn_id=self._turn_id,
+            )
 
     async def finish(self, outcome: str) -> None:
         """Close a turn that did not commit (or whose outcome is unknown). No-op once closed."""

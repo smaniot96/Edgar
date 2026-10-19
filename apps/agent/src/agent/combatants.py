@@ -259,7 +259,16 @@ def is_standing(c: Mapping[str, Any]) -> bool:
 
 
 def can_act(c: Mapping[str, Any]) -> bool:
+    # EDG-049: a hero who left the fight (`fled`) takes no more turns.
+    if c.get("fled"):
+        return False
     return is_standing(c) and not (has_effect(c, "paralyzed") or has_effect(c, "stunned"))
+
+
+def hero_of(combatants: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The hero a round is about: the acting hero of a party fight (EDG-049), else the only hero."""
+    heroes = [c for c in combatants if c.get("is_player")]
+    return next((c for c in heroes if c.get("acting")), heroes[0] if heroes else None)
 
 
 def declared_lethality(parsed: Any, player_input: str | None) -> Lethality | None:
@@ -542,11 +551,12 @@ def narrator_roster(combatants: Iterable[Mapping[str, Any]], round_actors: Itera
     ]
     able = [display_name(c) for c in enemies if can_act(c)]
     actors = list(dict.fromkeys(round_actors))
-    hero = next((c for c in combatants if c.get("is_player")), None)
+    hero = hero_of(combatants)
     concentrating = concentration_of(hero) if hero is not None else None
     return (
         "Combat roster (authoritative; the engine decided every outcome):\n"
         + "\n".join(lines)
+        + _party_text(combatants)
         + f"\nCombatants able to act now: {', '.join(able) if able else 'none'}."
         + (
             f"\n{display_name(hero)} is concentrating on {concentrating['spell']}."
@@ -562,6 +572,27 @@ def narrator_roster(combatants: Iterable[Mapping[str, Any]], round_actors: Itera
         "captured or defeated combatant as attacking or acting, and do not invent another attacker "
         "(such as an unlisted 'other', 'second' or 'another' raider)."
     )
+
+
+def _party_text(combatants: list[Mapping[str, Any]]) -> str:
+    """The other heroes of a party fight (EDG-049): who is up, down or gone, as the engine decided."""
+    heroes = [c for c in combatants if c.get("is_player")]
+    if len(heroes) < 2:
+        return ""
+    lines = []
+    for c in heroes:
+        if c.get("fled"):
+            status = "has left the fight"
+        elif disposition_of(c) == "dead":
+            status = "dead"
+        elif _hp(c) <= 0:
+            status = "down at 0 HP (unconscious)"
+        else:
+            status = f"standing, {_hp(c)}/{c.get('hp_max')} HP"
+        lines.append(
+            f'- "{display_name(c)}"{" (acting hero)" if c.get("acting") else ""}: {status}'
+        )
+    return "\nParty (authoritative, each hero is a different player):\n" + "\n".join(lines)
 
 
 def roster_violations(text: str, combatants: Iterable[Mapping[str, Any]]) -> list[str]:

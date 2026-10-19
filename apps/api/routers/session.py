@@ -60,7 +60,7 @@ from ..limits import admit_turn, record_assumed_call, record_turn_spend
 from ..schemas.channel import ChannelActor
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.spotlight import SpotlightRead, SpotlightUpdate
-from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
+from ..schemas.turn import CombatSkipRequest, TurnRequest, TurnResponse, debug_turns_enabled
 from ..services import queued_actions, spotlight
 from ..services.campaign_sources import source_reads
 from ..services.character_assignments import character_play_state, load_active_assignment
@@ -81,15 +81,18 @@ from ..services.session_messages import (
 )
 from ..services.session_party import session_party
 from ..services.setup_requests import creation_identity, creation_replay
+from ..services.spotlight import combat_hero_ids
 from ..services.story_state import load_story_state, session_story_flags
 from ..services.turn_receipts import load_turn_receipt
 from ..services.turn_runner import (
+    SKIP_TEXT,
     TurnError,
     combat_round_from_events,
     combat_state_public,
     new_turn_diagnostics,
     persist_turn,
     public_adjudication,
+    run_combat_skip,
     run_turn,
     sse_event,
     stage_turn_trace,
@@ -251,7 +254,8 @@ async def _load_turn_initial_state(
                     ),
                 },
             )
-    party = await session_party(db, session)
+    combat = await load_active_combat(db, session_id)
+    party = await session_party(db, session, include=combat_hero_ids(combat))
     npcs = await load_npcs(db, session.campaign_id, session_id)
     npc_summaries = model_context_npcs(npcs, story_state)
 
@@ -292,7 +296,6 @@ async def _load_turn_initial_state(
         "combat_captives": await load_combat_captives(db, session_id),
         "memory_summary": memory_summary,
     }
-    combat = await load_active_combat(db, session_id)
     if combat:
         initial_state["combat_state"] = combat
     await db.commit()
@@ -935,10 +938,11 @@ async def _session_turn(
         result = {**initial_state, **await run_turn(initial_state, diagnostics=diagnostics)}
         result = stage_turn_trace(result, debug=body.debug, delivery="sync")
         outcome = "unknown"
-        done = await persist_turn(session_id, body.message, result, spotlight=plan)
+        side: dict[str, Any] = {}
+        done = await persist_turn(session_id, body.message, result, spotlight=plan, side=side)
         outcome = "committed"
         observe_committed_turn(result.get("telemetry_events"), diagnostics)
-        await broadcast.committed(done)
+        await broadcast.committed(done, side)
         await _announce_pass(redis, session_id, plan, actor)
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 
@@ -980,6 +984,109 @@ async def _session_turn(
         observe_uncommitted_turn(diagnostics)
         if broadcast is not None:
             # No-op when the turn already committed or failed; otherwise the table learns the outcome.
+            await broadcast.finish(outcome)
+        await lock.release()
+
+
+@router.post("/sessions/{session_id}/combat/skip", response_model=TurnResponse)
+async def skip_combat_turn(
+    session_id: int,
+    body: CombatSkipRequest,
+    background_tasks: BackgroundTasks,
+    auth: Auth,
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
+):
+    """Skip the idle hero's turn in a shared fight; the hero takes the Dodge action (EDG-049).
+
+    The campaign owner may skip any turn. A seated player may once the holder is overdue (the table's
+    timeout) or absent from the channel past a short grace. The same lock, version gate, engine round
+    and single transaction as a typed turn: nothing is rolled by the caller, and a refused skip spends
+    nothing. See docs/party-combat.md.
+    """
+    await authorize_session(db, session_id, auth)
+    admission = await admit_turn(request, redis)
+    try:
+        return await _combat_skip(session_id, body, background_tasks, db, redis, auth)
+    finally:
+        await admission.release()
+
+
+async def _combat_skip(
+    session_id: int,
+    body: CombatSkipRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession,
+    redis: Redis,
+    auth: Auth,
+):
+    lock = await acquire_turn_lock(session_id, redis)
+    if lock is None:
+        return _turn_http_error_response(HTTPException(status_code=409, detail=_BUSY_DETAIL))
+    structlog.contextvars.bind_contextvars(session_id=session_id)
+    outcome = "not_committed"
+    diagnostics = None
+    broadcast: TurnBroadcast | None = None
+    try:
+        if auth is None:
+            raise spotlight.SpotlightRefused("no_party_combat")
+        opened = await spotlight.open_skip(
+            db, redis, session_id, auth, expected_version=body.spotlight_version
+        )
+        plan = opened.plan
+        initial_state = await _load_turn_initial_state(session_id, SKIP_TEXT, db)
+        actor = await _turn_actor(session_id, auth)
+        # The channel names the skipped hero, not the account that asked for the skip.
+        broadcast = TurnBroadcast(
+            redis, session_id, actor=actor, turn_id=initial_state.get("turn_id")
+        )
+        broadcast.skipped_character_id = plan.holder if plan is not None else None
+        await broadcast.start(f"Turn skipped: {actor.character_name or 'the hero'} takes the Dodge action.")
+        diagnostics = new_turn_diagnostics(
+            turn_id=initial_state.get("turn_id"), delivery="sync", lock_wait_ms=lock.acquire_ms
+        )
+        result = await run_combat_skip(initial_state, diagnostics=diagnostics)
+        outcome = "unknown"
+        side: dict[str, Any] = {}
+        done = await persist_turn(session_id, SKIP_TEXT, result, spotlight=plan, side=side)
+        outcome = "committed"
+        observe_committed_turn(result.get("telemetry_events"), diagnostics)
+        await broadcast.committed(done, side)
+        await _announce_pass(redis, session_id, plan, actor)
+        background_tasks.add_task(maybe_update_memory_summary, session_id)
+        return TurnResponse(
+            event_id=done.get("event_id"),
+            narration=done["narration"],
+            retrieval_degraded=done["retrieval_degraded"],
+            source_status=done["source_status"],
+            source_mode=done["source_mode"],
+            adjudication=public_adjudication(result.get("adjudication_result")),
+            citations=done["citations"],
+            rules_edition=done["rules_edition"],
+            ruling_citation_ids=done["ruling_citation_ids"],
+            combat_state=done["combat_state"],
+            current_scene_id=done["current_scene_id"],
+            character=done["character"],
+            campaign_complete=done["campaign_complete"],
+            roll_status=done.get("roll_status"),
+            roll=done.get("roll"),
+        )
+    except HTTPException as exc:
+        return _turn_http_error_response(exc)
+    except spotlight.SpotlightRefused as exc:
+        return _refused(exc)
+    except TurnError as e:
+        return _turn_error_response(e)
+    except Exception as exc:
+        failure = TurnError(exc, outcome=outcome)
+        log_failure("turn_failed", failure.failure, session_id=session_id)
+        return _turn_error_response(failure)
+    finally:
+        structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
+        await record_turn_spend(redis, diagnostics)
+        observe_uncommitted_turn(diagnostics)
+        if broadcast is not None:
             await broadcast.finish(outcome)
         await lock.release()
 
@@ -1051,8 +1158,10 @@ async def session_turn_stream(
         await admission.release()
         raise
 
+    side: dict[str, Any] = {}
+
     async def _committed(done: dict[str, Any]) -> None:
-        await broadcast.committed(done)
+        await broadcast.committed(done, side)
         await _announce_pass(redis, session_id, plan, actor)
 
     await broadcast.start(body.message)
@@ -1076,6 +1185,7 @@ async def session_turn_stream(
                     diagnostics=diagnostics,
                     on_committed=_committed,
                     spotlight=plan,
+                    side=side,
                 )
             ) as frames:
                 async for chunk in frames:

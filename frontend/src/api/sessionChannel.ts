@@ -62,11 +62,23 @@ export interface SpotlightState {
   /** EDG-051: the table's pacing policy and queued actions (see `api/tablePacing.ts`). */
   pacing?: import("./tablePacing").PacingState;
   queue?: import("./tablePacing").QueueState;
+  /** Present while a fight with two or more heroes is running (EDG-049). */
+  combat?: { round: number | null; holder_character_id: number | null; skip_due: boolean } | null;
 }
 
 /** Data of a `turn.spotlight_changed` envelope: the state as committed, plus why it changed. */
 export interface SpotlightChangedData extends SpotlightState {
   reason: string;
+}
+
+/** Data of a `combat.turn_changed` envelope (EDG-049): whose turn the shared fight moved to. */
+export interface CombatTurnChangedData {
+  round: number | null;
+  ended: boolean;
+  outcome: "victory" | "defeat" | "fled" | null;
+  current_turn: string | null;
+  current_turn_character_id: number | null;
+  skipped_character_id: number | null;
 }
 
 export type ChannelStatus = "connecting" | "live" | "reconnecting" | "closed";

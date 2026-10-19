@@ -84,9 +84,10 @@ spotlight: only the holder can act, the holder's turn passes it on, and the rule
 free-for-all, owner-directed), the timeout and the owner's override are in
 `docs/session-broadcast.md` (EDG-048). The owner also picks a table pacing policy (`relaxed`,
 `standard`, `fast`), visible to everyone, and a player whose turn is not up may queue one intended
-action that is checked again when their turn comes (EDG-051). Lobby and spotlight UI are not in the
-browser client yet (EDG-050); the pacing controls and queued-action composer are ready for it to
-mount (`frontend/src/components/table/`).
+action that is checked again when their turn comes (EDG-051). In a fight with two or more heroes the initiative order, not the
+rotation, decides whose turn it is: one shared encounter, one human turn per request, foes between
+heroes resolved by the engine, per-hero death saves, an idle hero skipped with a default Dodge
+(`POST /api/sessions/{id}/combat/skip`); see `docs/party-combat.md` (EDG-049). The lobby, party controls and spectator view are in `frontend/src/components/lobby/` (EDG-050); the pacing controls and queued-action composer are ready to mount (`frontend/src/components/table/`).
 
 ### Rules scope
 
@@ -152,7 +153,7 @@ simulate (`GET /api/rules/supported-scope`):
   armor, for 1 minute or until the encounter ends). Uses and recharge are tracked on the sheet; a
   declared feature the engine does not execute gets a ruling and no effect.
 - Catalog spells, in combat and out of it: Fire Bolt (spell attack), Magic Missile (automatic-hit
-  darts, upcast by slot), Sacred Flame (DEX save), Cure Wounds (self-heal) and Healing Word (bonus
+  darts, upcast by slot), Sacred Flame (DEX save), Cure Wounds (self-heal, or another hero of a party fight) and Healing Word (bonus
   action, self-heal). Their dice are rolled by the engine, leveled spells spend a slot tracked per
   character, and a cast with no slot left is refused with no effect.
 - Spell conditions in combat: Guiding Bolt (a spell attack for 4d6 radiant) marks a foe it hits, so
@@ -233,7 +234,7 @@ simulate (`GET /api/rules/supported-scope`):
   conditions (charmed and the rest have no engine effect; frightened and stunned only from the exact
   wordings above), area effects on more than the hero and save actions whose wording is not read
   exactly, cover, high ground, flanking, difficult terrain and exact distances, Help and Hide (no
-  ally in a solo fight; no hidden state), reactions other than opportunity attacks and a readied melee
+  Help between heroes of a party fight; no hidden state), reactions other than opportunity attacks and a readied melee
   attack, readied triggers other than a foe closing into melee, readied ranged attacks, spells and
   moves, other bonus actions, and class features other than
   Second Wind, Action Surge, Sneak Attack and Rage (Divine Smite, Lay on Hands, Bardic Inspiration,

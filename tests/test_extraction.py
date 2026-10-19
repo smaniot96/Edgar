@@ -555,6 +555,26 @@ def test_table_rows_with_blank_cells_read_as_a_table_band():
     assert "row0 spanning" in text and "row8 spanning" in text
 
 
+def test_table_with_one_gutter_crossing_cell_in_two_rows_reads_row_by_row():
+    # Mirrors PHB p.91 and p.101: a full-width class table whose wide feature cell crosses the
+    # gutter on only two rows. Every row still holds three or more cells, so the rows read in order.
+    table = []
+    for i in range(10):
+        y = 100 + i * 14
+        table += [
+            Line(f"lvl{i}", (30, y, 60, y + 10), 9),
+            Line(f"bonus{i}", (80, y, 110, y + 10), 9),
+            Line(f"feature{i}", (130, y, 180, y + 10), 9),
+            Line(f"slot{i}", (360, y, 380, y + 10), 9),
+            Line(f"slot2_{i}", (420, y, 440, y + 10), 9),
+        ]
+    table += [Line("feature crossing one", (200, 100, 320, 110), 9)]
+    table += [Line("feature crossing two", (200, 114, 320, 124), 9)]
+    text, _ = render_native_page(table, 500)
+    assert text.index("lvl0") < text.index("lvl5") < text.index("lvl9")
+    assert "lvl0 bonus0 feature0" in text or "lvl0 bonus0" in text
+
+
 def test_mixed_two_column_rows_with_few_spanning_cells_still_fail_closed():
     # Negative: prose rows of two cells with a few spanning fragments stay ambiguous.
     lines = [Line(f"left {i}", (30, 50 + i * 14, 230, 60 + i * 14), 10) for i in range(12)]
@@ -1618,3 +1638,120 @@ def test_corrected_raster_entry_is_flagged_in_the_review_sidecar(two_page_pdf, t
     ]
     reviewed = load_reviewed_extraction(two_page_pdf, report)
     assert reviewed.raster_review() == sidecar["entries"]
+
+
+def _plain_fails(lines, width=500):
+    from ingestion.layout import _columns
+
+    with pytest.raises(ValueError, match="ambiguous_spanning_column_text"):
+        _columns(lines, width)
+
+
+def test_drop_cap_is_merged_into_its_word_only_when_the_plain_reading_fails():
+    # Mirrors DMG p.43/316: a tall initial beside the first lines bridges every vertical run.
+    lines = [Line("CHAPTER TITLE", (30, 20, 300, 50), 20), Line("T", (30, 42, 60, 130), 70)]
+    lines += [
+        Line(f"he opening line {i}", (64, 60 + i * 12, 230, 70 + i * 12), 9) for i in range(3)
+    ]
+    lines += [Line(f"left body {i}", (30, 140 + i * 12, 230, 150 + i * 12), 9) for i in range(8)]
+    lines += [Line(f"right prose {i}", (280, 60 + i * 12, 480, 70 + i * 12), 9) for i in range(14)]
+    _plain_fails(lines)
+    text, _ = render_native_page(lines, 500)
+    assert "The opening line 0" in text and "\nT\n" not in text
+    assert text.index("opening line 2") < text.index("left body 0") < text.index("right prose 0")
+
+
+def test_illustration_captions_become_separate_blocks_not_a_gutter_failure():
+    # Mirrors DMG p.167/193: small captions inside an image cross the gutter above the text.
+    captions = [
+        Line("RING OF", (200, 58, 260, 64), 5.5, illustration=True),
+        Line("SPELL TURNING", (190, 66, 270, 72), 5.5, illustration=True),
+        Line("RING OF WARMTH", (400, 59, 470, 65), 5.5, illustration=True),
+        Line("RING OF SWIMMING", (150, 90, 340, 96), 5.5, illustration=True),
+        Line("RING OF THE RAM", (170, 112, 330, 118), 5.5, illustration=True),
+    ]
+    lines = captions + _two_column_block(60, 6)
+    _plain_fails(lines)
+    text, _ = render_native_page(lines, 500)
+    assert "RING OF\nSPELL TURNING" in text
+    assert text.index("SPELL TURNING") < text.index("RING OF WARMTH")
+
+
+def test_table_band_below_two_column_prose_reads_rows_with_blank_cells_as_blank():
+    # Mirrors DMG p.136: prose columns above treasure tables whose empty cells are absent.
+    lines = _two_column_block(30, 6)
+    xs = [40, 120, 175, 218, 330, 420]  # the fourth column straddles the gutter
+    for r in range(8):
+        y = 114 + r * 12
+        for c, x in enumerate(xs):
+            if r == 0 or c == 0 or c == 1 + r % 5:
+                lines.append(Line(f"r{r}c{c}", (x, y, x + (70 if c == 3 else 36), y + 10), 8))
+    from ingestion.layout import _table_band
+
+    assert _table_band(lines) is not None
+    text, _ = render_native_page(lines, 500)
+    assert text.index("left prose 5") < text.index("right prose 5") < text.index("r0c0")
+    assert text.index("r1c0") < text.index("r7c0")
+    assert "r1c1" not in text or text.index("r1c0") < text.index("r1c")  # blanks stay blank
+
+
+def test_prose_beside_a_table_like_stat_box_is_not_read_as_table_rows():
+    # Negative: two columns with a few aligned short cells must not be read across the page.
+    lines = _two_column_block(40, 10)
+    lines.append(Line("wide spanning title", (30, 100, 480, 110), 10))
+    lines.append(Line("another wide line", (30, 112, 480, 122), 10))
+    with pytest.raises(ValueError, match="ambiguous_spanning_column_text"):
+        render_native_page(lines, 500)
+
+
+def test_noise_spans_before_a_stat_line_are_cut_without_changing_words():
+    from ingestion.layout import strip_leading_noise
+
+    spans = (
+        ("-----....,;", (257, 520, 290, 529), 10.7),
+        ("Condition Immunities", (305, 519, 400, 530), 8.4),
+    )
+    line = Line("-----....,;Condition Immunities", (257, 519, 400, 530), 10.7, spans=spans)
+    (cleaned,) = strip_leading_noise([line])
+    assert cleaned.text == "Condition Immunities" and cleaned.bbox[0] == 305 and cleaned.size == 8.4
+    plain = Line(
+        "A homunculus",
+        (50, 10, 100, 20),
+        9,
+        spans=(("A ", (50, 10, 56, 20), 9), ("homunculus", (57, 10, 100, 20), 9)),
+    )
+    assert strip_leading_noise([plain])[0].text == "A homunculus"
+
+
+def test_unread_stat_heading_keeps_reading_order_and_only_text_codes():
+    from ingestion.layout import StatHeaderError
+
+    lines = _single_record(None, size_text=None)
+    with pytest.raises(StatHeaderError) as error:
+        render_native_page(lines, 500, header_ocr=lambda bbox: [])
+    assert str(error.value) == "missing_stat_heading"
+    assert error.value.text.index("Armor Class") < error.value.text.index("Hit Points")
+
+
+def test_type_and_ability_row_without_armor_class_and_hit_points_is_incomplete():
+    from ingestion.quality import check_text
+
+    text = "## Sprout\n\nSmall plant, lawful neutral\n\nSTR DEX CON INT WIS CHA\n8 (-1) 10 (+0) 10 (+0) 8 (-1) 11 (+0) 5 (-3)"
+    assert "incomplete_stat_fields" in check_text(text)["errors"]
+    assert not check_text("## Prose\n\nSmall folk are lawful neutral in most towns.")["errors"]
+
+
+def test_three_column_word_set_index_is_not_read_as_a_table():
+    # Mirrors PHB p.315-317: index entries set word by word touch along a row, so they are
+    # running text in three columns and must keep failing closed rather than read across.
+    from ingestion.layout import _table_band
+
+    lines = []
+    for r in range(20):
+        y = 60 + r * 12
+        for column, x0 in enumerate((40, 200, 360)):
+            for w in range(4):
+                lines.append(
+                    Line(f"w{r}{column}{w}", (x0 + w * 36, y, x0 + w * 36 + 33, y + 10), 8)
+                )
+    assert _table_band(lines) is None

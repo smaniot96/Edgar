@@ -29,6 +29,7 @@ from ..auth import (
     OWNER_ROLE,
     PLAYER_ROLE,
     Auth,
+    campaign_role,
     generate_invite_token,
     hash_token,
     member_campaign,
@@ -42,6 +43,9 @@ from ..schemas.party import (
     InviteCreate,
     InviteCreated,
     InviteRead,
+    LobbyMember,
+    LobbyRead,
+    LobbyViewer,
     MemberRead,
     MemberSeat,
     MemberUpdate,
@@ -323,6 +327,69 @@ async def list_session_participants(
         )
         for seat, character_name, display_name in rows
     ]
+
+
+@router.get("/sessions/{session_id}/lobby", response_model=LobbyRead)
+async def get_session_lobby(
+    session_id: int,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+):
+    """Any member's view of the table: who is in the campaign, their roles and seats here (EDG-050).
+
+    Display names and seated heroes only, never an email or an invite. Owners get the full
+    management view from ``/members``; this is the read every role, spectators included, may use.
+    """
+    session = await member_session(db, session_id, auth)
+    campaign = await db.get(Campaign, session.campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    memberships = (
+        await db.execute(
+            select(CampaignMembership.user_id, CampaignMembership.role)
+            .where(CampaignMembership.campaign_id == campaign.id)
+            .order_by(CampaignMembership.id)
+        )
+    ).all()
+    roles: dict[int, str] = {campaign.created_by: OWNER_ROLE}
+    for member_id, role in memberships:
+        roles.setdefault(member_id, role)
+    names = dict(
+        (
+            await db.execute(select(User.id, User.display_name).where(User.id.in_(list(roles))))
+        ).all()
+    )
+    seats = {
+        user_id: (character_id, character_name)
+        for user_id, character_id, character_name in (
+            await db.execute(
+                select(SessionParticipant.user_id, SessionParticipant.character_id, Character.name)
+                .join(Character, Character.id == SessionParticipant.character_id)
+                .where(SessionParticipant.session_id == session.id)
+            )
+        ).all()
+    }
+    members = [
+        LobbyMember(
+            user_id=member_id,
+            display_name=names.get(member_id),
+            role=role,
+            character_id=seats.get(member_id, (None, None))[0],
+            character_name=seats.get(member_id, (None, None))[1],
+        )
+        for member_id, role in roles.items()
+    ]
+    if auth is None:
+        viewer = LobbyViewer(user_id=None, role=OWNER_ROLE, character_id=None, character_name=None)
+    else:
+        own = seats.get(auth.user_id, (None, None))
+        viewer = LobbyViewer(
+            user_id=auth.user_id,
+            role=await campaign_role(db, campaign, auth.user_id) or OWNER_ROLE,
+            character_id=own[0],
+            character_name=own[1],
+        )
+    return LobbyRead(session_id=session.id, campaign_id=campaign.id, viewer=viewer, members=members)
 
 
 # Member lifecycle (EDG-046). Removal is immediate: every member_* helper and turn_session reads the

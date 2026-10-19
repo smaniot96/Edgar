@@ -1,4 +1,5 @@
 import { authorizedFetch } from "./auth";
+import type { SpotlightMode, SpotlightState } from "./sessionChannel";
 import { safeTurnError, GENERIC_SAFE_ERROR, type TurnError } from "./turnStream";
 
 import type {
@@ -17,10 +18,17 @@ import type {
   CharacterRead,
   ChatMessageRead,
   CombatState,
+  InviteAccepted,
+  InviteCreated,
+  InviteRead,
+  InviteRole,
+  MemberRead,
+  MemberRole,
   NPCRead,
   NPCListRead,
   SessionRead,
   SessionIntroRead,
+  SessionLobby,
   SessionMapRead,
   UserRead,
   WorldFlagRead,
@@ -494,4 +502,75 @@ export function deleteSession(id: number): Promise<void> {
 
 export function assignCharacterToCampaign(campaignId: number, characterId: number): Promise<void> {
   return send("POST", `/api/campaigns/${campaignId}/characters`, { character_id: characterId });
+}
+
+// ── Multiplayer table: lobby, members, invites, spotlight (EDG-046/048/050) ─────
+
+/** Member-readable roster of a table: every role, spectators included. */
+export function getSessionLobby(id: number, signal?: AbortSignal): Promise<SessionLobby> {
+  return getJson(`/api/sessions/${id}/lobby`, signal);
+}
+
+export function getSpotlight(id: number, signal?: AbortSignal): Promise<SpotlightState> {
+  return getJson(`/api/sessions/${id}/spotlight`, signal);
+}
+
+/** Owner only. Omit a field to leave it alone; `holder_character_id: null` releases the spotlight. */
+export function updateSpotlight(
+  id: number,
+  body: {
+    mode?: SpotlightMode;
+    timeout_seconds?: number;
+    holder_character_id?: number | null;
+    expected_version?: number;
+  },
+): Promise<SpotlightState> {
+  return sendJson("PATCH", `/api/sessions/${id}/spotlight`, body);
+}
+
+/** Best-effort attention report; a failure never matters to the player. */
+export async function reportPresence(id: number, state: "active" | "idle"): Promise<void> {
+  await send("POST", `/api/sessions/${id}/presence`, { state });
+}
+
+export function listMembers(campaignId: number, signal?: AbortSignal): Promise<MemberRead[]> {
+  return getJson(`/api/campaigns/${campaignId}/members`, signal);
+}
+
+export function changeMemberRole(
+  campaignId: number,
+  userId: number,
+  role: Exclude<MemberRole, "owner">,
+): Promise<MemberRead> {
+  return sendJson("PATCH", `/api/campaigns/${campaignId}/members/${userId}`, { role });
+}
+
+export function removeMember(campaignId: number, userId: number): Promise<void> {
+  return send("DELETE", `/api/campaigns/${campaignId}/members/${userId}`);
+}
+
+export function leaveCampaign(campaignId: number): Promise<void> {
+  return send("POST", `/api/campaigns/${campaignId}/leave`);
+}
+
+export function listInvites(campaignId: number, signal?: AbortSignal): Promise<InviteRead[]> {
+  return getJson(`/api/campaigns/${campaignId}/invites`, signal);
+}
+
+export function createInvite(
+  campaignId: number,
+  body: { role: InviteRole; session_id?: number; expires_in_hours?: number },
+): Promise<InviteCreated> {
+  return sendJson("POST", `/api/campaigns/${campaignId}/invites`, body);
+}
+
+export function revokeInvite(campaignId: number, inviteId: number): Promise<void> {
+  return send("DELETE", `/api/campaigns/${campaignId}/invites/${inviteId}`);
+}
+
+export function acceptInvite(token: string, characterId?: number): Promise<InviteAccepted> {
+  return sendJson("POST", "/api/invites/accept", {
+    token,
+    ...(characterId != null ? { character_id: characterId } : {}),
+  });
 }

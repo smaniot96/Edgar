@@ -421,6 +421,7 @@ JSON_BODY_ROUTES = {
     ("POST", "/api/campaigns/{campaign_id}/world-flags"),
     ("POST", "/api/characters"),
     ("POST", "/api/sessions"),
+    ("POST", "/api/sessions/{session_id}/combat/skip"),
     ("POST", "/api/sessions/{session_id}/presence"),
     ("POST", "/api/sessions/{session_id}/queue"),
     ("POST", "/api/sessions/{session_id}/turn"),
@@ -474,7 +475,7 @@ def test_every_mutating_route_is_classified_in_the_request_mode_table(load_app) 
     app = load_app()
     classified = JSON_BODY_ROUTES | BODYLESS_POST_ROUTES | MULTIPART_ROUTES | DELETE_ROUTES
     assert _mutating_routes(app) == classified
-    assert len(classified) == 51
+    assert len(classified) == 52
     simple_surface = BODYLESS_POST_ROUTES | MULTIPART_ROUTES
     assert len(simple_surface) == 10
 

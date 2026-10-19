@@ -57,3 +57,20 @@ it("ignores late refreshes from another session and older requests", async () =>
   expect(view.hook.title).toBe("Campaign 2");
   expect(view.hook.readiness).toEqual(blocked);
 });
+
+it("re-reads shared state after another member's turn without a loading flash, and keeps the view if the read fails", async () => {
+  vi.mocked(api.getSession).mockResolvedValue(session(1));
+  const view = await mount();
+  const firstBoot = view.hook.boot;
+  vi.mocked(api.getSession).mockResolvedValueOnce({ ...session(1), current_scene_id: "cellar" } as SessionRead);
+  vi.mocked(api.listSessionMessages).mockResolvedValueOnce([{ role: "dm", content: "Alice opened the door." }] as Awaited<ReturnType<typeof api.listSessionMessages>>);
+  await act(() => view.hook.refreshShared());
+  expect(view.hook.loading).toBe(false);
+  expect(view.hook.sceneId).toBe("cellar");
+  expect(view.hook.boot).not.toBe(firstBoot);
+  expect(view.hook.boot?.history[0].content).toBe("Alice opened the door.");
+  vi.mocked(api.getSession).mockRejectedValueOnce(new Error("offline"));
+  await act(() => view.hook.refreshShared());
+  expect(view.hook.sceneId).toBe("cellar");
+  expect(view.hook.error).toBeNull();
+});

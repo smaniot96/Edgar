@@ -83,3 +83,31 @@ class MemberUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: MemberRole
+
+
+class LobbyViewer(BaseModel):
+    """The caller's own standing at this table. ``user_id`` is null in single-user local mode."""
+
+    user_id: int | None
+    role: Literal["owner", "player", "spectator"]
+    character_id: int | None
+    character_name: str | None
+
+
+class LobbyMember(BaseModel):
+    """One person at the table: display name, role and the hero seated at this session (never an email)."""
+
+    user_id: int
+    display_name: str | None
+    role: Literal["owner", "player", "spectator"]
+    character_id: int | None
+    character_name: str | None
+
+
+class LobbyRead(BaseModel):
+    """Member-readable table roster for one session (EDG-050). Live presence comes from the channel."""
+
+    session_id: int
+    campaign_id: int
+    viewer: LobbyViewer
+    members: list[LobbyMember]

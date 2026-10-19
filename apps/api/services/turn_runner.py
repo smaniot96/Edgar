@@ -58,6 +58,7 @@ from agent.nodes.narrator import (
     narrator_context,
     narrator_request,
 )
+from agent.party_combat import hero_rows, holder_character_id, is_party
 from agent.positioning import band_of
 from agent.provider_trace import traced_call, traced_stream
 from agent.supported_rules import (
@@ -174,18 +175,85 @@ def public_adjudication(adjudication) -> dict | None:
     return value
 
 
+async def apply_party_updates(
+    db: Any, game_session: SessionModel, updates: list[dict[str, Any]]
+) -> list[int]:
+    """Write the sheet changes a party fight round made to heroes other than the acting one (EDG-049).
+
+    Each entry is the engine's `{character_id, hp_delta, death_saves}`. The assignments are locked in
+    id order first, so two sessions of one campaign cannot interleave. Returns the changed character ids.
+    """
+    from agent.models.adjudication import CharacterUpdate
+
+    from .world_writes import _apply_character_update
+
+    ids = sorted({int(u["character_id"]) for u in updates})
+    if ids:
+        await db.execute(
+            select(CharacterAssignment)
+            .where(
+                CharacterAssignment.character_id.in_(ids),
+                CharacterAssignment.campaign_id == game_session.campaign_id,
+                CharacterAssignment.ended_at.is_(None),
+            )
+            .order_by(CharacterAssignment.id)
+            .with_for_update()
+        )
+    for update in updates:
+        await _apply_character_update(
+            db,
+            int(update["character_id"]),
+            game_session.campaign_id,
+            CharacterUpdate(
+                hp_delta=int(update.get("hp_delta", 0)),
+                death_saves=update.get("death_saves"),
+            ),
+        )
+    return ids
+
+
+async def _party_sheets(
+    db: Any, game_session: SessionModel, character_ids: list[int]
+) -> list[dict[str, Any]]:
+    """Each changed hero's own play state with the account that controls it (private to that player)."""
+    from db.postgres.models import SessionParticipant
+
+    campaign = await db.get(Campaign, game_session.campaign_id)
+    sheets = []
+    for character_id in character_ids:
+        controller = await db.scalar(
+            select(SessionParticipant.user_id).where(
+                SessionParticipant.session_id == game_session.id,
+                SessionParticipant.character_id == character_id,
+            )
+        )
+        sheets.append(
+            {
+                "user_id": controller or (campaign.created_by if campaign is not None else None),
+                "character_id": character_id,
+                "character": await character_play_state(db, character_id, game_session.campaign_id),
+            }
+        )
+    return sheets
+
+
 async def persist_turn(
     session_id: int,
     body_message: str,
     result: dict[str, Any],
     *,
     spotlight: SpotlightTurn | None = None,
+    side: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write the whole turn in one transaction and return the `done` payload.
 
     Opens its own short-lived session so the caller never holds a pooled connection across LLM
     calls. The character is read *before* campaign completion closes the assignments, so the
     final turn of a campaign still reports the hero's state. Raises TurnError (after rollback).
+
+    `side` (EDG-049), when given, receives what the table channel needs besides `done`: the private
+    sheets of the other heroes this turn changed (`party_sheets`) and the hero the fight passes to
+    (`combat_holder`). It never reaches a response.
 
     `spotlight` (EDG-048) is the decision the turn was admitted under. It is checked and applied on
     the locked session row as the last step, so the turn commits only if the spotlight still stands.
@@ -387,8 +455,20 @@ async def persist_turn(
                 await persist_combat_npcs(
                     db, session_id, game_session.campaign_id, combat_id, new_combat
                 )
+            party_fight = bool(new_combat and is_party(new_combat.get("combatants")))
             if won_now:
-                await grant_victory_milestone(db, campaign, game_session.active_character_id)
+                if party_fight:
+                    # EDG-049: every hero who fought and lived shares the milestone, once.
+                    for row in hero_rows(new_combat["combatants"]):
+                        if row.get("character_id") is not None and disposition_of(row) != "dead":
+                            await grant_victory_milestone(db, campaign, int(row["character_id"]))
+                else:
+                    await grant_victory_milestone(db, campaign, game_session.active_character_id)
+            changed_heroes: list[int] = []
+            if party_fight:
+                changed_heroes = await apply_party_updates(
+                    db, game_session, result.get("party_updates") or []
+                )
 
             if adjudication:
                 discovery_keys = {
@@ -433,6 +513,14 @@ async def persist_turn(
             await record_hero_death_if_dead(
                 db, game_session, event_id=narration_event.id, turn_id=turn_id or ""
             )
+            for hero_id in changed_heroes:
+                await record_hero_death_if_dead(
+                    db,
+                    game_session,
+                    event_id=narration_event.id,
+                    turn_id=turn_id or "",
+                    character_id=hero_id,
+                )
             if accepted_amendment is not None:
                 await append_session_prepared_amendment(
                     db,
@@ -493,7 +581,20 @@ async def persist_turn(
                 "roll": turn_roll,
             }
             narration_event.payload = {**narration_event.payload, "done": done}
-            apply_turn_commit(game_session, spotlight, now=datetime.now(UTC))
+            next_holder = (
+                holder_character_id(new_combat)
+                if party_fight and not new_combat.get("ended")
+                else None
+            )
+            apply_turn_commit(
+                game_session, spotlight, now=datetime.now(UTC), combat_holder=next_holder
+            )
+            if party_fight and not new_combat.get("ended") and spotlight is None:
+                # Auth-less local mode has no spotlight plan, but the fight still names its holder.
+                game_session.active_character_id = next_holder or game_session.active_character_id
+            if side is not None:
+                side["combat_holder"] = next_holder
+                side["party_sheets"] = await _party_sheets(db, game_session, changed_heroes)
             await db.commit()
         except MissingCharacterAssignmentError as e:
             await db.rollback()
@@ -536,6 +637,39 @@ async def run_turn(
     return {**result, "telemetry_events": events}
 
 
+SKIP_TEXT = "I take the Dodge action."
+
+
+async def run_combat_skip(
+    initial_state: dict[str, Any], *, diagnostics: TurnDiagnostics | None = None
+) -> dict[str, Any]:
+    """Resolve an idle hero's skipped combat turn (EDG-049): the default Dodge, no parser call.
+
+    The same round node a typed turn reaches, fed a pre-parsed Dodge, so a skip rolls and persists exactly
+    like the hero acting. The model is only asked to narrate the round.
+    """
+    from agent.graph_combat import combat_round_node
+    from agent.models.parsed_input import ParsedInput
+
+    diag = diagnostics or new_turn_diagnostics(turn_id=initial_state.get("turn_id"), delivery="sync")
+    state = {
+        **initial_state,
+        "player_input": SKIP_TEXT,
+        "parsed_input": ParsedInput(intent="combat"),
+        "combat_skip": True,
+    }
+    diag.set_path("combat")
+    with model_profile_snapshot(), bind_collector(diag):
+        result = await combat_round_node(state)
+    if result.get("error"):
+        failure = TurnError(result.get("error_code"), outcome="not_committed")
+        log_failure("turn_agent_error", failure.failure)
+        raise failure
+    events = list(result.get("telemetry_events") or [])
+    events.append(finalize_turn_diagnostics(diag, events))
+    return {**state, **result, "telemetry_events": events}
+
+
 def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] | None:
     """Trim the persisted combat dict to what the client HUD needs.
 
@@ -552,6 +686,7 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         and 0 <= current_index < len(initiative)
     ):
         current_turn_id = initiative[current_index].get("id")
+    party = is_party(combat_state.get("combatants"))
     public: dict[str, Any] = {
         "round": combat_state.get("round"),
         "ended": combat_state.get("ended", False),
@@ -570,6 +705,7 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
                 # Additive (EDG-044): a foe's distance band and whether its reaction is spent.
                 "band": None if c.get("is_player") else band_of(c),
                 "reaction_used": bool(c.get("reaction_used", False)),
+                **(_hero_fields(c) if party and c.get("is_player") else {}),
             }
             for c in (combat_state.get("combatants") or [])
         ],
@@ -594,11 +730,44 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
     # Additive (EDG-182): the hero's standing reaction orders, each cancellable by a reply.
     if orders := public_standing_orders(combat_state.get("combatants") or []):
         public["standing_orders"] = orders
+    if party:
+        # Additive (EDG-049): the fight is shared, and the engine says whose turn it is.
+        public["party"] = True
+        holder = (
+            None
+            if combat_state.get("ended")
+            else combat_state.get("current_turn_character_id", holder_character_id(combat_state))
+        )
+        public["current_turn_character_id"] = holder
     return public
 
 
+def _hero_fields(c: dict[str, Any]) -> dict[str, Any]:
+    """What the table sees of a hero in a party fight: its sheet id, whether it left, its death saves.
+
+    Death saves are rolled in the open at a table, so the record is public; nothing else of the sheet is.
+    """
+    from agent.death import public_view as death_public, record_from
+    from agent.resolution import DEATH_SAVES_KEY
+
+    return {
+        "character_id": c.get("character_id"),
+        "fled": bool(c.get("fled", False)),
+        "death_saves": death_public(record_from(c.get(DEATH_SAVES_KEY))),
+    }
+
+
+def table_combat_state(combat_state: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The combat view the table channel carries: a party fight's pending declaration stays with its hero."""
+    if combat_state and combat_state.get("party"):
+        return {k: v for k, v in combat_state.items() if k != "pending_declaration"}
+    return combat_state
+
+
 def _concentration_spell(combat_state: dict[str, Any]) -> str | None:
-    player = next((c for c in combat_state.get("combatants") or [] if c.get("is_player")), None)
+    heroes = [c for c in combat_state.get("combatants") or [] if c.get("is_player")]
+    # EDG-049: in a party fight the HUD facts are the hero whose turn is next (or just acted).
+    player = next((c for c in heroes if c.get("acting")), heroes[0] if heroes else None)
     concentration = concentration_of(player) if player is not None else None
     return str(concentration["spell"]) if concentration else None
 
@@ -755,6 +924,7 @@ async def stream_session_turn(
     diagnostics: TurnDiagnostics | None = None,
     on_committed: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     spotlight: SpotlightTurn | None = None,
+    side: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     """Stream a turn under one immutable settings snapshot, including the narrator tail.
 
@@ -773,6 +943,7 @@ async def stream_session_turn(
                 diagnostics=diagnostics,
                 on_committed=on_committed,
                 spotlight=spotlight,
+                side=side,
             )
         ) as frames:
             async for frame in frames:
@@ -839,6 +1010,7 @@ async def _stream_session_turn(
     diagnostics: TurnDiagnostics | None = None,
     on_committed: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     spotlight: SpotlightTurn | None = None,
+    side: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     t0 = time.monotonic()
     lap_start = t0
@@ -1018,7 +1190,9 @@ async def _stream_session_turn(
     state["telemetry_events"] = [*telemetry, finalize_turn_diagnostics(diag, telemetry)]
     state = stage_turn_trace(state, debug=debug, delivery="stream")
     try:
-        done_payload = await persist_turn(session_id, body_message, state, spotlight=spotlight)
+        done_payload = await persist_turn(
+            session_id, body_message, state, spotlight=spotlight, side=side
+        )
     except TurnError as e:
         yield sse_event("error", e.body())
         return

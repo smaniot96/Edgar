@@ -104,6 +104,8 @@ class Declaration:
     ready: ReadyOrder | None = None  # EDG-044c: a validated readied melee attack, held for its trigger
     contingency: Contingency | None = None  # EDG-182: the "if" clause that follows the action
     contingency_moves: MovePlan | None = None  # its branch, planned on the bands before the action
+    # EDG-049: the other hero a healing spell or potion is aimed at (a party fight), else the caster.
+    ally_target: dict | None = None
 
 
 def declare_action(
@@ -123,6 +125,7 @@ def declare_action(
     cf_left: dict[str, int],
     cf_requested: tuple[str, ...],
     contingency: Contingency | None = None,
+    allies: list[dict] | None = None,
 ) -> Declaration | dict[str, Any]:
     """Resolve the declared action, or return the refusal as the question the player is asked."""
     # --- Decide the player's action BEFORE any dice, so a bad target never burns a round ---
@@ -188,6 +191,13 @@ def declare_action(
             # Using an item is the action; if it isn't carried, the action simply fails.
             missing_item = heal_item is None
             is_attack = False
+    # EDG-049: a healing spell or potion that names another hero of the party is aimed at that hero.
+    ally_target: dict | None = None
+    if allies and not fled and ((spell_plan is not None and spell_plan.spell.kind == "heal") or heal_item):
+        ally_target = next(
+            (a for n in named for a in allies if _name_matches(n, str(a.get("display_name") or a["name"]))),
+            None,
+        )
     # A supported contested maneuver (EDG-021) or a declared release replaces the attack this turn.
     combat_action = None
     if not (fled or spell_declared or heal_item or missing_item or dodge):
@@ -386,6 +396,7 @@ def declare_action(
         ready=ready,
         contingency=contingency,
         contingency_moves=branch_plan,
+        ally_target=ally_target,
     )
 
 

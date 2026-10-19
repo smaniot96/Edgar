@@ -45,6 +45,8 @@ class CombatantRecord(TypedDict, total=False):
     name: str
     display_name: str | None
     is_player: bool
+    character_id: int  # EDG-049: the hero a party-fight row belongs to
+    fled: bool  # EDG-049: the hero left the fight
     creature_id: str | None
     hp_current: int
     hp_max: int
@@ -78,6 +80,7 @@ class CombatStateRecord(TypedDict, total=False):
     initiative_order: list[str]
     current_turn_index: int | None
     current_turn: str | None
+    current_turn_character_id: int | None  # EDG-049: whose turn it is in a party fight
     player_ac: int | None
     second_wind_used: bool
     second_wind_uses_remaining: int | None
@@ -134,6 +137,8 @@ class AgentState(TypedDict, total=False):
     resolved_combat_outcomes: list[CombatOutcomeRecord]  # Session-owned authoritative ended rows
     combat_state: CombatStateRecord  # loaded from DB if an encounter is in progress
     combat_captives: list[dict]  # Combat-owned captive/released/dead NPC rows (EDG-146)
+    party_updates: list[dict]  # EDG-049: sheet changes of the other heroes a party fight round made
+    combat_skip: bool  # EDG-049: the turn is the default Dodge of an idle hero, not a typed action
     captive_outcome: dict  # Engine-decided release/kill of a captive, persisted with the turn
     memory_summary: str | None  # rolling story summary immediately before `messages`
 

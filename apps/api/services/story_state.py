@@ -284,8 +284,11 @@ async def record_hero_death_if_dead(
     *,
     event_id: int,
     turn_id: str,
+    character_id: int | None = None,
 ) -> bool:
-    """Record the active hero's permanent death in the story ledger once (caller commits).
+    """Record a hero's permanent death in the story ledger once (caller commits).
+
+    The active hero by default; EDG-049 passes the other heroes of a party fight explicitly.
 
     The sheet's death record decides it (agent.death). The fact is a `dead` entity status keyed by
     the hero, so a retried turn or a repeated write is a no-op (the effect id is the same).
@@ -295,18 +298,17 @@ async def record_hero_death_if_dead(
 
     from .character_assignments import load_active_assignment
 
-    if not game_session.active_character_id:
+    hero_id = character_id if character_id is not None else game_session.active_character_id
+    if not hero_id:
         return False
-    assignment = await load_active_assignment(
-        db, game_session.active_character_id, game_session.campaign_id
-    )
+    assignment = await load_active_assignment(db, hero_id, game_session.campaign_id)
     if assignment is None:
         return False
     record = record_from((assignment.stats or {}).get(DEATH_SAVES_KEY))
     if record is None or record.state != DEAD:
         return False
     character = assignment.character
-    character_id = int(game_session.active_character_id)
+    character_id = int(hero_id)
     await _record_encounter_fact(
         db,
         game_session,

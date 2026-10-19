@@ -37,7 +37,15 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
     if cs is None:
         return None
     combatants = cs.combatants or []
-    player = next((c for c in combatants if c.get("is_player")), None) or {}
+    from agent.party_combat import holder_row, is_party
+
+    party = is_party(combatants)
+    # EDG-049: in a party fight the per-encounter HUD facts belong to the hero whose turn is next.
+    player = (
+        (holder_row({"combatants": combatants, "current_turn_index": cs.current_turn_index}) if party else None)
+        or next((c for c in combatants if c.get("is_player")), None)
+        or {}
+    )
     out = {
         "id": cs.id,
         "initiative_order": cs.initiative_order,
@@ -61,6 +69,8 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
         out["current_turn"] = (
             None if cs.ended else (player.get("display_name") or player.get("name"))
         )
+        if party:
+            out["current_turn_character_id"] = None if cs.ended else player.get("character_id")
     return out
 
 

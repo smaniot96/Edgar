@@ -2,7 +2,7 @@
 
 import os
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def debug_turns_enabled() -> bool:
@@ -59,3 +59,11 @@ class TurnResponse(BaseModel):
     # The turn's original roll (EDG-030), the same record the reload path returns. Null when no dice.
     roll_status: str | None = None
     roll: dict | None = None
+
+
+class CombatSkipRequest(BaseModel):
+    """Skip the idle hero's turn in a shared fight (EDG-049). The version is the one the client last saw."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    spotlight_version: int | None = Field(default=None, ge=0)

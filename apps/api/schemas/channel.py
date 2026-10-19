@@ -99,6 +99,9 @@ EVENT_TYPES: dict[str, tuple[Channel, str]] = {
     # A queued action was added, edited, cancelled, played or dropped (EDG-051). The queue as the
     # table may read it: who has one and its status, never the text. Carries a `revision`.
     "turn.queue_changed": ("system", AUDIENCE_TABLE),
+    # EDG-049: a shared fight moved to another hero, or an idle turn was skipped. Table-visible: the
+    # round, whose turn it is and why. Never carries a declaration or any private sheet data.
+    "combat.turn_changed": ("system", AUDIENCE_TABLE),
     "presence.joined": ("system", AUDIENCE_TABLE),
     "presence.left": ("system", AUDIENCE_TABLE),
     "presence.idle": ("system", AUDIENCE_TABLE),
