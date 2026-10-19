@@ -305,7 +305,6 @@ def _segment(lines: list[Line], left: list[Line], right: list[Line], crossing: l
             raise
         ids = {id(item) for item in band}
         top = min(item.bbox[1] for item in band)
-        bottom = max(item.bbox[3] for item in band)
         parts = []
         for part in (
             [i for i in lines if id(i) not in ids and i.bbox[3] <= top + 1],
