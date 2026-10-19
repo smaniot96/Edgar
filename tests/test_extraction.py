@@ -378,6 +378,153 @@ def test_image_only_size_line_fails_with_page_specific_reason_instead_of_guessin
         )
 
 
+def test_uppercase_armor_class_prose_heading_is_not_a_stat_record():
+    # Mirrors MM p.8: an "ARMOR CLASS" section in prose has no number after it, so it needs no name.
+    lines = [Line("ARMOR CLASS", (30, 60, 150, 72), 12)]
+    lines += [
+        Line(f"A monster that wears armor line {i}.", (30, 80 + i * 12, 480, 90 + i * 12), 10)
+        for i in range(3)
+    ]
+    text, _ = render_native_page(lines, 500)
+    assert "A monster that wears armor line 2." in text
+
+
+def test_raster_name_is_retried_in_a_wider_crop_when_the_tight_crop_misses():
+    # Mirrors MM p.37 and p.65: OCR drops a name that sits close to the first crop's edge.
+    lines = _single_record(None, size_text="Medium fiend, any evil alignment")
+    calls = []
+
+    def header(bbox):
+        calls.append(bbox)
+        return [Line("CAMBION", (40, 48, 110, 58))] if bbox[0] < 36 else []
+
+    text, warnings = render_native_page(lines, 500, header_ocr=header)
+    assert text.startswith("## Cambion\n\nMedium fiend, any evil alignment")
+    assert len(calls) == 2
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_raster_name_just_above_native_size_line_is_found_in_a_size_anchored_crop():
+    # Mirrors MM p.36 and p.58: the name sits directly above a native size line, inside a crop
+    # that ends at the size line rather than at the Armor Class line.
+    lines = _single_record(None, size_text="Medium humanoid, neutral evil")
+
+    def header(bbox):
+        inside = bbox[1] >= 30 and bbox[3] <= 72
+        return [Line("BULLYWUG", (40, 40, 120, 52))] if inside else []
+
+    text, warnings = render_native_page(lines, 500, header_ocr=header)
+    assert text.startswith("## Bullywug\n\nMedium humanoid, neutral evil")
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_raster_name_is_still_required_when_no_crop_reads_one():
+    # Negative: a size line alone, with no readable name in any crop, still fails closed.
+    lines = _single_record(None, size_text="Medium humanoid, neutral evil")
+    with pytest.raises(ValueError, match="missing_stat_heading"):
+        render_native_page(lines, 500, header_ocr=lambda bbox: [])
+
+
+def test_stat_field_with_a_stray_leading_glyph_still_takes_its_raster_name():
+    # Mirrors MM p.209: the Armor Class line starts with a stray glyph, so it must still count.
+    lines = _single_record(None, size_text="Medium humanoid, neutral good")
+    lines[1] = Line(". Armor Class 11 (natural armor)", lines[1].bbox, 8.5)
+
+    def header(bbox):
+        return [Line("WEREBEAR", (40, 40, 120, 52))] if bbox[1] < 60 else []
+
+    text, warnings = render_native_page(lines, 500, header_ocr=header)
+    assert text.startswith("## Werebear\n\nMedium humanoid, neutral good")
+    assert check_text(text)["errors"] == []
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_punctuation_strip_on_the_column_top_is_an_ornament_not_text():
+    # Mirrors MM p.187: an ornament read as punctuation crosses the gutter inside a run of column
+    # text. It must not make the band ambiguous, and it carries no rules text.
+    lines = _two_column_block(60, 6)
+    lines.append(Line("=;....!:====_,;~;::ci!::bj~~~~~:;", (150, 80, 330, 90), 9))
+    text, _ = render_native_page(lines, 500)
+    assert "====" not in text
+    assert text.index("left prose 0") < text.index("right prose 0")
+
+
+def test_table_rows_with_blank_cells_read_as_a_table_band():
+    # Mirrors MM p.69: most rows of the Layers table leave one cell blank, so only three rows
+    # carry the spanning cell. Every row still holds three or more cells, so rows read in order.
+    table = []
+    for i in range(12):
+        y = 100 + i * 14
+        table += [
+            Line(f"row{i} first", (30, y, 70, y + 10), 9),
+            Line(f"row{i} second", (80, y, 120, y + 10), 9),
+            Line(f"row{i} last", (420, y, 460, y + 10), 9),
+        ]
+        if i % 4 == 0:
+            table.append(Line(f"row{i} spanning", (200, y, 380, y + 10), 9))
+    text, _ = render_native_page(table, 500)
+    assert text.index("row0 first") < text.index("row6 first") < text.index("row11 first")
+    assert "row0 spanning" in text and "row8 spanning" in text
+
+
+def test_mixed_two_column_rows_with_few_spanning_cells_still_fail_closed():
+    # Negative: prose rows of two cells with a few spanning fragments stay ambiguous.
+    lines = [Line(f"left {i}", (30, 50 + i * 14, 230, 60 + i * 14), 10) for i in range(12)]
+    lines += [Line(f"right {i}", (280, 50 + i * 14, 480, 60 + i * 14), 10) for i in range(12)]
+    lines += [Line(f"spanning {i}", (200, 60 + i * 56, 330, 70 + i * 56), 10) for i in range(3)]
+    with pytest.raises(ValueError, match="ambiguous_spanning_column_text"):
+        render_native_page(lines, 500)
+
+
+def test_raster_recovered_name_is_recorded_with_confidence_and_crop():
+    # Operator review: a name read from an image is listed with its OCR text, confidence and crop.
+    lines = _single_record(None, size_text="Medium fiend, any evil alignment")
+    recovered: list[dict] = []
+    text, warnings = render_native_page(
+        lines,
+        500,
+        header_ocr=lambda bbox: [Line("CAMBION", (40, 48, 110, 58), confidence=41.0)],
+        recovered=recovered,
+    )
+    assert text.startswith("## Cambion\n\nMedium fiend, any evil alignment")
+    assert recovered == [{"text": "CAMBION", "kind": "name", "confidence": 41, "crop_index": 0}]
+    assert "raster_stat_header_ocr_review_required" in warnings
+
+
+def test_extraction_lists_raster_reads_and_writes_a_full_sidecar(tmp_path):
+    page = ExtractedPage(
+        3,
+        "## Devil\n\nSmall fiend (devil), lawful evil",
+        "native_geometry+raster_headers",
+        {
+            "errors": [],
+            "raster_recovered": [
+                {"text": "Devil", "kind": "name", "confidence": 41, "crop_index": 3},
+                {"text": "Small fiend", "kind": "size_type", "confidence": 96, "crop_index": 3},
+            ],
+        },
+        ["raster_stat_header_ocr_review_required"],
+    )
+    extraction = Extraction("book", "a" * 64, 3, [page])
+    summary = "\n".join(extraction.quality_summary())
+    assert "Raster-read headings to verify against the page image (1 pages, 2 items" in summary
+    assert 'page 3: name "Devil" (conf 41, crop 3)' in summary
+    markdown, report = save_extraction(extraction, tmp_path)
+    sidecar = json.loads((tmp_path / "book.raster-review.json").read_text(encoding="utf-8"))
+    assert [e["text"] for e in sidecar["entries"]] == ["Devil", "Small fiend"]
+    assert sidecar["entries"][0]["page"] == 3
+
+
+def test_bundles_without_raster_reads_have_no_review_lines_or_sidecar(tmp_path):
+    # Additive: a page with no raster-read text adds no key, no summary line and no sidecar.
+    page = ExtractedPage(1, "Plain prose.", "native_geometry", {"errors": []}, [])
+    extraction = Extraction("book", "a" * 64, 1, [page])
+    assert not any("Raster-read" in line for line in extraction.quality_summary())
+    assert "raster_recovered" not in extraction.pages[0].quality
+    save_extraction(extraction, tmp_path)
+    assert not (tmp_path / "book.raster-review.json").exists()
+
+
 @pytest.fixture
 def native_pdf(tmp_path):
     path = tmp_path / "prepared.pdf"
