@@ -25,6 +25,7 @@ from edgar_core.config import VECTOR_DB_API_KEY, VECTOR_DB_URL
 from edgar_core.log_safety import error_summary
 
 from ..dependencies import get_redis, get_session
+from ..replica_lock import replica_lock_state
 from ..services.operational_metrics import observe_readiness, observe_readiness_check
 
 log = structlog.get_logger()
@@ -98,6 +99,10 @@ async def ready(
             _probe("qdrant", _check_qdrant()),
         )
     )
+    # EDG-074: reported only while the single-replica guard is enforced.
+    lock_state = replica_lock_state()
+    if lock_state is not None:
+        results["replica_lock"] = lock_state
     if all(v == "ok" for v in results.values()):
         observe_readiness(ready=True)
         return {"status": "ready", "checks": results}

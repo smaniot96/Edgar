@@ -330,6 +330,8 @@ The optional personal [work register](work-register/REGISTER.md) is the local pl
 
 The API sends structlog, standard-library/server logs and in-process ingestion logs through one output formatter. `ENV=local` uses readable console output; other values use JSON with UTC timestamps, log level, logger name and request correlation. `X-Request-ID` accepts bounded IDs from a proxy and is echoed on responses, including unhandled errors. Common credential fields and credential URL forms are redacted, SQL bound parameters are hidden, and traceback locals are disabled. Avoid logging request bodies, prompts or arbitrary secrets: pattern-based redaction is not a complete privacy policy. Provider and ingestion CLI failures log `error_summary` (`edgar_core.log_safety`: exception class, HTTP status, provider request id), never the exception message, which can echo prompts or player text. The ingestion CLI sink applies the same credential redaction.
 
+**Supported topology: one API replica.** Run the `api` service once; a second API process against the same database refuses to start (Postgres advisory lock held for the process lifetime, EDG-074). Jobs run in-process, so a restart interrupts them and recovery follows EDG-037. Details, restart behaviour and the development-only `EDGAR_ALLOW_MULTIPLE_REPLICAS=1` opt-out are in [docs/hosting-hardening.md](docs/hosting-hardening.md#supported-topology-one-api-replica).
+
 ## Tests
 
 ```

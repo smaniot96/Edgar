@@ -52,6 +52,52 @@ docker compose -f docker-compose.yml -f docker-compose.hosting.yml up -d
 The profile needs Docker Compose 2.24.4 or newer for the `!reset` tag, which clears the inherited
 datastore ports.
 
+## Supported topology: one API replica
+
+Edgar supports **exactly one API replica per database** (EDG-074, decision "declare single-replica
+and enforce it"). Run the `api` service once. Do not scale it above 1 and do not start a second API
+process (another container, a second `uvicorn`, a rolling-update overlap) against the same Postgres.
+
+**Why.** Ingestion and generation jobs run in-process; adventure/source status lives in metadata
+files beside the API; session stream and drain state is per process. None of that is coordinated
+between processes.
+
+**Enforcement.** At startup the API takes a Postgres session-level advisory lock on a dedicated,
+unpooled connection and holds it until shutdown. A second API against the same database refuses to
+start with "Another API replica is running against this database; Edgar supports exactly one
+replica." (no host, user or credential in the message). Postgres was chosen over a Redis lock
+because it is the authoritative store replicas would share and the lock dies with its connection,
+so there is no TTL to tune; the pooled engine cannot hold a session lock, hence the dedicated
+connection. A 15 s heartbeat checks the connection: if it drops, `/ready` reports
+`replica_lock: unavailable`, the lock is re-taken if still free, and if another replica took it the
+process shuts itself down. `/ready` lists `replica_lock` only while the guard is enforced.
+
+**Restarts.** A graceful stop (SIGTERM, `uvicorn --reload`, `docker compose restart`) releases the
+lock. A crashed or killed process releases it when Postgres notices the connection is gone: at once
+when the OS closes the socket, or within about a minute for a dead network peer (the connection sets
+TCP keepalives of 30 s idle, 10 s interval, 3 probes). A new process retries for
+`EDGAR_REPLICA_LOCK_WAIT_SEC` seconds (default 10) before refusing. If an operator still sees the
+refusal after a crash, find and end the lingering backend:
+`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'edgar-api-replica-lock';`
+(only when no API is genuinely running). If the database is unreachable at startup, the API now
+fails to start rather than starting degraded.
+
+**Opt-out (tests and development only).** `EDGAR_ALLOW_MULTIPLE_REPLICAS=1` disables the guard and
+logs `replica_guard_disabled_unsupported` as a warning. It is default off, is not passed through by
+the compose files, and a deployment that sets it is unsupported. The test suite sets it because many
+tests start the app without a reachable database; `tests/test_replica_lock.py` covers the guard.
+
+**What is guaranteed.** One replica sees one consistent source and job state by construction, so the
+EDG-074 acceptance "any replica observes consistent source/job state" holds because there is only
+one replica. Global worker limits (EDG-066, EDG-158) are per process, which is global here.
+
+**What is not.** Jobs run in-process: a restart interrupts running jobs, and recovery is unchanged
+(EDG-037: stale `processing` sources are marked failed and offered a retry; private preparations are
+recovered at startup). There is no high availability and no zero-downtime rolling update.
+
+**Lifting the limit** would need a durable Postgres job queue with checkpoints, source status moved
+from metadata files to shared storage, and shared stream/drain state (the unbuilt "option B").
+
 ## What is not done
 
 - **Read-only root filesystem.** Not enabled. Writes are known for `/data`, `/index-locks`,
