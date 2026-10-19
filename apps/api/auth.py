@@ -170,13 +170,19 @@ async def resolve_token(db: AsyncSession, presented: str, *, now: datetime | Non
 async def require_authentication(
     request: Request, db: AsyncSession = Depends(get_session)
 ) -> Principal | None:
-    """Router-level guard. Local mode: no check, returns None. Token mode: verifies the bearer token."""
+    """Router-level guard. Local mode: no check, returns None. Token mode: verifies the bearer token.
+
+    The token lookup is a read. Ending its transaction with a commit returns the pooled connection
+    now (the session factory keeps objects usable after commit), so a long-lived stream (EDG-047)
+    does not hold one for its whole life.
+    """
     if auth_mode() == LOCAL:
         return None
     presented = bearer_token(request)
     if presented is None:
         raise _unauthenticated()
     principal = await resolve_token(db, presented)
+    await db.commit()
     request.state.principal = principal
     return principal
 

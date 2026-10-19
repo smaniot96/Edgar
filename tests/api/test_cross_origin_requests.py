@@ -414,6 +414,7 @@ JSON_BODY_ROUTES = {
     ("POST", "/api/campaigns/{campaign_id}/world-flags"),
     ("POST", "/api/characters"),
     ("POST", "/api/sessions"),
+    ("POST", "/api/sessions/{session_id}/presence"),
     ("POST", "/api/sessions/{session_id}/turn"),
     ("POST", "/api/invites/accept"),
     ("POST", "/api/sessions/{session_id}/turn/stream"),

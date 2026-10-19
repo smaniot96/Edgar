@@ -50,6 +50,7 @@ from .routers.rules import router as rules_router
 from .routers.seed import router as seed_router
 from .routers.session import router as session_router
 from .routers.session_assets import router as session_assets_router
+from .routers.session_events import router as session_events_router
 from .routers.user import router as user_router
 from .routers.world_flag import router as world_flag_router
 from .services.safe_errors import classify_error, classify_http_failure, log_failure
@@ -60,6 +61,10 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    # A process that starts is not draining, whatever an earlier app lifespan in this process left behind.
+    from .services.session_stream import reset_drain
+
+    reset_drain()
     # Fail before any background work when the auth mode or its required settings are unsafe.
     log.info("auth_configuration_validated", **validate_auth_configuration())
     # Fail before any background work when local provider settings are unusable.
@@ -93,7 +98,10 @@ async def lifespan(app: FastAPI):
         from db.postgres import session as db_session_module
 
         from .dependencies import close_redis
+        from .services.session_stream import begin_drain
 
+        # Open session streams end with `closed: server_shutdown` at their next tick (EDG-047).
+        begin_drain()
         try:
             await close_redis()
         finally:
@@ -216,6 +224,7 @@ app.include_router(party_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(rules_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(seed_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(session_router, prefix="/api", dependencies=API_AUTH)
+app.include_router(session_events_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(session_assets_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(user_router, prefix="/api", dependencies=API_AUTH)
 app.include_router(world_flag_router, prefix="/api", dependencies=API_AUTH)

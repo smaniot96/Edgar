@@ -28,6 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+import db.postgres.session as db_session_module
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
 from agent.death import life_state_of
 from agent.turn_diagnostics import (
@@ -35,7 +36,13 @@ from agent.turn_diagnostics import (
     turn_diagnostics_public,
     turn_diagnostics_summary,
 )
-from db.postgres.models import Campaign, Character, EventLog, Session as SessionModel
+from db.postgres.models import (
+    Campaign,
+    Character,
+    EventLog,
+    Session as SessionModel,
+    User,
+)
 from edgar_core.sources import public_citations
 
 from ..auth import (
@@ -50,6 +57,7 @@ from ..auth import (
 )
 from ..dependencies import acquire_turn_lock, get_redis, get_session
 from ..limits import admit_turn, record_assumed_call, record_turn_spend
+from ..schemas.channel import ChannelActor
 from ..schemas.session import ChatMessageRead, SessionCreate, SessionRead, SessionUpdate
 from ..schemas.turn import TurnRequest, TurnResponse, debug_turns_enabled
 from ..services.campaign_sources import source_reads
@@ -63,6 +71,7 @@ from ..services.npcs import load_npcs, model_context_npcs
 from ..services.operational_metrics import observe_committed_turn, observe_uncommitted_turn
 from ..services.roll_record import stored_roll
 from ..services.safe_errors import classify_error, classify_http_failure, log_failure
+from ..services.session_broadcast import TurnBroadcast
 from ..services.session_intro import generate_session_intro
 from ..services.session_messages import (
     load_session_context,
@@ -604,6 +613,30 @@ async def delete_session(session_id: int, auth: Auth, db: AsyncSession = Depends
     await db.commit()
 
 
+async def _turn_actor(session_id: int, auth: Auth) -> ChannelActor:
+    """Who is acting on the channel: the caller's account and the spotlight character (EDG-047).
+
+    Reads in its own short session, so a streaming turn never holds the request's connection.
+    """
+    async with db_session_module.async_session_factory() as db:
+        session = await db.get(SessionModel, session_id)
+        character_name = None
+        character_id = session.active_character_id if session is not None else None
+        if character_id is not None:
+            character = await db.get(Character, character_id)
+            character_name = character.name if character is not None else None
+        display_name = None
+        if auth is not None:
+            user = await db.get(User, auth.user_id)
+            display_name = user.display_name if user is not None else None
+    return ChannelActor(
+        user_id=None if auth is None else auth.user_id,
+        display_name=display_name,
+        character_id=character_id,
+        character_name=character_name,
+    )
+
+
 def _turn_error_response(err: TurnError) -> JSONResponse:
     return JSONResponse(status_code=err.status_code, content=err.body())
 
@@ -696,7 +729,7 @@ async def session_turn(
     await authorize_session(db, session_id, auth)
     admission = await admit_turn(request, redis)
     try:
-        return await _session_turn(session_id, body, background_tasks, db, redis)
+        return await _session_turn(session_id, body, background_tasks, db, redis, auth)
     finally:
         await admission.release()
 
@@ -707,6 +740,7 @@ async def _session_turn(
     background_tasks: BackgroundTasks,
     db: AsyncSession,
     redis: Redis,
+    auth: Auth,
 ):
     lock = await acquire_turn_lock(session_id, redis)
     if lock is None:
@@ -715,6 +749,7 @@ async def _session_turn(
     structlog.contextvars.bind_contextvars(session_id=session_id)
     outcome = "not_committed"
     diagnostics = None
+    broadcast: TurnBroadcast | None = None
     try:
         replay = await _replayed_turn(db, session_id, body)
         if replay is not None:
@@ -723,6 +758,13 @@ async def _session_turn(
         if body.request_id is not None:
             initial_state["turn_id"] = body.request_id
         structlog.contextvars.bind_contextvars(campaign_id=initial_state["campaign_id"])
+        broadcast = TurnBroadcast(
+            redis,
+            session_id,
+            actor=await _turn_actor(session_id, auth),
+            turn_id=initial_state.get("turn_id"),
+        )
+        await broadcast.start(body.message)
 
         diagnostics = new_turn_diagnostics(
             turn_id=initial_state.get("turn_id"), delivery="sync", lock_wait_ms=lock.acquire_ms
@@ -733,6 +775,7 @@ async def _session_turn(
         done = await persist_turn(session_id, body.message, result)
         outcome = "committed"
         observe_committed_turn(result.get("telemetry_events"), diagnostics)
+        await broadcast.committed(done)
         background_tasks.add_task(maybe_update_memory_summary, session_id)
 
         adjudication = result.get("adjudication_result")
@@ -769,6 +812,9 @@ async def _session_turn(
         structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
         await record_turn_spend(redis, diagnostics)
         observe_uncommitted_turn(diagnostics)
+        if broadcast is not None:
+            # No-op when the turn already committed or failed; otherwise the table learns the outcome.
+            await broadcast.finish(outcome)
         await lock.release()
 
 
@@ -812,6 +858,12 @@ async def session_turn_stream(
         initial_state = await _load_turn_initial_state(session_id, body.message, db)
         if body.request_id is not None:
             initial_state["turn_id"] = body.request_id
+        broadcast = TurnBroadcast(
+            redis,
+            session_id,
+            actor=await _turn_actor(session_id, auth),
+            turn_id=initial_state.get("turn_id"),
+        )
     except HTTPException as exc:
         await lock.release()
         await admission.release()
@@ -821,6 +873,7 @@ async def session_turn_stream(
         await admission.release()
         raise
 
+    await broadcast.start(body.message)
     diagnostics = new_turn_diagnostics(
         turn_id=initial_state.get("turn_id"), delivery="stream", lock_wait_ms=lock.acquire_ms
     )
@@ -839,11 +892,16 @@ async def session_turn_stream(
                     initial_state=initial_state,
                     debug=body.debug,
                     diagnostics=diagnostics,
+                    on_committed=broadcast.committed,
                 )
             ) as frames:
                 async for chunk in frames:
+                    await broadcast.observe(chunk)
                     yield chunk
         finally:
+            # No-op after a commit or a reported failure. A disconnect mid-turn reports "unknown":
+            # the table re-reads state rather than assuming the turn did or did not commit.
+            await broadcast.finish("unknown")
             structlog.contextvars.unbind_contextvars("session_id", "campaign_id")
             await record_turn_spend(redis, diagnostics)
             observe_uncommitted_turn(diagnostics)

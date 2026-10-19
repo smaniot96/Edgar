@@ -24,8 +24,9 @@ from edgar_core import config
 # Exactly what the bundled client uses: fetch GET, POST and DELETE; JSON bodies (Content-Type, which
 # is not CORS-safelisted, so it needs a preflight); Accept for SSE; Authorization for bearer tokens
 # (EDG-065). X-Request-ID is accepted so a separate client can correlate its logs with ours.
+# Last-Event-ID resumes a session channel subscription (EDG-047); it is not CORS-safelisted.
 ALLOWED_METHODS = ("GET", "POST", "DELETE")
-ALLOWED_REQUEST_HEADERS = ("Authorization", "Content-Type", "Accept", "X-Request-ID")
+ALLOWED_REQUEST_HEADERS = ("Authorization", "Content-Type", "Accept", "X-Request-ID", "Last-Event-ID")
 # The bundled client reads `x-request-id` from responses. It does not read Retry-After, so that stays
 # unexposed until a client needs it.
 EXPOSED_RESPONSE_HEADERS = ("X-Request-ID",)

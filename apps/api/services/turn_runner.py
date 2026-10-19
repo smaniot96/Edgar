@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from typing import Any
 
@@ -730,8 +730,13 @@ async def stream_session_turn(
     initial_state: dict[str, Any],
     debug: bool = False,
     diagnostics: TurnDiagnostics | None = None,
+    on_committed: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> AsyncIterator[str]:
-    """Stream a turn under one immutable settings snapshot, including the narrator tail."""
+    """Stream a turn under one immutable settings snapshot, including the narrator tail.
+
+    `on_committed` runs right after the turn's transaction commits, before its `done` frame is
+    yielded, so a committed turn is never unknown to the session channel (EDG-047).
+    """
     with model_profile_snapshot():
         # aclosing: a client disconnect closes the turn generator here, and it closes the
         # provider stream below, rather than leaving that to garbage collection.
@@ -742,6 +747,7 @@ async def stream_session_turn(
                 initial_state=initial_state,
                 debug=debug,
                 diagnostics=diagnostics,
+                on_committed=on_committed,
             )
         ) as frames:
             async for frame in frames:
@@ -806,6 +812,7 @@ async def _stream_session_turn(
     initial_state: dict[str, Any],
     debug: bool = False,
     diagnostics: TurnDiagnostics | None = None,
+    on_committed: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> AsyncIterator[str]:
     t0 = time.monotonic()
     lap_start = t0
@@ -1004,6 +1011,9 @@ async def _stream_session_turn(
         return
     observe_committed_turn(state.get("telemetry_events"), diag)
     lap("saving_ms")
+    if on_committed is not None:
+        # Never raises by contract (see services.session_broadcast); the done frame follows.
+        await on_committed(done_payload)
 
     if debug:
         combat_diagnostics = combat_round_from_events(state.get("telemetry_events"))
