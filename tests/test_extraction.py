@@ -1499,3 +1499,36 @@ def test_duplicate_word_layer_cannot_be_cleared_even_when_the_text_now_passes(tw
     assert extraction.pages[1].quality["not_clearable_by_text_correction"] == [
         "duplicate_word_layer"
     ]
+
+
+def test_corrected_raster_entry_is_flagged_in_the_review_sidecar(two_page_pdf, tmp_path):
+    record = {"text": "Devil", "kind": "heading", "confidence": 41, "crop_index": 0}
+    page2 = ExtractedPage(
+        2,
+        "# Devil\n\nA small fiend rests here.",
+        "native_geometry+raster_headers",
+        {"errors": [], RASTER_RECOVERED_KEY: [dict(record)]},
+    )
+    extraction = Extraction(
+        "book",
+        source_digest(two_page_pdf),
+        2,
+        [ExtractedPage(1, "BOOK COVER", "native_geometry", {"errors": []}), page2],
+    )
+    apply_text_corrections(extraction, [{"page": 2, "old": "Devil", "new": "Spined Devil"}])
+    _markdown, report = save_extraction(extraction, tmp_path / "preview")
+
+    sidecar = json.loads((tmp_path / "preview" / "book.raster-review.json").read_text())
+    assert sidecar["markdown_sha256"] == json.loads(report.read_text())["markdown_sha256"]
+    assert sidecar["entries"] == [
+        {
+            "page": 2,
+            "text": "Devil",
+            "kind": "heading",
+            "confidence": 41,
+            "crop_index": 0,
+            "reviewed_correction": {"old": "Devil", "new": "Spined Devil"},
+        }
+    ]
+    reviewed = load_reviewed_extraction(two_page_pdf, report)
+    assert reviewed.raster_review() == sidecar["entries"]
