@@ -53,6 +53,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -110,13 +111,27 @@ from agent.combat_setup import (
 from agent.combat_targeting import select_target as select_target  # re-exported (tests)
 from agent.combat_view import _ask_player, _display, initiative_view, sort_by_initiative
 from agent.combatants import (
+    disposition_of,
     has_effect,
+)
+from agent.party_combat import (
+    PartyRound,
+    hero_row,
+    party_roster,
+    Seat,
+    hero_rows,
+    holder_row,
+    is_party,
+    outcome_of,
+    party_updates,
+    finish_party_fight,
+    settle_party_state,
 )
 from agent.conditions import (
     drop_concentration_if_incapacitated,
     stun_ends_before_turn,
 )
-from agent.death import DEATH_MODE_SAVES, DEATH_MODE_SUBDUED
+from agent.death import DEATH_MODE_SAVES, DEATH_MODE_SUBDUED, life_state_of
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model, message_text
 from agent.models.adjudication import AdjudicationResult
@@ -141,6 +156,7 @@ from agent.resolution import (
     DEATH_SAVES_KEY,
     initiative_bonus,
     second_wind_remaining,
+    second_wind_status,
 )
 from agent.state import AgentState
 from agent.supported_rules import (
@@ -235,7 +251,11 @@ async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
 
 
 async def _build_enemy_roster(
-    state: AgentState, targets: list[str], *, budget_summary: dict | None = None
+    state: AgentState,
+    targets: list[str],
+    *,
+    budget_summary: dict | None = None,
+    party_size: int = 1,
 ) -> list[dict]:
     """Build only verified identities, then fit the roster to the solo budget (EDG-148).
 
@@ -243,7 +263,12 @@ async def _build_enemy_roster(
     """
     adv_ctx = state.get("adventure_context", []) or []
     player_input = state.get("player_input", "")
-    budget = solo_budget(clamp_level((state.get("character") or {}).get("level")))
+    levels = [
+        clamp_level(sheet.get("level")) for sheet in party_roster(state)
+    ] if party_size > 1 else []
+    budget = solo_budget(
+        round(sum(levels) / len(levels)) if levels else clamp_level((state.get("character") or {}).get("level"))
+    )
     allies, hostiles = _npc_groups(state)
     inert = _inert_npc_names(state)
     # Allies the player explicitly attacks by name become fair game (player's choice).
@@ -276,7 +301,12 @@ async def _build_enemy_roster(
         ctx_lines.append("Scene context (for flavour only; do not turn allies into enemies):")
         ctx_lines += [f"- {c.get('text', '')[:300]}" for c in adv_ctx[:2]]
     ctx_lines.append(
-        f"Solo budget for this level-{budget.level} hero (enforced by the engine): {budget.describe()}."
+        (
+            f"Solo budget for this level-{budget.level} hero (enforced by the engine): {budget.describe()}."
+            if party_size <= 1
+            else f"Party of {party_size} heroes: the engine fits the foe count to the party "
+            f"(the solo limits below grow by one foe per extra hero): {budget.describe()}."
+        )
     )
     ctx_lines.append("Resolved foes and complete source records (the engine applies their stats):")
     ctx_lines += [f"Foe: {c['encounter_name']}\n{c['text']}" for c in monster_ctx]
@@ -320,7 +350,10 @@ async def _build_enemy_roster(
         if counts[key] > 1:
             e["name"] = f"{e['name']} {counts[key]}"
     # Fit to the solo budget last, so every name above is already unique when notes refer to it.
-    enemies, summary = apply_solo_budget(enemies, budget.level)
+    if party_size > 1:
+        enemies, summary = apply_solo_budget(enemies, budget.level, party_size=party_size)
+    else:
+        enemies, summary = apply_solo_budget(enemies, budget.level)
     if summary["adapted"]:
         log.info("solo_budget_adapted", extra={"level": budget.level, "notes": summary["notes"]})
     if budget_summary is not None:
@@ -328,13 +361,20 @@ async def _build_enemy_roster(
     return enemies
 
 
-def roll_initiative(combatants: list[dict], character: dict | None) -> list[dict]:
+def roll_initiative(
+    combatants: list[dict], character: dict | None, party: dict[int, dict] | None = None
+) -> list[dict]:
     """Roll d20 + DEX mod (player) / d20 + initiative_bonus (enemies); return sorted copy.
 
-    Ties go to the higher bonus, then to the player.
+    Ties go to the higher bonus, then to the player, then (EDG-049, heroes only) to the lower character
+    id. `party` maps a character id to its sheet so each hero of a party fight rolls its own bonus.
     """
     for c in combatants:
-        bonus = initiative_bonus(character) if c.get("is_player") else int(c.get("initiative_bonus", 0) or 0)
+        if c.get("is_player"):
+            sheet = (party or {}).get(c.get("character_id"), character)
+            bonus = initiative_bonus(sheet)
+        else:
+            bonus = int(c.get("initiative_bonus", 0) or 0)
         outcome = roll(f"1d20{bonus:+d}")
         c["init_bonus"] = bonus
         c["init"] = outcome.total
@@ -377,34 +417,55 @@ async def _open_encounter(
     player_hp: int,
     player_hp_max: int,
     log_lines: list[str],
+    roster: list[dict] | None = None,
 ) -> dict | None:
     """First entry: build the roster, roll initiative and open the encounter (EDG-044, EDG-057).
 
-    Returns the reply when the round cannot start (an unresolved foe, or no foe named), else None.
+    `roster` (EDG-049) holds the sheets of a party fight (two or more heroes): each gets its own row and
+    its own initiative roll. Returns the reply when the round cannot start (an unresolved foe, or no
+    foe named), else None.
     """
     budget_summary: dict = {}
     try:
-        enemies = await _build_enemy_roster(state, named, budget_summary=budget_summary)
+        if roster:
+            enemies = await _build_enemy_roster(
+                state, named, budget_summary=budget_summary, party_size=len(roster)
+            )
+        else:
+            enemies = await _build_enemy_roster(state, named, budget_summary=budget_summary)
     except CreatureResolutionError as exc:
         return {**retr, "error": str(exc), "error_code": "creature_identity_unresolved"}
     if not enemies:
         return _ask_player(state, "Who are you fighting? Name the foe you attack.")
     for e in enemies:  # EDG-044: where each foe starts (its record decides; see agent.positioning)
         e["band"] = initial_band(stats_of(e))
-    player_combatant = {
-        "name": "player",
-        "display_name": hero,
-        "is_player": True,
-        "hp_current": player_hp,
-        "hp_max": player_hp_max,
-        "ac": _player_ac(character),
-        "disposition": "active" if player_hp > 0 else "unconscious",
-        "alive": player_hp > 0,
-        # Per-encounter facts live on the player combatant: the table has no column for them.
-        "solo_budget": budget_summary,
-        "surprised": any(enemy.get("hero_surprised") for enemy in enemies),
-    }
-    ordered = roll_initiative([player_combatant] + enemies, character)
+    surprised = any(enemy.get("hero_surprised") for enemy in enemies)
+    if roster:
+        heroes = [
+            {
+                **hero_row(sheet, ac=_player_ac(sheet), surprised=surprised),
+                "solo_budget": budget_summary,
+            }
+            for sheet in roster
+        ]
+        ordered = roll_initiative(
+            heroes + enemies, character, {int(sheet["id"]): sheet for sheet in roster}
+        )
+    else:
+        player_combatant = {
+            "name": "player",
+            "display_name": hero,
+            "is_player": True,
+            "hp_current": player_hp,
+            "hp_max": player_hp_max,
+            "ac": _player_ac(character),
+            "disposition": "active" if player_hp > 0 else "unconscious",
+            "alive": player_hp > 0,
+            # Per-encounter facts live on the player combatant: the table has no column for them.
+            "solo_budget": budget_summary,
+            "surprised": surprised,
+        }
+        ordered = roll_initiative([player_combatant] + enemies, character)
     combat_state.update(
         {
             "combatants": ordered,
@@ -431,6 +492,139 @@ async def _open_encounter(
 # --------------------------------------------------------------------------------------------
 # Node
 # --------------------------------------------------------------------------------------------
+
+
+def _bind_party(
+    state: AgentState,
+    rec: RoundRecord,
+    combatants: list[dict],
+    player: dict,
+    death_mode: str,
+) -> tuple[PartyRound, Seat]:
+    """The seats of a party fight: each hero row with its sheet, synced from the authoritative sheets.
+
+    A hero whose sheet is no longer at the table (a removed seat) leaves the fight. Returns the party
+    and the acting hero's seat.
+    """
+    sheets = {int(sheet["id"]): sheet for sheet in party_roster(state)}
+    seats: list[Seat] = []
+    for row in hero_rows(combatants):
+        sheet = sheets.get(int(row["character_id"]))
+        if sheet is None:
+            row["fled"] = True
+            continue
+        hp = int(sheet.get("hp_current") or 0)
+        row["hp_current"] = hp
+        row["hp_max"] = int(sheet.get("hp_max") or hp)
+        ac = int(row.get("ac") or _player_ac(sheet))
+        row["ac"] = ac
+        if death_mode == DEATH_MODE_SAVES and DEATH_SAVES_KEY not in row:
+            row[DEATH_SAVES_KEY] = (sheet.get("stats") or {}).get(DEATH_SAVES_KEY)
+        dead = life_state_of(sheet.get("stats")) == "dead" or disposition_of(row) == "dead"
+        seats.append(
+            Seat(
+                row=row,
+                character=sheet,
+                hp=hp,
+                hp_start=hp,
+                sw_left=second_wind_remaining(sheet),
+                ac=ac,
+                dead=dead,
+            )
+        )
+    party = PartyRound(rec, seats, max_rounds=MAX_COMBAT_ROUNDS)
+    acting = party.seat_for_row(player)
+    assert acting is not None
+    return party, acting
+
+
+def _finish_party_request(
+    rec: RoundRecord,
+    turns: EnemyTurns,
+    party: PartyRound,
+    acting: Seat,
+    turn: Any,
+    cursor: int,
+    sw_before: int,
+    log_lines: list[str],
+) -> Any:
+    """After the acting hero's slot: record its turn, run the slots up to the next hero, settle the fight."""
+    from agent.action_economy import economy_record
+
+    row = acting.row
+    if rec.fled and not rec.dead:
+        row["fled"] = True
+    rec.fled = False
+    spent = turn.declared if turn.player_acted and not row.get("fled") else []
+    row["action_economy"] = economy_record(
+        rec.round_num, spent, dodging=has_effect(row, "dodging")
+    )
+    party.unbind()
+    holder, cursor = party.run_slots(turns, cursor + 1)
+    ended, outcome = outcome_of(party, rec)
+    log_lines += finish_party_fight(party, ended=ended, outcome=outcome)
+    if not ended and holder is not None:
+        log_lines.append(f"{_display(holder.row)} is up next.")
+    party.bind(acting)
+    sw_used = bool(second_wind_status(acting.character)) and rec.sw_left <= 0
+    settle_party_state(
+        party,
+        acting,
+        holder=holder,
+        cursor=cursor,
+        ended=ended,
+        outcome=outcome,
+        sw_used=sw_used,
+    )
+    from agent.combat_finalise import RoundEnd
+
+    return RoundEnd(ended=ended, outcome=outcome, second_wind_used=sw_used)
+
+
+def _party_pause(
+    state: AgentState,
+    rec: RoundRecord,
+    party: PartyRound,
+    acting: Seat,
+    first: Seat | None,
+    cursor: int,
+    log_lines: list[str],
+    hero: str,
+    player_input: str,
+) -> dict:
+    """A fight opened by a hero whose slot is not first: initiative is rolled, the slots ahead resolve, and
+    the engine states whose turn it is. The opener's declaration is not rolled; it waits for their slot."""
+    from langchain_core.messages import AIMessage
+
+    ended, outcome = outcome_of(party, rec)
+    log_lines += finish_party_fight(party, ended=ended, outcome=outcome)
+    if not ended and first is not None:
+        log_lines.append(
+            f"{_display(first.row)} is up first. {hero}'s action waits for {hero}'s own turn in the "
+            "initiative order: nothing was rolled for it."
+        )
+    party.bind(acting)
+    settle_party_state(
+        party,
+        acting,
+        holder=first,
+        cursor=cursor,
+        ended=ended,
+        outcome=outcome,
+        sw_used=False,
+    )
+    text = " ".join(line for line in log_lines if line)
+    adj = AdjudicationResult(success=True, mechanical_summary=text, completion_status="none")
+    adj.dice_log = list(rec.dice_log)
+    return {
+        "narration": text,
+        "adjudication_result": adj,
+        "messages": [*state.get("messages", []), AIMessage(content=text)],
+        "source_status": state.get("source_status", []),
+        "retrieval_degraded": bool(state.get("retrieval_degraded")),
+        "combat_state": rec.combat_state,
+        "party_updates": party_updates(party, skip_character_id=None),
+    }
 
 
 async def combat_round_node(state: AgentState) -> dict:
@@ -466,9 +660,24 @@ async def combat_round_node(state: AgentState) -> dict:
             return {**retr, **_captive_result(state, captive)}
 
     # --- Initialise on first entry ---
-    if not combat_state.get("combatants"):
+    # EDG-049: two or more heroes at the table fight one shared encounter (agent.party_combat).
+    roster = party_roster(state)
+    opening = not combat_state.get("combatants")
+    party_fight = (
+        not opening and not combat_state.get("ended") and is_party(combat_state.get("combatants"))
+    ) or (opening and len(roster) >= 2)
+    if opening:
         opened = await _open_encounter(
-            state, retr, combat_state, named, character, hero, player_hp, player_hp_max, log_lines
+            state,
+            retr,
+            combat_state,
+            named,
+            character,
+            hero,
+            player_hp,
+            player_hp_max,
+            log_lines,
+            roster=roster if party_fight else None,
         )
         if opened is not None:
             return opened
@@ -480,13 +689,35 @@ async def combat_round_node(state: AgentState) -> dict:
     combat_state["combatants"] = combatants
     combat_state["initiative_order"] = [c["name"] for c in combatants]
     enemies = [c for c in combatants if not c.get("is_player")]
-    player = next((c for c in combatants if c.get("is_player")), None)
-    if player is None:
-        player = {"name": "player", "display_name": hero, "is_player": True, "init": 0, "init_bonus": 0}
-        combatants.append(player)
-    player_index = combatants.index(player)
-    before = [c for c in combatants[:player_index] if not c.get("is_player")]
-    after = [c for c in combatants[player_index + 1 :] if not c.get("is_player")]
+    if party_fight:
+        for row in hero_rows(combatants):
+            row.pop("acting", None)
+        player = next(
+            (c for c in hero_rows(combatants) if c.get("character_id") == character.get("id")), None
+        )
+        if player is None:
+            return _ask_player(
+                state, f"{hero} is not part of this fight.", combat_state=combat_state
+            )
+        holder = holder_row(combat_state)
+        if not opening and holder is not None and holder is not player:
+            # Only the hero whose slot is next acts; anything else changes nothing (EDG-049).
+            return _ask_player(
+                state,
+                f"It is {_display(holder)}'s turn. No roll is made and no turn is spent.",
+                combat_state=combat_state,
+            )
+        player["acting"] = True
+        before: list[dict] = []
+        after: list[dict] = []
+    else:
+        player = next((c for c in combatants if c.get("is_player")), None)
+        if player is None:
+            player = {"name": "player", "display_name": hero, "is_player": True, "init": 0, "init_bonus": 0}
+            combatants.append(player)
+        player_index = combatants.index(player)
+        before = [c for c in combatants[:player_index] if not c.get("is_player")]
+        after = [c for c in combatants[player_index + 1 :] if not c.get("is_player")]
     round_num = int(combat_state.get("round", 1) or 1)
     # Re-sync player HP from the authoritative character row each turn.
     player["hp_current"] = player_hp
@@ -557,6 +788,11 @@ async def combat_round_node(state: AgentState) -> dict:
         round_num=round_num,
         cf_left=cf_left,
         cf_requested=cf_requested,
+        allies=[
+            c for c in hero_rows(combatants) if c is not player and disposition_of(c) != "dead"
+        ]
+        if party_fight
+        else None,
     )
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
@@ -605,6 +841,26 @@ async def combat_round_node(state: AgentState) -> dict:
     # EDG-044c: a foe that closes into melee on its own turn may trigger the hero's readied attack.
     turns.on_closed = lambda foe: fire_readied(rec, turns, foe)
 
+    party: PartyRound | None = None
+    acting: Seat | None = None
+    cursor = int(combat_state.get("current_turn_index") or 0)
+    if party_fight:
+        party, acting = _bind_party(state, rec, combatants, player, death_mode)
+        turns.party = party
+        turns.on_closed = lambda foe: party.fire_readied_all(foe, turns)
+        if opening or holder_row(combat_state) is None:
+            # Foes and heroes ahead of the first hero who can act resolve now; the declaration waits
+            # unless the acting hero is that first hero. (A fight whose opening was refused before its
+            # slots ran catches up here too.)
+            rec.fled = False
+            first, cursor = party.run_slots(turns, 0)
+            if first is not acting:
+                return _party_pause(
+                    state, rec, party, acting, first, cursor, log_lines, hero, player_input
+                )
+            rec.fled = fled
+        party.bind(acting)
+
     # A predicted source-turn expiry lets a stunned hero keep a flee declaration. Resolve foes ahead
     # first; restore the flee state before the player slot so it succeeds only if the stun ends.
     if flee_after_stun_source:
@@ -648,15 +904,21 @@ async def combat_round_node(state: AgentState) -> dict:
 
     # --- The hero's turn ends, then the foes after the hero act (agent.combat_player_phase) ---
     finish_hero_turn(rec, turns)
-    for e in after:
-        _enemy_slot(turns, e)
-    if not rec.lair_done:
-        # The encounter has no actor below initiative 20; the lair acts after the final tie.
-        turns.lair_boundary()
-    close_round_effects(rec)
-    end = settle_round(
-        rec, declared=turn.declared, player_acted=turn.player_acted, max_rounds=MAX_COMBAT_ROUNDS
-    )
+    if party is not None and acting is not None:
+        # EDG-049: the slots after this hero run until the next hero who can act (or the fight ends).
+        end = _finish_party_request(
+            rec, turns, party, acting, turn, cursor, sw_before, log_lines
+        )
+    else:
+        for e in after:
+            _enemy_slot(turns, e)
+        if not rec.lair_done:
+            # The encounter has no actor below initiative 20; the lair acts after the final tie.
+            turns.lair_boundary()
+        close_round_effects(rec)
+        end = settle_round(
+            rec, declared=turn.declared, player_acted=turn.player_acted, max_rounds=MAX_COMBAT_ROUNDS
+        )
 
     # --- The adjudication the API persists: engine HP + validated flags/scene/items (agent.combat_finalise) ---
     settlement = settle_adjudication(
@@ -691,6 +953,10 @@ async def combat_round_node(state: AgentState) -> dict:
         bonus_record=turn.bonus_record,
         stage_ms=stage_ms,
     )
+    if party is not None and acting is not None:
+        pending.base_update["party_updates"] = party_updates(
+            party, skip_character_id=acting.character_id
+        )
     text = deterministic_narration(pending.narr_state)
     if text is None and state.get("defer_narration"):
         # The SSE runner streams the one narrator call, then calls finalize_round_narration.

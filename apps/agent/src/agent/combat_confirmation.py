@@ -98,6 +98,8 @@ def stored_declaration(player: dict, *, player_input: str, parsed: Any, summary:
 
 def public_pending(combatants: list[dict]) -> dict[str, str] | None:
     """The client's view of a pending confirmation: the summary, nothing the engine re-uses."""
-    player = next((c for c in combatants if c.get("is_player")), None)
+    # EDG-049: at a party table the pending reply belongs to whichever hero holds one.
+    heroes = [c for c in combatants if c.get("is_player")]
+    player = next((c for c in heroes if pending_of(c) is not None), None)
     pending = pending_of(player or {})
     return {"summary": str(pending["summary"])} if pending and pending.get("summary") else None

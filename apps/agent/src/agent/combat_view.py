@@ -18,7 +18,13 @@ from agent.state import AgentState
 def sort_by_initiative(combatants: list[dict]) -> list[dict]:
     return sorted(
         combatants,
-        key=lambda c: (int(c.get("init", 0)), int(c.get("init_bonus", 0)), bool(c.get("is_player"))),
+        key=lambda c: (
+            int(c.get("init", 0)),
+            int(c.get("init_bonus", 0)),
+            bool(c.get("is_player")),
+            # EDG-049: heroes tied on every key go in character order; solo rows carry no id (0).
+            -int(c.get("character_id") or 0),
+        ),
         reverse=True,
     )
 
@@ -36,6 +42,8 @@ def initiative_view(combatants: list[dict]) -> list[dict]:
             "hp": c.get("hp_current"),
             "hp_max": c.get("hp_max"),
             "ac": c.get("ac"),
+            # Additive (EDG-049): which hero a party row is (absent on foes and solo rows).
+            **({"character_id": c["character_id"]} if c.get("character_id") is not None else {}),
             **view_fields(c),
         }
         for c in sort_by_initiative(combatants)

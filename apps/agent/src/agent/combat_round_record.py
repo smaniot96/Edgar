@@ -40,3 +40,5 @@ class RoundRecord:
     death_mode: str = "subdued"
     # The hero died this round (death saves or massive damage): the encounter ends in defeat.
     dead: bool = False
+    # EDG-049: the party this record binds heroes from (agent.party_combat); None for a solo round.
+    party: Any = None

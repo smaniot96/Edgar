@@ -34,8 +34,8 @@ Deliberately absent: Burning Hands (an area effect). Blindness/Deafness is cast 
 only, at one target: a declaration that names deafness alone is refused, and the upcast extra targets
 are not modelled. Hold Person cast at a slot above 2nd affects one more humanoid per level
 (`target_count`); the "within 30 feet of each other" clause is not modelled, as the engine tracks
-bands, not distances. Healing Word heals only its caster, as Cure Wounds does; a creature other than
-the hero is not a target. A spell is added here only with its effect, cost and targeting implemented.
+bands, not distances. Healing Word and Cure Wounds heal their caster, or (EDG-049, a party fight) another
+hero of the party that the declaration names; a creature outside the party is not a target. A spell is added here only with its effect, cost and targeting implemented.
 """
 
 from __future__ import annotations

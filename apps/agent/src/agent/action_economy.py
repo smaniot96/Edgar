@@ -150,7 +150,9 @@ def economy_record(
 
 def economy_text(combatants: Iterable[Mapping[str, Any]]) -> str | None:
     """Narrator context for the player's turn: what the engine recorded, and nothing more."""
-    player = next((c for c in combatants if c.get("is_player")), None)
+    from agent.combatants import hero_of
+
+    player = hero_of(list(combatants))
     record = (player or {}).get("action_economy")
     if not isinstance(record, Mapping):
         return None
