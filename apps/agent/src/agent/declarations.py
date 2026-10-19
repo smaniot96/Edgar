@@ -91,10 +91,11 @@ UNKNOWN = "unknown"
 
 
 def normalise_kind(raw: object) -> str:
-    """The registered kind for a parser's spelling of it, or UNKNOWN (never a guess)."""
+    """The registered kind for a parser's spelling of it, or UNKNOWN (never a guess). A mechanic with a
+    ruling keeps its kind, so the refusal can name it."""
     key = str(raw or "").strip().lower().replace(" ", "_")
     key = _ALIASES.get(key, key)
-    return key if key in REGISTRY else UNKNOWN
+    return key if key in REGISTRY or key in _RULINGS else UNKNOWN
 
 
 def label_of(kind: str) -> str:
@@ -104,6 +105,10 @@ def label_of(kind: str) -> str:
 def agreement_question(
     proposed: Iterable[tuple[str, str | None]], detected: Collection[str], hero: str
 ) -> str | None:
+    proposed = list(proposed)
+    for kind, _text in proposed:
+        if kind in _RULINGS:
+            return _RULINGS[kind][1]
     """One question when the parser proposed an action the engine did not detect, or an unknown one.
 
     `proposed` holds (kind, the player's words for it) pairs as the parser wrote them; `detected`
@@ -223,4 +228,53 @@ def nearest_maneuver(text: str | None) -> tuple[str, str, str] | None:
         else:
             rewritten = pattern.sub(canonical, body, count=1)
         return word, rewritten, label
+    return None
+
+
+# Mechanics the engine does not execute, each with its ruling (EDG-182 contract point 7). A player who
+# names one is refused before any roll, with the ruling and the nearest supported action. Pages are PHB
+# PDF pages (verified on the owner's copy).
+_RULINGS: dict[str, tuple[re.Pattern[str], str]] = {
+    "help": (
+        re.compile(r"\b(?:take\s+the\s+)?help\s+(?:action|my|the|an?|him|her|them|it|someone)\b|\bi\s+help\b", re.I),
+        "Help needs an ally to aid, and this encounter has no ally: the engine has no allied creature to "
+        "help (PHB, PDF p.193). Nearest supported options: Dodge, or an attack on the foe. No roll is made "
+        "and no turn is spent.",
+    ),
+    "cover": (
+        re.compile(
+            r"\b(?:take|use|find|get|seek)\s+(?:half\s+|three[- ]quarters\s+|total\s+)?cover\b"
+            r"|\bcover\s+(?:behind|from|of)\b|\b(?:duck|crouch|dive)s?\s+behind\b|\bhide\s+behind\b",
+            re.I,
+        ),
+        "Cover is not modelled: the engine records no walls, trees or creatures to take cover behind, so "
+        "no cover bonus applies (PHB, PDF p.197). Nearest supported options: Dodge (attacks against you have "
+        "disadvantage), or a move away (PDF p.193). No roll is made and no turn is spent.",
+    ),
+    "difficult_terrain": (
+        re.compile(r"\bdifficult\s+terrain\b", re.I),
+        "Difficult terrain is not modelled: the scene records no terrain, so its double movement cost is not "
+        "applied (PHB, PDF p.193, grid variant). Declare the move in feet instead. No roll is made and no "
+        "turn is spent.",
+    ),
+    "high_ground": (
+        re.compile(r"\bhigh\s+ground\b|\bhigh\s+(?:ledge|rock|platform|balcony)\b", re.I),
+        "High ground is not a PHB rule, so the engine does not apply it. Nearest supported option: attack from "
+        "where the hero stands. No roll is made and no turn is spent.",
+    ),
+    "flanking": (
+        re.compile(r"\bflank\w*\b", re.I),
+        "Flanking is not a PHB rule; it is an optional rule outside the PHB, and it is not enabled here. Nearest "
+        "supported option: attack the foe as usual. No roll is made and no turn is spent.",
+    ),
+}
+
+
+def unsupported_ruling(text: str | None, proposed: Iterable[str] = ()) -> str | None:
+    """The ruling for a named mechanic the engine does not execute: from the player's words, or from a
+    proposal of that kind. None when no such mechanic is named."""
+    body = str(text or "")
+    for kind, (pattern, ruling) in _RULINGS.items():
+        if kind in proposed or pattern.search(body):
+            return ruling
     return None

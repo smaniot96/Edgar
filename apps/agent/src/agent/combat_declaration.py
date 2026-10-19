@@ -40,6 +40,7 @@ from agent.declarations import (
     MOVE,
     agreement_question,
     completeness_question,
+    unsupported_ruling,
 )
 from agent.positioning import (
     RANGED,
@@ -125,6 +126,13 @@ def declare_action(
 ) -> Declaration | dict[str, Any]:
     """Resolve the declared action, or return the refusal as the question the player is asked."""
     # --- Decide the player's action BEFORE any dice, so a bad target never burns a round ---
+    if not fled:
+        # EDG-182: a mechanic the engine does not execute is refused with its ruling, before any roll.
+        ruling = unsupported_ruling(
+            player_input, [a.kind for a in getattr(parsed, "actions", None) or []]
+        )
+        if ruling:
+            return _ask_player(state, ruling, combat_state=combat_state)
     is_attack, is_spell = (False, False) if fled else _is_attack_action(parsed, named)
     # A declared spell never becomes a weapon-style attack roll (EDG-028). A catalog spell the
     # character can cast resolves through agent.spells; any other declared spell keeps its ruling.
