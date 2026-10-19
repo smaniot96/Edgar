@@ -506,6 +506,18 @@
               ],
               "title": "Current Turn"
             },
+            "current_turn_character_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Current Turn Character Id"
+            },
             "current_turn_id": {
               "anyOf": [
                 {
@@ -567,6 +579,18 @@
                 }
               ],
               "title": "Outcome"
+            },
+            "party": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Party"
             },
             "pending_declaration": {
               "anyOf": [
@@ -691,9 +715,46 @@
               "title": "Can Act",
               "type": "boolean"
             },
+            "character_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Character Id"
+            },
+            "death_saves": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Death Saves"
+            },
             "disposition": {
               "title": "Disposition",
               "type": "string"
+            },
+            "fled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fled"
             },
             "hp_current": {
               "anyOf": [
@@ -1345,9 +1406,46 @@
               "title": "Can Act",
               "type": "boolean"
             },
+            "character_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Character Id"
+            },
+            "death_saves": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Death Saves"
+            },
             "disposition": {
               "title": "Disposition",
               "type": "string"
+            },
+            "fled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fled"
             },
             "hp_current": {
               "anyOf": [
@@ -1444,6 +1542,18 @@
           ],
           "title": "Current Turn"
         },
+        "current_turn_character_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Turn Character Id"
+        },
         "current_turn_id": {
           "anyOf": [
             {
@@ -1505,6 +1615,18 @@
             }
           ],
           "title": "Outcome"
+        },
+        "party": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Party"
         },
         "pending_declaration": {
           "anyOf": [
@@ -1629,9 +1751,46 @@
           "title": "Can Act",
           "type": "boolean"
         },
+        "character_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Character Id"
+        },
+        "death_saves": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Death Saves"
+        },
         "disposition": {
           "title": "Disposition",
           "type": "string"
+        },
+        "fled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fled"
         },
         "hp_current": {
           "anyOf": [

@@ -88,7 +88,12 @@ def holder_row(combat_state: dict | None) -> dict | None:
     if type(index) is not int or not 0 <= index < len(combatants):
         return None
     row = combatants[index]
-    return row if row.get("is_player") and row.get("character_id") is not None else None
+    if not row.get("is_player") or row.get("character_id") is None:
+        return None
+    # A hero who left or died has no turn: the next request catches the slots up past it.
+    if row.get("fled") or row.get("disposition") == "dead":
+        return None
+    return row
 
 
 def holder_character_id(combat_state: dict | None) -> int | None:

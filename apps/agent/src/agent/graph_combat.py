@@ -699,6 +699,11 @@ async def combat_round_node(state: AgentState) -> dict:
             return _ask_player(
                 state, f"{hero} is not part of this fight.", combat_state=combat_state
             )
+        present = {int(sheet["id"]) for sheet in roster}
+        for row in hero_rows(combatants):
+            # A hero whose sheet is no longer at the table (removed seat) leaves the fight.
+            if int(row["character_id"]) not in present and disposition_of(row) != "dead":
+                row["fled"] = True
         holder = holder_row(combat_state)
         if not opening and holder is not None and holder is not player:
             # Only the hero whose slot is next acts; anything else changes nothing (EDG-049).
@@ -708,6 +713,11 @@ async def combat_round_node(state: AgentState) -> dict:
                 combat_state=combat_state,
             )
         player["acting"] = True
+        if state.get("combat_skip"):
+            log_lines.append(
+                f"{hero} does not answer in time: the table skips the turn and {hero} takes the "
+                "Dodge action by default."
+            )
         before: list[dict] = []
         after: list[dict] = []
     else:

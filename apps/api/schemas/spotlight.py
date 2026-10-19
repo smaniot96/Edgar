@@ -24,6 +24,14 @@ class SpotlightHolder(SpotlightMember):
     eligible: bool = True
 
 
+class CombatTurnRead(BaseModel):
+    """A running shared fight (EDG-049): who acts next and whether that turn may be skipped."""
+
+    round: int | None = None
+    holder_character_id: int | None = None
+    skip_due: bool = False
+
+
 class SpotlightRead(BaseModel):
     session_id: int
     # False for solo and single-PC tables, where the rules are not engaged.
@@ -36,6 +44,8 @@ class SpotlightRead(BaseModel):
     # The holder has been idle past the timeout; the next table request applies the handover.
     handover_due: bool = False
     next_up: list[SpotlightMember] = Field(default_factory=list)
+    # Additive (EDG-049): present while a fight with two or more heroes is running.
+    combat: CombatTurnRead | None = None
 
 
 class SpotlightUpdate(BaseModel):

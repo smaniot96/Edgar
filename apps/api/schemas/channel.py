@@ -96,6 +96,9 @@ EVENT_TYPES: dict[str, tuple[Channel, str]] = {
     # The turn spotlight changed hands or its rules did (EDG-048): the new holder, the reason, the
     # version and the next-up order, all as the table may read them. Never player-private.
     "turn.spotlight_changed": ("system", AUDIENCE_TABLE),
+    # EDG-049: a shared fight moved to another hero, or an idle turn was skipped. Table-visible: the
+    # round, whose turn it is and why. Never carries a declaration or any private sheet data.
+    "combat.turn_changed": ("system", AUDIENCE_TABLE),
     "presence.joined": ("system", AUDIENCE_TABLE),
     "presence.left": ("system", AUDIENCE_TABLE),
     "presence.idle": ("system", AUDIENCE_TABLE),

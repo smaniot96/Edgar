@@ -31,6 +31,14 @@ and inside one transaction that locks the session row (``SELECT ... FOR UPDATE``
 re-checks ``spotlight_version`` and the holder on the locked row before it applies the pass, so a
 turn can never commit against a spotlight that changed while the model was thinking.
 
+* Combat (EDG-049): while a shared fight with two or more heroes is running, the initiative order
+  decides the holder, not the rotation. ``sessions.active_character_id`` is kept equal to the hero
+  whose slot is next (the combat turn holder); only that hero's controller may act, with the same
+  ``spotlight_version`` gate. Every committed combat turn bumps the version and passes the turn to the
+  next hero who can act. An idle holder is handled by ``open_skip`` (docs/party-combat.md): the owner
+  may skip at any time, any seated player once the holder is overdue or absent, and the skipped hero
+  takes the Dodge action by default.
+
 Alternatives considered and rejected are documented in docs/session-broadcast.md (spotlight section).
 """
 
@@ -49,6 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.postgres.session as db_session_module
 from agent.death import life_state_of
+from agent.party_combat import is_party
 from db.postgres.models import (
     Campaign,
     Character,
@@ -60,6 +69,7 @@ from db.postgres.models import (
 from ..schemas.channel import ChannelActor
 from . import session_channel
 from .character_assignments import character_play_state
+from .combat import load_active_combat
 from .safe_errors import classify_error, log_failure
 
 log = structlog.get_logger()
@@ -73,6 +83,9 @@ DEFAULT_TIMEOUT_SECONDS = 300
 MIN_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 3600
 FREE_FOR_ALL_COOLDOWN = timedelta(seconds=60)
+# EDG-049: how long a combat turn waits for a holder who is not on the channel at all, before another
+# seated player (not only the owner) may skip it. A present holder gets the full timeout.
+COMBAT_ABSENT_GRACE = timedelta(seconds=MIN_TIMEOUT_SECONDS)
 
 EVENT_TYPE = "turn.spotlight_changed"
 _PUBLISH_TIMEOUT_SECONDS = 2.0
@@ -143,6 +156,8 @@ class SpotlightTurn:
     consumes: bool
     pass_to: int | None = None
     passed_reason: str | None = None
+    # EDG-049: admitted as the combat turn holder's turn (or a skip of it).
+    combat: bool = False
 
 
 @dataclass(frozen=True)
@@ -211,6 +226,62 @@ def _timed_out(session: SessionModel, now: datetime) -> bool:
     if session.active_character_id is None or session.spotlight_mode == MODE_OWNER_DIRECTED or since is None:
         return False
     return now - since >= timedelta(seconds=session.spotlight_timeout_seconds)
+
+
+async def running_party_combat(db: AsyncSession, session_id: int) -> dict | None:
+    """The session's open fight when it has two or more heroes (EDG-049), else None."""
+    combat = await load_active_combat(db, session_id)
+    if combat is None or combat.get("ended") or not is_party(combat.get("combatants")):
+        return None
+    return combat
+
+
+def combat_hero_ids(combat: dict | None) -> list[int]:
+    return [
+        int(row["character_id"])
+        for row in (combat or {}).get("combatants", [])
+        if row.get("is_player") and row.get("character_id") is not None
+    ]
+
+
+def combat_holder(table: Table, combat: dict) -> int | None:
+    """The hero whose turn it is now: the next slot's hero, or the next hero after it who can still act.
+
+    A hero who left, died, is down or whose seat can no longer act is passed over, so a fight never
+    waits on a chair that cannot answer. None when nobody at the table can take the turn.
+    """
+    rows = combat.get("combatants") or []
+    index = combat.get("current_turn_index")
+    if not rows or type(index) is not int:
+        return None
+    for step in range(len(rows)):
+        row = rows[(index + step) % len(rows)]
+        if not row.get("is_player") or row.get("character_id") is None:
+            continue
+        if row.get("fled") or row.get("disposition") == "dead" or int(row.get("hp_current") or 0) <= 0:
+            continue
+        if _eligible(table, int(row["character_id"])):
+            return int(row["character_id"])
+    return None
+
+
+def combat_due(session: SessionModel, table: Table, holder: int | None, now: datetime) -> bool:
+    """Whether the holder's combat turn may be skipped by a seated player (the owner may always skip).
+
+    Overdue: idle for the table's timeout (never in owner-directed mode). Absent: the holder's controller
+    is not on the channel and a short grace has passed.
+    """
+    if holder is None or session.spotlight_since is None:
+        return False
+    if _timed_out(session, now):
+        return True
+    member = table.members.get(holder)
+    absent = member is not None and member.controller_id not in table.present
+    return (
+        absent
+        and session.spotlight_mode != MODE_OWNER_DIRECTED
+        and now - session.spotlight_since >= COMBAT_ABSENT_GRACE
+    )
 
 
 async def _lock_session(db: AsyncSession, session_id: int) -> SessionModel:
@@ -350,13 +421,18 @@ async def _open_turn(
     consumes: bool,
     now: datetime,
 ) -> Opened:
-    table = await load_table(db, redis, session, now=now, present_extra={caller})
+    combat = await running_party_combat(db, session.id)
+    table = await load_table(
+        db, redis, session, now=now, present_extra={caller}, include=combat_hero_ids(combat)
+    )
     if not table.engaged():
         _apply_rotation(session, table)
         await db.commit()
         return Opened(plan=None, change=None)
     if expected_version is not None and expected_version != session.spotlight_version:
         raise SpotlightRefused("spotlight_stale")
+    if combat is not None:
+        return await _open_combat_turn(db, session, table, combat, caller, consumes, now)
 
     mode = session.spotlight_mode
     version = session.spotlight_version
@@ -420,16 +496,127 @@ async def _open_turn(
     return Opened(plan=plan, change=change)
 
 
-def apply_turn_commit(session: SessionModel, plan: SpotlightTurn | None, *, now: datetime) -> str | None:
+async def _open_combat_turn(
+    db: AsyncSession,
+    session: SessionModel,
+    table: Table,
+    combat: dict,
+    caller: int,
+    consumes: bool,
+    now: datetime,
+) -> Opened:
+    """Admit the combat turn holder's own turn (EDG-049). Anyone else is refused before any model call."""
+    holder = combat_holder(table, combat)
+    if holder is None:
+        raise SpotlightRefused("spotlight_unavailable")
+    if table.members[holder].controller_id != caller:
+        raise SpotlightRefused("not_your_spotlight")
+    version = session.spotlight_version
+    reason: str | None = None
+    if holder != table.holder:
+        version += 1
+        reason = "combat_turn"
+    session.spotlight_since = now
+    session.active_character_id = holder
+    session.spotlight_version = version
+    _apply_rotation(session, table)
+    mode = session.spotlight_mode
+    plan = SpotlightTurn(
+        session_id=session.id,
+        version=version,
+        holder=holder,
+        mode=mode,
+        consumes=consumes,
+        pass_to=_pick(table, holder) if consumes and mode == MODE_ROUND_ROBIN else None,
+        combat=True,
+    )
+    await db.commit()
+    return Opened(plan=plan, change=Change(reason=reason, announce=True) if reason else None)
+
+
+async def open_skip(
+    db: AsyncSession,
+    redis: Redis,
+    session_id: int,
+    auth: Any,
+    *,
+    expected_version: int | None,
+    now: datetime | None = None,
+) -> Opened:
+    """Admit the skip of the combat turn holder's idle turn (EDG-049). Commits its own transaction.
+
+    The owner may skip any turn; a seated player only when the holder is overdue or absent (`combat_due`).
+    The holder is the hero who takes the default Dodge. Raises ``SpotlightRefused`` after rollback.
+    The caller must hold the turn lock.
+    """
+    t = _utc(now)
+    session = await _lock_session(db, session_id)
+    try:
+        combat = await running_party_combat(db, session.id)
+        if combat is None:
+            raise SpotlightRefused("no_party_combat")
+        table = await load_table(
+            db, redis, session, now=t, present_extra={auth.user_id}, include=combat_hero_ids(combat)
+        )
+        if expected_version is not None and expected_version != session.spotlight_version:
+            raise SpotlightRefused("spotlight_stale")
+        holder = combat_holder(table, combat)
+        if holder is None:
+            raise SpotlightRefused("spotlight_unavailable")
+        is_owner = auth.user_id == table.owner_id
+        if not is_owner and table.seat_of(auth.user_id) is None:
+            raise SpotlightRefused("not_your_spotlight")
+        if not is_owner and not combat_due(session, table, holder, t):
+            raise SpotlightRefused("combat_skip_not_due")
+        version = session.spotlight_version
+        if holder != table.holder:
+            version += 1
+        session.active_character_id = holder
+        session.spotlight_since = t
+        session.spotlight_version = version
+        _apply_rotation(session, table)
+        mode = session.spotlight_mode
+        plan = SpotlightTurn(
+            session_id=session.id,
+            version=version,
+            holder=holder,
+            mode=mode,
+            consumes=True,
+            pass_to=_pick(table, holder) if mode == MODE_ROUND_ROBIN else None,
+            combat=True,
+        )
+        await db.commit()
+        return Opened(plan=plan, change=None)
+    except SpotlightRefused:
+        await db.rollback()
+        raise
+
+
+def apply_turn_commit(
+    session: SessionModel,
+    plan: SpotlightTurn | None,
+    *,
+    now: datetime,
+    combat_holder: int | None = None,
+) -> str | None:
     """Pass the spotlight when a turn commits. Called inside the turn's transaction, on the locked row.
 
     Raises ``SpotlightRefused("spotlight_stale")`` if the spotlight moved after the turn was admitted;
     the caller rolls back, so the turn is not committed. Returns the reason when the spotlight moved.
+    ``combat_holder`` (EDG-049) is the hero whose slot is next in a fight this turn left running.
     """
     if plan is None or not plan.consumes:
         return None
     if session.spotlight_version != plan.version or session.active_character_id != plan.holder:
         raise SpotlightRefused("spotlight_stale")
+    if combat_holder is not None:
+        # EDG-049: a running party fight passes the turn along its initiative order, whatever the
+        # table's rotation rule is. The same hero may follow itself when the others cannot act.
+        session.active_character_id = combat_holder
+        session.spotlight_version = plan.version + 1
+        session.spotlight_since = now
+        plan.passed_reason = "combat_turn_passed" if combat_holder != plan.holder else "combat_turn_continues"
+        return plan.passed_reason
     if plan.mode == MODE_ROUND_ROBIN:
         if plan.pass_to is None or plan.pass_to == plan.holder:
             return None
@@ -506,6 +693,9 @@ async def _host_update(
 ) -> Change | None:
     if expected_version is not None and expected_version != session.spotlight_version:
         raise SpotlightRefused("spotlight_stale")
+    if holder is not UNCHANGED and await running_party_combat(db, session.id) is not None:
+        # EDG-049: the initiative order decides the holder while a shared fight is running.
+        raise SpotlightRefused("combat_turn_locked")
     old_order = list(session.spotlight_order or [])
     was_engaged = len(old_order) >= 2
     old_holder = session.active_character_id
@@ -593,12 +783,17 @@ async def on_seat_change(
         db, redis, session, now=t, present_extra={actor_id} if actor_id is not None else None
     )
     holder = old_holder
-    if holder is not None and not _eligible(table, holder):
-        holder = None
-    if holder is None and session.spotlight_mode == MODE_ROUND_ROBIN:
-        target = _pick(table, None)
-        if target is not None:
-            holder = target
+    combat = await running_party_combat(db, session.id)
+    if combat is not None:
+        # EDG-049: a fight keeps its own order; a seat that left is passed over, not replaced.
+        holder = combat_holder(table, combat)
+    else:
+        if holder is not None and not _eligible(table, holder):
+            holder = None
+        if holder is None and session.spotlight_mode == MODE_ROUND_ROBIN:
+            target = _pick(table, None)
+            if target is not None:
+                holder = target
     if holder == old_holder and table.rotation == old_order:
         return None
     if holder != old_holder:
@@ -637,7 +832,8 @@ async def public_view(
     session = await db.get(SessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    table = await load_table(db, redis, session, now=t)
+    combat_now = await running_party_combat(db, session_id)
+    table = await load_table(db, redis, session, now=t, include=combat_hero_ids(combat_now))
     holder_view = None
     holder = table.holder
     if holder is not None and holder in table.members:
@@ -648,15 +844,25 @@ async def public_view(
         member = table.members[character_id]
         if member.eligible:
             next_up.append(_member_view(member, table))
+    combat_view = None
+    combat = combat_now
+    if combat is not None:
+        effective = combat_holder(table, combat)
+        combat_view = {
+            "round": combat.get("round"),
+            "holder_character_id": effective,
+            "skip_due": combat_due(session, table, effective, t),
+        }
     return {
         "session_id": session.id,
+        "combat": combat_view,
         "engaged": table.engaged(),
         "mode": session.spotlight_mode,
         "version": session.spotlight_version,
         "timeout_seconds": session.spotlight_timeout_seconds,
         "holder": holder_view,
         "since": session.spotlight_since.isoformat() if session.spotlight_since is not None else None,
-        "handover_due": _timed_out(session, t),
+        "handover_due": _timed_out(session, t) or bool(combat_view and combat_view["skip_due"]),
         "next_up": next_up,
     }
 
@@ -720,6 +926,7 @@ __all__ = [
     "MODE_FREE_FOR_ALL",
     "MODE_OWNER_DIRECTED",
     "MODE_ROUND_ROBIN",
+    "COMBAT_ABSENT_GRACE",
     "Change",
     "SpotlightRefused",
     "SpotlightTurn",
@@ -729,8 +936,10 @@ __all__ = [
     "host_update",
     "is_engaged",
     "on_seat_change",
+    "open_skip",
     "open_turn",
     "precheck",
+    "running_party_combat",
     "public_view",
     "sessions_with_seats",
 ]
