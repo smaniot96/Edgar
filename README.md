@@ -115,6 +115,16 @@ simulate (`GET /api/rules/supported-scope`):
   spent or no such pair is carried, and its damage adds no ability modifier unless that is negative
   (Rage's bonus still applies; Sneak Attack still adds its dice at most once per turn). The sheet
   does not say which hand holds a weapon, and throwing a weapon is not modelled.
+- Declared actions (EDG-182): the parser proposes a combat turn as an ordered list of registered
+  actions (attack, off-hand attack, maneuver, item, spell, Dodge, Dash, Disengage, Ready, Second Wind,
+  Rage, move, contingency). The engine adopts a proposal only where its own reading of the player's
+  words and state agrees; a disagreement, an unknown action, or a missing target among several foes
+  is one question with no roll and no turn spent. A multi-part typed turn (two actions, or a move
+  beside an action) is repeated back before any die: "yes" runs the stored declaration as proposed,
+  "no" cancels, and any other reply is a new declaration. "always confirm" asks about every action
+  turn for that hero (per encounter for now). A contingency ("if it drops, attack the other") is not
+  executed yet: the turn is asked with the alternatives. Standing reaction orders, feet-based
+  movement and Help are not modelled.
 - Positioning in combat: each foe stands in the melee band (within 5 feet of the hero) or the ranged
   band (beyond it), set from its exact record (a foe whose listed attacks are all ranged starts at
   range). Movement is free and declared in the hero's words ("I close in on the archer", "I back

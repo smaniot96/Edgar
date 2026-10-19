@@ -123,6 +123,14 @@ def agreement_question(
             missing.append(kind)
     if not missing:
         return None
+    if CONTINGENCY.kind in missing:
+        # The engine cannot run an if-then clause yet, so it is asked with the nearest supported
+        # alternatives rather than dropped or guessed (EDG-182 contract point 7).
+        return (
+            f"{hero} asked for a contingency (an if-then clause), and the engine cannot run one yet, "
+            "so nothing this turn is declared. Choose: declare the first action alone now, or make the "
+            "conditional attack on your next turn. No roll is made and no turn is spent."
+        )
     names = " and ".join(f"\"{label_of(k)}\"" for k in missing)
     return (
         f"I did not find {names} in what {hero} said, so I have not declared it. Say it in plain "

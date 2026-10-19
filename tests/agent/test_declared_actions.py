@@ -53,6 +53,12 @@ def test_every_registered_kind_is_its_own_engine_name_and_unknowns_are_not_guess
     assert normalise_kind("off hand") == "off_hand_attack"
 
 
+def test_an_unexecutable_contingency_is_asked_with_alternatives() -> None:
+    question = agreement_question([("contingency", "if it drops, attack the other")], set(), "Eda")
+    assert question is not None and "contingency" in question and "next turn" in question
+    assert question.count("No roll") == 1
+
+
 def test_agreement_is_silent_when_detected_and_one_question_otherwise() -> None:
     assert agreement_question([("attack", None)], {"attack"}, "Eda") is None
     assert agreement_question([], {"attack"}, "Eda") is None
