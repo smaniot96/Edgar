@@ -7,7 +7,9 @@ from collections import Counter
 # line, so prose such as "regains 20 hit points", class tables such as "Hit Points at 1st
 # Level" and colon-style object lines such as "Armor Class: 15" are not counted.
 _AC = re.compile(r"^[^\w\n]*Armor\s+Class(?:\*+|_+)?\s+\d", re.I | re.M)
-_HP = re.compile(r"^[^\w\n]*Hit\s+Points(?:\*+|_+)?\s+\d", re.I | re.M)
+# A hit point formula ("half the hit point maximum of its summoner", DMG Avatar of Death) is a real
+# stat field: correcting it to a number would alter the source, so it counts like a number.
+_HP = re.compile(r"^[^\w\n]*Hit\s+Points(?:\*+|_+)?\s+(?:\d|half\b|equal\s+to\b)", re.I | re.M)
 _HEADING = re.compile(r"^#{1,6}\s+(.+)$", re.M)
 STAT_SUBHEADINGS = {
     "ACTIONS",
