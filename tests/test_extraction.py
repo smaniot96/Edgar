@@ -24,7 +24,12 @@ from ingestion.extract import (
     validate_exclusions,
 )
 from ingestion.layout import Line, native_lines, render_native_page
-from ingestion.quality import check_text, diagnostic_message, require_separate_stat_chunks
+from ingestion.quality import (
+    check_text,
+    diagnostic_message,
+    has_stat_record,
+    require_separate_stat_chunks,
+)
 from ingestion.readiness import prepare_report, require_ready
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "extraction"
@@ -174,6 +179,84 @@ def test_bold_stat_field_blocks_keep_their_checks():
     assert "interleaved_stat_records" in check_text(concatenated)["errors"]
     missing_hp = block.replace("**Hit Points** 50 (6d10+18)", "Speed 30 ft.")
     assert "incomplete_stat_fields" in check_text(missing_hp)["errors"]
+
+
+# EDG-180: appendix creature records (PHB App. D), object records and prose that resembles a
+# stat record. Positive shapes must pass; garbled labels, non-numeric HP, two records and a
+# missing field must still fail.
+_ANIMAL_RECORD = (
+    "## Boar\n\nMedium beast, unaligned\n\nArmor Class 11 (natural armor)\nHit Points 11 (2d8 + 2)\n"
+    "Speed 40 ft.\n\n## ACTIONS\n\nTusk. Melee Weapon Attack: +3 to hit, reach 5 ft., one target.\n"
+    "Hit: 4 (1d6 + 1) slashing damage."
+)
+
+
+def test_appendix_animal_record_with_clean_fields_passes():
+    assert check_text(_ANIMAL_RECORD)["errors"] == []
+    assert has_stat_record(_ANIMAL_RECORD)
+
+
+def test_animal_record_with_garbled_armor_class_label_still_fails():
+    # Mirrors PHB p.305 "Armar Class 12": a native glyph error is never repaired by the checks.
+    text = _ANIMAL_RECORD.replace("Armor Class 11", "Armar Class 11")
+    assert "incomplete_stat_fields" in check_text(text)["errors"]
+
+
+def test_animal_record_with_garbled_hit_points_label_still_fails():
+    # Mirrors PHB p.309 "Hil Poinls 1": the hit points label is unreadable, so the record fails.
+    text = _ANIMAL_RECORD.replace("Hit Points 11", "Hil Poinls 11")
+    assert "incomplete_stat_fields" in check_text(text)["errors"]
+
+
+def test_two_animal_records_under_one_heading_still_fail():
+    second = (
+        _ANIMAL_RECORD.split("\n\n", 1)[1]
+        .replace("Boar", "Mule")
+        .replace("Hit Points 11", "Hit Points 13")
+    )
+    assert "interleaved_stat_records" in check_text(_ANIMAL_RECORD + "\n\n" + second)["errors"]
+
+
+def test_non_numeric_hit_points_formula_fails_closed():
+    # Mirrors DMG p.164 Avatar of Death: HP is a formula, not a number, so the record is not
+    # recovered as complete and keeps its failure.
+    text = (
+        "## Avatar of Death\n\nMedium undead, neutral evil\n\nArmor Class 20\n"
+        "Hit Points half the hit point maximum of its summoner\nSpeed 60 ft., fly 60 ft. (hover)\n\n"
+        "## ACTIONS\n\nReaping Scythe. The avatar sweeps its spectral scythe."
+    )
+    assert "incomplete_stat_fields" in check_text(text)["errors"]
+
+
+def test_object_records_with_colon_fields_and_a_size_line_are_not_stat_records():
+    # Mirrors DMG p.255-256 object blocks: "Armor Class: 15" is colon style and is not counted.
+    text = (
+        "## Siege Tower\n\nGargantuan object\n\nArmor Class: 15\nHit Points: 200\n"
+        "Damage Immunities: poison, psychic\n\nA siege tower is a mobile wooden structure."
+    )
+    assert check_text(text)["errors"] == []
+    assert not has_stat_record(text)
+
+
+def test_prose_about_medium_armor_is_not_a_stat_record():
+    # Mirrors PHB p.144 "Medium Armor" prose: a sentence beginning "Medium" is not a size/type line.
+    text = (
+        "## Medium Armor\n\nMedium armor offers more protection than light armor, but it also "
+        "impairs movement more. If you wear medium armor, you add your Dexterity modifier, to a "
+        "maximum of +2, to determine your Armor Class."
+    )
+    assert check_text(text)["errors"] == []
+    assert not has_stat_record(text)
+
+
+def test_class_table_and_hit_dice_table_are_not_stat_records():
+    # Mirrors PHB class text and DMG p.276 "Hit Dice by Size": table rows, not records.
+    table = "Hit Dice by Size\n\nTiny d4 2 1/2\nSmall d6 3 1/2\nMedium d8 4 1/2\nLarge d10 5 1/2"
+    assert check_text(table)["errors"] == []
+    assert not has_stat_record(table)
+    assert not has_stat_record(
+        "## Fighter\n\nHit Points at 1st Level: 10 + your Constitution modifier."
+    )
 
 
 def test_require_separate_stat_chunks_allows_prose_and_rejects_concatenated_records():
