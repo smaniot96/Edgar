@@ -12,6 +12,7 @@ extends the existing mechanism rather than replacing it.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 
@@ -161,4 +162,65 @@ def completeness_question(
                 f"Which foe does {hero} mean: {' or '.join(names)}? No roll is made and no turn is "
                 "spent."
             )
+    return None
+
+
+# Words the engine does not read, and the supported action each is nearest to (EDG-182 contract point 7).
+# Only a maneuver the engine executes qualifies: its own text is what the round then reads. A word with
+# no supported neighbour gets no entry, and its turn is asked with the supported alternatives instead.
+_NEAREST_MANEUVERS = (
+    (
+        re.compile(
+            r"\b(?:grabs?|grabbing|seiz(?:e|es|ing)|clutch(?:es|ing)?|wrestl(?:e|es|ing)|take\s+hold\s+of)\b",
+            re.IGNORECASE,
+        ),
+        "grapple",
+        "a grapple (PHB p.196)",
+    ),
+    (
+        re.compile(r"\b(?:pushe?s?|pushing|shoves?|shoving)\b", re.IGNORECASE),
+        "knock",
+        "a shove that knocks the foe prone (PHB p.196)",
+    ),
+)
+
+
+_PUSH_AWAY = re.compile(r"\b(?:away|back|off|from\s+(?:me|us|him|her|them|it))\b", re.IGNORECASE)
+
+
+def object_is_foe(word: str, text: str | None, foe_names: Collection[str]) -> bool:
+    """True when the word's own object is a foe the player names, or a pronoun for one ("grab the goblin",
+    "push him"). "grab my sword and attack the goblin" does not qualify: its object is the sword."""
+    names = [re.escape(n) for n in foe_names if n]
+    if not names:
+        return False
+    pattern = (
+        rf"\b{re.escape(word)}\s+(?:(?:the|a|an|my|his|her|its|their)\s+)?"
+        rf"(?:(?:{'|'.join(names)})\b|(?:him|her|it|them)\b)"
+    )
+    return re.search(pattern, str(text or ""), re.IGNORECASE) is not None
+
+
+def nearest_maneuver(text: str | None) -> tuple[str, str, str] | None:
+    """(the player's word, the same turn in the engine's words, the nearest supported action) or None.
+
+    The rewritten turn is what the engine reads, so it is shown to the player to confirm (never run
+    silently). A shove is written as "knock ... prone", which the engine reads as a shove to the ground.
+    """
+    body = str(text or "")
+    for pattern, canonical, label in _NEAREST_MANEUVERS:
+        hit = pattern.search(body)
+        if hit is None:
+            continue
+        if canonical == "knock" and _PUSH_AWAY.search(body):
+            # A push away from the hero is its own unsupported shove (contract), not a knock prone.
+            continue
+        word = hit.group(0)
+        if canonical == "knock":
+            rewritten = pattern.sub("knock", body, count=1).rstrip(" .!?")
+            rewritten = re.sub(r"\s+(?:away|back|over)\b$", "", rewritten, flags=re.IGNORECASE)
+            rewritten = f"{rewritten} prone"
+        else:
+            rewritten = pattern.sub(canonical, body, count=1)
+        return word, rewritten, label
     return None

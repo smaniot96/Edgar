@@ -113,6 +113,7 @@ from agent.combat_setup import (
 from agent.combat_targeting import select_target as select_target  # re-exported (tests)
 from agent.combat_view import _ask_player, _display, initiative_view, sort_by_initiative
 from agent.combatants import (
+    classify_combat_maneuver,
     has_effect,
 )
 from agent.conditions import (
@@ -121,6 +122,7 @@ from agent.conditions import (
 )
 from agent.contingency import SplitTurn, split_contingency
 from agent.death import DEATH_MODE_SAVES, DEATH_MODE_SUBDUED
+from agent.declarations import MANEUVER, UNKNOWN, nearest_maneuver, object_is_foe
 from agent.encounter_budget import adaptation_sentence, apply_solo_budget, clamp_level, solo_budget
 from agent.llm import make_chat_model, message_text
 from agent.models.adjudication import AdjudicationResult
@@ -145,6 +147,7 @@ from agent.readied_action import CANCEL_ORDER
 from agent.resolution import (
     DEATH_SAVES_KEY,
     initiative_bonus,
+    mentions_item_use,
     second_wind_remaining,
 )
 from agent.state import AgentState
@@ -565,6 +568,38 @@ async def combat_round_node(state: AgentState) -> dict:
         )
     player_input = split.main
     contingency = split.contingency
+    # EDG-182 nearest mechanic: an action the engine does not read, that has a supported neighbour, is
+    # not run silently. It becomes the same confirmation as any conditional turn, naming the nearest action.
+    if not fled and contingency is None and classify_combat_maneuver(player_input) is None:
+        nearest = nearest_maneuver(player_input)
+        foe_names = [str(c.get("name")) for c in combatants if not c.get("is_player") and c.get("name")]
+        if (
+            nearest is not None
+            and object_is_foe(nearest[0], player_input, foe_names)
+            and not mentions_item_use(parsed, player_input)
+        ):
+            word, rewritten, label = nearest
+            mapped_parsed = parsed
+            if parsed is not None and any(a.kind == UNKNOWN for a in parsed.actions):
+                mapped_parsed = parsed.model_copy(
+                    update={
+                        "actions": [
+                            a.model_copy(update={"kind": MANEUVER.kind, "text": rewritten})
+                            if a.kind == UNKNOWN
+                            else a
+                            for a in parsed.actions
+                        ]
+                    }
+                )
+            summary = (
+                f"Confirm before any dice: {hero} will {rewritten}. '{word}' is not a supported action, so "
+                f"this is the nearest one: {label}. Reply yes to commit, or no to change it. No roll is made "
+                "and no turn is spent until you reply yes."
+            )
+            stored_declaration(
+                player, player_input=rewritten, parsed=mapped_parsed, summary=summary, round_num=round_num
+            )
+            return _ask_player(state, summary, combat_state=combat_state)
     if ended_spell := drop_concentration_if_incapacitated(player, enemies):
         log_lines.append(f"{hero}'s concentration on {ended_spell} ends while incapacitated.")
     stun_will_end_before_turn = has_effect(player, "stunned") and stun_ends_before_turn(
