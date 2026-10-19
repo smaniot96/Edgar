@@ -81,6 +81,7 @@ The registry in `apps/api/schemas/channel.py` is an allowlist. Publishing an unr
 | `character.state` | private | **that player only** | The acting character's play state and the rest evidence. |
 | `turn.failed` | private | **that player only** | The safe error for the player who submitted the turn. |
 | `presence.joined` / `left` / `idle` / `active` | system | table | `user_id` and the presence state change. |
+| `turn.spotlight_changed` | system | table | The table's spotlight after a change: holder, mode, `version`, `next_up`, `reason` (EDG-048). |
 | `access.changed` | system | **control** | Internal wake-up. No client ever receives it. |
 
 Audiences, and the one rule that decides delivery (`audience_visible`, used for live and replay alike):

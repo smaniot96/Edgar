@@ -33,6 +33,35 @@ export interface ChannelEnvelope {
   data: Record<string, unknown>;
 }
 
+// Spotlight arbitration (EDG-048): the table's turn token, as the server announces it. Types only;
+// the lobby and spotlight UI are EDG-050.
+export type SpotlightMode = "round_robin" | "owner_directed" | "free_for_all";
+
+export interface SpotlightMember {
+  character_id: number;
+  character_name: string;
+  user_id: number;
+  display_name: string | null;
+  present: boolean;
+}
+
+export interface SpotlightState {
+  session_id: number;
+  engaged: boolean;
+  mode: SpotlightMode;
+  version: number;
+  timeout_seconds: number;
+  holder: (SpotlightMember & { eligible?: boolean }) | null;
+  since: string | null;
+  handover_due: boolean;
+  next_up: SpotlightMember[];
+}
+
+/** Data of a `turn.spotlight_changed` envelope: the state as committed, plus why it changed. */
+export interface SpotlightChangedData extends SpotlightState {
+  reason: string;
+}
+
 export type ChannelStatus = "connecting" | "live" | "reconnecting" | "closed";
 
 export interface SessionChannelHandlers {
