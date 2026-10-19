@@ -10,6 +10,7 @@ _AC = re.compile(r"^[^\w\n]*Armor\s+Class(?:\*+|_+)?\s+\d", re.I | re.M)
 # A hit point formula ("half the hit point maximum of its summoner", DMG Avatar of Death) is a real
 # stat field: correcting it to a number would alter the source, so it counts like a number.
 _HP = re.compile(r"^[^\w\n]*Hit\s+Points(?:\*+|_+)?\s+(?:\d|half\b|equal\s+to\b)", re.I | re.M)
+_ABILITY_ROW = re.compile(r"^STR\s+DEX\s+CON\s+INT\s+WIS\s+CHA\b", re.M)
 _HEADING = re.compile(r"^#{1,6}\s+(.+)$", re.M)
 STAT_SUBHEADINGS = {
     "ACTIONS",
@@ -111,6 +112,9 @@ def check_text(text: str) -> dict:
             errors.append("interleaved_stat_records")
         stat_type = any(SIZE_TYPE.match(line.strip("*_ ")) for line in section.splitlines())
         if (ac or stat_type) and ac != hp:
+            errors.append("incomplete_stat_fields")
+        elif stat_type and not ac and _ABILITY_ROW.search(section):
+            # A type line and ability scores without armor class or hit points: the box lost them.
             errors.append("incomplete_stat_fields")
         if ac and hp:
             headings = [h.group(1).strip("*_ ") for h in _HEADING.finditer(section)]

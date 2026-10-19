@@ -553,7 +553,8 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
                         warnings.append(f"removed_identical_overlapping_spans:{duplicates}")
                 except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
                     # Retain the native material for diagnosis; never index ambiguous output.
-                    text = "\n".join(item.text for item in lines)
+                    # An unread heading keeps the page in reading order; other errors keep raw lines.
+                    text = getattr(exc, "text", None) or "\n".join(item.text for item in lines)
                     fatal.append(str(exc))
                     recovered = []
                 scores["native_geometry"] = score_text(text)
