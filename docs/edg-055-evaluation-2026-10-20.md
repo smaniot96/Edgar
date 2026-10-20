@@ -525,3 +525,33 @@ endpoint returned 202 around 14:01:53 Rome. The same run is preparing its first 
 small retained edits in background response `resp_0f57a87682b30e7a006ad75830e43887d2aea15d2009a19623`.
 All 20 original source/rulebook artifact hashes and the accepted design digest remain
 unchanged. **0/8 acts accepted; campaign not Ready.**
+
+## Saved-edit recovery — 14:14 Rome, 20 October 2026
+
+The next stop was a local OpenAI SDK reload error: persisted JSON-schema format used
+`schema_` rather than the API alias `schema`. Commit `18788cf` saves the alias and
+reads legacy records compatibly. The same commit allows scalar `/support/dm_notes`
+edits, which the first patch guard incorrectly rejected, and recovers completed edit
+responses from the exact bound task before making another request. Both previously
+completed edit responses and the original authored proposal remain on disk.
+
+Combined build `0386102` is now deployed. At 14:13:58 Rome the normal retry endpoint
+resumed the same run. A completed saved correction was applied locally; its remaining
+schema defect is now being corrected in background response
+`resp_0593bbbd2512d0e6006ad75b0a407887d2b1eb60fe3b867f14`. Batched feedback covers
+effect target types/statuses, exact physical public evidence, and entity/source links.
+The original 20 artifact digests and accepted design digest were verified unchanged
+immediately before retry. **0/8 acts accepted; preparing P04; not Ready.**
+
+Creature grounding now retains parser limitations as explicit runtime adaptation
+notes rather than rejecting every stat block for its declared unsimulated movement.
+Exact source stats and checksums remain required. Narrow OCR fixes recognize Bugbear
+`ll` as 11 only when the printed dice independently match, and preserve the separate
+lowercase javelin action. Read-only inspection of the saved proposal passes all seven
+encounter groundings with 44 adaptation notes. Goblin Nimble Escape, Wolf Pack Tactics/
+Keen senses/prone rider and Bugbear Surprise Attack are still declared runtime
+limitations; this does not claim those mechanics are implemented.
+
+No test suite, CI or push was run. Built-image imports and API readiness passed.
+All new fixes remain local; `main` has not been updated. Publication, restart
+durability, Bryn's playthrough and the known P11 broad-repair issue remain pending.
