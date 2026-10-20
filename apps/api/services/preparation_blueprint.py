@@ -234,6 +234,33 @@ def blueprint_preflight(blueprint, design):
     scenes = {sid for act in design.acts for sid in act.scene_ids}
     facts = {f.key: f for f in blueprint.facts}
     errors = []
+    disclosures = {}
+    discovery_keys = {k for k, f in facts.items() if f.kind in {"clue", "hint", "hazard", "ending"}}
+
+    def disclosure(numbers, gate, path):
+        for number in numbers:
+            if number in disclosures and disclosures[number] != gate:
+                errors.append(f"{path}: source span {number} has conflicting public disclosure gates")
+            else:
+                disclosures[number] = gate
+
+    def predicates(value, path):
+        if set(value) - discovery_keys or any(v != "discovered" for v in value.values()):
+            errors.append(f"{path} must use declared discovery keys with status discovered")
+
+    for i, fact in enumerate(blueprint.facts):
+        predicates(fact.requires, f"/facts/{i}/requires")
+        if fact.key in discovery_keys:
+            disclosure(fact.sources, {**fact.requires, fact.key: "discovered"}, f"/facts/{i}/sources")
+        if fact.kind in {"actor", "clue", "hint", "hazard", "ending"}:
+            disclosure(fact.setup, fact.requires, f"/facts/{i}/setup")
+    for i, scene in enumerate(blueprint.scenes):
+        disclosure(scene.public, {}, f"/scenes/{i}/public")
+        for j, link in enumerate(scene.links):
+            predicates(link.requires, f"/scenes/{i}/links/{j}/requires")
+            predicates(link.reveal, f"/scenes/{i}/links/{j}/reveal")
+            if link.private and not link.reveal:
+                errors.append(f"/scenes/{i}/links/{j}/reveal needs the concrete earned discovery for this private route")
     missing = {key for act in design.acts for key in act.advance_ids} - facts.keys()
     if missing:
         errors.append(f"/facts is missing accepted design advance IDs: {sorted(missing)}")
@@ -249,6 +276,7 @@ def blueprint_preflight(blueprint, design):
             errors.append(f"{base}/scene must name an accepted scene")
         for j, approach in enumerate(decision.approaches):
             path = f"{base}/approaches/{j}"
+            predicates(approach.requires, path + "/requires")
             outcomes = {}
             for name in ("success", "failure"):
                 outcomes[name] = []
@@ -259,6 +287,8 @@ def blueprint_preflight(blueprint, design):
                             errors.append(f"{ep}/target must name an accepted scene")
                     elif effect.target not in facts or facts[effect.target].kind not in targets[effect.kind]:
                         errors.append(f"{ep}/target must name a fact with kind in {sorted(targets[effect.kind])}; got {effect.target}")
+                    if effect.kind == "discover" and effect.target in discovery_keys:
+                        disclosure(effect.sources, {**facts[effect.target].requires, effect.target: "discovered"}, ep + "/sources")
                     value = dict(kind=effect.kind, target_id="preflight_target",
                         status=effect.status or EFFECT_DEFAULTS.get(effect.kind, ""), passage_ids=["preflight_source"])
                     if effect.operation is not None:
@@ -285,7 +315,9 @@ def blueprint_preflight(blueprint, design):
                     check=engine_check(approach.check), dc=approach.dc, failure_mode=approach.failure_mode,
                     on_success=outcomes["success"], on_failure=outcomes["failure"]))
             except ValueError as exc:
-                errors.append(f"{path}: {exc}")
+                detail = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}"
+                    for e in exc.errors(include_url=False)) if hasattr(exc, "errors") else str(exc)
+                errors.append(f"{path}: {detail}")
     if errors:
         raise ValueError("Blueprint structural errors:\n" + "\n".join(errors))
 
@@ -375,6 +407,9 @@ def compile_blueprint(binding, design, blueprint, *, books):
     page_act = {p: act.act_id for act in design.acts for p in act.source_pages}
 
     def provenance(numbers, rationale=""):
+        # Source access keeps every anchor in its owning packet/definition. A
+        # provenance record only needs representative exact citations (schema: 32).
+        numbers = list(dict.fromkeys(numbers))[:32]
         if rationale:
             return {"origin": "dm_extension", "passage_ids": [f"ls_{n}" for n in numbers], "rationale": rationale}
         return {"origin": "source", "passage_ids": [f"ls_{n}" for n in numbers]}
