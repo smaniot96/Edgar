@@ -249,6 +249,14 @@ explicitly lists the participating named actor keys, with matching exact stat bi
 populations remain distinct source encounter groups. Every named participant has a creature request
 with actor_id=its key, quantity=1 and creature_name=its exact template or module stat heading.
 Distinct named actors sharing a template have separate requests. Do not combine separate rooms into one fight.
+Actor dispositions dead/defeated/captive/released come only from an actual actor-bound encounter;
+a stat reference alone produces none of them. Ordinary rescue, unbinding and safe escort are story
+actions: define a narrowly named milestone such as captive_freed, complete it through an explicit
+source-backed automatic release action, and require that completed milestone for later conversation
+or handover. Keep this distinct from a broad objective that also permits finding the captive dead.
+Never put a rescued ally into an enemy roster to manufacture a disposition. A release action must
+not require its own completed result. Any prior victory, discovery or rescue needed for an action
+belongs in requires/requires_facts; mentioning it only in the action text or DM notes is not a gate.
 Facts.required marks mandatory campaign advancement; mark genuinely optional sidequests false.
 All accepted design advance IDs remain defined; optionality must follow the actual campaign.
 Links with the same endpoints and different requires are alternative routes (OR); each one's
@@ -301,6 +309,76 @@ class BlueprintValidationError(ValueError):
             "path": message.split(":", 1)[0].split(" ", 1)[0] if message.startswith("/") else None}
             for message in messages]
         super().__init__("Blueprint structural errors:\n" + "\n".join(messages))
+
+
+def blueprint_progression_findings(blueprint, design, *, template_name=lambda name: name):
+    """Sound negative checks on a finite, deliberately optimistic dependency graph.
+
+    This joins alternative results and ignores resource/disclosure restrictions, so
+    possible membership is never an acceptance witness. A missing producer chain
+    cannot be repaired by a larger exact search or another compiler retry.
+    """
+    facts = {fact.key: fact for fact in blueprint.facts}
+    actions = [
+        (f"/decisions/{i}/approaches/{j}", decision.scene, approach.requires,
+         approach.requires_facts, [*approach.success, *approach.failure])
+        for i, decision in enumerate(blueprint.decisions)
+        for j, approach in enumerate(decision.approaches)
+    ] + [
+        (f"/transitions/{i}", action.scene, action.requires, action.requires_facts, action.effects)
+        for i, action in enumerate(blueprint.transitions)
+    ]
+    actor_events = defaultdict(set)
+    for scene in blueprint.scenes:
+        for encounter in scene.encounters:
+            for key in encounter.actors:
+                actor = facts.get(key)
+                if (actor is None or actor.kind != "actor" or scene.id not in actor.scenes
+                        or not (actor.creature or actor.stat_sources)):
+                    continue
+                expected = (actor.stat_name or actor.name) if actor.stat_sources else actor.creature
+                requests = [request for request in encounter.creatures if request.actor_id == key]
+                if (expected and len(requests) == 1 and requests[0].quantity == 1
+                        and template_name(requests[0].creature_name).casefold().strip()
+                        == template_name(expected).casefold().strip()):
+                    actor_events[scene.id].add(key)
+
+    possible, reached, enabled = set(), {design.opening_scene_id}, set()
+    changed = True
+    while changed:
+        before = len(possible), len(reached), len(enabled)
+        for scene in blueprint.scenes:
+            if scene.id not in reached:
+                continue
+            for key in actor_events[scene.id]:
+                possible.update((key, status) for status in ("captive", "dead", "defeated", "released"))
+            for link in scene.links:
+                if all((key, status) in possible for key, status in link.requires.items()):
+                    reached.add(link.to)
+        for path, scene_id, gates, requirements, effects in actions:
+            if (scene_id in reached and all((key, status) in possible for key, status in gates.items())
+                    and all(any((req.key, status) in possible for status in req.statuses)
+                            for req in requirements)):
+                enabled.add(path)
+                possible.update((effect.target, effect.status or EFFECT_DEFAULTS.get(effect.kind, ""))
+                                for effect in effects)
+                reached.update(effect.target for effect in effects if effect.kind == "move")
+        changed = before != (len(possible), len(reached), len(enabled))
+
+    findings = []
+    for path, scene_id, gates, requirements, _ in actions:
+        if path in enabled:
+            continue
+        blocked = [f"{key}={status}" for key, status in gates.items()
+                   if (key, status) not in possible]
+        blocked += [f"{req.key} in {req.statuses}" for req in requirements
+                    if not any((req.key, status) in possible for status in req.statuses)]
+        if scene_id not in reached:
+            blocked.append(f"reachable scene {scene_id}")
+        findings.append(f"{path}: no possible prerequisite producer chain for {', '.join(blocked)}. "
+                        "Preserve the intended prerequisite and supply its supported earned producer; "
+                        "actor dispositions require an exact actor-bound encounter, ordinary rescue uses a completed milestone.")
+    return findings
 
 
 def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda name: name):
@@ -505,6 +583,7 @@ def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda n
                     errors.append(f"/scenes/{i}/encounters/{j}/actors needs exact stat-bound actors in this scene; invalid {key}")
                 elif sum(r.actor_id == key for r in encounter.creatures) != 1:
                     errors.append(f"/scenes/{i}/encounters/{j}/creatures: named actor {key} needs exactly one explicit actor_id on its participating creature request")
+    errors.extend(blueprint_progression_findings(blueprint, design, template_name=template_name))
     if errors:
         raise BlueprintValidationError(errors)
 
@@ -865,6 +944,22 @@ def compile_blueprint(binding, design, blueprint, *, books):
         opening_scene_id=design.opening_scene_id, prepared=prepared, **fields)
     report = validate_prepared_campaign(manifest)
     if not report.valid:
+        # Only authored causal findings may request a semantic correction. Unknown
+        # schema/compiler findings remain local diagnostics, never paid rewrites.
+        authored_codes = {"missing_fact_producer", "missing_gate_producer", "missing_objective_producer",
+                          "missing_milestone_producer", "missing_ending_producer", "missing_campaign_ending"}
+        if all(f.code in authored_codes for f in report.findings):
+            messages = []
+            for finding in report.findings:
+                match = re.match(r"resolution_policies\.(lt_(\d+)|lp_(\d+)_(\d+))\.(.*)", finding.path)
+                if match:
+                    path = (f"/transitions/{match[2]}" if match[2] is not None else
+                            f"/decisions/{match[3]}/approaches/{match[4]}")
+                    path += "/" + match[5].replace(".", "/")
+                else:
+                    path = "/facts"
+                messages.append(f"{path}: {finding.code}: {finding.message} ({finding.path})")
+            raise BlueprintValidationError(messages)
         raise ValueError(str([f.model_dump() for f in report.findings]))
     manifest.reviewed_sha256 = manifest_digest(manifest)
     manifest.reviewed_by = "compact-compiler-v1; independent review pending"

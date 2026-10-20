@@ -613,7 +613,13 @@ async def _preflight_compact_paths(binding, task, deps, manifest, chapters, grou
 
 
 async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_client):
-    from .preparation_proposals import latest_rejection, reject_proposal, save_proposal
+    from .preparation_proposals import (
+        latest_proposal,
+        latest_rejection,
+        reject_proposal,
+        save_diagnostic,
+        save_proposal,
+    )
 
     accumulated = []
     rejected_states = set()
@@ -627,7 +633,8 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             from .preparation import assert_current_preparation_worker
 
             assert_current_preparation_worker()
-            feedback = latest_rejection(binding, planned, schema, kwargs["idempotency_key"])
+            lookup = latest_proposal if schema in (AuthoredAct, CampaignBlueprint) else latest_rejection
+            feedback = lookup(binding, planned, schema, kwargs["idempotency_key"])
             # An authored act can be tens of thousands of tokens. Correct its saved
             # fields instead of asking the provider to rewrite all of it repeatedly.
             if feedback and schema in (AuthoredAct, CampaignBlueprint):
@@ -691,6 +698,8 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             total = _usage_sum(accumulated) if accumulated else usage
             if correctable and total:
                 total = total.model_copy(update={"failure_code": "stage_evidence_invalid"})
+            save_diagnostic(binding, f"{stage.value}:execution", exc,
+                            task=task, dependencies=deps)
             raise PreparationTaskFailure(exc.code, total, exc.findings) from exc
 
 
@@ -860,7 +869,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
             design = design_from(deps)
             evidence = blueprint_evidence(binding, design, source_spans(extraction_for_design(binding, design)))
             from .preparation_grounding import preflight_creature_sources
-            from .preparation_proposals import latest_rejection
+            from .preparation_proposals import latest_proposal
             from .preparation_store import preparation_path
 
             # Optional local source diagnosis supplements the paid study without
@@ -877,7 +886,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                     raise PreparationTaskFailure("source_snapshot_stale", _local_usage())
                 evidence["local_source_review"] = local_review["evidence"]
 
-            retained = latest_rejection(binding, task, CampaignBlueprint, key)
+            retained = latest_proposal(binding, task, CampaignBlueprint, key)
             if retained:
                 previous = retained["proposal"]
                 fact_by_key = {f["key"]: f for f in previous.get("facts", [])}

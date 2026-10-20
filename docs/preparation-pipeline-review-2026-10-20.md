@@ -135,3 +135,81 @@ Known response usage remains separate from unresolved estimates; exhausted credi
 The held run remains `prep-95ea542c81af43ec9dea3f61a77e9f85`; its accepted studies/design and original benchmark start remain unchanged. Verified snapshot `review-fixes-preserved-20261020T135726Z` contains 78 original files; campaign archive SHA256 `e4c9f149ad1b4ea88b1d23fc1f045d8c5149f82c7d5e94b78c8060e96b70e7cd`. All 22 accepted artifact digests and the cancelled comparison baseline are preserved. No Edgar provider calls occurred during review or implementation.
 
 All 26 changed Python sources parse, production imports/schema generation pass, all changed Python files pass Ruff, and `git diff --check` passes. No test suite, CI/CD or remote push was run. A coherent local build/restart, receipt-accounting reconciliation and same-run resumption follow these checks; fresh end-to-end performance is still unmeasured.
+
+## Follow-up review of the corrected blueprint — general contract remains incomplete
+
+The resumed correction completed, but P04 then stopped on missing Sildar `released`
+producers. GPT-6.1 Sol extra-high reviewed the newest saved proposal before any
+further paid generation. This exposed a general contract gap: canonical prepared
+validation provisionally admits combat dispositions from an actor's stat reference,
+while runtime accepts them only from exact persisted actor-bound combat outcomes
+and P10 requires accepted grounding receipts. Ordinary unbinding/rescue actions
+should instead complete narrow source-backed rescue milestones. A broad objective
+that permits establishing a captive's death cannot authorize living conversation.
+
+The definite missing roots and dependent transitions are:
+
+| Missing root | Immediate consumers | Further blocked progression |
+| --- | --- | --- |
+| `yeemik:captive` | T1 | `castle_goblins`, T28 |
+| `sildar:released` | T3, T4 | account and objectives 0101/0102/0103 |
+| `dendrars:released` | T13, T17 | Mirna directions and objectives 0301/0302/0303 |
+| `gundren:released` | T39 | objectives 0501/0503 |
+| `nundro:released` | T48 | objective 0703 |
+
+These roots also block T51, T52, T53 and T54's ending. The complete blocked set
+is T1,T3,T4,T13,T17,T28,T39,T48,T51,T52,T53,T54. All fifty scenes are possible
+under optimistic joining, and no additional positive dependency cycle was found.
+This is negative dependency evidence, not a full executable path witness.
+
+General code remediation now collects this finite optimistic dependency inventory
+alongside structural preflight instead of stopping on the first missing producer.
+Only exact named encounter participation with matching actor/stat requests admits
+hypothetical combat events. Statuses/results are joined and resource/disclosure
+restrictions ignored, so failure implies no producer chain, while possible
+membership never permits acceptance. Movement effects are included optimistically.
+Local evaluation of the actual retained proposal returns exactly the twelve
+independently identified blocked actions. The authoring contract distinguishes
+rescue milestones from combat dispositions and requires causal preconditions in
+typed guards instead of action prose. Recognized final authored producer findings
+are mapped to blueprint paths; compiler/source failures remain local.
+
+The same review found seven additional source/action concerns, which are separate
+from guaranteed dependency impossibilities:
+
+1. T14 assumes a successful DC15 Intimidation check but only guards on Mosk captive.
+2. T39 omits Gundren's required map before extraction (source span 2107).
+3. T47 assumes the prison door was opened by key or DC15 tools; the D6 door change
+   explicitly represents reaching the door without opening it (2591–2593).
+4. T5's post-flood discovery has no actual flood-event prerequisite.
+5. T1/D0 bargain and conscious-captive conditions remain partly in prose.
+6. T11 checks only Mosk even though two other bugbears can still control Droop.
+7. D7 custody arrangements lack captive/receiving-authority guards; this is lower
+   severity because their effects record arrangements rather than transfer custody.
+
+Minor procedures may stay in DM notes. The issue arises when an executable
+producer treats an unperformed prerequisite as already earned. Do not serialize
+every room detail to compensate; add only the durable action/state required for
+the intended consequence.
+
+Source binding also cannot yet express all template-plus-narrative modifiers:
+generic Bugbear/Wolf requests lose Grol's printed 45HP (2083) and Snarl's 18HP
+(2087); Yeemik has 12HP (545) if his exact encounter is restored. Those sentences
+are not complete headed module stat blocks. This requires a generic local source
+modifier representation with source proof, not a prompt asking for fabricated
+statistics or a module binding to an incomplete sentence. Earlier checksum-bound
+OCR recipes remain specific to the inspected source PDFs; they do not establish
+general PDF parsing reliability.
+
+Recovery now retains the newest successful paid proposal through a local failure,
+instead of preferring older rejection diagnostics. It keeps exact task, binding,
+dependency and logical-call identity, cumulative usage receipts, and revalidates
+the retained proposal normally. Cause-chain diagnostic records remain private.
+The reviewer found no blocking regression in these follow-up changes.
+
+Paid generation is held. Snapshot `causal-review-hold-20261020T142128Z` verifies
+85 campaign/job/source files and all 22 prior accepted artifact digests, including
+the latest correction. The run remains blocked in P04; studies/design were not
+repeated. New-PDF reliability, complete campaign acceptance, and the twenty-minute/
+five-dollar target remain unproven. The latest correction took about 9.6 minutes,
+bringing compact recovery estimates to USD 5.105084 before completion.
