@@ -10,11 +10,21 @@ from collections.abc import Sequence
 from typing import Literal, NotRequired, Protocol, TypedDict
 
 from edgar_core.sources import SourceEdition
+from ingestion.chunk import has_chunkable_content
 from ingestion.artifacts import ExcludedPage, TextCorrection, corrections_digest, exclusions_digest
 from ingestion.quality import diagnostic_message
 
 REPORT_VERSION = 1
 SampleKind = Literal["text", "stat", "scene_candidate"]
+
+
+class NonChunkablePage(TypedDict):
+    """A page with text but no chunkable content (picture placeholders only); not required."""
+
+    page: int
+    chars: int
+    chunkable_chars: int
+    reason: str
 
 
 class ExtractionPage(Protocol):
@@ -102,6 +112,7 @@ class ReadinessReport(TypedDict):
     page_count: int
     required_pages: list[int]
     covered_pages: list[int]
+    non_chunkable_pages: NotRequired[list[NonChunkablePage]]
     excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
     text_corrections: NotRequired[list[TextCorrection]]
@@ -170,7 +181,16 @@ def prepare_report(
                 "message": "Extraction must cover every source page in order.",
             }
         )
-    required_pages = [n for n, text in pages if text.strip()]
+    # A page whose text is only image placeholders cannot produce a chunk; it is logged in the
+    # report as non-chunkable instead of being required (or silently ignored).
+    required_pages = [n for n, text in pages if has_chunkable_content(text)]
+    non_chunkable_pages = [
+        NonChunkablePage(
+            page=n, chars=len(text), chunkable_chars=0, reason="picture_placeholder_only"
+        )
+        for n, text in pages
+        if text.strip() and n not in set(required_pages)
+    ]
     covered_pages = sorted({n for c in chunks for n in c.get("source_pages", [])})
     for chunk in chunks:
         # Citations may never point into an excluded page, even via a multi-page range.
@@ -261,6 +281,8 @@ def prepare_report(
         # Reviewed corrections are reported only when present; ordinary reports keep their shape.
         report["text_corrections"] = [TextCorrection(**c) for c in extraction.text_corrections]
         report["corrections_sha256"] = corrections_digest(extraction.text_corrections)
+    if non_chunkable_pages:
+        report["non_chunkable_pages"] = non_chunkable_pages
     return report
 
 

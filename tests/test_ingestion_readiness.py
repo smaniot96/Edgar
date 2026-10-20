@@ -10,6 +10,7 @@ from qdrant_client import QdrantClient
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.versions import active_index_read, read_index_state
 from ingestion import embed
+from ingestion.chunk import chunk_page_runs
 from ingestion.artifacts import corrections_digest, exclusions_digest, source_digest
 from ingestion.extract import ExtractedPage, Extraction, apply_text_corrections, save_extraction
 from ingestion.readiness import (
@@ -122,6 +123,34 @@ def test_blank_physical_pages_and_complete_cross_page_chunks(tmp_path):
     assert chunks[0]["extraction_sha256"] == result["extraction_sha256"]
     persist(result, pages, tmp_path)
     assert "PDF page 3" in (tmp_path / "source.md").read_text()
+
+
+PICTURE_ONLY = (
+    "**==> picture [578 x 515] intentionally omitted <==**\n\n"
+    "**----- Start of picture text -----**<br>\nMZ Bs gt<br>Jt i, VP<br>"
+    "**----- End of picture text -----**<br>\n"
+)
+
+
+def test_picture_only_page_is_not_required_but_is_logged_as_non_chunkable():
+    pages = [(1, "The opening paragraph of the rules."), (2, PICTURE_ONLY)]
+    chunk_list = chunk_page_runs(pages, "source")
+    assert {n for c in chunk_list for n in c["source_pages"]} == {1}
+    result = report(pages, chunks=chunk_list)
+    require_ready(result)
+    assert result["required_pages"] == [1]
+    (skipped,) = result["non_chunkable_pages"]
+    assert skipped["page"] == 2 and skipped["chunkable_chars"] == 0
+    assert skipped["chars"] == len(PICTURE_ONLY)
+    assert skipped["reason"] == "picture_placeholder_only"
+
+
+def test_real_text_lost_by_the_chunker_still_fails_coverage():
+    pages = [(1, "The opening paragraph of the rules."), (2, "Real rules text on page two.")]
+    chunks = chunk_page_runs(pages[:1], "source")
+    result = report(pages, chunks=chunks)
+    assert "non_chunkable_pages" not in result
+    assert "chunk_page_coverage" in [i["code"] for i in result["issues"]]
 
 
 def test_representative_text_stat_and_unreviewed_scene_candidates():

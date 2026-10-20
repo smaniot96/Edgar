@@ -27,6 +27,7 @@ from ingestion.artifacts import (
     source_digest,
     text_digest,
 )
+from ingestion.chunk import has_chunkable_content
 from ingestion.layout import Line, native_lines, ocr_stat_header, render_native_page
 from ingestion.quality import check_text, diagnostic_message, has_section_heading, has_stat_record
 from ingestion.text_quality import is_degraded, prefer_ocr, score_text
@@ -144,6 +145,24 @@ class Extraction:
                 f"... {len(failing) - SUMMARY_PAGE_LIMIT} more pages; see the extraction bundle."
             )
         lines += self._raster_review_lines()
+        picture_only = [
+            p.page
+            for p in self.pages
+            if p.page not in self.excluded_numbers()
+            and p.text.strip()
+            and not has_chunkable_content(p.text)
+        ]
+        if picture_only:
+            lines.append(
+                f"Pages with text but nothing chunkable, not required for coverage "
+                f"(picture_placeholder_only, {len(picture_only)}): "
+                + ", ".join(str(n) for n in picture_only[:SUMMARY_PAGE_LIMIT])
+                + (
+                    "; more in the extraction bundle"
+                    if len(picture_only) > SUMMARY_PAGE_LIMIT
+                    else ""
+                )
+            )
         if self.excluded_pages:
             listed = [
                 f"page {e['page']} ({e['reason']}"

@@ -213,6 +213,13 @@ def _prepare_extraction(
     except ValueError as exc:
         issues.append({"code": "stat_chunk_integrity", "message": str(exc)})
     report = prepare_report(extraction, source_kind=source_kind, chunks=chunks, extra_issues=issues)
+    for skipped in report.get("non_chunkable_pages", []):
+        logger.warning(
+            "Page {} has {} characters but no chunkable text ({}); not required for coverage",
+            skipped["page"],
+            skipped["chars"],
+            skipped["reason"],
+        )
     if report["quality_passed"]:
         stamp_chunks(chunks, report)
         report["index_version"] = index_version([_chunk_payload(c) for c in chunks])
