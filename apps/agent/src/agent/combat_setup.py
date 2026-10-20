@@ -180,6 +180,11 @@ def _creature_source_reference(record: dict) -> dict:
         "lair_reference",
         "actor_rules_edition",
         "actor_source_sha256",
+        "text_sha256",
+        "evidence_origin",
+        "source_evidence",
+        "parsing_text_sha256",
+        "source_corrections",
     )
     return {key: record[key] for key in fields if key in record}
 
@@ -192,7 +197,7 @@ def _exact_enemy(identity: dict, *, is_boss: bool = False) -> dict:
     """
     name = str(identity["encounter_name"])
     try:
-        stats = parse_monster_stats(str(identity.get("text") or ""), name=name)
+        stats = parse_monster_stats(str(identity.get("parsing_text", identity.get("text")) or ""), name=name)
         if identity.get("lair_text"):
             actions = parse_lair_actions(str(identity["lair_text"]))
             declared = stats.declared + (

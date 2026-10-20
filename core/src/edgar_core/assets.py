@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from edgar_core.identifiers import Digest, Identifier
 from edgar_core.manifests import AdventureManifest
-from edgar_core.prepared import prepared_digest, validate_prepared_campaign
+from edgar_core.prepared import prepared_digest, route_identity, validate_prepared_campaign
 from edgar_core.sources import SourceEdition
 from edgar_core.story import StoryFact
 
@@ -395,14 +395,15 @@ def project_player_map(
     # campaign exists, its route inventory is authoritative; missing or invalid prepared
     # topology must never fall back to every canonical link.
     prepared = canonical.prepared
-    prepared_routes: dict[tuple[str, str], object] | None = None
+    prepared_routes: dict[tuple, object] | None = None
     topology: Literal["prepared", "reviewed_manifest", "unavailable"] = "reviewed_manifest"
     prepared_valid = prepared is None
     if prepared is not None:
         report = validate_prepared_campaign(canonical, prepared)
         if report.valid:
             prepared_routes = {
-                (route.from_scene_id, route.to_scene_id): route for route in prepared.routes
+                route_identity(route.from_scene_id, route.to_scene_id, route.traversal_requires): route
+                for route in prepared.routes
             }
             topology = "prepared"
             prepared_valid = True
@@ -416,7 +417,7 @@ def project_player_map(
                 continue
             if scene.scene_id not in known or link.scene_id not in known:
                 continue
-            route = prepared_routes.get((scene.scene_id, link.scene_id)) if prepared_routes else None
+            route = prepared_routes.get(route_identity(scene.scene_id, link.scene_id, link.requires)) if prepared_routes else None
             if prepared is not None:
                 if not prepared_valid or route is None:
                     continue
@@ -424,7 +425,9 @@ def project_player_map(
                     continue
                 if route.visibility == "private" and not route.reveal_requires:
                     continue
-            routes.append(PlayerMapRoute(from_scene_id=scene.scene_id, to_scene_id=link.scene_id))
+            projected = PlayerMapRoute(from_scene_id=scene.scene_id, to_scene_id=link.scene_id)
+            if projected not in routes:
+                routes.append(projected)
     current = current_scene_id if current_scene_id in known else None
     return PlayerMapProjection(
         session_id=session_id,

@@ -18,9 +18,7 @@ from pydantic import Field
 from edgar_core.artifacts import text_digest
 from edgar_core.grounding import (
     BookReferenceRequest,
-    EncounterPlan,
     HeroPartySnapshot,
-    MechanicRequirement,
     VerifiedBookSnapshot,
     validate_mechanic_requirements,
 )
@@ -39,9 +37,28 @@ from ingestion.quality import check_text
 
 from .preparation import PreparationSupervisor, PreparationTaskFailure, StageAdapter
 from .preparation_authoring import (
-    ActMechanics, ActSupport, AuthoredAct, asset_requirements, canonical_registry, compile_quotes,
-    fragment_for, grounding_payload, retained_chapter, saved_support, scene_work,
-    source_inventory, support_for, validate_support_assets, validate_authored_references,
+    ActMechanics,
+    ActSupport,
+    AuthoredAct,
+    asset_requirements,
+    canonical_registry,
+    compile_quotes,
+    fragment_for,
+    grounding_payload,
+    retained_chapter,
+    saved_support,
+    scene_work,
+    source_inventory,
+    support_for,
+    validate_authored_references,
+    validate_support_assets,
+)
+from .preparation_blueprint import (
+    AUTHOR_INSTRUCTION,
+    CampaignBlueprint,
+    blueprint_evidence,
+    compile_blueprint,
+    source_spans,
 )
 from .preparation_content import (
     CampaignDesign,
@@ -56,9 +73,6 @@ from .preparation_content import (
     validate_fragment,
 )
 from .preparation_provider import invoke_preparation, request_cost_ceiling
-from .preparation_blueprint import (
-    AUTHOR_INSTRUCTION, CampaignBlueprint, blueprint_evidence, compile_blueprint, source_spans,
-)
 
 log = structlog.get_logger(__name__)
 
@@ -126,24 +140,39 @@ def _local_usage():
 
 
 def _usage_sum(usages):
+    usages = list(usages)
     called = any(u.provider_called for u in usages)
     responses = {}
     duplicated = []
+    pending = {}
+    pending_occurrences = 0
     for usage in usages:
         for response in usage.responses:
             if response.response_id in responses:
                 duplicated.append(response)
             responses[response.response_id] = response
+        for call in usage.unresolved_calls:
+            pending_occurrences += call.call_count
+            pending[call.dispatch_id] = call
+    known_dispatches = {r.dispatch_id for r in responses.values() if r.dispatch_id}
+    pending = {key: call for key, call in pending.items()
+               if key not in known_dispatches and call.response_id not in responses}
+    pending_count = sum(call.call_count for call in pending.values())
+    legacy_unknown = any(u.provider_called and not u.usage_known and not u.unresolved_calls
+                         for u in usages)
     return ProviderUsage(
         provider_called=called,
-        usage_known=all(u.usage_known for u in usages),
-        call_count=sum(u.call_count for u in usages) - len(duplicated),
+        usage_known=not pending and not legacy_unknown,
+        call_count=sum(u.call_count for u in usages) - len(duplicated)
+                   - pending_occurrences + pending_count,
         input_tokens=sum(u.input_tokens for u in usages) - sum(r.input_tokens for r in duplicated),
         output_tokens=sum(u.output_tokens for u in usages) - sum(r.output_tokens for r in duplicated),
         cost_microusd=sum(u.cost_microusd for u in usages) - sum(r.cost_microusd for r in duplicated),
         responses=tuple(responses.values()),
+        unresolved_calls=tuple(pending.values()),
         requested_model="gpt-6.1-sol" if called else None,
         reasoning_effort="high" if called else None,
+        failure_code=usages[-1].failure_code if usages else None,
         task_version="preparation-bounded-tasks-v1",
     )
 
@@ -274,6 +303,7 @@ def _large_source_groups(binding):
     Keep _source_groups unchanged: saved legacy tasks bind those exact groups.
     """
     import tiktoken
+
     from .preparation_sources import load_source
 
     encoding = tiktoken.get_encoding("o200k_base")
@@ -488,6 +518,100 @@ def _retained(binding, deps, manifest):
     )
 
 
+async def _preflight_compact_paths(binding, task, deps, manifest, chapters, grounding):
+    """Check executable authoring before any independent paid review.
+
+    These are private local subjects, not accepted artifacts or a publication seal.
+    P10 still independently recomputes the final reviewed campaign.
+    """
+    import json
+
+    from edgar_core.coherence import (
+        DEFAULT_PATH_BUDGET,
+        PathBudget,
+        _gated_route_id,
+        explore_prepared_paths,
+        optimistic_prepared_dependency_closure,
+    )
+
+    from .preparation_blueprint import BlueprintValidationError
+    from .preparation_proposals import proposal_directory
+    from .preparation_store import _atomic_write
+
+    chapter_artifacts = tuple(_artifact(binding, task, "complete_chapter",
+        {"chapter": chapter.model_dump(mode="json")}, deps) for chapter in chapters)
+    manuscript = _retained(binding, (*deps, *chapter_artifacts), manifest)
+    subjects = tuple(_artifact(binding, task, kind, payload, deps) for kind, payload in (
+        ("canonical_manifest", {"manifest": manifest.model_dump(mode="json")}),
+        ("prepared_campaign", {"prepared": manifest.prepared.model_dump(mode="json")}),
+        ("retained_manuscript", {"manuscript": manuscript.model_dump(mode="json")}),
+    ))
+    closure = await asyncio.to_thread(optimistic_prepared_dependency_closure,
+        binding, subjects[0], subjects[1], grounding_artifacts=(*deps, *grounding))
+    _atomic_write(proposal_directory(binding, task) / "local-blueprint-dependency-closure.json",
+        {"manifest_sha256": manifest.reviewed_sha256, "report": closure.model_dump(mode="json")})
+    if closure.definitely_impossible:
+        problems = []
+        for policy_id in closure.impossible_policy_ids:
+            if policy_id.startswith("lt_"):
+                path = f"/transitions/{policy_id.removeprefix('lt_')}"
+            else:
+                _, decision, approach = policy_id.split("_", 2)
+                path = f"/decisions/{decision}/approaches/{approach}"
+            problems.append(f"{path}: policy {policy_id} cannot satisfy its accessible setup and earned prerequisites even under optimistic dependency closure; repair missing or circular producers")
+        for outcome_id in closure.impossible_outcome_ids:
+            _, decision, approach, result = outcome_id.split("_", 3)
+            problems.append(f"/decisions/{decision}/approaches/{approach}/{result}: outcome {outcome_id} has impossible causal prerequisites")
+        for scene in manifest.scenes:
+            for link in scene.links:
+                if _gated_route_id(scene.scene_id, link.scene_id, link.requires) in closure.impossible_gated_route_ids:
+                    problems.append(f"/scenes: route {scene.scene_id} to {link.scene_id} has unproducible or circular AND prerequisites {link.requires}")
+        for field, label in (("impossible_required_objective_ids", "required objectives"),
+                             ("impossible_required_milestone_ids", "required milestones"),
+                             ("impossible_ending_ids", "endings")):
+            if missing := getattr(closure, field):
+                problems.append(f"/transitions: {label} {list(missing)} have no possible earned completion producer from the opening")
+        raise BlueprintValidationError(problems)
+    progress_path = proposal_directory(binding, task) / "local-blueprint-path-progress.json"
+    budget = DEFAULT_PATH_BUDGET
+    if progress_path.exists():
+        previous = json.loads(progress_path.read_text())
+        if previous.get("manifest_sha256") == manifest.reviewed_sha256:
+            budget = PathBudget.model_validate(previous["next_budget"])
+    while True:
+        report = await asyncio.to_thread(explore_prepared_paths, binding, *subjects,
+            grounding_artifacts=(*deps, *grounding), budget=budget)
+        next_budget = budget.model_copy(update={"max_states": budget.max_states * 2,
+                                               "max_depth": budget.max_depth * 2}) if report.exhausted else budget
+        _atomic_write(progress_path, {"manifest_sha256": manifest.reviewed_sha256,
+            "next_budget": next_budget.model_dump(mode="json"),
+            "last_report": report.model_dump(mode="json")})
+        if not report.exhausted:
+            break
+        budget = next_budget
+        log.info("preparation_blueprint_path_search_continuing", run_id=binding.run_id,
+                 explored_states=report.explored_states, next_states=budget.max_states)
+    problems = []
+    for policy_id in report.unreachable_automatic_policy_ids:
+        index = policy_id.removeprefix("lt_")
+        problems.append(f"/transitions/{index}: action {policy_id} has no executable path from the opening; correct its accessible setup and earned prerequisites")
+    for outcome_id in report.unreachable_outcome_ids:
+        _, decision, approach, result = outcome_id.split("_", 3)
+        problems.append(f"/decisions/{decision}/approaches/{approach}/{result}: outcome {outcome_id} has no runtime-compatible path from the opening")
+    routes = {row.scene_id: row for row in manifest.scenes}
+    for source, scene in routes.items():
+        for link in scene.links:
+            if _gated_route_id(source, link.scene_id, link.requires) in report.unreachable_gated_route_ids:
+                problems.append(f"/scenes: gated route {source} to {link.scene_id} with AND prerequisites {link.requires} has no causal traversal witness; correct its earned producer or real source-backed route")
+    missing_endings = sorted(set(report.expected_ending_ids) - set(report.reached_ending_ids))
+    if missing_endings:
+        problems.append(f"/facts: endings {missing_endings} have no executable earned path")
+    if report.completion_witness is None:
+        problems.append(f"/transitions: no single success path completes every required objective {report.required_objective_ids} and milestone {report.required_milestone_ids} and reaches a terminal ending; fix the actual causal advancement without removing mandatory source achievements")
+    if problems:
+        raise BlueprintValidationError(problems)
+
+
 async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_client):
     from .preparation_proposals import latest_rejection, reject_proposal, save_proposal
 
@@ -547,8 +671,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             if usage:
                 accumulated.append(usage)
             cause = exc.__cause__
-            if (exc.code == "provider_output_invalid" and usage and usage.usage_known
-                    and (_compact(binding) or correction < 2)):
+            if exc.code == "provider_output_invalid" and usage and usage.usage_known:
                 continue  # Provider retained the raw answer and schema diagnostics.
             correctable = (exc.code == "stage_evidence_invalid" and last is not None
                            and isinstance(cause, ValueError) and usage is not None
@@ -564,8 +687,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
                 log.warning("preparation_proposal_rejected", stage=stage.value,
                             task_id=task.task_id, error_type=type(cause).__name__,
                             correction=correction)
-                if _compact(binding) or correction < 2:
-                    continue
+                continue
             total = _usage_sum(accumulated) if accumulated else usage
             if correctable and total:
                 total = total.model_copy(update={"failure_code": "stage_evidence_invalid"})
@@ -573,6 +695,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
 
 
 async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, book_client):
+    from .preparation_grounding import GroundingUnavailable
     usages = []
 
     async def propose(schema, instruction, evidence, *, suffix="", call_limit=None, images=()):
@@ -736,12 +859,42 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
         elif stage == PreparationStage.P04 and _compact(binding):
             design = design_from(deps)
             evidence = blueprint_evidence(binding, design, source_spans(extraction_for_design(binding, design)))
+            from .preparation_grounding import preflight_creature_sources
+            from .preparation_proposals import latest_rejection
+            from .preparation_store import preparation_path
+
+            # Optional local source diagnosis supplements the paid study without
+            # rebinding it. It is advisory context; actual sources/receipts are
+            # independently revalidated below and again before publication.
+            source_review_path = preparation_path(binding.source_slug, binding.run_id).with_name("local-preflight-evidence.json")
+            if source_review_path.exists():
+                import json
+
+                local_review = json.loads(source_review_path.read_text())
+                if (local_review.get("binding_sha256") != binding.binding_sha256
+                        or local_review.get("source_sha256") != binding.source_sha256
+                        or local_review.get("extraction_sha256") != binding.extraction_sha256):
+                    raise PreparationTaskFailure("source_snapshot_stale", _local_usage())
+                evidence["local_source_review"] = local_review["evidence"]
+
+            retained = latest_rejection(binding, task, CampaignBlueprint, key)
+            if retained:
+                previous = retained["proposal"]
+                fact_by_key = {f["key"]: f for f in previous.get("facts", [])}
+                names = [r["creature_name"] for scene in previous.get("scenes", [])
+                    for encounter in scene.get("encounters", []) for r in encounter["creatures"]
+                    if not fact_by_key.get(r.get("actor_id"), {}).get("stat_sources")]
+                names += [fact["creature"] for fact in previous.get("facts", []) if fact.get("creature")]
+                catalog = preflight_creature_sources(names, _books(deps), client=book_client)
+                evidence["creature_catalog"] = catalog["available"]
+                if catalog["findings"]:
+                    raise GroundingUnavailable("creature_unresolved", str(catalog["findings"]))
             # A review repair changes dependencies, so carry the exact paid semantic
             # proposal into this task's cache explicitly instead of regenerating it.
             repairs = [a.payload for a in deps if a.artifact_kind == "repair_context"
                        and a.payload.get("retained_blueprint")]
             if repairs:
-                from .preparation_proposals import latest_rejection, save_proposal, reject_proposal
+                from .preparation_proposals import latest_rejection, reject_proposal, save_proposal
 
                 cache_key = key + f":attempt:{attempt}:correction:0"
                 if latest_rejection(binding, task, CampaignBlueprint, cache_key) is None:
@@ -750,23 +903,46 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                     record = save_proposal(binding, task, CampaignBlueprint, retained["blueprint"], usage, cache_key)
                     reject_proposal(*record, ValueError(str(repairs[-1]["findings"])))
             blueprint = await propose(CampaignBlueprint, AUTHOR_INSTRUCTION, evidence)
-            compiled, _ = compile_blueprint(binding, design, blueprint, books=_books(deps))
+            from .preparation_blueprint import BlueprintValidationError
+            try:
+                compiled, actor_manifest = compile_blueprint(binding, design, blueprint, books=_books(deps))
+            except BlueprintValidationError:
+                raise  # Authored semantic defects are correctable from retained fields.
+            except ValueError as exc:
+                # A compiler/representation failure is a local code diagnostic,
+                # never an instruction to pay for another campaign rewrite.
+                raise PreparationTaskFailure("preparation_compile_invalid", _usage_sum(usages)) from exc
             artifacts = [_artifact(binding, task, "compact_blueprint", {
                 "blueprint": blueprint.model_dump(mode="json"),
                 "usage": _usage_sum(usages).model_dump(mode="json"),
                 "compiler": "compact_v1", "source_sha256": binding.source_sha256,
                 "extraction_sha256": binding.extraction_sha256}, deps)]
+            local_errors, source_errors, chapters, grounding = [], [], [], []
             for fragment, support in compiled:
                 act_task = task.model_copy(update={"scope_keys": (fragment.act_id,)})
-                grounding_payload(binding, _act(deps, fragment.act_id), support,
-                                  _books(deps), _party(binding), client=book_client)
-                validate_support_assets(binding, design, fragment, support, deps)
-                retained_chapter(binding, design, fragment, support)
+                try:
+                    payload = grounding_payload(binding, _act(deps, fragment.act_id), support,
+                        _books(deps), _party(binding), client=book_client, actor_manifest=actor_manifest)
+                    grounding.append(_artifact(binding, act_task, "act_grounding", payload, deps))
+                except GroundingUnavailable as exc:
+                    source_errors.append(f"{fragment.act_id}: {exc.code}: {exc}")
+                except ValueError as exc:
+                    local_errors.append(f"Act {fragment.act_id}: {exc}")
+                try:
+                    validate_support_assets(binding, design, fragment, support, deps)
+                    chapters.append(retained_chapter(binding, design, fragment, support))
+                except ValueError as exc:
+                    local_errors.append(f"Act {fragment.act_id}: {exc}")
                 artifacts.extend((_artifact(binding, act_task, "canonical_act", {
                     "fragment": fragment.model_dump(mode="json")}, deps),
                     _artifact(binding, act_task, "act_authoring", {
                         "support": support.model_dump(mode="json")}, deps)))
+            if source_errors:
+                raise GroundingUnavailable("creature_unresolved", "\n".join(source_errors + local_errors))
+            if local_errors:
+                raise BlueprintValidationError(local_errors)
             assemble_manifest(binding, (*deps, *artifacts))
+            await _preflight_compact_paths(binding, task, deps, actor_manifest, chapters, grounding)
             return StageExecutionResult(proposed_artifacts=tuple(artifacts), usage=_usage_sum(usages))
         elif stage == PreparationStage.P04:
             design, act = design_from(deps), _act(deps, task.scope_keys[0])
@@ -887,8 +1063,10 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                 validate_support_assets(binding, design_from(deps), fragment_for(deps, act.act_id),
                                         support, deps)
                 payloads.append(("act_authoring", {"support": support.model_dump(mode="json")}))
+            actor_manifest, _ = assemble_manifest(binding, deps)
             payloads.append(("act_grounding", grounding_payload(
-                binding, act, support, _books(deps), _party(binding), client=book_client)))
+                binding, act, support, _books(deps), _party(binding), client=book_client,
+                actor_manifest=actor_manifest)))
         elif stage == PreparationStage.P06:
             act = _act(deps, task.scope_keys[0])
             scenes = scene_work(fragment_for(deps, act.act_id), support_for(deps, act.act_id))
@@ -897,7 +1075,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                 raise ValueError("Runnable scene coverage invalid.")
             payloads = [("runnable_scenes", {"scenes": scenes.model_dump(mode="json")})]
         elif stage == PreparationStage.P07:
-            from edgar_core.assets import AssetRequirement, plan_assets
+            from edgar_core.assets import plan_assets
 
             manifest, _ = assemble_manifest(binding, deps)
             requirements = asset_requirements(deps, manifest)
@@ -950,6 +1128,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
             return await _review_campaign(binding, task, deps, key, propose)
         elif stage == PreparationStage.P10:
             from edgar_core.coherence import DEFAULT_PATH_BUDGET, build_path_exploration_artifact
+
             from .preparation_proposals import proposal_directory
             from .preparation_store import _atomic_write
 
@@ -957,6 +1136,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
             progress_path = proposal_directory(binding, task) / "local-path-progress.json"
             if progress_path.exists():
                 import json
+
                 from edgar_core.coherence import PathBudget
 
                 budget = PathBudget.model_validate(json.loads(progress_path.read_text())["next_budget"])
@@ -1054,7 +1234,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
         raise
     except Exception as exc:
         code = getattr(exc, "code", "stage_evidence_invalid")
-        if code not in {
+        if not isinstance(exc, GroundingUnavailable) and code not in {
             "unsupported_edition",
             "unsupported_party",
             "unsupported_progression",
@@ -1390,7 +1570,7 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
         elif stage == PreparationStage.P04 and _compact(binding):
             blueprint_a = _one(proposed, "compact_blueprint")
             blueprint = CampaignBlueprint.model_validate(blueprint_a.payload["blueprint"])
-            compiled, _ = compile_blueprint(binding, design_from(deps), blueprint, books=_books(deps))
+            compiled, actor_manifest = compile_blueprint(binding, design_from(deps), blueprint, books=_books(deps))
             fragments = [a for a in proposed if a.artifact_kind == "canonical_act"]
             if len(fragments) != len(compiled):
                 raise ValueError("Compact compilation omitted an act.")
@@ -1401,7 +1581,8 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
                 if saved_support(proposed, fragment.act_id) != support:
                     raise ValueError("Compact act support changed after compilation.")
                 grounding_payload(binding, _act(deps, fragment.act_id), support,
-                                  _books(deps), _party(binding), client=book_client)
+                                  _books(deps), _party(binding), client=book_client,
+                                  actor_manifest=actor_manifest)
                 validate_support_assets(binding, design_from(deps), fragment, support, deps)
                 retained_chapter(binding, design_from(deps), fragment, support)
             assemble_manifest(binding, (*deps, *proposed))
@@ -1429,7 +1610,6 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
         elif stage == PreparationStage.P05:
             from agent.supported_rules import SUPPORTED_MECHANICS
 
-            from .preparation_grounding import ground_prepared_encounters
 
             payload = _one(proposed, "act_grounding").payload
             support = saved_support((*deps, *proposed), task.scope_keys[0])
@@ -1447,20 +1627,11 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
                 or any(e.scene_id not in act.scene_ids for e in plan.encounters)
             ):
                 raise ValueError("Grounding act or capabilities changed.")
-            receipts = (
-                ground_prepared_encounters(
-                    plan.encounters, _party(binding), _books(deps), client=book_client
-                )
-                if plan.encounters
-                else []
-            )
-            if (
-                any(r.findings or r.unsupported_mechanics for r in receipts)
-                or payload["encounters"] != [r.model_dump(mode="json") for r in receipts]
-                or payload["supported_mechanics"] != [m.model_dump(mode="json") for m in supported]
-                or payload["book_snapshot_sha256"] != _books(deps).snapshot_sha256
-                or payload["hero_party_sha256"] != _party(binding).party_sha256
-            ):
+            actor_manifest, _ = assemble_manifest(binding, deps)
+            expected = grounding_payload(binding, act, support or ActSupport(mechanics=plan,
+                dm_notes="Revalidate the retained exact encounter mechanics and source identities."),
+                _books(deps), _party(binding), client=book_client, actor_manifest=actor_manifest)
+            if payload != expected:
                 raise ValueError("Grounding receipt differs from exact tools.")
         elif stage == PreparationStage.P06:
             scenes = ScenePreparation.model_validate(

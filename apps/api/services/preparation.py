@@ -36,6 +36,7 @@ from edgar_core.preparation import (
     SafePreparationFailure,
     StageExecutionResult,
     StagePlan,
+    UnresolvedProviderCall,
     ValidationReceipt,
     ValidationResult,
     assert_artifact_integrity,
@@ -141,6 +142,13 @@ _CONFIG_RETRY_CODES = {
     "publication_callback_missing",
     "publication_failed",
 }
+_AUTOMATIC_RETRY_CODES = {"provider_unavailable", "rate_limited", "provider_rate_limited"}
+
+
+def automatically_retryable_preparation_task(task: PreparationTaskState) -> bool:
+    """Only a confirmed transient failure may loop without an external change."""
+    return (task.status == PreparationTaskStatus.FAILED
+            and task.last_safe_error_code in _AUTOMATIC_RETRY_CODES)
 
 
 def _now() -> datetime:
@@ -280,7 +288,7 @@ class PreparationSupervisor:
                     if item["status"] in ("leased", "running"):
                         task = item["task"]
                         called = task["requires_provider"]
-                        payload["usage_attempts"].append(ProviderUsage(
+                        usage = ProviderUsage(
                             provider_called=called,
                             usage_known=False,
                             call_count=max(item["reserved_provider_calls"], 1) if called else 0,
@@ -288,15 +296,19 @@ class PreparationSupervisor:
                                 f"{task['stage']}.{task['task_kind']}.attempt-{item['attempt_count']}"
                             ),
                             failure_code="cancelled",
+                        )
+                        payload["usage_attempts"].append(_with_unresolved_estimates(
+                            usage, item["reserved_provider_calls"], item["reserved_tokens"],
+                            item["reserved_cost_microusd"],
+                            canonical_sha256({"run": run_id, "task": task["task_id"],
+                                              "attempt": item["attempt_count"]}),
                         ).model_dump(mode="json"))
                     item["status"] = "cancelled"
                     item["lease_owner"] = None
                     item["lease_expires_at"] = None
                     item["lease_fence"] += 1
-            # Any outstanding reservation is uncertain and is conservatively charged.
-            payload["provider_calls_spent"] += payload["provider_calls_reserved"]
-            payload["tokens_spent"] += payload["tokens_reserved"]
-            payload["cost_microusd_spent"] += payload["cost_microusd_reserved"]
+            # Cancellation does not establish inference usage or a charge.
+            _refresh_unresolved_usage(payload)
             payload["provider_calls_reserved"] = 0
             payload["tokens_reserved"] = 0
             payload["cost_microusd_reserved"] = 0
@@ -315,10 +327,6 @@ class PreparationSupervisor:
             changed = False
             for item in payload["tasks"].values():
                 if item["status"] in ("failed", "blocked"):
-                    item["retry_attempt_limit"] = max(
-                        item.get("retry_attempt_limit", 0),
-                        item["attempt_count"] + payload["binding"]["budget"]["max_attempts_per_task"],
-                    )
                     item["status"] = "pending"
                     item["last_safe_error_code"] = None
                     item["lease_owner"] = None
@@ -338,16 +346,14 @@ class PreparationSupervisor:
     ) -> PreparationRunState:
         """Resume retryable provider failures without losing their durable attempt record."""
         retryable = [task for task in state.tasks.values()
-                     if task.status == PreparationTaskStatus.FAILED
-                     and task.attempt_count < task.attempt_limit(state.binding)]
+                     if automatically_retryable_preparation_task(task)]
         if not retryable:
             return state
 
         def update(payload: dict[str, Any]) -> None:
             for task in payload["tasks"].values():
                 if (task["status"] == "failed"
-                        and task["attempt_count"] < max(task.get("retry_attempt_limit", 0),
-                            payload["binding"]["budget"]["max_attempts_per_task"])):
+                        and task.get("last_safe_error_code") in _AUTOMATIC_RETRY_CODES):
                     task["status"] = "pending"
             payload["status"] = "preparing"
             payload["last_safe_error_code"] = None
@@ -592,12 +598,9 @@ class PreparationSupervisor:
                 payload["provider_calls_reserved"] -= calls
                 payload["tokens_reserved"] -= tokens
                 payload["cost_microusd_reserved"] -= cost
-                payload["provider_calls_spent"] += calls
-                payload["tokens_spent"] += tokens
-                payload["cost_microusd_spent"] += cost
                 task_spec = task["task"]
                 called = task_spec["requires_provider"]
-                payload["usage_attempts"].append(ProviderUsage(
+                usage = ProviderUsage(
                     provider_called=called,
                     usage_known=False,
                     call_count=max(calls, 1) if called else 0,
@@ -605,12 +608,18 @@ class PreparationSupervisor:
                         f"{task_spec['stage']}.{task_spec['task_kind']}.attempt-{task['attempt_count']}"
                     ),
                     failure_code="lease_expired",
+                )
+                payload["usage_attempts"].append(_with_unresolved_estimates(
+                    usage, calls, tokens, cost,
+                    canonical_sha256({"run": run_id, "task": task_spec["task_id"],
+                                      "attempt": task["attempt_count"]}),
                 ).model_dump(mode="json"))
                 task.update(status="pending", lease_owner=None, lease_expires_at=None,
                             reserved_provider_calls=0, reserved_tokens=0,
                             reserved_cost_microusd=0, last_safe_error_code="lease_expired",
                             lease_fence=task["lease_fence"] + 1)
             payload["status"] = "preparing"
+            _refresh_unresolved_usage(payload)
         return self.store.mutate_run(slug, run_id, update=recover)
 
     async def _execute_task(
@@ -618,8 +627,9 @@ class PreparationSupervisor:
         state: PreparationRunState, task_state: PreparationTaskState,
     ) -> PreparationStep:
         task = task_state.task
-        if task_state.attempt_count >= task_state.attempt_limit(state.binding):
-            return PreparationStep(self._block_task(slug, run_id, task, "attempt_budget_exhausted"))
+        if task_state.attempt_count and task_state.last_safe_error_code in _AUTOMATIC_RETRY_CODES:
+            # Backoff controls retry pacing, never the number of attempts.
+            await asyncio.sleep(min(30.0, 2.0 ** min(task_state.attempt_count, 5)))
         self._check_live(state, source_guard)
         reserved_calls = task.max_provider_calls if task.requires_provider else 0
         reserved_tokens = task.max_input_tokens + task.max_output_tokens if task.requires_provider else 0
@@ -858,6 +868,7 @@ class PreparationSupervisor:
             payload["tokens_spent"] += spent_tokens
             payload["cost_microusd_spent"] += spent_cost
             payload["usage_attempts"].append(usage.model_dump(mode="json"))
+            _refresh_unresolved_usage(payload)
             saved.update(status="accepted", lease_owner=None, lease_expires_at=None,
                          reserved_provider_calls=0, reserved_tokens=0,
                          reserved_cost_microusd=0, accepted_artifact_ids=[a.artifact_id for a in result.proposed_artifacts],
@@ -891,7 +902,8 @@ class PreparationSupervisor:
         unknown_provider_outcome = task.requires_provider and (
             usage is None or (usage.provider_called and not usage.usage_known)
         )
-        retryable = not unknown_provider_outcome and (usage is None or usage.failure_code is not None)
+        retryable = (not unknown_provider_outcome and usage is not None
+                     and usage.provider_called and code in _AUTOMATIC_RETRY_CODES)
         error_ref = _new_support_ref()
         log.warning(
             "preparation_task_failed",
@@ -916,6 +928,11 @@ class PreparationSupervisor:
             )
             if usage is not None and usage.failure_code is None:
                 attempt_usage = usage.model_copy(update={"failure_code": code})
+            attempt_usage = _with_unresolved_estimates(
+                attempt_usage, calls, tokens, cost,
+                canonical_sha256({"run": run_id, "task": task.task_id,
+                                  "attempt": saved["attempt_count"]}),
+            )
             used_calls, used_tokens, used_cost = _charged(
                 attempt_usage, calls, tokens, cost, payload["usage_attempts"])
             payload["provider_calls_reserved"] -= calls
@@ -925,13 +942,12 @@ class PreparationSupervisor:
             payload["tokens_spent"] += used_tokens
             payload["cost_microusd_spent"] += used_cost
             payload["usage_attempts"].append(attempt_usage.model_dump(mode="json"))
+            _refresh_unresolved_usage(payload)
             current_findings = {finding["finding_id"]: finding for finding in payload["findings"]}
             for finding in findings:
                 current_findings[finding.finding_id] = finding.model_dump(mode="json")
             payload["findings"] = list(current_findings.values())
-            exhausted = saved["attempt_count"] >= max(saved.get("retry_attempt_limit", 0),
-                payload["binding"]["budget"]["max_attempts_per_task"])
-            saved.update(status="failed" if retryable and not exhausted else "blocked",
+            saved.update(status="failed" if retryable else "blocked",
                          lease_owner=None, lease_expires_at=None, reserved_provider_calls=0,
                          reserved_tokens=0, reserved_cost_microusd=0,
                          last_safe_error_code=code, updated_at=now)
@@ -1072,14 +1088,53 @@ def _assert_fence(task_state: dict[str, Any], owner: str, fence: int) -> None:
 
 def _charged(usage: ProviderUsage | None, calls: int, tokens: int, cost: int,
              previous=()) -> tuple[int, int, int]:
-    if usage is None or (usage.provider_called and not usage.usage_known):
-        return calls, tokens, cost
+    """Count known usage once; reservations and unknown estimates never become spent."""
+    if usage is None:
+        return 0, 0, 0
     seen = {r["response_id"] for item in previous for r in item.get("responses", [])}
     repeated = [r for r in usage.responses if r.response_id in seen]
-    return (usage.call_count - len(repeated),
-            usage.input_tokens + usage.output_tokens
-            - sum(r.input_tokens + r.output_tokens for r in repeated),
-            usage.cost_microusd - sum(r.cost_microusd for r in repeated))
+    if usage.usage_known:
+        known_calls = usage.call_count
+    elif usage.unresolved_calls:
+        known_calls = usage.call_count - sum(call.call_count for call in usage.unresolved_calls)
+    else:
+        # Legacy aggregates retain known responses despite an unknown later request.
+        known_calls = len(usage.responses)
+    return (max(0, known_calls - len(repeated)),
+            max(0, usage.input_tokens + usage.output_tokens
+                - sum(r.input_tokens + r.output_tokens for r in repeated)),
+            max(0, usage.cost_microusd - sum(r.cost_microusd for r in repeated)))
+
+
+def _with_unresolved_estimates(usage, calls, tokens, cost, dispatch_id):
+    if not usage.provider_called or usage.usage_known or usage.unresolved_calls:
+        return usage
+    return usage.model_copy(update={"unresolved_calls": (UnresolvedProviderCall(
+        dispatch_id=dispatch_id, call_count=max(1, usage.call_count - len(usage.responses)),
+        estimated_tokens=tokens, estimated_cost_microusd=cost,
+    ),)})
+
+
+def _refresh_unresolved_usage(payload):
+    """Project unique pending calls; a later exact receipt resolves its old estimate."""
+    responses = {r["response_id"]: r for item in payload["usage_attempts"]
+                 for r in item.get("responses", [])}
+    dispatches = {r.get("dispatch_id") for r in responses.values() if r.get("dispatch_id")}
+    pending = {}
+    for index, usage in enumerate(payload["usage_attempts"]):
+        for call in usage.get("unresolved_calls", []):
+            if call["dispatch_id"] not in dispatches and call.get("response_id") not in responses:
+                pending[call["dispatch_id"]] = call
+        if usage["provider_called"] and not usage["usage_known"] and not usage.get("unresolved_calls"):
+            # Legacy unknown outcomes have no trustworthy per-call estimate. Keep
+            # that uncertainty visible until receipt reconciliation supplies it.
+            pending[f"legacy-{index}"] = {"call_count": max(1, usage["call_count"] - len(usage.get("responses", [])))}
+    payload["provider_calls_unresolved"] = sum(call["call_count"] for call in pending.values())
+    payload["tokens_unresolved_estimate"] = sum(call.get("estimated_tokens", 0) for call in pending.values())
+    payload["cost_microusd_unresolved_estimate"] = sum(call.get("estimated_cost_microusd", 0) for call in pending.values())
+    payload["unresolved_estimates_complete"] = all(
+        "estimated_tokens" in call and "estimated_cost_microusd" in call for call in pending.values()
+    )
 
 
 async def _call(function: Callable[..., Any], *args: Any) -> Any:

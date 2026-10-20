@@ -78,9 +78,10 @@ class CanonicalAct(ContentRecord):
     act: PreparedAct
     quests: list[PreparedQuest] = Field(min_length=1, max_length=20)
     scene_packets: list[PreparedScenePacket] = Field(min_length=1, max_length=12)
-    routes: list[PreparedRoute] = Field(default_factory=list, max_length=30)
-    branches: list[PreparedBranch] = Field(min_length=2, max_length=50)
-    outcomes: list[PreparedOutcome] = Field(min_length=4, max_length=100)
+    # Route topology comes from the source, not a fixed authoring batch size.
+    routes: list[PreparedRoute] = Field(default_factory=list)
+    branches: list[PreparedBranch] = Field(default_factory=list, max_length=50)
+    outcomes: list[PreparedOutcome] = Field(default_factory=list, max_length=100)
     extensions: list[PreparedExtension] = Field(default_factory=list, max_length=40)
 
 

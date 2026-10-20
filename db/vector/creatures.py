@@ -16,7 +16,8 @@ from edgar_core.artifacts import text_digest
 _AC = re.compile(r"\bArmor Class\W{0,6}\d", re.IGNORECASE)
 _HP = re.compile(r"\bHit Points\W{0,6}\d", re.IGNORECASE)
 _STAT_START = re.compile(
-    r"^(?:tiny|small|medium|large|huge|gargantuan)\b|^armor class\b", re.IGNORECASE
+    r"^(?:[•·*-]\s*)?(?:(?:tiny|small|medium|large|huge|gargantuan)\b|armor class\b)",
+    re.IGNORECASE,
 )
 
 
@@ -92,6 +93,8 @@ def resolve_creature(
     adventure_manifests: dict[str, dict] | None = None,
     current_scene_id: str | None = None,
     world_flags: dict[str, str] | None = None,
+    collections: list[str] | None = None,
+    source_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Resolve a creature or a reviewed active-scene actor, with an explicit failure.
 
@@ -121,7 +124,7 @@ def resolve_creature(
         unresolved("multiple reviewed actors have this name")
     actor_identity = {}
     lair_context = {}
-    lookup = {}
+    lookup = {"collections": collections, "source_sha256": source_sha256}
     creature_name = name
     if actors:
         collection, manifest, actor = actors[0]
@@ -131,6 +134,11 @@ def resolve_creature(
         if manifest.rules_edition != rules_edition or actor.stat_reference is None:
             unresolved("the actor has no matching edition and explicit statistics reference")
         reference = actor.stat_reference
+        if reference.kind == "template" and (
+            (collections is not None and reference.collection not in collections)
+            or (source_sha256 is not None and reference.source_sha256 != source_sha256)
+        ):
+            unresolved("the actor template conflicts with the caller's frozen source binding")
         creature_name = reference.creature_name
         actor_identity = {
             "actor_id": actor.entity_id,
@@ -190,6 +198,15 @@ def resolve_creature(
             )
             if not record:
                 unresolved("the reviewed module passage is not one complete named stat record")
+            from db.vector.creature_sources import reviewed_module_parsing_text
+
+            parsing_text, corrections = reviewed_module_parsing_text(record["text"],
+                name=creature_name, source_sha256=manifest.source_sha256,
+                rules_edition=rules_edition, page=record["page"])
+            if corrections:
+                record.update({"parsing_text": parsing_text, "source_corrections": corrections,
+                               "parsing_text_sha256": text_digest(parsing_text)})
+            record["evidence_origin"] = "prepared_module"
             return {**record, **actor_identity, **lair_context}
         lookup = {
             "collections": [reference.collection],
@@ -202,8 +219,26 @@ def resolve_creature(
         limit=2,
         **lookup,
     )
+    # Reviewed source recovery is exact and shared by preparation and runtime. It
+    # never treats a prose mention, similarly named monster or matching HP as identity.
+    # The helper also recognizes the verified MM's truncated two-column Flameskull.
+    from db.vector.creature_sources import recover_creature_source
+
+    recovered = recover_creature_source(
+        creature_name,
+        client=client,
+        rules_edition=rules_edition,
+        candidates=records,
+        **lookup,
+    )
+    if recovered is not None:
+        records = [recovered]
     if len(records) != 1:
-        unresolved("no unique exact complete source record is available")
+        details = (
+            f"{len(records)} distinct complete records match the exact name"
+            if records else "no complete record matches the exact name in the active source"
+        )
+        unresolved(details)
     if not all(
         isinstance(records[0].get(field), str)
         and re.fullmatch(r"[0-9a-f]{64}", records[0][field])
