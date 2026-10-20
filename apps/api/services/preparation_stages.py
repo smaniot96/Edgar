@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Literal
 
+import structlog
 from pydantic import Field
 
 from edgar_core.artifacts import text_digest
@@ -49,6 +50,8 @@ from .preparation_content import (
     validate_fragment,
 )
 from .preparation_provider import invoke_preparation, request_cost_ceiling
+
+log = structlog.get_logger(__name__)
 
 
 class BookSelection(ContentRecord):
@@ -450,6 +453,65 @@ def _retained(binding, deps, manifest):
 
 
 async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_client):
+    from .preparation_proposals import latest_rejection, reject_proposal, save_proposal
+
+    accumulated = []
+    for correction in range(3):
+        last = None
+
+        async def retained(bound, planned, schema, *, _correction=correction, **kwargs):
+            nonlocal last
+            from .preparation import assert_current_preparation_worker
+
+            assert_current_preparation_worker()
+            feedback = latest_rejection(binding, task, schema)
+            if feedback:
+                kwargs["evidence"] = {
+                    **kwargs["evidence"],
+                    "previous_rejected_proposal": feedback["proposal"],
+                    "code_validation_feedback": feedback["diagnostics"],
+                }
+                kwargs["instruction"] += (
+                    " Correct the supplied previous proposal using code_validation_feedback. "
+                    "Keep valid content and exact source identities. Return the complete corrected proposal."
+                )
+            # A fresh correction is a distinct request, while duplicate dispatch of the
+            # same durable attempt retains its key.
+            kwargs["idempotency_key"] += f":attempt:{attempt}:correction:{_correction}"
+            result, usage = await provider(bound, planned, schema, **kwargs)
+            assert_current_preparation_worker()
+            last = save_proposal(binding, task, schema, result, usage, kwargs["idempotency_key"])
+            return result, usage
+
+        try:
+            result = await _execute_once(stage, binding, task, deps, attempt, key,
+                                         provider=retained, book_client=book_client)
+            if isinstance(result, StageExecutionResult):
+                return result.model_copy(update={"usage": _usage_sum([*accumulated, result.usage])})
+            return result  # P09 accounts each subcall in its factory wrapper.
+        except PreparationTaskFailure as exc:
+            usage = exc.usage
+            if usage:
+                accumulated.append(usage)
+            cause = exc.__cause__
+            correctable = (exc.code == "stage_evidence_invalid" and last is not None
+                           and isinstance(cause, ValueError) and usage is not None
+                           and usage.provider_called and usage.usage_known)
+            if correctable:
+                reject_proposal(*last, cause)
+                log.warning("preparation_proposal_rejected", stage=stage.value,
+                            task_id=task.task_id, error_type=type(cause).__name__,
+                            correction=correction)
+                if correction < 2:
+                    continue
+            total = _usage_sum(accumulated) if accumulated else usage
+            if correctable and total:
+                total = total.model_copy(update={"failure_code": "stage_evidence_invalid"})
+            raise PreparationTaskFailure(exc.code, total, exc.findings) from exc
+    raise AssertionError("Correction loop must return or raise.")
+
+
+async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, book_client):
     usages = []
 
     async def propose(schema, instruction, evidence, *, suffix="", call_limit=None, images=()):
@@ -564,14 +626,23 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             evidence = {
                 **base,
                 "verified_guidance": _guidance(deps),
-                "source_studies": [a.payload for a in deps if a.artifact_kind == "source_study"],
+                "source_studies": sorted(
+                    [a.payload for a in deps if a.artifact_kind == "source_study"],
+                    key=lambda payload: payload["study"]["page_numbers"][0],
+                ),
+                "required_source_pages": sorted({
+                    page for a in deps if a.artifact_kind == "source_study"
+                    for page in a.payload["study"]["page_numbers"]
+                }),
             }
             design = await propose(
                 CampaignDesign,
                 "Design the ENTIRE commissioned campaign now, every act with distinct dramatic function, discoveries, "
                 "decisions and durable consequences. Duration is independent of actual starting level. Stable globally unique "
                 "act/scene/objective IDs; advance_ids must later name real canonical records. Avoid repeated climaxes. "
-                "PDF: assign EVERY studied nonblank physical page exactly once to an act. AI: seed_text is the exact "
+                "PDF: assign every required_source_pages entry exactly once across all acts, including front matter, "
+                "maps, appendices and credits. Do not use printed page labels in place of physical page numbers. "
+                "opening_scene_id must be one of the FIRST act scene_ids. AI: seed_text is the exact "
                 "source anchor for that act and must include the observable opening, exact clues and private truth. "
                 "The final manuscript expands these stable seeds. Preserve all source commitments and supported abilities.",
                 evidence,

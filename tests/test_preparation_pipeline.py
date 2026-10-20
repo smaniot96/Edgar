@@ -751,3 +751,47 @@ async def test_joined_commissioned_images_use_frozen_budget_and_real_asset_path(
                                prepared_sha256=receipt["prepared_sha256"], run_id=binding.run_id)
     assert usage["reserved"] == 1 and usage["reserved_cost_microusd"] == 100_000
     assert state.cost_microusd_spent + usage["reserved_cost_microusd"] <= commission["max_cost_microusd"]
+
+
+@pytest.mark.asyncio
+async def test_design_rejection_is_retained_and_corrected_without_repeating_studies(
+    tmp_path, monkeypatch, source_index,  # noqa: F811
+):
+    import json
+
+    client, _ = source_index
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    author = OfflineAuthor()
+    design_calls = []
+    all_calls = []
+
+    async def reject_once(binding, task, schema, **kwargs):
+        all_calls.append(task.task_id)
+        result, usage = await author(binding, task, schema, **kwargs)
+        if schema is CampaignDesign:
+            design_calls.append(kwargs)
+            if len(design_calls) == 1:
+                result = result.model_copy(update={"opening_scene_id": "unplanned_opening"})
+            else:
+                assert kwargs["evidence"]["previous_rejected_proposal"]["opening_scene_id"] == "unplanned_opening"
+                assert "opening" in kwargs["evidence"]["code_validation_feedback"][0]["message"]
+        return result, usage
+
+    supervisor = make_preparation_supervisor(provider=reject_once, book_client=client)
+    binding = _binding()
+    supervisor.create_run(binding)
+    for _ in range(12):
+        step = await supervisor.step(binding.source_slug, binding.run_id, "correction-test", lambda _: True)
+        if step.state.tasks.get("P03:design_campaign") and step.state.tasks["P03:design_campaign"].status.value == "accepted":
+            break
+    state = supervisor.store.load_run(binding.source_slug, binding.run_id)
+    assert state.tasks["P03:design_campaign"].status.value == "accepted"
+    assert all_calls.count("study_books") == 1
+    assert len(design_calls) == 2
+    assert design_calls[0]["idempotency_key"] != design_calls[1]["idempotency_key"]
+    assert state.provider_calls_spent == 3
+    assert state.tokens_spent == 600
+    files = list((tmp_path / "adventures").rglob("proposals/*/*.json"))
+    rejected = [json.loads(p.read_text()) for p in files if json.loads(p.read_text())["diagnostics"]]
+    assert len(rejected) == 1
+    assert rejected[0]["proposal"]["opening_scene_id"] == "unplanned_opening"
