@@ -24,7 +24,6 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
-from edgar_core.prepared import PreparedAmendment
 from edgar_core.story import AcceptedStoryEffect, StoryEffect
 
 
@@ -115,10 +114,8 @@ class AdjudicationResult(BaseModel):
         ),
     )
 
-    # A bounded private proposal for a plausible action the prepared backbone did not cover.
-    # The API accepts it only after engine validation against the session's exact source,
-    # current prepared digest, committed facts and world state. It is never a player DTO.
-    proposed_prepared_amendment: PreparedAmendment | None = None
+    # Compatibility for retained saved rulings and their API receipt checks. Live play
+    # clears this field and has no amendment proposal in its structured-output schema.
     accepted_prepared_amendment: SkipJsonSchema[dict | None] = None
 
     # Side effects (see module docstring).

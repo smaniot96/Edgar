@@ -1,5 +1,7 @@
 # Phandelver compact preparation comparison — 20 October 2026
 
+Current architecture: the lighter pipeline is now the only implementation. The dated findings below retain the investigation history; scripted producer chains and exhaustive completion proofs were superseded by the owner’s agent-led story direction. See [current preparation contract](preparation-runtime-integration.md). Campaign data and paid responses remain preserved.
+
 The owner requested a lighter preparation path after stopping the original P04
 authoring run. The current comparison targets are twenty minutes and USD 5,
 measured afterward; neither is an execution limit. No CI, test suite, or remote
@@ -168,3 +170,47 @@ Ruff and diff checks, plus read-only validation of the actual saved proposal.
 The reviewer inspected these changes and found no blocking regression. No test
 suite, CI/CD, remote push or further provider call ran. The frontend remains
 healthy on port 8000; these newest local edits have not restarted the stack.
+
+## Sole preparation pipeline and live DM goals
+
+The owner's subsequent direction supersedes the scripted progression requirements
+above. Preparation now has one shared PDF/AI flow: retained studies, whole-campaign
+design, one compact blueprint, local canonical compilation/grounding/scene and
+guide assembly, independent review, source-scaffold validation and publication.
+Removed the alternative per-act authoring/enrichment/chapter calls, exhaustive
+story-path search, optimistic producer closure and live branch-amendment tool.
+Frozen checkpoint identifiers and archived receipt readers remain for recovery;
+they do not select an alternative preparation path.
+
+Source-backed goals describe earned outcomes. The live DM recognizes those
+outcomes from actual play and records a private achievement basis with a
+code-owned turn receipt. Explicit engine actor predicates can constrain a goal;
+combat and exact tool effects remain engine-owned. Private goal support cannot
+reveal planner passages or publish a paraphrase of a hidden objective. The journal
+uses a goal's title only when eligible reviewed player text includes that title.
+
+A read-only run of the production compiler, rules grounding, canonical assembly
+and independently recomputed source-scaffold validator on the latest saved paid
+proposal succeeded: 8 acts, 50 scenes, 26 goals, 24 grounded encounter requests,
+zero authored branches/outcomes and zero scaffold findings, in 3.7 seconds.
+This made no provider calls and changed no checkpoint. All 22 accepted studies/
+design artifacts remain unchanged. It establishes local structural/grounding
+compatibility, not completed independent review, solo balance or Ready.
+
+The accepted PDF extraction tolerance now propagates through compilation,
+inspection, review, chunk materialization and publication instead of reverting to
+zero tolerance at a later stage. Exact text spans and source hashes remain checked.
+Legacy manifest/prepared/effect hashes remain stable when the new optional goal
+fields are absent. Syntax, production imports/schema generation, Ruff and diff
+checks pass; no test suite, CI/CD or remote push was run.
+
+Known source-modifier representation and encounter-suitability concerns remain
+independent of these local checks. The recovery is not a fresh-PDF time/cost
+benchmark. Actual review/publication and restart durability remain pending.
+
+The final sweep also removed the old executable AI outline/chapter generator and
+its obsolete capacity-harness scenario. Fresh AI requests now enter preparation
+directly. Archive models/readers and a guarded delegate remain; legacy non-private
+generation jobs report conversion required and preserve their saved files rather
+than offering a retry of deleted code. Unrelated turn, summary, source indexing and
+archive-reader checks remain. The combined cleanup removes about 3,400 net lines.

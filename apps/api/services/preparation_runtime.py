@@ -246,8 +246,7 @@ def _binding_for(
         source_sha = source_digest(retained_pdf)
         extraction_sha = extraction.text_sha256()
         commission = copy.deepcopy(request)
-        commission.update({"source_kind": "pdf", "source_sha256": source_sha,
-                           "preparation_pipeline": "compact_v1"})
+        commission.update({"source_kind": "pdf", "source_sha256": source_sha})
         version = f"pdf-{source_sha[:24]}-{extraction_sha[:16]}"
     else:
         commission = _generation_commission(meta, setup)
@@ -410,8 +409,10 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             )
             if "image_budget" in binding.commission:
                 expected_commission["image_budget"] = copy.deepcopy(binding.commission["image_budget"])
-            if meta.get("preparation_pipeline") == "compact_v1":
-                expected_commission["preparation_pipeline"] = "compact_v1"
+            # Frozen legacy metadata remains part of identity, never execution selection.
+            if "preparation_pipeline" in binding.commission:
+                expected_commission["preparation_pipeline"] = copy.deepcopy(
+                    binding.commission["preparation_pipeline"])
             if canonical_sha256(expected_commission) != binding.commission_sha256:
                 return False
         else:
@@ -421,6 +422,9 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             )
             if "image_budget" in binding.commission:
                 expected_commission["image_budget"] = copy.deepcopy(binding.commission["image_budget"])
+            if "preparation_pipeline" in binding.commission:
+                expected_commission["preparation_pipeline"] = copy.deepcopy(
+                    binding.commission["preparation_pipeline"])
             if (
                 canonical_sha256(expected_commission) != binding.commission_sha256
             ):
@@ -617,7 +621,9 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
     if not isinstance(manifest_value, dict):
         raise PreparationError("The final canonical manifest is missing.")
     manifest = AdventureManifest.model_validate(manifest_value)
-    validate_spans(extraction, manifest)
+    from .preparation_sources import page_budget
+
+    validate_spans(extraction, manifest, degraded_page_budget=page_budget(binding.source_mode))
     if manifest.rules_edition != binding.rules_edition:
         raise PreparationError("Final manifest edition does not match the frozen run.")
     if manifest.reviewed_sha256 not in (None, manifest_digest(manifest)):
@@ -670,8 +676,9 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
     # immutable run. The source-mode-specific helper retains the original PDF separately.
     from ingestion.extract import save_extraction
 
-    report_chunks = manifest_chunks(extraction, manifest)
-    from .preparation_sources import page_budget
+    report_chunks = manifest_chunks(
+        extraction, manifest, degraded_page_budget=page_budget(binding.source_mode)
+    )
 
     report = prepare_report(
         extraction,

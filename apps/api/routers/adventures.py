@@ -647,12 +647,12 @@ async def generate_adventure(
     background: BackgroundTasks,
     redis: Redis = Depends(get_redis),
 ):
-    """Have the AI author a full campaign in the background; it becomes a playable module.
+    """Prepare an AI-authored campaign in the background for the selected hero party.
 
-    `size` (small | medium | large | gigantic) scales length/complexity. Returns 202 with
-    status "processing"; poll GET /adventures for the slug. Large/gigantic take longer (many
-    chapters are generated), so the card stays "processing" for a while. The declared
-    preparation budget is reserved against the daily spend ceiling before any work starts (EDG-066).
+    `size` (small | medium | large | gigantic) scales the requested adventure scope.
+    A shared blueprint is assembled locally into the prepared campaign. Returns 202 with
+    status "processing"; poll GET /adventures for the slug. The declared preparation
+    budget is an advisory usage estimate recorded before work starts.
     """
     admission = await admit_job(request, redis)
     try:
@@ -665,8 +665,8 @@ async def _accept_generation(
     body: AdventureGenerateRequest, background: BackgroundTasks, admission: Admission
 ) -> AdventureUploadResponse:
     from ..services import generation_requests
-    from ..services.campaign_generator import build_generated_campaign
     from ..services.preparation_commission import capture_setup
+    from ..services.preparation_runtime import prepare_adventure
 
     identity = generation_requests.identity_for(body)
     if identity is not None:
@@ -694,13 +694,7 @@ async def _accept_generation(
             "theme": body.theme,
             "title_hint": title_hint,
         },
-        "job": new_job(
-            "generation",
-            "queued",
-            total_chapters={"small": 3, "medium": 6, "large": 12, "gigantic": 24}.get(
-                body.size, 6
-            ),
-        ),
+        "job": new_job("generation", "queued"),
     }
     slug, stored, created = await run_in_threadpool(
         generation_requests.claim, identity, base, meta, _reserve_slug
@@ -714,12 +708,9 @@ async def _accept_generation(
     schedule_job(
         background,
         admission,
-        build_generated_campaign,
+        prepare_adventure,
         slug,
-        title_hint,
-        body.theme or "",
-        body.size,
-        attempt_id=token,
+        attempt_token=token,
     )
     log.info("adventure_generate_accepted", slug=slug, size=body.size)
     return _generate_response(slug, stored)
@@ -848,11 +839,11 @@ def _retry_adventure(
     body: AdventureRetryRequest | None = None,
     admission: Admission | None = None,
 ):
-    """Re-run ingestion (uploads) or generation (AI campaigns) for a failed adventure.
+    """Resume private preparation or reindex a failed public PDF source.
 
     Typical use: an adventure left "failed" because a restart interrupted its processing.
     409 if it is not missing/empty/partial/failed; 410 if there is nothing to retry from (the uploaded
-    PDF is gone and it was not AI-generated).
+    PDF is gone).
     """
     meta = load_adventure_metadata(slug)
     if not meta:
@@ -872,6 +863,17 @@ def _retry_adventure(
         return AdventureUploadResponse(
             slug=slug, title=meta.get("title") or "Adventure", status="processing"
         )
+    if (meta.get("generation") or {}).get("kind") == "ai":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "preparation_setup_required",
+                "message": (
+                    "This saved campaign needs conversion to the current preparation workflow. "
+                    "Its outline, chapters and source files are preserved."
+                ),
+            },
+        )
     from ..services.campaign_sources import source_read
 
     job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
@@ -890,7 +892,6 @@ def _retry_adventure(
         )
 
     title = meta.get("title") or slug.replace("_", " ").title()
-    generation = meta.get("generation") or {}
     retained_candidate = job.get("retained_source_attempt_id")
     try:
         retained_candidate_path = (
@@ -908,7 +909,7 @@ def _retry_adventure(
                 status_code=422,
                 detail="Both inspected source and extraction identities are required.",
             )
-        if generation.get("kind") == "ai" or not (
+        if not (
             pdf_path.is_file()
             or (retained_candidate_path is not None and retained_candidate_path.is_file())
         ):
@@ -927,22 +928,7 @@ def _retry_adventure(
                 status_code=409,
                 detail="The inspected extraction changed or failed quality checks. Inspect the current preview again.",
             )
-    if job.get("checkpoint_corrupt"):
-        raise HTTPException(
-            status_code=409,
-            detail="Saved generation progress is unreadable. Create a new campaign to generate again.",
-        )
-    if generation.get("kind") == "ai":
-        from ..services.campaign_generator import build_generated_campaign
-
-        task_args: tuple = (
-            build_generated_campaign,
-            slug,
-            generation.get("title_hint") or "",
-            generation.get("theme") or "",
-            generation.get("size") or "medium",
-        )
-    elif retained_candidate_path and retained_candidate_path.is_file():
+    if retained_candidate_path and retained_candidate_path.is_file():
         task_args = (
             _ingest_adventure,
             slug,
@@ -981,13 +967,9 @@ def _retry_adventure(
     token = begin_attempt(
         slug,
         job_attempt=True,
-        job_kind="generation" if generation.get("kind") == "ai" else "ingestion",
+        job_kind="ingestion",
     )
-    if (
-        retained_candidate_path
-        and retained_candidate_path.is_file()
-        and generation.get("kind") != "ai"
-    ):
+    if retained_candidate_path and retained_candidate_path.is_file():
         from ..services.adventures_meta import stage_attempt_pdf
 
         candidate_path = stage_attempt_pdf(

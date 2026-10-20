@@ -1,4 +1,4 @@
-"""Resume a preserved PDF design through compact authoring, without paid study redo.
+"""Recover a retained PDF design through the campaign pipeline, without paid study redo.
 
 Run inside Edgar's configured environment. The original checkpoint, proposals and
 source remain immutable; imports receive fresh bindings and local validation.
@@ -33,7 +33,7 @@ def import_saved_design(slug, original_run_id):
     store = PreparationStore()
     original = store.load_run(slug, original_run_id)
     if not original.cancel_requested or original.status.value != "cancelled":
-        raise ValueError("Stop the baseline before starting a separate compact comparison.")
+        raise ValueError("Stop the source run before importing its retained design into a recovery run.")
     if original.binding.source_mode != "pdf" or any(
         original.stage_statuses.get(stage.value).value != "accepted"
         for stage in (PreparationStage.P01, PreparationStage.P02, PreparationStage.P03)
@@ -42,7 +42,7 @@ def import_saved_design(slug, original_run_id):
     now = datetime.now(UTC).isoformat()
     frozen = original.binding.model_dump(mode="json")
     frozen["run_id"] = "prep-" + uuid.uuid4().hex
-    frozen["commission"]["preparation_pipeline"] = "compact_v1"
+    frozen["commission"].pop("preparation_pipeline", None)
     frozen["commission_sha256"] = canonical_sha256(frozen["commission"])
     binding = PreparationRunBinding.model_validate_json(json.dumps(frozen))
     shutil.copytree(source_directory(slug, original_run_id), source_directory(slug, binding.run_id))
@@ -53,8 +53,8 @@ def import_saved_design(slug, original_run_id):
         "original_binding_sha256": original.binding.binding_sha256,
         "original_artifact_digests": {a.artifact_id: a.content_sha256 for a in original.artifacts.values()},
         "reused_stages": ["P01", "P02", "P03"], "fresh_provider_calls": 0,
-        "baseline_recorded_cost_microusd": original.cost_microusd_spent,
-        "measurement": "Fresh benchmark excludes preserved source studies and accepted design."}
+        "source_run_recorded_cost_microusd": original.cost_microusd_spent,
+        "measurement": "Recovery measurement excludes retained source studies and accepted design."}
     rebound, plans, tasks, receipts = {}, {}, {}, {}
     for stage in (PreparationStage.P01, PreparationStage.P02, PreparationStage.P03):
         planned = []
@@ -104,10 +104,11 @@ def import_saved_design(slug, original_run_id):
     store.mutate_run(slug, binding.run_id, update=imported)
     store.load_run(slug, binding.run_id)
     if preparation_path(slug, original_run_id).read_bytes() != originals:
-        raise ValueError("Baseline changed while importing; stop before generation.")
+        raise ValueError("The source checkpoint changed while importing; stop before generation.")
     token = meta_store.begin_attempt(slug, job_attempt=True, job_kind="generation", reset_job=True)
     with meta_store.attempt_guard(slug, token) as meta:
-        meta.update(preparation_pipeline="compact_v1", preparation_run_id=binding.run_id,
+        meta.pop("preparation_pipeline", None)
+        meta.update(preparation_run_id=binding.run_id,
             preparation_binding={"binding_sha256": binding.binding_sha256,
                 "source_binding_sha256": binding.source_binding_sha256,
                 "hero_party_sha256": binding.hero_party_sha256,
@@ -134,10 +135,10 @@ async def main():
         meta = meta_store.load_meta(args.slug)
         run_id, token = meta["preparation_run_id"], meta["attempt"]["id"]
         if run_id != args.resume_run:
-            raise ValueError("Resume must match the current imported run identity.")
+            raise ValueError("Resume must match the current saved recovery run identity.")
         state = PreparationStore().load_run(args.slug, run_id)
         if state.cancel_requested or state.status.value == "cancelled":
-            raise ValueError("A cancelled baseline cannot be resumed by this command.")
+            raise ValueError("A cancelled source run cannot be resumed by this command.")
         if state.status.value in {"blocked", "failed"}:
             from apps.api.services.preparation_runtime import retry_preparation
 

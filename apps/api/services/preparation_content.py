@@ -46,7 +46,7 @@ class ActDesign(ContentRecord):
     scene_ids: list[Identifier] = Field(min_length=1, max_length=12)
     summary: str = Field(min_length=50, max_length=4000)
     role: Literal["opening", "development", "climax", "resolution"]
-    advance_ids: list[Identifier] = Field(min_length=1, max_length=20)
+    advance_ids: list[Identifier] = Field(default_factory=list, max_length=20)
     climax_ids: list[Identifier] = Field(default_factory=list, max_length=5)
     source_pages: list[int] = Field(default_factory=list, max_length=500)
     seed_text: str = Field(min_length=100, max_length=8000)
@@ -68,15 +68,15 @@ class CanonicalAct(ContentRecord):
     scenes: list[Scene] = Field(min_length=1, max_length=12)
     entities: list[Entity] = Field(default_factory=list, max_length=40)
     passages: list[Passage] = Field(min_length=1)
-    objectives: list[StoryDefinition] = Field(min_length=1, max_length=20)
+    objectives: list[StoryDefinition] = Field(default_factory=list, max_length=20)
     milestones: list[StoryDefinition] = Field(default_factory=list, max_length=30)
     objects: list[StoryDefinition] = Field(default_factory=list, max_length=40)
     promises: list[StoryDefinition] = Field(default_factory=list, max_length=20)
     clocks: list[StoryDefinition] = Field(default_factory=list, max_length=20)
     opening_journal: list[OpeningJournalSeed] = Field(default_factory=list, max_length=20)
-    resolution_policies: list[ResolutionPolicy] = Field(min_length=1, max_length=50)
+    resolution_policies: list[ResolutionPolicy] = Field(default_factory=list, max_length=50)
     act: PreparedAct
-    quests: list[PreparedQuest] = Field(min_length=1, max_length=20)
+    quests: list[PreparedQuest] = Field(default_factory=list, max_length=20)
     scene_packets: list[PreparedScenePacket] = Field(min_length=1, max_length=12)
     # Route topology comes from the source, not a fixed authoring batch size.
     routes: list[PreparedRoute] = Field(default_factory=list)
@@ -213,6 +213,7 @@ def assemble_manifest(
     }
     prepared = PreparedCampaign(
         source_mode=binding.source_mode,
+        narrative_mode="agent",
         acts=[fragment.act for fragment in fragments],
         **{
             name: [item for fragment in fragments for item in getattr(fragment, name)]
@@ -269,7 +270,9 @@ def assemble_manifest(
         prepared=prepared,
         **fields,
     )
-    validate_spans(extraction, manifest)
+    from .preparation_sources import page_budget
+
+    validate_spans(extraction, manifest, degraded_page_budget=page_budget(binding.source_mode))
     report = validate_prepared_campaign(manifest)
     if not report.valid:
         raise ValueError(

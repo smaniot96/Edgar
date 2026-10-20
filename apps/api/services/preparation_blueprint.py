@@ -53,6 +53,11 @@ class BlueprintScene(ContentRecord):
     encounters: list[BlueprintEncounter] = Field(default_factory=list)
 
 
+class BlueprintEngineRequirement(ContentRecord):
+    actor: str
+    statuses: list[Literal["dead", "defeated", "captive", "released"]] = Field(min_length=1)
+
+
 class BlueprintFact(ContentRecord):
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,47}$")
     kind: Literal["actor", "clue", "hint", "hazard", "ending", "object", "objective", "milestone", "clock"]
@@ -74,6 +79,9 @@ class BlueprintFact(ContentRecord):
     maximum: int | None = None
     objective: str | None = None
     required: bool = True
+    completion_condition: str | None = None
+    engine_requirements: list[BlueprintEngineRequirement] = Field(default_factory=list)
+    engine_forbidden: list[BlueprintEngineRequirement] = Field(default_factory=list)
 
 
 class BlueprintEffect(ContentRecord):
@@ -104,13 +112,13 @@ class BlueprintApproach(ContentRecord):
     requires_facts: list[BlueprintFactRequirement] = Field(default_factory=list)
     success: list[BlueprintEffect]
     failure: list[BlueprintEffect]
-    failure_mode: Literal["partial", "essential_reveal", "cost"]
+    failure_mode: Literal["no_progress", "partial", "essential_reveal", "cost"]
 
 
 class BlueprintDecision(ContentRecord):
     objective: str
     scene: str
-    approaches: list[BlueprintApproach] = Field(min_length=2)
+    approaches: list[BlueprintApproach] = Field(min_length=1)
     addition_rationale: str = ""
 
 
@@ -127,7 +135,7 @@ class BlueprintTransition(ContentRecord):
 class CampaignBlueprint(ContentRecord):
     scenes: list[BlueprintScene]
     facts: list[BlueprintFact]
-    decisions: list[BlueprintDecision]
+    decisions: list[BlueprintDecision] = Field(default_factory=list)
     transitions: list[BlueprintTransition] = Field(default_factory=list)
     resource_plan: str
     progression_plan: str
@@ -179,7 +187,7 @@ def blueprint_evidence(binding, design, spans):
 
 
 AUTHOR_INSTRUCTION = """Prepare the entire campaign as ONE compact semantic blueprint, using the accepted
-design and exact PDF spans. Keep all existing scene IDs. Include every scene once with practical
+design and exact retained source spans (PDF text or generated campaign seed). Keep all existing scene IDs. Include every scene once with practical
 short DM notes: what happens, motives/knowledge, useful interaction, tactics and recovery. Keep
 original PDF prose in the source; do not copy it into notes. Fill minor missing details sensibly
 in additions, consistent with theme, accepted facts and future acts. Additions are private DM
@@ -208,59 +216,40 @@ discovered; code allocates flag IDs. Private routes require a concrete earned re
 source-backed routes connecting every scene from the opening; do not invent linear doors or
 teleportation. For missing low-impact travel details use coherent DM additions and explain them.
 
-Use a SMALL number of real durable quests/decisions per act, not a micro-quest for every room.
-Each act needs at least one objective. Use a decision with two materially different approaches
-where the source has a real uncertain choice; purely automatic advancement needs only transitions.
-The first advance_id for each act is its primary objective key; remaining advance_ids can be
-milestone keys belonging to it. Each milestone's objective field names its one owning objective.
-Use exact supplied advance IDs where appropriate. Decisions
-name an objective key and a scene. Each approach supplies the action, supported ability/skill
-check name, DC, accessible source context, explicit earned success and failure effects. Do not
-substitute an ability check for an entire fight: combat tactics remain in scene notes/encounters;
-choose meaningful negotiation/avoidance/investigation opportunities for check policies.
-Failure must have a real source-backed cost, essential discovery or actual partial progress;
-never fake partial success or a no-op to fill the schema. An essential_reveal failure discovers
-a real clue; cost uses a clock/consume/environment effect. Only use/environment effects declare
-an operation; clock uses a positive quantity, consume names an actually carried consumable. Where the
-PDF leaves a harmless procedure unspecified, supply a reasonable DM addition with rationale.
-Every policy effect needs player-safe physical evidence in its scene. Definitions and evidence
-links, policies, branches, outcomes, scene packets, provenance and generated IDs are compiled
-by code: do NOT repeat those records. Clock maximum is required. Objects list actual supported
-operations when used. Evidence for discovering entities uses the fact's actual reveal sources;
-the policy itself cites accessible setup. No invented physical quotes, numeric stats or levels.
-Normal rooms and minor checks stay in concise notes; do not enumerate tactical procedures.
-Encounters contain exact MM creature names/counts/roles; code grounds them for the actual hero.
-Shared resource/progression plans are written once; do not assume the hero has future levels.
-Aim for concise, useful content rather than exhaustive serialization. This is not a token cap.
-"""
+Define a SMALL number of source-backed objectives and milestones. Each goal's completion_condition
+describes the outcome the PDF calls for, not a prescribed sequence of actions. For example, a prisoner
+is safely freed when the actual play establishes their freedom; negotiation, stealth, deception,
+combat or another credible player solution can achieve it. The live DM judges this from the scene,
+source context, committed events and current action. Arrival, an intention or a successful unrelated
+check alone does not complete a goal. Goal completion records progress; it cannot manufacture combat
+victory, actor HP, inventory or travel. Optional engine_requirements / engine_forbidden use actor keys
+and committed statuses only where an explicit combat boundary matters. Do not require a combat
+released status for an ordinary narrative rescue. Each milestone's objective field names its owning
+objective. Retain all accepted design advance IDs and source-grounded optionality (facts.required).
+An act may be connective/setup material without inventing a quest just to satisfy a record count.
 
-AUTHOR_INSTRUCTION += """
-Executable progression contract: transitions are straightforward player actions with automatic
-effects, independent of decisions. Use them for observations, reading, promised directions,
-handover, rescue confirmation, objective/milestone completion and an earned campaign ending.
-Do not invent a die roll for an action that simply works. Every discoverable fact needs a producer
-and accessible setup; every required objective/milestone needs its actual completed effect.
-requires maps discovered clue keys; requires_facts is an AND list of {key,statuses}, with OR among
-the listed statuses for that one actor/objective/milestone. Required achievements in an ending's
-prerequisites prevent premature completion. Include at least one ending fact with supported sources.
-Combat-dependent advances require the exact actor's engine status dead/defeated/captive as appropriate;
-never infer victory from visiting a scene, negotiation, or a generic skill check. Encounters.actors
-explicitly lists the participating named actor keys, with matching exact stat bindings; generic
-populations remain distinct source encounter groups. Every named participant has a creature request
-with actor_id=its key, quantity=1 and creature_name=its exact template or module stat heading.
-Distinct named actors sharing a template have separate requests. Do not combine separate rooms into one fight.
-Actor dispositions dead/defeated/captive/released come only from an actual actor-bound encounter;
-a stat reference alone produces none of them. Ordinary rescue, unbinding and safe escort are story
-actions: define a narrowly named milestone such as captive_freed, complete it through an explicit
-source-backed automatic release action, and require that completed milestone for later conversation
-or handover. Keep this distinct from a broad objective that also permits finding the captive dead.
-Never put a rescued ally into an enemy roster to manufacture a disposition. A release action must
-not require its own completed result. Any prior victory, discovery or rescue needed for an action
-belongs in requires/requires_facts; mentioning it only in the action text or DM notes is not a gate.
-Facts.required marks mandatory campaign advancement; mark genuinely optional sidequests false.
-All accepted design advance IDs remain defined; optionality must follow the actual campaign.
-Links with the same endpoints and different requires are alternative routes (OR); each one's
-requires is AND. A private link must enforce every reveal predicate also in requires.
+Decisions and transitions are OPTIONAL exact engine tools. Include them only when a meaningful
+printed mechanic or useful durable action merits one. They are not an exhaustive list of permitted
+player actions and need not produce every discovery, objective or milestone. Leave ordinary
+conversation, rescue, observations, NPC reactions and creative solutions to the live DM with useful
+notes. Do not enumerate success/failure trees to prove the story can finish. If an exact check tool
+is included, provide its supported skill/ability and DC, accessible setup, and real consequences;
+never replace a fight with a skill check or invent failure costs to fill fields. Only use/environment
+effects declare operation; clocks use positive quantity; consume requires a carried consumable.
+Tool effects cite their supporting source and preserve earned reveal gates. requires maps clue keys
+to discovered; requires_facts is AND across keys and OR across statuses for each key.
+
+Include a source-backed ending as private DM guidance for recognizing the earned resolution.
+Keep scene links and secrets faithful to the PDF. Alternatives with the same endpoints are OR;
+predicates within one route are AND. Private links enforce every reveal predicate in requires.
+Encounters.actors names exact participating actors; creature requests bind each named actor once,
+quantity=1, with its exact verified template or full module stat heading. Generic groups remain
+distinct. Keep separate rooms as separate encounters. Do not put rescued allies into enemy rosters
+to manufacture dispositions. Source statistics and combat outcomes remain engine-owned.
+Code compiles definitions, packets, evidence links, optional check tools and canonical IDs;
+do not repeat those records. Write the resource/progression plans once for the actual hero.
+Keep notes useful and concise. The DM may fill harmless gaps consistently with the theme,
+established facts and future acts. Never fabricate source quotes, numeric statistics or levels.
 Use supported engine checks only: """ + ", ".join(sorted(_POLICY_CHECKS)) + ".\n"
 
 
@@ -311,76 +300,6 @@ class BlueprintValidationError(ValueError):
         super().__init__("Blueprint structural errors:\n" + "\n".join(messages))
 
 
-def blueprint_progression_findings(blueprint, design, *, template_name=lambda name: name):
-    """Sound negative checks on a finite, deliberately optimistic dependency graph.
-
-    This joins alternative results and ignores resource/disclosure restrictions, so
-    possible membership is never an acceptance witness. A missing producer chain
-    cannot be repaired by a larger exact search or another compiler retry.
-    """
-    facts = {fact.key: fact for fact in blueprint.facts}
-    actions = [
-        (f"/decisions/{i}/approaches/{j}", decision.scene, approach.requires,
-         approach.requires_facts, [*approach.success, *approach.failure])
-        for i, decision in enumerate(blueprint.decisions)
-        for j, approach in enumerate(decision.approaches)
-    ] + [
-        (f"/transitions/{i}", action.scene, action.requires, action.requires_facts, action.effects)
-        for i, action in enumerate(blueprint.transitions)
-    ]
-    actor_events = defaultdict(set)
-    for scene in blueprint.scenes:
-        for encounter in scene.encounters:
-            for key in encounter.actors:
-                actor = facts.get(key)
-                if (actor is None or actor.kind != "actor" or scene.id not in actor.scenes
-                        or not (actor.creature or actor.stat_sources)):
-                    continue
-                expected = (actor.stat_name or actor.name) if actor.stat_sources else actor.creature
-                requests = [request for request in encounter.creatures if request.actor_id == key]
-                if (expected and len(requests) == 1 and requests[0].quantity == 1
-                        and template_name(requests[0].creature_name).casefold().strip()
-                        == template_name(expected).casefold().strip()):
-                    actor_events[scene.id].add(key)
-
-    possible, reached, enabled = set(), {design.opening_scene_id}, set()
-    changed = True
-    while changed:
-        before = len(possible), len(reached), len(enabled)
-        for scene in blueprint.scenes:
-            if scene.id not in reached:
-                continue
-            for key in actor_events[scene.id]:
-                possible.update((key, status) for status in ("captive", "dead", "defeated", "released"))
-            for link in scene.links:
-                if all((key, status) in possible for key, status in link.requires.items()):
-                    reached.add(link.to)
-        for path, scene_id, gates, requirements, effects in actions:
-            if (scene_id in reached and all((key, status) in possible for key, status in gates.items())
-                    and all(any((req.key, status) in possible for status in req.statuses)
-                            for req in requirements)):
-                enabled.add(path)
-                possible.update((effect.target, effect.status or EFFECT_DEFAULTS.get(effect.kind, ""))
-                                for effect in effects)
-                reached.update(effect.target for effect in effects if effect.kind == "move")
-        changed = before != (len(possible), len(reached), len(enabled))
-
-    findings = []
-    for path, scene_id, gates, requirements, _ in actions:
-        if path in enabled:
-            continue
-        blocked = [f"{key}={status}" for key, status in gates.items()
-                   if (key, status) not in possible]
-        blocked += [f"{req.key} in {req.statuses}" for req in requirements
-                    if not any((req.key, status) in possible for status in req.statuses)]
-        if scene_id not in reached:
-            blocked.append(f"reachable scene {scene_id}")
-        findings.append(f"{path}: no possible prerequisite producer chain for {', '.join(blocked)}. "
-                        "Preserve the intended prerequisite and supply its supported earned producer; "
-                        "actor dispositions require an exact actor-bound encounter, ordinary rescue uses a completed milestone.")
-    return findings
-
-
 def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda name: name):
     """Collect structural defects before requesting any paid semantic correction."""
     scenes = {sid for act in design.acts for sid in act.scene_ids}
@@ -424,6 +343,12 @@ def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda n
             errors.append(f"/facts/{i}/location: use a scene ID or character for actual carried gear")
         if fact.kind == "clock" and (fact.maximum is None or fact.maximum < 1):
             errors.append(f"/facts/{i}/maximum: clocks need a positive maximum")
+        for field in ("engine_requirements", "engine_forbidden"):
+            for j, requirement in enumerate(getattr(fact, field)):
+                if fact.kind not in {"objective", "milestone"}:
+                    errors.append(f"/facts/{i}/{field}: only goals may declare completion boundaries")
+                if requirement.actor not in facts or facts[requirement.actor].kind != "actor":
+                    errors.append(f"/facts/{i}/{field}/{j}/actor: name a declared actor")
         if fact.kind == "milestone":
             goals = [k for k, f in facts.items() if f.kind == "objective" and f.scenes
                 and fact.scenes and scene_act.get(f.scenes[0]) == scene_act.get(fact.scenes[0])]
@@ -481,7 +406,6 @@ def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda n
         approaches=[SimpleNamespace(action=t.action, sources=t.sources, requires=t.requires,
             requires_facts=t.requires_facts, success=t.effects, failure=[], check=None, dc=None,
             failure_mode="no_progress")]), True) for i, t in enumerate(blueprint.transitions)]
-    emitted = set()
     for base, decision, automatic in rows:
         if not automatic and (decision.objective not in facts or facts[decision.objective].kind != "objective"):
             errors.append(f"{base}/objective must name an objective fact")
@@ -505,7 +429,6 @@ def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda n
                 for k, effect in enumerate(getattr(approach, name)):
                     ep = f"{path}/{name}/{k}"
                     sources(effect.sources, ep + "/sources", required=True)
-                    emitted.add((effect.kind, effect.target, effect.status or EFFECT_DEFAULTS.get(effect.kind, "")))
                     if effect.kind in {"move", "learn_place"}:
                         if effect.target not in scenes:
                             errors.append(f"{ep}/target must name an accepted scene")
@@ -546,18 +469,9 @@ def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda n
                 detail = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}"
                     for e in exc.errors(include_url=False)) if hasattr(exc, "errors") else str(exc)
                 errors.append(f"{path}: {detail}")
-    for goal in {d.objective for d in blueprint.decisions}:
-        approaches = {a.approach for d in blueprint.decisions if d.objective == goal
-                      for a in d.approaches}
-        if len(approaches) < 2:
-            errors.append(f"Objective {goal} needs two different approach categories; got {sorted(approaches)}")
     if not any(f.kind == "ending" for f in blueprint.facts):
-        errors.append("/facts needs a source-backed campaign ending and an earned discovery transition")
+        errors.append("/facts needs a source-backed campaign ending for the DM to recognize")
     for i, fact in enumerate(blueprint.facts):
-        if fact.kind in {"objective", "milestone"} and fact.required and (fact.kind, fact.key, "completed") not in emitted:
-            errors.append(f"/facts/{i} required {fact.kind} {fact.key} has no completed effect; add its earned action/event in /transitions")
-        if fact.key in discovery_keys and ("discover", fact.key, "discovered") not in emitted:
-            errors.append(f"/facts/{i} discovery {fact.key} has no producer; add an observation/interaction transition with accessible setup and earned prerequisites")
         if fact.kind == "actor" and not fact.name:
             errors.append(f"/facts/{i}/name needs the exact short actor identity; keep the full description in title (private DM notes)")
         if fact.creature and fact.stat_sources:
@@ -583,7 +497,6 @@ def blueprint_preflight(blueprint, design, *, spans=None, template_name=lambda n
                     errors.append(f"/scenes/{i}/encounters/{j}/actors needs exact stat-bound actors in this scene; invalid {key}")
                 elif sum(r.actor_id == key for r in encounter.creatures) != 1:
                     errors.append(f"/scenes/{i}/encounters/{j}/creatures: named actor {key} needs exactly one explicit actor_id on its participating creature request")
-    errors.extend(blueprint_progression_findings(blueprint, design, template_name=template_name))
     if errors:
         raise BlueprintValidationError(errors)
 
@@ -700,7 +613,9 @@ def compile_blueprint(binding, design, blueprint, *, books):
                  "scene_ids": act.scene_ids, "provenance": None}, quests=[], scene_packets=[],
             routes=[], branches=[], outcomes=[], extensions=[])
     owner = {}
-    page_act = {p: act.act_id for act in design.acts for p in act.source_pages}
+    page_act = ({p: act.act_id for act in design.acts for p in act.source_pages}
+                if binding.source_mode == "pdf" else
+                {page: act.act_id for page, act in enumerate(design.acts, 1)})
 
     def provenance(numbers, rationale=""):
         # Source access keeps every anchor in its owning packet/definition. A
@@ -750,6 +665,13 @@ def compile_blueprint(binding, design, blueprint, *, books):
                 if fact.maximum is None or fact.maximum < 1:
                     raise ValueError(f"Clock {key} needs a positive maximum.")
                 record["clock_max"] = fact.maximum
+            if fact.kind in {"objective", "milestone"}:
+                # Older paid proposals express the outcome in their title/source. Retain that
+                # work rather than reauthoring it just to populate a new semantic field.
+                record["completion_condition"] = fact.completion_condition or fact.title
+                for field in ("engine_requirements", "engine_forbidden"):
+                    record[field] = [{"actor_id": ids[r.actor], "statuses": r.statuses}
+                                     for r in getattr(fact, field)]
             fragment[category].append(record)
             definition_records[key] = record
 
@@ -789,9 +711,8 @@ def compile_blueprint(binding, design, blueprint, *, books):
         if decision.objective not in facts or facts[decision.objective].kind != "objective":
             raise ValueError("Decision needs an existing objective fact.")
         fragment = fragments[scene_act[decision.scene].act_id]
-        quest_id = f"lq_{decision.objective}"
         for position, approach in enumerate(decision.approaches):
-            pid, bid = f"lp_{index}_{position}", f"lb_{index}_{position}"
+            pid = f"lp_{index}_{position}"
             pids = cite(approach.sources, [decision.scene], audience="player")
             success = effects(approach.success, decision.scene)
             failure = effects(approach.failure, decision.scene, failure=True)
@@ -805,20 +726,6 @@ def compile_blueprint(binding, design, blueprint, *, books):
                 "check": engine_check(approach.check), "dc": approach.dc, "requires": conditions(approach.requires),
                 "requires_facts": fact_conditions(approach.requires_facts),
                 "failure_mode": approach.failure_mode, "on_success": success, "on_failure": failure})
-            prov = provenance(approach.sources, decision.addition_rationale)
-            outcomes = []
-            for result, selected, emitted in (("success", "success", success),
-                    ("partial" if approach.failure_mode == "partial" else "failure", "failure", failure)):
-                oid = f"lo_{index}_{position}_{selected}"
-                outcomes.append(oid)
-                fragment["outcomes"].append({"outcome_id": oid, "branch_id": bid, "result": result,
-                    "policy_selections": [{"policy_id": pid, "result": selected}],
-                    "ending_entity_ids": [e["target_id"] for e in emitted if e["kind"] == "discover"
-                        and next((f.kind for k,f in facts.items() if ids[k] == e["target_id"]), None) == "ending"],
-                    "provenance": prov})
-            fragment["branches"].append({"branch_id": bid, "quest_id": quest_id, "scene_id": decision.scene,
-                "approach": approach.approach, "action": approach.action, "requires": conditions(approach.requires),
-                "policy_ids": [pid], "outcome_ids": outcomes, "provenance": prov})
         decisions_by_goal[decision.objective].append(decision)
 
     for index, transition in enumerate(blueprint.transitions):
@@ -860,7 +767,7 @@ def compile_blueprint(binding, design, blueprint, *, books):
             "milestone_ids": milestones, "scene_ids": sorted(set(fact.scenes) | {d.scene for d in choices}),
             "required_for_completion": fact.required,
             "required_milestone_ids": required_milestones,
-            "required_approaches": sorted({a.approach for d in choices for a in d.approaches}),
+            "required_approaches": [],
             "provenance": provenance(fact.sources)})
 
     for scene in blueprint.scenes:
@@ -889,8 +796,10 @@ def compile_blueprint(binding, design, blueprint, *, books):
             packet_sources.add(eid)
         fragment["scene_packets"].append({"scene_id": scene.id, "passage_ids": sorted(packet_sources),
             "entity_ids": [ids[k] for k,f in facts.items() if f.kind in {"actor","clue","hint","hazard","ending"} and scene.id in f.scenes],
-            "objective_ids": [ids[k] for k,f in facts.items() if f.kind == "objective" and scene.id in f.scenes],
-            "milestone_ids": [ids[k] for k,f in facts.items() if f.kind == "milestone" and scene.id in f.scenes],
+            "objective_ids": [ids[k] for k,f in facts.items() if f.kind == "objective"
+                              and scene.id in definition_records[k]["scene_ids"]],
+            "milestone_ids": [ids[k] for k,f in facts.items() if f.kind == "milestone"
+                              and scene.id in definition_records[k]["scene_ids"]],
             "policy_ids": [p["policy_id"] for p in fragment["resolution_policies"] if scene.id in p["scene_ids"]],
             "dm_notes": "\n\n".join([scene.notes]
                 + ([scene.title] if display_title(scene.title) != scene.title else [])
@@ -899,6 +808,9 @@ def compile_blueprint(binding, design, blueprint, *, books):
             "provenance": provenance(scene.sources)})
 
     for key, record in definition_records.items():
+        if facts[key].kind in {"objective", "milestone"}:
+            # Optional tool effects cannot narrow the live DM's goal lifecycle.
+            record["statuses"] = sorted(set(record["statuses"]) | {"active", "completed", "failed"})
         if not record["statuses"]:
             record["statuses"] = {"object": ["acquired","used","changed"], "clock": ["advanced","completed"]}.get(
                 facts[key].kind, ["active","completed","failed"])
@@ -931,12 +843,19 @@ def compile_blueprint(binding, design, blueprint, *, books):
             for scene in blueprint.scenes if scene.id in act.scene_ids for i,encounter in enumerate(scene.encounters)]
         support = ActSupport(mechanics=ActMechanics(act_id=act.act_id, encounters=encounters,
             resource_plan=blueprint.resource_plan, progression_plan=blueprint.progression_plan),
-            dm_notes="Retain every assigned original PDF page as authoritative. Use these scene notes and explicitly labelled DM additions alongside the exact source.")
+            dm_notes="Use the complete retained source, scene notes and explicitly labelled DM additions. The live DM narrates and recognizes earned progress from actual play.",
+            chapter_text=(None if binding.source_mode == "pdf" else "\n\n".join([
+                f"# {act.title}\n{act.summary}", act.seed_text,
+                *[f"### {packet.scene_id}\n{packet.dm_notes}" for packet in canonical.scene_packets],
+                *[f"[DM addition]\n{extension.text}" for extension in canonical.extensions],
+                blueprint.resource_plan, blueprint.progression_plan,
+            ])))
         compiled.append((canonical, support))
     fields = {name: [item for f,_ in compiled for item in getattr(f,name)] for name in (
         "scenes","entities","passages","objectives","milestones","objects","promises","clocks","opening_journal","resolution_policies")}
     from edgar_core.prepared import PreparedCampaign
-    prepared = PreparedCampaign(source_mode=binding.source_mode, acts=[f.act for f,_ in compiled],
+    prepared = PreparedCampaign(source_mode=binding.source_mode, narrative_mode="agent",
+        acts=[f.act for f,_ in compiled],
         **{name: [item for f,_ in compiled for item in getattr(f,name)] for name in (
             "quests","scene_packets","routes","branches","outcomes","extensions")})
     manifest = AdventureManifest(source=binding.source_slug, source_sha256=extraction.source_sha256,
@@ -944,29 +863,15 @@ def compile_blueprint(binding, design, blueprint, *, books):
         opening_scene_id=design.opening_scene_id, prepared=prepared, **fields)
     report = validate_prepared_campaign(manifest)
     if not report.valid:
-        # Only authored causal findings may request a semantic correction. Unknown
-        # schema/compiler findings remain local diagnostics, never paid rewrites.
-        authored_codes = {"missing_fact_producer", "missing_gate_producer", "missing_objective_producer",
-                          "missing_milestone_producer", "missing_ending_producer", "missing_campaign_ending"}
-        if all(f.code in authored_codes for f in report.findings):
-            messages = []
-            for finding in report.findings:
-                match = re.match(r"resolution_policies\.(lt_(\d+)|lp_(\d+)_(\d+))\.(.*)", finding.path)
-                if match:
-                    path = (f"/transitions/{match[2]}" if match[2] is not None else
-                            f"/decisions/{match[3]}/approaches/{match[4]}")
-                    path += "/" + match[5].replace(".", "/")
-                else:
-                    path = "/facts"
-                messages.append(f"{path}: {finding.code}: {finding.message} ({finding.path})")
-            raise BlueprintValidationError(messages)
         raise ValueError(str([f.model_dump() for f in report.findings]))
     manifest.reviewed_sha256 = manifest_digest(manifest)
     manifest.reviewed_by = "compact-compiler-v1; independent review pending"
     # This verifies publishability invariants without certifying independent review.
-    # The supervisor's separate critic, path and seal gates still control Ready.
+    # The supervisor's source-scaffold review and publication seal still control Ready.
     require_published(manifest)
-    validate_spans(extraction, manifest)
+    from .preparation_sources import page_budget
+
+    validate_spans(extraction, manifest, degraded_page_budget=page_budget(binding.source_mode))
     return compiled, manifest
 
 
@@ -979,7 +884,7 @@ def compact_review_batches(manuscript, common, blueprint_artifact, extraction, *
     """
     canonical = common["canonical"]
     semantic = {key: canonical[key] for key in (
-        "source", "opening_scene_id", "entities", "objectives", "milestones", "objects",
+        "source", "opening_scene_id", "scenes", "entities", "objectives", "milestones", "objects",
         "promises", "clocks", "opening_journal", "resolution_policies")}
     pages = dict(extraction.text_pages())
     semantic["passages"] = [{"json_pointer": f"/manifest/passages/{i}",
@@ -987,7 +892,7 @@ def compact_review_batches(manuscript, common, blueprint_artifact, extraction, *
         for i, row in enumerate(canonical["passages"]) if row["audience"] == "player"]
     prepared = canonical["prepared"]
     semantic["prepared"] = {key: prepared[key] for key in (
-        "acts", "quests", "routes", "branches", "outcomes")}
+        "narrative_mode", "acts", "quests", "routes", "branches", "outcomes")}
     chapters = [{**chapter.model_dump(mode="json"),
         "text_json_pointer": f"/manuscript/chapters/{i}/text",
         "text_start": 0, "text_end": len(chapter.text), "complete_chapter": True}

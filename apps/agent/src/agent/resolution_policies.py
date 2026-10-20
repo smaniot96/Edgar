@@ -15,7 +15,6 @@ from edgar_core.manifests import (
     require_published,
     select_scene_context,
 )
-from edgar_core.prepared import PreparedCampaign, prepared_policy_available
 from edgar_core.sources import source_citation
 from edgar_core.story import StoryEffect, StoryRef, StoryState, player_story_effect
 
@@ -104,14 +103,13 @@ def policies_for_state(state: dict) -> list[dict]:
         )
         source_ready = source_status is None or source_status.get("status") == "ready"
         committed = committed_prepared_facts(state, collection, manifest)
-        overlay = (state.get("prepared_campaign_overlays") or {}).get(collection)
-        try:
-            prepared = PreparedCampaign.model_validate(overlay) if overlay is not None else manifest.prepared
-        except ValueError:
-            continue
         for policy in manifest.resolution_policies:
             if scene_id not in policy.scene_ids:
                 continue
+            if policy.mode == "automatic" and not any(
+                effect.kind not in {"objective", "milestone"} for effect in policy.on_automatic
+            ):
+                continue  # Narrative-only legacy actions belong to the live DM.
             supported_check = True
             if policy.mode == "check":
                 normalized = normalise_check(policy.check)
@@ -126,9 +124,6 @@ def policies_for_state(state: dict) -> list[dict]:
             ) and policy_fact_requirements_met(policy.requires_facts, committed)
             gear_met = all(match_inventory_item(items, item) for item in policy.requires_items)
             evidence_met = set(policy.passage_ids) <= readable_ids
-            branch_met = prepared_policy_available(
-                prepared, policy.policy_id, scene_id, state.get("world_flags") or {}, committed
-            )
             edition_met = (
                 manifest.rules_edition in {"2014", "2024"} and manifest.rules_edition == edition
             )
@@ -140,14 +135,12 @@ def policies_for_state(state: dict) -> list[dict]:
                     "manifest_sha256": manifest.reviewed_sha256,
                     "rules_edition": manifest.rules_edition,
                     "policy": policy,
-                    "prepared": prepared,
                     "available": bool(
                         source_ready
                         and supported_check
                         and prerequisites_met
                         and gear_met
                         and evidence_met
-                        and branch_met
                         and edition_met
                     ),
                     "rejection_reason": "That approach is not available in the current circumstances.",
@@ -315,19 +308,15 @@ def policy_effects_for_outcome(
         or current["manifest_sha256"] != selected.get("manifest_sha256")
         or current["policy"] != policy
         or not policy_source_is_fresh(current, state)
-        or not prepared_policy_available(
-            current["prepared"], policy.policy_id, state.get("current_scene_id"),
-            state.get("world_flags") or {},
-            committed_prepared_facts(
-                state, current["collection"], require_published(
-                    state["adventure_manifests"][current["collection"]]
-                )
-            ),
-            result="automatic" if policy.mode == "automatic" else "success" if success else "failure",
-        )
     ):
         selected["generation_failed"] = True
         return [], []
+    # A reviewed policy can resolve mechanics and disclosures; selecting it does not
+    # establish that its narrative goals were earned. The live DM judges all such goals.
+    definitions = [
+        outcome for outcome in definitions if outcome.kind not in {"objective", "milestone"}
+    ]
+    selected["expected_effect_count"] = len(definitions)
     if not definitions:
         return [], []
 

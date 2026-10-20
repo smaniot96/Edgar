@@ -1,37 +1,36 @@
 # Preparation supervisor integration
 
-`apps/api/services/preparation.py` owns durable task leases, provider budget reservations,
-receipt acceptance, retry recovery and the readiness gate. Keep generation and upload entrypoints
-thin: create a frozen `PreparationRunBinding`, call `PreparationSupervisor.create_run`, then
-schedule `step` until the returned run is ready or blocked. The private checkpoint is stored in
-the source's existing `.jobs/<run-id>/preparation.json` directory; public status must come from
-`supervisor.status` so private artifact payloads, validator findings and error codes do not leak.
+`apps/api/services/preparation.py` owns durable leases, usage accounting, accepted
+receipts, recovery and publication. There is one scheduler: PDF and AI inputs share
+whole-campaign design and compact blueprint authoring. Later compilation, grounding,
+scene/guide construction, repair directions and scaffold checks are local operations.
+See `preparation-runtime-integration.md` for the current narrative contract.
 
-Register one `StageAdapter` for each stage. Its planner receives the frozen binding and all
-accepted artifacts; its executor receives `(binding, task, dependency_artifacts, attempt,
-idempotency_key)` and returns `StageExecutionResult`. The executor must use the idempotency key,
-return exact dependency-bound artifacts, and include `ProviderUsage` for success or failure.
-Raise `PreparationTaskFailure(code, usage)` when the provider fails. If usage is unknown, the
-supervisor records an unknown-usage attempt and charges the task's full call, token and cost
-reservation. Provider SDK retries must be disabled; each supervisor attempt is checkpointed.
+Entrypoints create a frozen `PreparationRunBinding`, call
+`PreparationSupervisor.create_run`, and schedule `step` until ready or blocked. Private
+checkpoints live in `.jobs/<run-id>/preparation.json`. Public status comes from
+`supervisor.status` and excludes private content, findings and provider diagnostics.
 
-Register code validators for each stage as callables in `validators[stage]`; assign each callable
-a stable `validator_id` string. A successful validator returns a `ValidationResult` with exactly
-one passing receipt for that ID. Each receipt must bind the exact proposed artifact and dependency
-digests. P04 requires `p04_prepared_campaign`; P09 requires separate
-`p09_deterministic_review` and `p09_independent_critic` validators; P12 requires
-`p12_publication_inventory`. Missing adapters or validators block before dispatch. P06 and P08
-plans must cover exactly the `act_ids` in P03's `scope_contract`.
+Stage executors receive `(binding, task, dependency_artifacts, attempt,
+idempotency_key)` and return `StageExecutionResult`. Provider work uses durable
+response identity and retains usage on both success and failure. Unique completed
+response receipts establish known usage; unresolved estimates do not erase it.
+Token/call/cost and retry estimates do not stop otherwise valid preparation.
 
-Call `step(slug, run_id, worker_id, source_guard, publisher)` repeatedly. `source_guard(binding)`
-must confirm that the source version and extraction/PDF digest are still current. It is checked
-around worker execution and before publication. Supply `publisher(publication)` only for the final
-P12 step; it must commit the exact inventory atomically and idempotently, and return the supplied
-`publication.bundle_sha256` only after that commit succeeds. The supervisor marks the run ready
-only after that digest is confirmed and all twelve stage plans, tasks, artifacts and receipts
-still match the checkpoint.
+Validators issue receipts bound to exact proposed and dependency digests. P04 checks
+the compiled scaffold; P09 combines deterministic source/structure review with an
+independent critic; P10 recomputes source-scaffold coverage; P12 validates publication
+inventory. Stable task/artifact identifiers remain compatible with the retained run.
+An accepted model response alone cannot mark a campaign ready.
 
-For explicit recovery use `retry` on a blocked run after correcting its stage contract, or when a
-blocked task has attempts remaining. `cancel` fences in-flight workers and charges outstanding
-reservations conservatively. `invalidate_dependents` removes an artifact's transitive dependent
-closure so amended private work cannot reuse stale downstream approvals.
+`source_guard(binding)` fences changed sources, cancellation and replacement before
+and after execution and before publication. No lifecycle lock spans provider work.
+The publisher must return the exact `publication.bundle_sha256` after index activation;
+READY follows only when accepted receipts and publication agree.
+
+`retry` resumes the same saved blocked run after its defect is corrected. Review
+repairs archive prior downstream artifacts and retain P01–P03 plus the accepted compact
+blueprint. They restart local compilation at P04 and require fresh dependent review
+and publication receipts. They do not repeat paid studies or design. Historical
+per-act authoring checkpoints keep their data and report a conversion diagnostic;
+they never dispatch the removed heavy authoring workflow.

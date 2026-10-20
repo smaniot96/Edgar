@@ -1,13 +1,14 @@
 """Canonical proposal validation and bounded planning/player projections.
 
-Only retrieved, currently eligible reviewed spans may establish a new fact. Private
-planner prose can guide a decision but can never become a discovered player quotation.
+Only retrieved, currently eligible reviewed spans may establish a source fact. The live
+DM adjudicates goals from play; private criteria never become quotations.
 """
 
 from __future__ import annotations
 
 import re
 
+from agent.committed_facts import committed_prepared_facts
 from agent.models.adjudication import AdjudicationResult
 from agent.resolution_policies import policy_effect_key
 from agent.state import AgentState
@@ -23,6 +24,7 @@ from edgar_core.story import (
     StoryRef,
     StoryState,
     accept_story_effect,
+    dm_adjudication_reference,
     homebrew_name_key,
     homebrew_reference,
     homebrew_target,
@@ -152,6 +154,11 @@ def story_candidates(state: AgentState) -> list[dict]:
                         definition.title,
                         list(eligible_ids.intersection(definition.passage_ids)),
                         statuses=definition.statuses,
+                        completion_condition=definition.completion_condition,
+                        engine_requirements=[
+                            r.model_dump() for r in definition.engine_requirements
+                        ],
+                        engine_forbidden=[r.model_dump() for r in definition.engine_forbidden],
                         reveal_on=definition.reveal_on,
                         clock_max=definition.clock_max,
                         portable=definition.portable,
@@ -164,6 +171,29 @@ def story_candidates(state: AgentState) -> list[dict]:
                         else None,
                     )
     return candidates + _player_promise_candidates(state)
+
+
+def is_dm_goal_candidate(candidate: dict) -> bool:
+    return candidate["target"]["kind"] in {"objective", "milestone"}
+
+
+def _goal_engine_allows_completion(candidate: dict, state: AgentState) -> bool:
+    """Check only engine facts; natural-language achievement remains the DM's judgment."""
+    if not candidate.get("engine_requirements") and not candidate.get("engine_forbidden"):
+        return True
+    target = candidate["target"]
+    manifest = require_published(state["adventure_manifests"][target["collection"]])
+    statuses: dict[str, str] = {}
+    for fact in committed_prepared_facts(state, target["collection"], manifest):
+        if fact.kind == "entity" and fact.status in {"dead", "defeated", "captive", "released"}:
+            statuses[fact.target_id] = fact.status
+    return all(
+        statuses.get(row["actor_id"]) in row["statuses"]
+        for row in candidate.get("engine_requirements", [])
+    ) and not any(
+        statuses.get(row["actor_id"]) in row["statuses"]
+        for row in candidate.get("engine_forbidden", [])
+    )
 
 
 def _explicit_player_promise(text: str) -> bool:
@@ -360,6 +390,18 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         policy_key = policy_effect_key(proposal)
         if candidate is None or not _kind_matches(proposal, candidate):
             continue
+        dm_goal = is_dm_goal_candidate(candidate)
+        if dm_goal and (
+            not state.get("player_input", "").strip()
+            or not (proposal.achievement_basis or "").strip()
+        ):
+            continue
+        if (
+            proposal.kind in {"objective", "milestone"}
+            and proposal.status == "completed"
+            and not _goal_engine_allows_completion(candidate, state)
+        ):
+            continue
         if proposal.kind == "visit" and proposal.target.canonical_id != state.get(
             "current_scene_id"
         ):
@@ -431,10 +473,11 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 public = [c for c in public if c.get("passage_id") in policy_reveals[policy_key]]
                 if not policy_reveals[policy_key] <= {c.get("passage_id") for c in public}:
                     continue
-        if not public:
+        if not public and not dm_goal:
             continue
         if (
-            candidate.get("reveal_on", "success") == "success"
+            not dm_goal
+            and candidate.get("reveal_on", "success") == "success"
             and not adj.success
             and policy_key not in authorized_policy_effects
         ):
@@ -484,16 +527,19 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 or (proposal.status == "completed") != (proposal.quantity == maximum)
             ):
                 continue
-        effect = proposal.model_copy(
-            update={
-                "player_text": "\n".join(
-                    c["text"]
-                    for c in sorted(
-                        public, key=lambda c: source_citation(c, edition)["reference_id"]
-                    )
-                )
-            }
+        public_text = "\n".join(
+            c["text"]
+            for c in sorted(public, key=lambda c: source_citation(c, edition)["reference_id"])
         )
+        if dm_goal:
+            # Private achievement evidence earns progress, not disclosure permission.
+            # The journal names a goal only when its reviewed public support names it.
+            public_text = (
+                candidate["title"]
+                if any(candidate["title"] in c["text"] for c in public)
+                else None
+            )
+        effect = proposal.model_copy(update={"player_text": public_text})
         if effect.kind in _OBJECT_KINDS:
             try:
                 from agent.object_effects import validate_object_effect
@@ -502,15 +548,27 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             effect = validate_object_effect(effect, state, accepted)
             if effect is None:
                 continue
+        source_refs = list(
+            {
+                source_citation(c, edition)["reference_id"]: source_citation(c, edition)
+                for c in supporting + public
+            }.values()
+        )
+        if dm_goal:
+            source_refs.append(
+                dm_adjudication_reference(
+                    state["turn_id"],
+                    effect.target,
+                    action=state["player_input"],
+                    success=adj.success,
+                )
+            )
         sealed = accept_story_effect(
             effect,
             turn_id=state["turn_id"],
-            source_refs=list(
-                {
-                    source_citation(c, edition)["reference_id"]: source_citation(c, edition)
-                    for c in supporting + public
-                }.values()
-            ),
+            source_refs=source_refs,
+            evidence_kind="dm_adjudication" if dm_goal else "source",
+            origin_turn_id=state["turn_id"] if dm_goal else None,
             display_name=(
                 candidate["title"]
                 if any(candidate["title"] in c["text"] for c in public)

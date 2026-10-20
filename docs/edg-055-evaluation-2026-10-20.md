@@ -1,5 +1,7 @@
 # EDG-055 product evaluation — run of 20 October 2026
 
+Current architecture: the lighter pipeline is now the only implementation. The dated findings below retain the investigation history; scripted producer chains and exhaustive completion proofs were superseded by the owner’s agent-led story direction. See [current preparation contract](preparation-runtime-integration.md). Campaign data and paid responses remain preserved.
+
 Owner-instructed run of the [EDG-055 evaluation procedure](../work-register/stories/EDG-055-evaluate-full-campaigns-fun-human-ux-and-accessibility.md#evaluation-procedure--owner-instruction-19-october-2026-binding),
 driven by the orchestrator in the built-in browser pane (no subagents). Owner choices: **Lost Mine of Phandelver** PDF;
 scope **play-through plus the narrator set and the classification evaluation**; caps USD 10 (narrator) and USD 5
@@ -594,3 +596,24 @@ match the prior backup. Archive SHA256:
 The source/bindings, accepted design, paid proposals, receipts and cancelled
 baseline remain retained. EDG-055 stays Open. Ready, restart durability, Bryn's
 playthrough and general fresh-PDF acceptance remain unproven.
+
+### Sole pipeline cleanup and retained proposal evaluation
+
+The owner clarified that narration and recognition of earned goals belong to the
+live DM, while combat/UI/persisted state remain structured. The compact flow is
+now the sole PDF/AI scheduler. Obsolete authoring/enrichment/chapter alternatives,
+scripted path search, producer closure and the live branch-amendment tool were
+removed. Source and checkpoint compatibility readers remain; saved paid work was
+not discarded. Current runtime/supervisor contracts document this architecture.
+
+Read-only production evaluation of the newest retained correction passed local
+compilation, all eight act groundings, assembly and the independently recomputed
+source-scaffold validator: 8 acts, 50 scenes, 26 goals, 24 encounters, no authored
+branches/outcomes, zero findings, 3.7 seconds and zero provider calls. The stored
+run remained blocked with its original 22 accepted artifacts during this audit.
+This does not establish source-modifier fidelity, solo balance or final readiness.
+
+Subagents reviewed integration, legacy identity hashes and private goal projection.
+The reported journal paraphrase leak was fixed. Syntax/import/schema/Ruff/diff
+checks passed. No test suite, CI/CD or remote push ran. Deployment, final critic,
+publication, restart durability and Bryn's playthrough are still pending here.

@@ -138,20 +138,15 @@ def test_new_source_bytes_with_identical_extraction_invalidate_only_previous_rev
     assert published.get("manifest") == (replacement if fresh_review else None)
 
 
-def test_restart_recovers_checkpoint_when_summary_write_fails_and_retry_is_single(
+def test_restart_recovers_checkpoint_when_summary_write_fails(
     tmp_path, monkeypatch
 ):
     """A chapter saved before a failed metadata write must still be useful after restart."""
-    from fastapi import BackgroundTasks, HTTPException
-
-    from apps.api.routers import adventures
     from apps.api.services import campaign_sources
     from db.vector.versions import SupersededIngestion
 
     monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
     monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
-    monkeypatch.setattr(adventures, "_ADVENTURES_DIR", store.ADVENTURES_DIR)
-    monkeypatch.setattr(adventures, "_PDF_DIR", store.PDF_DIR)
     monkeypatch.setattr(campaign_sources, "active_index_version", lambda _: None)
     monkeypatch.setattr(
         campaign_sources,
@@ -204,7 +199,7 @@ def test_restart_recovers_checkpoint_when_summary_write_fails_and_retry_is_singl
     )
     assert store.fail_stale_processing() == ["keep"]
     state = campaign_sources.safe_job_read(store.load_meta("keep"), "keep")
-    assert state.state == "interrupted" and state.retryable
+    assert state.state == "interrupted" and not state.retryable
     assert state.completed_chapters == 1 and state.total_chapters == 3
     assert "PRIVATE" not in state.model_dump_json()
     assert "generating" not in store.load_meta("keep")["title"].lower()
@@ -212,85 +207,18 @@ def test_restart_recovers_checkpoint_when_summary_write_fails_and_retry_is_singl
         store.save_generation_checkpoint(
             "keep", token, checkpoint, stage="generating_chapters", total_chapters=3
         )
-    queued = BackgroundTasks()
-    assert adventures.retry_adventure("keep", queued).status == "processing"
-    assert len(queued.tasks) == 1
-    assert store.load_meta("keep")["job"]["job_id"] == job["job_id"]
-    with pytest.raises(HTTPException) as duplicate:
-        adventures.retry_adventure("keep", BackgroundTasks())
-    assert duplicate.value.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_checkpoint_failure_settles_siblings_before_retry_and_preserves_chapter_identity(
-    monkeypatch,
-):
-    """Retry cannot overlap old paid calls or attach one sibling's text to another chapter."""
-    import asyncio
-    import copy
-
-    from apps.api.services import campaign_generator as generator
-
-    outline = generator.CampaignOutline(
-        title="The Keep",
-        premise="A lost guide",
-        setting="A village",
-        hook="A witness asks",
-        chapters=[generator.ChapterOutline(name=f"Part {i}", summary="A lead") for i in range(3)],
-    )
-    calls = []
-    settled = set()
-    saved = {}
-    retrying = False
-    blocked = asyncio.Event()
-
-    async def fake_outline(*_args):
-        calls.append("outline")
-        return outline
-
-    async def fake_chapter(_outline, index, *_args):
-        calls.append(index)
-        try:
-            if index and not retrying:
-                await blocked.wait()
-            return f"## Chapter {index + 1}\n\n" + f"Unique chapter {index} content. " * 12
-        finally:
-            settled.add(index)
-
-    def fail_after_chapter(value, _stage):
-        nonlocal saved
-        saved = copy.deepcopy(value)
-        if value["chapters"]:
-            raise OSError("durable summary write failed")
-
-    monkeypatch.setattr(generator, "_generate_outline", fake_outline)
-    monkeypatch.setattr(generator, "_expand_chapter", fake_chapter)
-    with pytest.raises(OSError, match="durable summary"):
-        await generator.generate_campaign("", "", "small", on_checkpoint=fail_after_chapter)
-    assert settled == {0, 1, 2}
-    assert set(saved["chapters"]) == {"0"}
-    retrying = True
-    calls.clear()
-    _, _, pages = await generator.generate_campaign("", "", "small", checkpoint=saved)
-    assert set(calls) == {1, 2}
-    assert len(pages) == 3
-    for index, (_, text) in enumerate(pages):
-        assert f"Unique chapter {index} content." in text
-        assert all(
-            f"Unique chapter {other} content." not in text for other in range(3) if other != index
-        )
 
 
 @pytest.mark.parametrize(
     "corruption", ["optional_outline_type", "noncanonical_chapter", "short_chapter"]
 )
-async def test_unreadable_progress_is_terminal_and_offers_no_paid_retry(
+def test_unreadable_progress_is_terminal_and_offers_no_paid_retry(
     tmp_path, monkeypatch, corruption
 ):
     import json
 
     from apps.api.routers import adventures
-    from apps.api.services import campaign_generator as generator, campaign_sources
+    from apps.api.services import campaign_sources
 
     monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
     monkeypatch.setattr(store, "PDF_DIR", tmp_path / "pdfs")
@@ -303,11 +231,6 @@ async def test_unreadable_progress_is_terminal_and_offers_no_paid_retry(
             "status": "missing",
             "usable_chunks": 0,
         },
-    )
-    monkeypatch.setattr(
-        generator,
-        "make_chat_model",
-        lambda **_: pytest.fail("corrupt progress made a provider call"),
     )
     job = store.new_job("generation", "queued", total_chapters=3)
     store.save_meta(
@@ -345,11 +268,9 @@ async def test_unreadable_progress_is_terminal_and_offers_no_paid_retry(
             }
         )
     )
-    await generator.build_generated_campaign("keep", "", "", "small")
-    meta = store.load_meta("keep")
-    assert meta["job"]["checkpoint_corrupt"] and not meta["job"]["retryable"]
-    assert "generating" not in meta["title"].lower()
+    with pytest.raises(ValueError):
+        store.load_generation_checkpoint("keep", job["job_id"], expected_chapters=3)
     read = adventures._read_for_slug("keep", False)
     assert not read.can_retry and not read.job.retryable
-    assert "Create a new campaign" in read.job.explanation
+    assert "files and any previously published source are preserved" in read.job.explanation
     assert "SECRET" not in read.model_dump_json()

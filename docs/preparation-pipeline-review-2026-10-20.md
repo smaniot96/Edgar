@@ -1,5 +1,7 @@
 # Campaign preparation pipeline review — 2026-10-20
 
+Current architecture: the lighter pipeline is now the only implementation. The dated findings below retain the investigation history; scripted producer chains and exhaustive completion proofs were superseded by the owner’s agent-led story direction. See [current preparation contract](preparation-runtime-integration.md). Campaign data and paid responses remain preserved.
+
 Review basis: development HEAD `fbc6162` plus the existing uncommitted route/title/preflight changes; held runtime HEAD `46a5170`; retained artifacts for `prep-95ea542c81af43ec9dea3f61a77e9f85`, adventure `lost_mine_of_phandelver_edg_055_rerun_3`. Line references below describe that reviewed state and may move during remediation.
 
 The review itself was read-only: no edits, tests, provider or embedding calls, runtime restart, or campaign continuation. This report was saved afterward when implementation was authorized. The current run must remain held until local representation, progression, grounding, and validation defects are repaired. The six completed requests produced substantial reusable content, but the saved blueprint is not yet a demonstrably playable campaign. Removing route-count and title-length failures alone exposes further structural failures.
@@ -213,3 +215,28 @@ the latest correction. The run remains blocked in P04; studies/design were not
 repeated. New-PDF reliability, complete campaign acceptance, and the twenty-minute/
 five-dollar target remain unproven. The latest correction took about 9.6 minutes,
 bringing compact recovery estimates to USD 5.105084 before completion.
+
+## Current architecture after owner-directed cleanup
+
+The lighter preparation flow is now the only active scheduler for PDF and AI.
+The former per-act authoring, separate enrichment/chapter calls, exhaustive path
+search and producer closure are removed. Goals use source-backed outcome criteria
+judged by the live DM, with optional explicit engine predicates. Story readiness
+does not require every possible rescue, discovery or creative action to have an
+authored producer. The live prepared-amendment proposal tool and its prompts,
+context builders, acceptance hook and state channel are removed; historical
+receipt validation remains to read saved sessions.
+
+P10 now independently recomputes source-scaffold evidence under its retained
+artifact/validator IDs. It verifies bindings, reviewed source coverage, goals,
+scene packets, topology and actor grounding without claiming simulated completion.
+The accepted proposal passes compilation, assembly, all eight act groundings and
+this validator locally: 50 scenes, 26 goals, 24 encounters, zero findings, no
+provider calls. Independent critic and publication gates still determine Ready.
+
+Final subagent integration review found a private journal disclosure gap. Goal
+progress now emits only a canonical title already present in eligible public
+support; hidden progress remains private. Legacy identity hashes and stage
+interfaces were checked read-only. See `preparation-runtime-integration.md` and
+`preparation-supervisor-integration.md` for the current contracts. Old findings
+above remain historical evidence, not instructions to restore scripted paths.

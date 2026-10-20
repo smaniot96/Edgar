@@ -1,16 +1,14 @@
 """Worker diagnostics and local preview endpoints use isolated files and stubbed indexes."""
 
 import hashlib
-from unittest.mock import AsyncMock
 
 import pytest
-import structlog
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from apps.api.routers import adventures
 from apps.api.schemas.adventure import AdventureRetryRequest
-from apps.api.services import adventures_meta, campaign_generator as generator, campaign_sources
+from apps.api.services import adventures_meta, campaign_sources
 from ingestion.extract import ExtractedPage, Extraction, save_extraction
 from ingestion.readiness import IngestionRejected, prepare_report, report_summary
 
@@ -201,82 +199,3 @@ def test_changed_pdf_makes_retained_preview_explicitly_previous(local_sources):
     assert source.status == "partial" and source.extraction_preview_available
     assert not source.extraction_preview_current
     assert not adventures.get_extraction_preview("bridge")["source_current"]
-
-
-async def test_partial_generated_outline_fails_without_expanding_or_indexing(
-    local_sources, monkeypatch
-):
-    outline = generator.CampaignOutline(
-        title="Bridge",
-        premise="Premise",
-        setting="River",
-        hook="Cross the bridge",
-        chapters=[generator.ChapterOutline(name="Start", summary="Opening")],
-    )
-    expand = AsyncMock()
-    monkeypatch.setattr(generator, "_generate_outline", AsyncMock(return_value=outline))
-    monkeypatch.setattr(generator, "_expand_chapter", expand)
-    with pytest.raises(generator.IncompleteGeneration, match="1 of 3"):
-        await generator.generate_campaign("Bridge", "River", "small")
-    expand.assert_not_called()
-    adventures_meta.save_meta("bridge", {"status": "processing", "generation": {"kind": "ai"}})
-    await generator.build_generated_campaign("bridge", "Bridge", "River", "small")
-    meta = adventures_meta.load_meta("bridge")
-    assert meta["status"] == "failed" and meta["failure_code"] == "turn_failed"
-    assert meta["error"] == (
-        "Something went wrong while processing this action. "
-        "Check the saved result before trying again."
-    )
-    assert not (local_sources[1] / "bridge.pdf").exists()
-
-
-async def test_unreadable_generation_checkpoint_persists_the_logged_support_reference(
-    local_sources, monkeypatch, fresh_safe_error_logger
-):
-    adventures_meta.save_meta(
-        "bridge", {"status": "processing", "generation": {"kind": "ai"}}
-    )
-
-    def unreadable(*_args, **_kwargs):
-        raise ValueError("private checkpoint content")
-
-    monkeypatch.setattr(adventures_meta, "load_generation_checkpoint", unreadable)
-    with structlog.testing.capture_logs() as captured:
-        await generator.build_generated_campaign("bridge", "Bridge", "River", "small")
-
-    meta = adventures_meta.load_meta("bridge")
-    job = campaign_sources.safe_job_read(meta, "bridge")
-    assert meta["failure_code"] == "campaign_sources_unavailable"
-    assert job is not None and job.failure is not None
-    assert job.failure.support_ref == meta["support_ref"]
-    event = next(item for item in captured if item.get("event") == "campaign_checkpoint_unreadable")
-    assert event["support_ref"] == meta["support_ref"]
-    assert "private checkpoint content" not in repr(captured)
-
-
-async def test_generated_embedding_failure_keeps_failed_recoverable_manuscript(
-    local_sources, monkeypatch
-):
-    pages = [
-        (
-            n,
-            "This complete chapter describes a bridge, its guard, the nearby village and several choices for the party.",
-        )
-        for n in range(1, 4)
-    ]
-    monkeypatch.setattr(
-        generator, "generate_campaign", AsyncMock(return_value=("Bridge", "Premise", pages))
-    )
-
-    def failed_write(*args, **kwargs):
-        raise ConnectionError("isolated embedding failure")
-
-    monkeypatch.setattr("ingestion.embed._embed_and_upsert", failed_write)
-    adventures_meta.save_meta("bridge", {"status": "processing", "generation": {"kind": "ai"}})
-    await generator.build_generated_campaign("bridge", "Bridge", "River", "small")
-    meta = adventures_meta.load_meta("bridge")
-    assert meta["status"] == "failed" and meta["failure_code"] == "turn_failed"
-    assert meta["ingestion"]["source_kind"] == "generated"
-    assert meta["ingestion"]["quality_passed"]
-    assert (local_sources[0] / "bridge" / "bridge.md").is_file()
-    assert not (local_sources[1] / "bridge.pdf").exists()

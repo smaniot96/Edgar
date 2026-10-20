@@ -12,14 +12,12 @@ What it drives, all in one process with no network, no Docker and no live provid
   turn publishes a summary, while the real cadence is every 5 turns) plus a readiness-probe loop.
 - `summary`: N concurrent real `maybe_update_memory_summary` jobs. The two DB helpers are stand-ins
   with the same `async with session, begin()` shape; `summarize_story` runs for real.
-- `generation`: N concurrent `medium` campaign generations (6 chapters) through the real
-  `_expand_chapter` with the per-generation semaphore of six, as in `campaign_generator`.
 
 What is measured: every DB session is a counting fake. A session holds a pooled connection from its
 first statement until commit, rollback or close (SQLAlchemy autobegin semantics). A pool cap (default
 15 = SQLAlchemy `pool_size` 5 + `max_overflow` 10) models queueing; "connection demand" counts sessions
-waiting for or holding a connection and is the sizing input. Each unit of work (turn, summary job,
-generation) is attributed through a contextvar, so the harness can check whether any unit holds a
+waiting for or holding a connection and is the sizing input. Each unit of work (turn or summary
+job) is attributed through a contextvar, so the harness can check whether any unit holds a
 connection while one of its own provider calls is pending.
 
 What it does NOT establish: production latency or throughput; real database latency (statement delays
@@ -51,15 +49,13 @@ if __package__ in (None, ""):  # `python tools/capacity_harness.py` from any dir
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 SCHEMA = "edgar.capacity_harness/1"
-ALL_SCENARIOS = ("runner", "route", "mixed", "summary", "generation")
+ALL_SCENARIOS = ("runner", "route", "mixed", "summary")
 DEFAULT_LEVELS = (1, 2, 4, 8, 16, 32)
 # SQLAlchemy QueuePool defaults for create_async_engine without pool arguments: 5 + 10.
 DEFAULT_POOL_CAP = 15
 LOADER_STATEMENTS = 10  # _load_turn_initial_state issues about this many reads before its commit
 PERSIST_STATEMENTS = 4  # persist_turn stand-in: writes inside one transaction
 PROBE_STATEMENTS = 2  # /ready: postgres + schema checks on one session
-GENERATION_CHAPTERS = 6  # "medium" size tier
-GENERATION_CONCURRENCY = 6  # campaign_generator._MAX_CONCURRENT
 MESSAGE = "I attack the goblin"
 CHAT_MODULES = (
     "agent.llm",
@@ -68,13 +64,8 @@ CHAT_MODULES = (
     "agent.nodes.narrator",
     "agent.nodes.memory_summarizer",
     "agent.graph_combat",
-    "apps.api.services.campaign_generator",
 )
 NARRATION_CHUNKS = ["The goblin ", "lunges ", "at you, ", "and Eda steadies her shield ", "against the wall."]
-CHAPTER_TEXT = (
-    "The party crosses the flooded cellar while torches gutter and an old bell tolls once more "
-    "across the valley below the ruined chapel tonight."
-)
 
 
 @dataclass(frozen=True)
@@ -90,7 +81,7 @@ class Timing:
 
 @dataclass
 class Unit:
-    """One unit of work (turn, summary job, generation). Attribution for connection and provider checks."""
+    """One turn or summary job. Attribution for connection and provider checks."""
 
     name: str
     held: int = 0
@@ -279,16 +270,13 @@ class DelayedChat:
     def with_structured_output(self, schema: type, **_kw: Any) -> _Structured:
         return _Structured(self, schema)
 
-    def _text(self, messages: Any) -> str:
-        return CHAPTER_TEXT if _is_chapter_request(messages) else "".join(NARRATION_CHUNKS)
-
     async def ainvoke(self, messages: Any, *_a: Any, **_kw: Any) -> Any:
         from langchain_core.messages import AIMessage
 
         unit = self._ledger.provider_begin()
         try:
             await asyncio.sleep(self._timing.provider_ms / 1000)
-            return AIMessage(content=self._text(messages))
+            return AIMessage(content="".join(NARRATION_CHUNKS))
         finally:
             self._ledger.provider_end(unit)
 
@@ -303,10 +291,6 @@ class DelayedChat:
                 yield AIMessage(content=chunk)
         finally:
             self._ledger.provider_end(unit)
-
-
-def _is_chapter_request(messages: Any) -> bool:
-    return any("Write Chapter" in str(getattr(m, "content", "")) for m in messages)
 
 
 class _Structured:
@@ -525,43 +509,6 @@ async def _run_summary_unit(index: int) -> Unit:
     return unit
 
 
-def _outline() -> Any:
-    from apps.api.services.campaign_generator import CampaignOutline, ChapterOutline
-
-    return CampaignOutline(
-        title="Cellar of Bells",
-        premise="A bell rings beneath the chapel.",
-        setting="A flooded cellar under a ruined chapel.",
-        hook="The bell has not rung in forty years.",
-        factions=["the chapel wardens"],
-        key_npcs=["Brother Oren"],
-        chapters=[
-            ChapterOutline(name=f"Chapter name {k}", summary="The party moves deeper into the cellar.")
-            for k in range(GENERATION_CHAPTERS)
-        ],
-    )
-
-
-async def _run_generation_unit(index: int) -> Unit:
-    from apps.api.services.campaign_generator import _expand_chapter
-
-    unit = Unit(name=f"generation-{index}")
-    token = _CURRENT.set(unit)
-    started = time.perf_counter()
-    try:
-        outline = _outline()
-        # One semaphore per generation, as generate_campaign creates it (bound of six per run).
-        sem = asyncio.Semaphore(GENERATION_CONCURRENCY)
-        results = await asyncio.gather(
-            *(_expand_chapter(outline, k, GENERATION_CHAPTERS, sem, "2014") for k in range(GENERATION_CHAPTERS))
-        )
-        unit.ok = len(results) == GENERATION_CHAPTERS
-    finally:
-        unit.latency_ms = (time.perf_counter() - started) * 1000
-        _CURRENT.reset(token)
-    return unit
-
-
 async def _lag_sampler(samples: list[float], stop: asyncio.Event, interval_s: float = 0.005) -> None:
     while not stop.is_set():
         started = time.perf_counter()
@@ -618,8 +565,6 @@ async def _run_level(scenario: str, n: int, run: Run, seed: int) -> dict[str, An
                     units = await asyncio.gather(*(_run_route_unit(client, run, i, seed) for i in range(n)))
             elif scenario == "summary":
                 units = await asyncio.gather(*(_run_summary_unit(i) for i in range(n)))
-            elif scenario == "generation":
-                units = await asyncio.gather(*(_run_generation_unit(i) for i in range(n)))
             else:
                 raise ValueError(f"unknown scenario {scenario!r}")
         finally:
@@ -713,8 +658,6 @@ def run_harness(
             "loader_statements": LOADER_STATEMENTS,
             "persist_statements": PERSIST_STATEMENTS,
             "probe_statements": PROBE_STATEMENTS,
-            "generation_chapters": GENERATION_CHAPTERS,
-            "generation_concurrency": GENERATION_CONCURRENCY,
         },
         "environment": {"python": platform.python_version(), "platform": sys.platform},
         "scenarios": scenario_rows,
