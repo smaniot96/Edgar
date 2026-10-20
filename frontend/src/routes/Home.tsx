@@ -8,10 +8,9 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
-  deleteAdventure,
   getMe,
   getOrCreateCampaign,
   listAdventures,
@@ -20,12 +19,14 @@ import {
 } from "../api/client";
 import type { AdventureRead } from "../api/types";
 import { CampaignCard } from "../components/campaign/CampaignCard";
+import { DeleteCampaignDialog } from "../components/campaign/DeleteCampaignDialog";
+import type { DeleteTarget } from "../lib/campaignDelete";
 import { Button } from "../components/ui/Button";
 import { EmptyState, LoadingText } from "../components/ui/EmptyState";
 import { ErrorNotice, OfflineState } from "../components/ui/ErrorNotice";
 import { ChevronIcon, PlayIcon, PlusIcon } from "../components/ui/icons";
 import { Page, PageHeader, SectionTitle } from "../components/ui/Page";
-import { campaignDisplayName } from "../lib/campaign";
+import { campaignDisplayName, stripGenerationPlaceholder } from "../lib/campaign";
 import { buildCards, selectResumeSession, type CardModel } from "../lib/campaignCards";
 import { isJobActive } from "../lib/adventureJob";
 import { cn } from "../lib/cn";
@@ -36,8 +37,20 @@ import { WelcomeForm } from "./home/WelcomeForm";
 
 const POLL_MS = 3000;
 
+/** What deleting a card removes: the player's campaigns for it, then a source nothing else uses. */
+function deleteTargetFor(card: CardModel): DeleteTarget {
+  const homebrew = card.campaign?.source_mode === "homebrew";
+  const title = stripGenerationPlaceholder(card.adventure.title) || card.name;
+  return {
+    name: card.name,
+    campaigns: card.campaigns,
+    sources: homebrew ? [] : [{ slug: card.adventure.slug, title, missing: card.adventure.status === "missing" }],
+  };
+}
+
 export default function Home() {
   const navigate = useNavigate();
+  const location = useLocation();
   const me = useQuery("me", (signal) => getMe(signal));
   const user = me.data;
   const ready = user != null;
@@ -49,7 +62,10 @@ export default function Home() {
   const [createOpen, setCreateOpen] = useState<boolean | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [openingSlug, setOpeningSlug] = useState<string | null>(null);
-  const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
+  const [deleteCard, setDeleteCard] = useState<CardModel | null>(null);
+  // Set by a confirmed delete here, or handed over by the campaign page after its delete.
+  const handedOver = (location.state as { notice?: string } | null)?.notice;
+  const [notice, setNotice] = useState<string | null>(handedOver ?? null);
 
   // Poll while anything is still being prepared: one request at a time, timer cleared on
   // unmount or as soon as nothing is pending.
@@ -122,20 +138,12 @@ export default function Home() {
     }
   }
 
-  async function handleDelete(card: CardModel) {
-    if (!window.confirm(`Delete campaign "${card.name}"? This cannot be undone.`)) return;
-    setActionError(null);
-    setDeletingSlug(card.adventure.slug);
-    try {
-      await deleteAdventure(card.adventure.slug);
-      adventures.refetch();
-      campaigns.refetch();
-      sessions.refetch();
-    } catch (err) {
-      setActionError(err);
-    } finally {
-      setDeletingSlug(null);
-    }
+  function handleDeleted(message: string) {
+    setDeleteCard(null);
+    setNotice(message);
+    adventures.refetch();
+    campaigns.refetch();
+    sessions.refetch();
   }
 
   // Shared by Upload and Generate: show the processing card immediately; polling flips it.
@@ -230,6 +238,14 @@ export default function Home() {
       ) : null}
 
       <ErrorNotice error={actionError} />
+      <div role="status" aria-live="polite">
+        {notice ? (
+          <p className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-success/40 bg-success-soft px-3 py-2 text-sm text-ink">
+            <span className="min-w-0 break-words">{notice}</span>
+            <Button variant="ghost" size="sm" onClick={() => setNotice(null)}>Dismiss</Button>
+          </p>
+        ) : null}
+      </div>
 
       <section aria-labelledby="your-campaigns" className="space-y-3">
         <SectionTitle>
@@ -250,15 +266,20 @@ export default function Home() {
                 key={card.adventure.slug}
                 card={card}
                 onPlay={(c) => void handlePlay(c)}
-                onDelete={(c) => void handleDelete(c)}
+                onDelete={(c) => { setActionError(null); setNotice(null); setDeleteCard(c); }}
                 opening={openingSlug === card.adventure.slug}
-                deleting={deletingSlug === card.adventure.slug}
                 onRetried={() => { adventures.refetch(); campaigns.refetch(); }}
               />
             ))}
           </div>
         )}
       </section>
+      <DeleteCampaignDialog
+        target={deleteCard ? deleteTargetFor(deleteCard) : null}
+        sessions={sessions.data}
+        onClose={() => setDeleteCard(null)}
+        onDeleted={handleDeleted}
+      />
     </Page>
   );
 }

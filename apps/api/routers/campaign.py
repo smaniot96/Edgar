@@ -5,13 +5,16 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Header,
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
 )
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -21,7 +24,14 @@ from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 from ..auth import Auth, campaign_scope, member_campaign, owned_campaign, require_admin
 from ..dependencies import current_user_id, get_redis, get_session
 from ..limits import admit_job
-from ..schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
+from ..schemas.campaign import (
+    CampaignCreate,
+    CampaignDeleteRead,
+    CampaignRead,
+    CampaignUpdate,
+    SourceRelease,
+    SourceReleaseOutcome,
+)
 from ..services.campaign_completion import close_campaign, lock_campaign
 from ..services.campaign_sources import campaign_read, require_sources, validate_binding
 from ._common import Page
@@ -191,11 +201,56 @@ async def update_campaign(
     return await campaign_read(campaign)
 
 
-@router.delete("/campaigns/{campaign_id}", status_code=204)
-async def delete_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
+@router.delete(
+    "/campaigns/{campaign_id}",
+    status_code=204,
+    responses={200: {"model": CampaignDeleteRead, "description": "Deleted, with source outcomes"}},
+)
+async def delete_campaign(
+    campaign_id: int,
+    auth: Auth,
+    db: AsyncSession = Depends(get_session),
+    remove_unused_sources: bool = Query(
+        default=False,
+        description="Also delete each bound adventure source that no other campaign uses "
+        "(requires X-Confirm-Delete: yes, as DELETE /adventures/{slug} does)",
+    ),
+    x_confirm_delete: str | None = Header(default=None),
+):
+    """Delete the campaign and its sessions; optionally release the sources it alone used."""
+    if remove_unused_sources and x_confirm_delete != "yes":
+        raise HTTPException(
+            status_code=400,
+            detail="Send header X-Confirm-Delete: yes to confirm deletion.",
+        )
     campaign = await owned_campaign(db, campaign_id, auth)
+    slugs = list(dict.fromkeys(campaign.adventure_collections or []))
     await db.delete(campaign)
     await db.commit()
+    if not remove_unused_sources:
+        return Response(status_code=204)
+    sources = [
+        SourceRelease(slug=slug, outcome=await _release_source(db, slug, auth)) for slug in slugs
+    ]
+    # The route's declared 204 would drop a returned model, so send the outcome explicitly.
+    return JSONResponse(CampaignDeleteRead(campaign_id=campaign_id, sources=sources).model_dump())
+
+
+async def _release_source(db: AsyncSession, slug: str, auth: Auth) -> SourceReleaseOutcome:
+    if slug in DEFAULT_ADVENTURE_COLLECTIONS:
+        return "built_in"
+    # Sources are a shared library: deleting one is an admin action (DELETE /adventures/{slug}).
+    # Checked before the usage count so a player learns nothing about other campaigns.
+    if auth is not None and not auth.is_admin:
+        return "not_permitted"
+    in_use = await db.scalar(
+        select(func.count()).select_from(Campaign).where(Campaign.adventure_collections.any(slug))
+    )
+    if in_use:
+        return "in_use"
+    from .adventures import release_unused_source
+
+    return await run_in_threadpool(release_unused_source, slug)
 
 
 @router.post("/campaigns/{campaign_id}/end", response_model=CampaignRead)
