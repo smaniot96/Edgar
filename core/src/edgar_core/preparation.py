@@ -186,6 +186,15 @@ class PreparationArtifact(PreparationRecord):
     scope_keys: tuple[str, ...] = ()
 
 
+class ResponseUsage(PreparationRecord):
+    """Provider-reported usage for one durable response, counted once per run."""
+
+    response_id: str
+    input_tokens: Nonnegative
+    output_tokens: Nonnegative
+    cost_microusd: Nonnegative
+
+
 class ProviderUsage(PreparationRecord):
     """Usage is recorded for successful and failed calls, without credentials or prompt text."""
 
@@ -201,6 +210,7 @@ class ProviderUsage(PreparationRecord):
     task_version: str
     latency_ms: Nonnegative = 0
     failure_code: str | None = None
+    responses: tuple[ResponseUsage, ...] = ()
 
     @model_validator(mode="after")
     def validate_provider_usage(self) -> ProviderUsage:

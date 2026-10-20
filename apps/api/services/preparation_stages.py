@@ -125,13 +125,21 @@ def _local_usage():
 
 def _usage_sum(usages):
     called = any(u.provider_called for u in usages)
+    responses = {}
+    duplicated = []
+    for usage in usages:
+        for response in usage.responses:
+            if response.response_id in responses:
+                duplicated.append(response)
+            responses[response.response_id] = response
     return ProviderUsage(
         provider_called=called,
         usage_known=all(u.usage_known for u in usages),
-        call_count=sum(u.call_count for u in usages),
-        input_tokens=sum(u.input_tokens for u in usages),
-        output_tokens=sum(u.output_tokens for u in usages),
-        cost_microusd=sum(u.cost_microusd for u in usages),
+        call_count=sum(u.call_count for u in usages) - len(duplicated),
+        input_tokens=sum(u.input_tokens for u in usages) - sum(r.input_tokens for r in duplicated),
+        output_tokens=sum(u.output_tokens for u in usages) - sum(r.output_tokens for r in duplicated),
+        cost_microusd=sum(u.cost_microusd for u in usages) - sum(r.cost_microusd for r in duplicated),
+        responses=tuple(responses.values()),
         requested_model="gpt-6.1-sol" if called else None,
         reasoning_effort="high" if called else None,
         task_version="preparation-bounded-tasks-v1",
@@ -464,7 +472,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             from .preparation import assert_current_preparation_worker
 
             assert_current_preparation_worker()
-            feedback = latest_rejection(binding, task, schema)
+            feedback = latest_rejection(binding, planned, schema, kwargs["idempotency_key"])
             if feedback:
                 kwargs["evidence"] = {
                     **kwargs["evidence"],
@@ -480,7 +488,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             kwargs["idempotency_key"] += f":attempt:{attempt}:correction:{_correction}"
             result, usage = await provider(bound, planned, schema, **kwargs)
             assert_current_preparation_worker()
-            last = save_proposal(binding, task, schema, result, usage, kwargs["idempotency_key"])
+            last = save_proposal(binding, planned, schema, result, usage, kwargs["idempotency_key"])
             return result, usage
 
         try:
@@ -1421,7 +1429,10 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
             created_at=_now(),
         )
         return ValidationResult(passed=True, receipts=(receipt,))
-    except Exception:
+    except Exception as exc:
+        from .preparation_proposals import save_diagnostic
+
+        save_diagnostic(binding, f"{stage.value}:validation", exc, task=task, dependencies=deps)
         return ValidationResult(passed=False, block_code="stage_validation_failed")
 
 
