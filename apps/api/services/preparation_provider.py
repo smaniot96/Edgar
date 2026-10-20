@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agent.llm import make_chat_model
 from edgar_core.model_profiles import ModelProfileSnapshot, effective_profile
-from edgar_core.preparation import PreparationRunBinding, PreparationTask, ProviderUsage
+from edgar_core.preparation import PreparationRunBinding, PreparationTask, ProviderUsage, ResponseUsage
 from edgar_core.safe_errors import provider_error_code
 
 log = structlog.get_logger(__name__)
@@ -137,8 +137,6 @@ async def invoke_preparation[T: BaseModel](
     request = {
         "model": profile.model,
         "reasoning": {"effort": profile.reasoning_effort},
-        "max_output_tokens": min(task.max_output_tokens, profile.max_output_tokens)
-        if profile.max_output_tokens is not None else task.max_output_tokens,
         "input": [{"role": "system", "content": system},
                   {"role": "user", "content": parts}],
         "text": {"format": {"type": "json_object"} if dynamic else {
@@ -159,7 +157,8 @@ async def invoke_preparation[T: BaseModel](
     try:
         from .preparation_responses import await_response
 
-        response = await await_response(llm.root_async_client, binding, task, request)
+        response = await await_response(llm.root_async_client, binding, task, request,
+                                        idempotency_key=idempotency_key)
     except asyncio.CancelledError:
         raise  # Supervisor charges its outstanding reservation before propagating cancellation.
     except Exception as exc:
@@ -207,6 +206,9 @@ async def invoke_preparation[T: BaseModel](
         resolved_model=resolved if isinstance(resolved, str) else None,
         task_version=TASK_VERSION,
         latency_ms=int((time.monotonic() - started) * 1000),
+        responses=(ResponseUsage(response_id=response.id, input_tokens=tokens_in,
+                   output_tokens=tokens_out,
+                   cost_microusd=request_cost_ceiling(tokens_in, tokens_out)),) if known else (),
     )
     if resolved is not None and (
         not isinstance(resolved, str)

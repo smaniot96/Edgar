@@ -518,7 +518,10 @@ class PreparationSupervisor:
             if not isinstance(plan, StagePlan) or plan.stage != stage:
                 raise ValueError("invalid stage plan")
             self._validate_plan(state, plan)
-        except Exception:
+        except Exception as exc:
+            from .preparation_proposals import save_diagnostic
+
+            save_diagnostic(state.binding, f"{stage.value}:plan", exc, dependencies=accepted)
             return self._block_run(slug, run_id, "stage_plan_invalid")
 
         def save(payload: dict[str, Any]) -> None:
@@ -802,11 +805,12 @@ class PreparationSupervisor:
         calls: int, tokens: int, cost: int,
     ) -> PreparationRunState:
         usage = result.usage
-        spent_calls, spent_tokens, spent_cost = _charged(usage, calls, tokens, cost)
         now = _iso(_now())
         def update(payload: dict[str, Any]) -> None:
             saved = payload["tasks"][_task_key(task)]
             _assert_fence(saved, worker_id, fence)
+            spent_calls, spent_tokens, spent_cost = _charged(
+                usage, calls, tokens, cost, payload["usage_attempts"])
             payload["provider_calls_reserved"] -= calls
             payload["tokens_reserved"] -= tokens
             payload["cost_microusd_reserved"] -= cost
@@ -872,7 +876,8 @@ class PreparationSupervisor:
             )
             if usage is not None and usage.failure_code is None:
                 attempt_usage = usage.model_copy(update={"failure_code": code})
-            used_calls, used_tokens, used_cost = _charged(attempt_usage, calls, tokens, cost)
+            used_calls, used_tokens, used_cost = _charged(
+                attempt_usage, calls, tokens, cost, payload["usage_attempts"])
             payload["provider_calls_reserved"] -= calls
             payload["tokens_reserved"] -= tokens
             payload["cost_microusd_reserved"] -= cost
@@ -968,7 +973,11 @@ class PreparationSupervisor:
             return PreparationStep(ready_state, publication_digest=digest)
         except StalePreparationRevision:
             return PreparationStep(self.store.load_run(slug, run_id))
-        except Exception:
+        except Exception as exc:
+            from .preparation_proposals import save_diagnostic
+
+            save_diagnostic(state.binding, "publication", exc,
+                            dependencies=tuple(state.artifacts.values()))
             current = self.store.load_run(slug, run_id)
             if current.revision != state.revision or current.status in (
                 PreparationJobStatus.READY, PreparationJobStatus.CANCELLED
@@ -1021,10 +1030,16 @@ def _assert_fence(task_state: dict[str, Any], owner: str, fence: int) -> None:
         raise PreparationError("Task lease was superseded before its result could be committed.")
 
 
-def _charged(usage: ProviderUsage | None, calls: int, tokens: int, cost: int) -> tuple[int, int, int]:
+def _charged(usage: ProviderUsage | None, calls: int, tokens: int, cost: int,
+             previous=()) -> tuple[int, int, int]:
     if usage is None or (usage.provider_called and not usage.usage_known):
         return calls, tokens, cost
-    return usage.call_count, usage.input_tokens + usage.output_tokens, usage.cost_microusd
+    seen = {r["response_id"] for item in previous for r in item.get("responses", [])}
+    repeated = [r for r in usage.responses if r.response_id in seen]
+    return (usage.call_count - len(repeated),
+            usage.input_tokens + usage.output_tokens
+            - sum(r.input_tokens + r.output_tokens for r in repeated),
+            usage.cost_microusd - sum(r.cost_microusd for r in repeated))
 
 
 async def _call(function: Callable[..., Any], *args: Any) -> Any:

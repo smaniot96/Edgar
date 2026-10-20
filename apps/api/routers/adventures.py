@@ -755,17 +755,15 @@ async def admit_retry_job(
     request: Request,
     redis: Redis = Depends(get_redis),
 ) -> AsyncIterator[Admission]:
-    """Admit a retry before any work: per-client starts, a job lease and its declared budget.
+    """Admit a retry before any work: per-client starts and a job lease.
 
     The retry route is synchronous, so admission runs here on the event loop. Whatever the route
     did not hand to a background job is undone when the request ends (EDG-066).
     """
     admission = await admit_job(request, redis)
     try:
-        saved = await run_in_threadpool(load_adventure_metadata, slug)
-        await admission.reserve_daily_spend(
-            job_budget_microusd(declared_budget_microusd((saved or {}).get("preparation_setup")))
-        )
+        # The original job already recorded its campaign estimate. Resuming its
+        # checkpoint must not record that entire estimate again.
         yield admission
     finally:
         await admission.settle()

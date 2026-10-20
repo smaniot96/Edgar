@@ -402,3 +402,53 @@ The owner reported deletion working on the rebuilt combined stack.
 These are application accounting figures, not a statement about the provider invoice.
 No further retry was dispatched after this rejection. No reliable Ready ETA is available
 while P03 remains blocked. Gameplay and the required restart-after-Ready test remain pending.
+
+
+## Rerun 3 recovery — 12:18 Rome, 20 October 2026
+
+The owner requires continuation of the existing run to Ready, preserving extraction and accepted studies.
+The run remains `prep-5d81406d90104c45b253c652a44ceee0`. All 20 originally accepted artifact hashes
+(P01 binding and 19 P02 studies) still match the saved inventory. No re-upload or study rerun was performed.
+
+The resumed P03 call at 10:09:27 UTC hit the configured 300-second foreground HTTP timeout at
+10:14:27 UTC (`provider_unavailable`, `err-4081fceac19012af`). No answer or actual usage was returned.
+Accounting conservatively added the reservation (one call, 224,000 tokens, USD 2.432); these are
+unknown-usage estimates, not verified provider consumption. Before the next background response,
+the checkpoint reports 21 calls, 517,340 accounted tokens and USD 5.036176.
+
+Local fix `c37e3ae`, combined stack `873a3b1`, changes preparation to background Responses jobs.
+Edgar persists the provider response ID and private raw response beside the checkpoint, polls without
+an overall generation deadline, and retrieves the same request after a worker interruption. Temporary
+poll connection/server failures keep the same response ID. Individual HTTP calls still detect broken
+connections. The exact frozen model policy remains Sol/high. Rejected schema-valid and schema-invalid
+proposals are retained privately with diagnostics for bounded correction attempts. An explicit Retry
+grants another attempt batch without resetting attempt counts, usage, the binding or accepted artifacts.
+
+At the owner's request, deployment/resumption did not wait for CI and no further tests were run after
+that instruction. The focused local checks already in progress had passed (76). The change is locally
+committed; it has not been pushed, so no new CI run was triggered. API `/ready` passed after restart.
+The normal retry endpoint returned 202, and P03 attempt 4 was accepted by the provider in background
+mode at 10:18:05 UTC. Current state: generating the campaign design; **not Ready yet**.
+
+## Rerun 3 — accepted design and P04 provider recovery
+
+The background P03 response completed at approximately 10:29:39 UTC. Its accepted
+design contains **8 acts and 50 scenes**. Known usage: 94,665 input and 20,576
+output tokens (115,241 total), USD 0.790180 using configured accounting rates.
+The original 20 accepted P01/P02 artifact hashes remain unchanged.
+
+P04's first request was rejected before inference with HTTP 400: the strict
+provider schema could not express `CanonicalAct`'s ID-keyed maps. Local commit
+`1370146` uses JSON output mode for such dynamic schemas and retains strict
+Pydantic/semantic validation in code. Provider rejection details are retained
+privately. New HTTP 400 requests record zero inference usage rather than a full
+unknown-use reservation; the old failure's reservation remains historical.
+Combined stack `90d41de` was built and restarted without tests or CI. The retry
+endpoint returned 202. P04 background response
+`resp_01c39c17df619708006ad7435815dc87d2a25f91e05d8f3801` is in progress.
+
+The owner requested a subagent audit of arbitrary caps/timeouts and related
+recovery defects. Its findings and the inspected local follow-up patch are in
+`docs/preparation-reliability-audit-2026-10-20.md`. That patch is not deployed over
+the running P04 job. Campaign Ready, post-Ready restart persistence and gameplay
+remain unverified.

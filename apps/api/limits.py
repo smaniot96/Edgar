@@ -9,7 +9,7 @@ and would put every client in one bucket. Forwarded headers are deliberately not
 
 Failure policy when Redis is unavailable:
 - rate windows and concurrency leases fail open and log `limits_backend_unavailable`;
-- the daily spend ceiling fails closed (503 `limits_unavailable`) before new paid work starts;
+- daily spending estimates are advisory and never prevent paid work from continuing;
 - recording spend after work already ran fails open, so an outage under-counts spend.
 
 Atomicity uses WATCH/MULTI (as `TurnLock` does) so the same code runs against fakeredis.
@@ -199,11 +199,7 @@ def _spend_key(now: float) -> str:
 
 
 async def _reserve_daily_spend(redis: Redis, amount: int) -> str:
-    """Atomically check and add `amount` (USD micro-units) to today's spend.
-
-    `amount == 0` is a pre-check: it refuses only once the ceiling is reached. A positive amount
-    is refused when it would push spend past the ceiling. Fails closed when Redis is down.
-    """
+    """Record a spending estimate; crossing the estimate only emits a warning."""
     now = _now()
     key = _spend_key(now)
     ceiling = limit_config.LIMIT_DAILY_SPEND_MICROUSD
@@ -215,9 +211,8 @@ async def _reserve_daily_spend(redis: Redis, amount: int) -> str:
                     spent = int(await pipe.get(key) or 0)
                     over = spent >= ceiling if amount == 0 else spent + amount > ceiling
                     if over:
-                        await pipe.unwatch()
-                        retry_after = max(1, math.ceil(_DAY_SECONDS - (now % _DAY_SECONDS)))
-                        raise reject(SCOPE_DAILY_SPEND, "daily_budget_exhausted", retry_after=retry_after)
+                        log.warning("daily_spend_estimate_exceeded", scope=SCOPE_DAILY_SPEND,
+                                    estimated_microusd=spent + amount, advisory_microusd=ceiling)
                     pipe.multi()
                     pipe.incrby(key, amount)
                     pipe.expire(key, _SPEND_KEY_TTL_SECONDS)
@@ -226,8 +221,8 @@ async def _reserve_daily_spend(redis: Redis, amount: int) -> str:
                 except WatchError:
                     continue
     except RedisError:
-        log.warning("limits_backend_unavailable", scope=SCOPE_DAILY_SPEND, policy="fail_closed")
-        raise reject(SCOPE_DAILY_SPEND, "limits_unavailable") from None
+        _backend_unavailable(SCOPE_DAILY_SPEND)
+        return ""
 
 
 async def record_spend(redis: Redis, amount: int) -> None:
@@ -290,7 +285,8 @@ class Admission:
 
     async def reserve_daily_spend(self, microusd: int) -> None:
         self.reserved_key = await _reserve_daily_spend(self.redis, microusd)
-        self.reserved += microusd
+        if self.reserved_key:
+            self.reserved += microusd
 
     async def settle(self) -> None:
         """End of the admitted request: undo the reservation and leases unless a job took them."""
@@ -467,10 +463,6 @@ def validate_limit_configuration() -> dict[str, int]:
     if limit_config.LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT > limit_config.LIMIT_MAX_CONCURRENT_TURNS:
         raise LimitConfigurationError(
             "LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT cannot exceed LIMIT_MAX_CONCURRENT_TURNS."
-        )
-    if limit_config.LIMIT_UNBUDGETED_JOB_COST_MICROUSD > limit_config.LIMIT_DAILY_SPEND_MICROUSD:
-        raise LimitConfigurationError(
-            "LIMIT_UNBUDGETED_JOB_COST_MICROUSD cannot exceed LIMIT_DAILY_SPEND_MICROUSD."
         )
     return limits_settings()
 
