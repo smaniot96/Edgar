@@ -7,7 +7,7 @@ import json
 import uuid
 
 import structlog
-from openai import APIConnectionError, InternalServerError, RateLimitError
+from openai import APIConnectionError, BadRequestError, InternalServerError, RateLimitError
 from openai.types.responses import Response
 
 from edgar_core.preparation import canonical_sha256
@@ -20,6 +20,47 @@ POLL_SECONDS = 3
 
 
 async def await_response(client, binding, task, request, *, idempotency_key):
+    try:
+        return await _await_response(client, binding, task, request,
+                                     idempotency_key=idempotency_key)
+    finally:
+        # Fencing the local worker does not stop an OpenAI background response.
+        # Cancel only on the user's durable cancellation, never on a restart,
+        # temporary connection failure or expired worker lease.
+        from .preparation_store import preparation_path
+
+        path = preparation_path(binding.source_slug, binding.run_id)
+        state = json.loads(path.read_text()) if path.exists() else {}
+        if state.get("cancel_requested"):
+            await cancel_background_responses(client, binding, task)
+
+
+async def cancel_background_responses(client, binding, task):
+    """Retain every receipt while stopping work explicitly cancelled by the user."""
+    for path in (proposal_directory(binding, task) / "responses").glob("*.json"):
+        record = json.loads(path.read_text())
+        response = record.get("response", {})
+        if (record.get("binding_sha256") != binding.binding_sha256
+                or response.get("status") not in {"queued", "in_progress"}):
+            continue
+        try:
+            try:
+                cancelled = await client.responses.cancel(response["id"])
+            except BadRequestError:
+                # Completion can win the race with cancellation; keep the paid answer.
+                cancelled = await client.responses.retrieve(response["id"])
+        except (APIConnectionError, InternalServerError, RateLimitError) as exc:
+            log.warning("preparation_response_cancel_pending", response_id=response["id"],
+                        error_type=type(exc).__name__)
+            continue
+        record["response"] = cancelled.model_dump(mode="json", by_alias=True)
+        record["cancellation_requested"] = True
+        _atomic_write(path, record)
+        log.info("preparation_response_cancelled", response_id=cancelled.id,
+                 status=cancelled.status)
+
+
+async def _await_response(client, binding, task, request, *, idempotency_key):
     """Resume the exact stored job after a worker restart, without another generation.
 
     Individual HTTP requests still detect broken connections. A temporary polling

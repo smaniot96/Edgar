@@ -331,6 +331,8 @@ def validate_prepared_campaign(
 
     # A predicate is meaningful only when a production runtime WorldFlag contract reads it.
     runtime_flag_keys = {
+        entity.discovery_flag for entity in canonical.entities if entity.discovery_flag
+    } | {
         key
         for scene in canonical.scenes for link in scene.links for key in link.requires
     } | {

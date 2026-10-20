@@ -56,6 +56,9 @@ from .preparation_content import (
     validate_fragment,
 )
 from .preparation_provider import invoke_preparation, request_cost_ceiling
+from .preparation_blueprint import (
+    AUTHOR_INSTRUCTION, CampaignBlueprint, blueprint_evidence, compile_blueprint, source_spans,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -87,6 +90,10 @@ class RepairDirections(ContentRecord):
 
 def _now():
     return datetime.now(UTC).isoformat()
+
+
+def _compact(binding):
+    return binding.commission.get("preparation_pipeline") == "compact_v1"
 
 
 def _one(artifacts, kind):
@@ -355,6 +362,9 @@ def _plan(stage, binding, accepted):
             )
             for i, act in enumerate(acts)
         ]
+        if stage == PreparationStage.P04 and _compact(binding):
+            tasks = [_task(stage, "compile_blueprint", tuple(acts), all_deps,
+                           provider=True, output_cap=24000)]
     elif stage == PreparationStage.P07:
         # Canonical assembly must already be valid before spending on prose or assets.
         assemble_manifest(binding, accepted)
@@ -401,7 +411,7 @@ def _plan(stage, binding, accepted):
                 "repair_campaign" if material else "confirm_reviews",
                 tuple(acts),
                 all_deps,
-                provider=bool(material),
+                provider=bool(material) and not _compact(binding),
                 output_cap=8000,
             )
         ]
@@ -482,7 +492,10 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
     from .preparation_proposals import latest_rejection, reject_proposal, save_proposal
 
     accumulated = []
-    for correction in range(3):
+    rejected_states = set()
+    correction = -1
+    while True:
+        correction += 1
         last = None
 
         async def retained(bound, planned, schema, *, _correction=correction, **kwargs):
@@ -493,13 +506,15 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             feedback = latest_rejection(binding, planned, schema, kwargs["idempotency_key"])
             # An authored act can be tens of thousands of tokens. Correct its saved
             # fields instead of asking the provider to rewrite all of it repeatedly.
-            if feedback and schema is AuthoredAct:
+            if feedback and schema in (AuthoredAct, CampaignBlueprint):
                 from .preparation_corrections import correct_retained
 
                 kwargs["idempotency_key"] += f":attempt:{attempt}:correction:{_correction}"
                 result, usage = await correct_retained(
                     provider, bound, planned, schema, feedback, dependencies=deps,
-                    reuse_valid=_correction == 0, **kwargs)
+                    reuse_valid=_correction == 0 and not any(
+                        a.artifact_kind == "repair_context" and a.payload.get("retained_blueprint")
+                        for a in deps), **kwargs)
                 assert_current_preparation_worker()
                 last = save_proposal(binding, planned, schema, result, usage, kwargs["idempotency_key"])
                 return result, usage
@@ -533,23 +548,28 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
                 accumulated.append(usage)
             cause = exc.__cause__
             if (exc.code == "provider_output_invalid" and usage and usage.usage_known
-                    and correction < 2):
+                    and (_compact(binding) or correction < 2)):
                 continue  # Provider retained the raw answer and schema diagnostics.
             correctable = (exc.code == "stage_evidence_invalid" and last is not None
                            and isinstance(cause, ValueError) and usage is not None
                            and usage.provider_called and usage.usage_known)
             if correctable:
                 reject_proposal(*last, cause)
+                from edgar_core.preparation import canonical_sha256
+
+                fingerprint = canonical_sha256({"proposal": last[1]["proposal"], "error": str(cause)})
+                if fingerprint in rejected_states:
+                    raise PreparationTaskFailure("retained_correction_no_progress", _usage_sum(accumulated)) from exc
+                rejected_states.add(fingerprint)
                 log.warning("preparation_proposal_rejected", stage=stage.value,
                             task_id=task.task_id, error_type=type(cause).__name__,
                             correction=correction)
-                if correction < 2:
+                if _compact(binding) or correction < 2:
                     continue
             total = _usage_sum(accumulated) if accumulated else usage
             if correctable and total:
                 total = total.model_copy(update={"failure_code": "stage_evidence_invalid"})
             raise PreparationTaskFailure(exc.code, total, exc.findings) from exc
-    raise AssertionError("Correction loop must return or raise.")
 
 
 async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, book_client):
@@ -713,6 +733,41 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                     },
                 )
             ]
+        elif stage == PreparationStage.P04 and _compact(binding):
+            design = design_from(deps)
+            evidence = blueprint_evidence(binding, design, source_spans(extraction_for_design(binding, design)))
+            # A review repair changes dependencies, so carry the exact paid semantic
+            # proposal into this task's cache explicitly instead of regenerating it.
+            repairs = [a.payload for a in deps if a.artifact_kind == "repair_context"
+                       and a.payload.get("retained_blueprint")]
+            if repairs:
+                from .preparation_proposals import latest_rejection, save_proposal, reject_proposal
+
+                cache_key = key + f":attempt:{attempt}:correction:0"
+                if latest_rejection(binding, task, CampaignBlueprint, cache_key) is None:
+                    retained = repairs[-1]["retained_blueprint"]
+                    usage = ProviderUsage.model_validate_json(__import__("json").dumps(retained["usage"]))
+                    record = save_proposal(binding, task, CampaignBlueprint, retained["blueprint"], usage, cache_key)
+                    reject_proposal(*record, ValueError(str(repairs[-1]["findings"])))
+            blueprint = await propose(CampaignBlueprint, AUTHOR_INSTRUCTION, evidence)
+            compiled, _ = compile_blueprint(binding, design, blueprint, books=_books(deps))
+            artifacts = [_artifact(binding, task, "compact_blueprint", {
+                "blueprint": blueprint.model_dump(mode="json"),
+                "usage": _usage_sum(usages).model_dump(mode="json"),
+                "compiler": "compact_v1", "source_sha256": binding.source_sha256,
+                "extraction_sha256": binding.extraction_sha256}, deps)]
+            for fragment, support in compiled:
+                act_task = task.model_copy(update={"scope_keys": (fragment.act_id,)})
+                grounding_payload(binding, _act(deps, fragment.act_id), support,
+                                  _books(deps), _party(binding), client=book_client)
+                validate_support_assets(binding, design, fragment, support, deps)
+                retained_chapter(binding, design, fragment, support)
+                artifacts.extend((_artifact(binding, act_task, "canonical_act", {
+                    "fragment": fragment.model_dump(mode="json")}, deps),
+                    _artifact(binding, act_task, "act_authoring", {
+                        "support": support.model_dump(mode="json")}, deps)))
+            assemble_manifest(binding, (*deps, *artifacts))
+            return StageExecutionResult(proposed_artifacts=tuple(artifacts), usage=_usage_sum(usages))
         elif stage == PreparationStage.P04:
             design, act = design_from(deps), _act(deps, task.scope_keys[0])
             extraction = extraction_for_design(binding, design)
@@ -928,7 +983,12 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                 if f["severity"] in ("medium", "high", "critical")
             ]
             if findings:
-                directions = await propose(
+                if _compact(binding):
+                    directions = RepairDirections(finding_ids=[f["finding_id"] for f in findings],
+                        instructions="Apply targeted edits to the retained compact blueprint for every independently verified material finding. Preserve all unaffected paid authoring and accepted campaign design.",
+                        preserve_exact_source=True)
+                else:
+                    directions = await propose(
                     RepairDirections,
                     "Privately assign concrete repairs for EVERY material finding. Canonical definitions must be corrected "
                     "before dependent scenes/manuscript/maps are recreated and independently reviewed again. Preserve physical "
@@ -1163,7 +1223,13 @@ async def _review_campaign(binding, task, deps, key, propose):
     # Whole chapters are assigned exactly once. Related chapters provide actual
     # transition text and authored notes, with pointers into the original inventory.
     covered_ranges = {chapter.chapter_id: [] for chapter in manuscript.chapters}
-    for indices, evidence in review_batches(manuscript, common):
+    if _compact(binding):
+        from .preparation_blueprint import compact_review_batches
+
+        batches = compact_review_batches(manuscript, common, _one(deps, "compact_blueprint"), extraction)
+    else:
+        batches = review_batches(manuscript, common)
+    for indices, evidence in batches:
         expected_ids = [manuscript.chapters[index].chapter_id for index in indices]
         observation = await propose(
             CriticObservations,
@@ -1321,6 +1387,24 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
                 group = groups[int(task.task_id.rsplit("_", 1)[1])]
                 if study.page_numbers != [p["page"] for p in group]:
                     raise ValueError("Source study omitted a physical page.")
+        elif stage == PreparationStage.P04 and _compact(binding):
+            blueprint_a = _one(proposed, "compact_blueprint")
+            blueprint = CampaignBlueprint.model_validate(blueprint_a.payload["blueprint"])
+            compiled, _ = compile_blueprint(binding, design_from(deps), blueprint, books=_books(deps))
+            fragments = [a for a in proposed if a.artifact_kind == "canonical_act"]
+            if len(fragments) != len(compiled):
+                raise ValueError("Compact compilation omitted an act.")
+            for fragment, support in compiled:
+                actual = next(a for a in fragments if a.scope_keys == (fragment.act_id,))
+                if actual.payload["fragment"] != fragment.model_dump(mode="json"):
+                    raise ValueError("Compact canonical output differs from deterministic compilation.")
+                if saved_support(proposed, fragment.act_id) != support:
+                    raise ValueError("Compact act support changed after compilation.")
+                grounding_payload(binding, _act(deps, fragment.act_id), support,
+                                  _books(deps), _party(binding), client=book_client)
+                validate_support_assets(binding, design_from(deps), fragment, support, deps)
+                retained_chapter(binding, design_from(deps), fragment, support)
+            assemble_manifest(binding, (*deps, *proposed))
         elif stage == PreparationStage.P04:
             fragment = CanonicalAct.model_validate(_one(proposed, "canonical_act").payload["fragment"])
             design = design_from(deps)
@@ -1493,7 +1577,8 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
             artifacts=proposed,
             dependencies=deps,
             passed=True,
-            details={"stage": stage.value, "code_version": "production-dm-v1"},
+            details={"stage": stage.value, "code_version": "production-dm-v1", "task_id": task.task_id,
+                     "artifact_digests": {a.artifact_id: a.content_sha256 for a in proposed}},
             created_at=_now(),
         )
         return ValidationResult(passed=True, receipts=(receipt,))
