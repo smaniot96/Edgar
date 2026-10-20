@@ -27,6 +27,48 @@ class ProposalCorrection(ContentRecord):
     edits: list[ProposalEdit] = Field(min_length=1)
 
 
+def _reference_feedback(proposal, dependencies):
+    """Report independent canonical defects together, before another repair call."""
+    canonical = proposal.get("canonical", {})
+    earlier = [a.payload["fragment"] for a in dependencies if a.artifact_kind == "canonical_act"]
+    sources = [*earlier, canonical]
+    passages = {p["passage_id"] for f in sources for p in f.get("passages", [])}
+    entities = {e["entity_id"]: e for f in sources for e in f.get("entities", [])}
+    statuses = {"discovered", "encountered", "visited", "active", "announced", "completed", "failed",
+                "fulfilled", "broken", "advanced", "friendly", "neutral", "hostile", "acquired",
+                "consumed", "moved", "used", "changed"}
+    messages = []
+
+    def evidence(record, path):
+        missing = set(record.get("passage_ids", [])) - passages
+        if missing:
+            messages.append(f"{path}/passage_ids references non-source evidence {sorted(missing)}. "
+                            "Canonical policies/effects/definitions require exact physical source passage IDs. "
+                            "Typed DM extensions are retained for scene packets/DM notes; they are not physical citations.")
+
+    for category in ("objects", "objectives", "milestones", "promises", "clocks"):
+        for index, definition in enumerate(canonical.get(category, [])):
+            path = f"/canonical/{category}/{index}"
+            invalid = set(definition.get("statuses", [])) - statuses
+            if invalid:
+                messages.append(f"{path}/statuses contains unsupported values {sorted(invalid)}. "
+                                f"Supported statuses are {sorted(statuses)}; preserve the actual intended result.")
+            evidence(definition, path)
+    for index, policy in enumerate(canonical.get("resolution_policies", [])):
+        path = f"/canonical/resolution_policies/{index}"
+        evidence(policy, path)
+        for outcome in ("on_automatic", "on_success", "on_failure"):
+            for effect_index, effect in enumerate(policy.get(outcome, [])):
+                effect_path = f"{path}/{outcome}/{effect_index}"
+                evidence(effect, effect_path)
+                entity = entities.get(effect.get("target_id"))
+                if effect.get("kind") in {"encounter", "relationship"} and entity and entity["kind"] != "actor":
+                    messages.append(f"{effect_path} targets {entity['kind']} {entity['entity_id']}; "
+                                    "encounter and relationship effects require actors. Model trap costs using "
+                                    "a declared environment object and operation supported by the same source.")
+    return [{"type": "CanonicalReferenceError", "message": m} for m in messages]
+
+
 def apply_correction(proposal, correction, diagnostics):
     if canonical_sha256(proposal) != correction.base_proposal_sha256:
         raise ValueError("Correction is not bound to the retained proposal.")
@@ -114,6 +156,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
         raise PreparationTaskFailure("retained_dependencies_invalid")
     for artifact in dependencies:
         assert_artifact_integrity(binding, artifact)
+    diagnostics = [*feedback["diagnostics"], *_reference_feedback(proposal, dependencies)]
     original_usage = ProviderUsage.model_validate_json(json.dumps(feedback["usage"]))
     # Only exact, accounted provider receipts can satisfy a provider-backed task.
     if not (original_usage.provider_called and original_usage.usage_known
@@ -126,7 +169,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
         except ValueError:
             pass
     base_digest = canonical_sha256(proposal)
-    diagnostics_digest = canonical_sha256(feedback["diagnostics"])
+    diagnostics_digest = canonical_sha256(diagnostics)
     logical, separator, attempt = idempotency_key.partition(":attempt:")
     patch_key = logical + ":edit:" + base_digest + ":" + diagnostics_digest
     if separator:
@@ -137,7 +180,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
     context = {name: evidence[name] for name in (
         "commission", "party", "whole_design", "act", "accepted_registry", "supported_mechanics"
     ) if name in evidence}
-    if any("quote" in d.get("message", "").lower() for d in feedback["diagnostics"]):
+    if any("quote" in d.get("message", "").lower() for d in diagnostics):
         context["exact_pages"] = evidence.get("exact_pages", [])
     correction, patch_usage = await provider(
         binding, task, ProposalCorrection,
@@ -155,7 +198,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
             "progress, not an arbitrary way to bypass cost validation. Keep reveal gates safe."
         ),
         evidence={"base_proposal_sha256": base_digest, "previous_proposal": proposal,
-                  "code_validation_feedback": feedback["diagnostics"],
+                  "code_validation_feedback": diagnostics,
                   "previous_invalid_patch": patch_feedback["proposal"] if patch_feedback else None,
                   "patch_validation_feedback": patch_feedback["diagnostics"] if patch_feedback else [],
                   "required_proposal_schema": schema.model_json_schema(), "task_context": context},
@@ -163,7 +206,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
     )
     usage = _usage_sum([original_usage, patch_usage])
     try:
-        patched = apply_correction(proposal, correction, feedback["diagnostics"])
+        patched = apply_correction(proposal, correction, diagnostics)
     except ValueError as exc:
         retained = save_proposal(binding, task, schema, proposal, usage, idempotency_key)
         reject_proposal(*retained, exc)
