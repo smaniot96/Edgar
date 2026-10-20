@@ -513,7 +513,8 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
                         a.artifact_kind == "repair_context" and a.payload.get("retained_blueprint")
                         for a in deps), **kwargs)
                 assert_current_preparation_worker()
-                last = save_proposal(binding, planned, schema, result, usage, kwargs["idempotency_key"])
+                last = save_proposal(binding, planned, schema, result, usage, kwargs["idempotency_key"],
+                                     evidence=kwargs["evidence"])
                 return result, usage
             if feedback:
                 kwargs["evidence"] = {
@@ -530,7 +531,8 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             kwargs["idempotency_key"] += f":attempt:{attempt}:correction:{_correction}"
             result, usage = await provider(bound, planned, schema, **kwargs)
             assert_current_preparation_worker()
-            last = save_proposal(binding, planned, schema, result, usage, kwargs["idempotency_key"])
+            last = save_proposal(binding, planned, schema, result, usage, kwargs["idempotency_key"],
+                                 evidence=kwargs["evidence"])
             return result, usage
 
         try:
@@ -538,7 +540,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
                                          provider=retained, book_client=book_client)
             if isinstance(result, StageExecutionResult):
                 return result.model_copy(update={"usage": _usage_sum([*accumulated, result.usage])})
-            return result  # P09 accounts each subcall in its factory wrapper.
+            return result
         except PreparationTaskFailure as exc:
             usage = exc.usage
             if usage:
@@ -546,8 +548,11 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             cause = exc.__cause__
             if exc.code == "provider_output_invalid" and usage and usage.usage_known:
                 continue  # Provider retained the raw answer and schema diagnostics.
-            correctable = (exc.code == "stage_evidence_invalid" and last is not None
-                           and isinstance(cause, ValueError) and usage is not None
+            correctable = ((exc.code == "critic_observation_invalid"
+                            or exc.code == "stage_evidence_invalid" and stage != PreparationStage.P09)
+                           and last is not None
+                           and (exc.code == "critic_observation_invalid" or isinstance(cause, ValueError))
+                           and usage is not None
                            and usage.provider_called and usage.usage_known)
             if correctable:
                 reject_proposal(*last, cause)
@@ -562,8 +567,6 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
                             correction=correction)
                 continue
             total = _usage_sum(accumulated) if accumulated else usage
-            if correctable and total:
-                total = total.model_copy(update={"failure_code": "stage_evidence_invalid"})
             save_diagnostic(binding, f"{stage.value}:execution", exc,
                             task=task, dependencies=deps)
             raise PreparationTaskFailure(exc.code, total, exc.findings) from exc
@@ -877,7 +880,8 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                 raise ValueError("Complete chapter identity or authored text quality invalid.")
             payloads = [("complete_chapter", {"chapter": chapter.model_dump(mode="json")})]
         elif stage == PreparationStage.P09:
-            return await _review_campaign(binding, task, deps, key, propose)
+            artifacts = await _review_campaign(binding, task, deps, key, propose, usages)
+            return StageExecutionResult(proposed_artifacts=artifacts, usage=_usage_sum(usages))
         elif stage == PreparationStage.P10:
             from edgar_core.coherence import build_path_exploration_artifact
 
@@ -969,7 +973,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
         ) from exc
 
 
-async def _review_campaign(binding, task, deps, key, propose):
+async def _review_campaign(binding, task, deps, key, propose, usages):
     from edgar_core.assets import AssetRequirement, IndependentVisualReviewDecision, plan_assets
     from edgar_core.coherence import (
         CriticFinding,
@@ -1126,11 +1130,58 @@ async def _review_campaign(binding, task, deps, key, propose):
     # Whole chapters are assigned exactly once. Related chapters provide actual
     # transition text and authored notes, with pointers into the original inventory.
     covered_ranges = {chapter.chapter_id: [] for chapter in manuscript.chapters}
-    from .preparation_blueprint import compact_review_batches
+    from edgar_core.coherence import resolve_json_pointer
 
-    batches = compact_review_batches(manuscript, common, _one(deps, "compact_blueprint"), extraction)
-    for indices, evidence in batches:
-        expected_ids = [manuscript.chapters[index].chapter_id for index in indices]
+    from .preparation_blueprint import compact_review_batches
+    from .preparation_proposals import critic_assignment, reject_proposal, retained_critic_reviews
+
+    by_id = {a.artifact_id: a for a in inventory}
+    chapters_by_id = {chapter.chapter_id: chapter for chapter in manuscript.chapters}
+
+    def accept_observation(observation, ranges):
+        validated_findings = []
+        expected_ids = list(dict.fromkeys(row["chapter_id"] for row in ranges))
+        if observation.reviewed_chapter_ids != expected_ids:
+            raise ValueError("Independent critic omitted or changed its assigned complete chapters.")
+        for row in ranges:
+            chapter = chapters_by_id[row["chapter_id"]]
+            start, end = row["start"], row["end"]
+            if (not 0 <= start < end <= len(chapter.text)
+                    or text_digest(chapter.text[start:end]) != row["text_sha256"]):
+                raise ValueError("Retained critic coverage no longer matches its exact text.")
+        for raw in observation.findings:
+            finding = deepcopy(raw)
+            for cited in finding.get("evidence", []):
+                try:
+                    artifact = by_id[cited["artifact_id"]]
+                    value = resolve_json_pointer(artifact.payload, cited["json_pointer"])
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise ValueError("Critic evidence must use an available artifact ID and its original global JSON pointer.") from exc
+                if not isinstance(value, str) or cited["excerpt"] not in value:
+                    raise ValueError("Critic excerpt is not exact cited evidence.")
+                cited["artifact_sha256"] = artifact.content_sha256
+                cited["excerpt_sha256"] = text_digest(cited["excerpt"])
+            validated_findings.append(CriticFinding.model_validate(finding, strict=False))
+        findings.extend(validated_findings)
+        for row in ranges:
+            covered_ranges[row["chapter_id"]].append((row["start"], row["end"]))
+        observations.extend(chapter_id for chapter_id in expected_ids if chapter_id not in observations)
+
+    for path, retained in retained_critic_reviews(binding, task, common["binding"]):
+        usage = ProviderUsage.model_validate(retained["usage"], strict=False)
+        usages.append(usage)
+        if retained.get("diagnostics"):
+            continue
+        try:
+            observation = CriticObservations.model_validate(retained["proposal"])
+            accept_observation(observation, retained["review_assignment"]["ranges"])
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            reject_proposal(path, retained, exc)
+            log.warning("preparation_retained_critic_invalid", task_id=task.task_id)
+
+    batches = compact_review_batches(manuscript, common, _one(deps, "compact_blueprint"), extraction,
+                                     reviewed_ranges=covered_ranges)
+    for _indices, evidence in batches:
         observation = await propose(
             CriticObservations,
             "Act as the INDEPENDENT campaign critic. Read ALL assigned retained chapter text with the whole "
@@ -1152,41 +1203,35 @@ async def _review_campaign(binding, task, deps, key, propose):
                 for chapter in evidence["reviewed_chapters"]))[:24],
             call_limit=8000,
         )
-        if observation.reviewed_chapter_ids != expected_ids:
-            raise ValueError("Independent critic omitted or changed its assigned complete chapters.")
-        from edgar_core.coherence import resolve_json_pointer
-
-        by_id = {a.artifact_id: a for a in inventory}
-        for raw in observation.findings:
-            finding = deepcopy(raw)
-            for cited in finding.get("evidence", []):
-                try:
-                    artifact = by_id[cited["artifact_id"]]
-                    value = resolve_json_pointer(artifact.payload, cited["json_pointer"])
-                except (KeyError, IndexError, TypeError) as exc:
-                    raise ValueError("Critic evidence must use an available artifact ID and its original global JSON pointer.") from exc
-                if not isinstance(value, str) or cited["excerpt"] not in value:
-                    raise ValueError("Critic excerpt is not exact cited evidence.")
-                cited["artifact_sha256"] = artifact.content_sha256
-                cited["excerpt_sha256"] = text_digest(cited["excerpt"])
-            findings.append(CriticFinding.model_validate(finding, strict=False))
-        for chapter in evidence["reviewed_chapters"]:
-            covered_ranges[chapter["chapter_id"]].append((chapter["text_start"], chapter["text_end"]))
-        observations.extend(chapter_id for chapter_id in expected_ids if chapter_id not in observations)
+        try:
+            accept_observation(observation, critic_assignment(evidence)["ranges"])
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise PreparationTaskFailure("critic_observation_invalid", _usage_sum(usages)) from exc
     for chapter in manuscript.chapters:
         cursor = 0
         for start, end in sorted(covered_ranges[chapter.chapter_id]):
-            if start != cursor or end <= start:
-                raise ValueError("Independent review text coverage has a gap or overlap.")
-            cursor = end
+            if start > cursor or end <= start:
+                raise ValueError("Independent review text coverage has a gap or invalid range.")
+            cursor = max(cursor, end)
         if cursor != len(chapter.text):
             raise ValueError("Independent review must cover every character of each complete chapter.")
+    from edgar_core.preparation import canonical_sha256
+
+    unique_findings, finding_ids = {}, set()
+    for finding in findings:
+        digest = canonical_sha256(finding.model_dump(mode="json", exclude={"finding_id"}))
+        if digest in unique_findings:
+            continue
+        if finding.finding_id in finding_ids:
+            finding = finding.model_copy(update={"finding_id": f"{finding.finding_id[:70]}-{digest[:20]}"})
+        finding_ids.add(finding.finding_id)
+        unique_findings[digest] = finding
     critic = CriticReport(
         bindings=bindings,
         reviewed_chapter_text_sha256={
             c.chapter_id: text_digest(c.text) for c in manuscript.chapters
         },
-        findings=tuple(findings),
+        findings=tuple(unique_findings.values()),
     )
     semantic = _artifact(
         binding,
@@ -1492,7 +1537,7 @@ def make_preparation_supervisor(*, store=None, provider=None, book_client=None):
     for stage in PreparationStage:
 
         async def execute(binding, task, dependencies, attempt, key, stage=stage):
-            result = await _execute(
+            return await _execute(
                 stage,
                 binding,
                 task,
@@ -1502,46 +1547,6 @@ def make_preparation_supervisor(*, store=None, provider=None, book_client=None):
                 provider=provider or invoke_preparation,
                 book_client=book_client,
             )
-            # P09 returns subject/report proposals only after its tracked subcalls finish.
-            if isinstance(result, tuple):
-                # Usage is returned through the wrapper below; see tracked provider.
-                raise RuntimeError("Unwrapped P09 provider accounting.")
-            return result
-
-        # Keep per-execution accounting local; factories may serve concurrent workers.
-        if stage == PreparationStage.P09:
-
-            async def execute(binding, task, dependencies, attempt, key):
-                usages = []
-
-                async def tracked(*args, **kwargs):
-                    try:
-                        parsed, usage = await (provider or invoke_preparation)(*args, **kwargs)
-                        usages.append(usage)
-                        return parsed, usage
-                    except PreparationTaskFailure as exc:
-                        if exc.usage:
-                            usages.append(exc.usage)
-                        raise
-
-                try:
-                    artifacts = await _execute(
-                        PreparationStage.P09,
-                        binding,
-                        task,
-                        dependencies,
-                        attempt,
-                        key,
-                        provider=tracked,
-                        book_client=book_client,
-                    )
-                    return StageExecutionResult(
-                        proposed_artifacts=artifacts, usage=_usage_sum(usages)
-                    )
-                except PreparationTaskFailure as exc:
-                    raise PreparationTaskFailure(
-                        exc.code, _usage_sum(usages) if usages else exc.usage
-                    ) from exc
 
         adapters[stage] = StageAdapter(plan=partial(_plan, stage), execute=execute)
         validator = partial(_validator, stage, book_client=book_client)

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 
 import tiktoken
+
+from edgar_core.preparation import canonical_sha256
 
 
 def review_grounding(payload):
@@ -25,121 +26,282 @@ def review_grounding(payload):
     return {**payload, "acts": acts, "verified_creatures": creatures}
 
 
-def review_batches(manuscript, common, *, target_tokens=90000):
-    """Review each complete chapter once, with actual cross-chapter evidence.
+def _fields(row, names):
+    return {name: row[name] for name in names if name in row and row[name] not in (None, [], {})}
 
-    The target partitions requests; it never blocks preparation or limits spending.
-    Other chapters supply exact transition text and their full authored DM notes.
-    All original global JSON pointers remain valid against the retained manuscript.
+
+def _lean_guidance(guidance):
+    seen, entries = set(), []
+    for index, row in enumerate(guidance.get("evidence", [])):
+        # Exact monster statistics are supplied once by the scoped grounding
+        # report. The broad book search also returns unrelated monster actions.
+        if row.get("role") == "mm":
+            continue
+        # The critic reviews the authored campaign. Engine arithmetic, equipment
+        # tables and basic combat execution have already been checked by code.
+        # Retain exact guidance for story structure, adjudication, party resources
+        # and encounter risk, rather than repeating every retrieved combat rule.
+        section = row.get("section", "").casefold()
+        if row.get("role") == "phb":
+            engine_topics = {"armor and shields", "heavy armor", "weapon proficiency", "weapon properties",
+                "weapons", "adventuring gear", "bonus actions", "initiative", "surprise", "the order of combat",
+                "your turn", "movement and position", "reactions", "actions in combat", "making an attack",
+                "melee attacks", "opportunity attacks", "cover", "damage and healing", "death saving throws",
+                "dropping to o hit points", "stabilizing a creature", "knocking a creature out"}
+            if section.rsplit(">", 1)[-1].strip() in engine_topics:
+                continue
+        elif row.get("role") == "dmg":
+            if any(name in section for name in ("evaluating encounter difficulty", "xp thresholds", "encounter multipliers")):
+                continue
+            relevant = ("adventure", "clues", "encounter", "small groups", "resolution", "resolving",
+                        "rest", "trap", "damage severity", "healing", "morale", "monster motivation",
+                        "involving the characters")
+            if not any(name in section for name in relevant):
+                continue
+        identity = (row.get("role"), row.get("text"))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        entries.append({**_fields(row, ("role", "source", "page", "page_end", "section", "text", "rule_policy")),
+                        "text_json_pointer": f"/study/evidence/{index}/text"})
+    return {"rules_edition": guidance.get("rules_edition"), "evidence": entries,
+            "monster_rules": "See exact verified creature stat blocks and parsed mechanics in grounding."}
+
+
+def _lean_grounding(grounding, relevant):
+    acts, creature_ids, origins = [], set(), {}
+    for index, raw in enumerate(grounding.get("acts", [])):
+        encounters = []
+        for position, receipt in enumerate(raw.get("encounters", [])):
+            if receipt["scene_id"] not in relevant:
+                continue
+            members = []
+            for member_index, member in enumerate(receipt["creatures"]):
+                creature_id = member["creature"]["creature_id"]
+                creature_ids.add(creature_id)
+                origins.setdefault(creature_id,
+                    f"/acts/{index}/encounters/{position}/creatures/{member_index}/creature")
+                members.append(_fields(member, ("creature", "actor_id", "requested_quantity", "effective_quantity", "role")))
+            encounters.append({**_fields(receipt, ("encounter_id", "scene_id", "actor_ids", "raw_xp", "adjusted_xp",
+                "difficulty", "thresholds", "solo_budget", "adaptation_notes", "supported_mechanics",
+                "unsupported_mechanics", "findings")), "creatures": members})
+        if encounters:
+            acts.append({"act_id": raw["plan"]["act_id"], "encounters": encounters})
+    creatures = []
+    for creature_id in sorted(creature_ids):
+        raw = grounding["verified_creatures"][creature_id]
+        creatures.append({**_fields(raw, ("creature_id", "creature_name", "source", "page", "page_end",
+            "challenge_rating", "xp", "stat_block_text", "monster_stats", "evidence_origin")),
+            "json_pointer": origins[creature_id],
+            "text_json_pointer": origins[creature_id] + "/stat_block_text"})
+    return {"acts": acts, "verified_creatures": creatures}
+
+
+def review_batches(manuscript, common, blueprint_artifact, extraction, *, target_tokens=90000,
+                   reviewed_ranges=None):
+    """Partition exact chapter coverage around a lean semantic review context.
+
+    The provider receives source, authored decisions and exact grounded statistics,
+    rather than the compiler's repeated expanded joins and integrity receipts.
+    Global IDs, goals and route semantics remain visible in every batch. Every
+    citation pointer still addresses the original immutable artifact.
     """
     encoding = tiktoken.get_encoding("o200k_base")
     chapters = list(manuscript.chapters)
+    canonical = common["canonical"]
+    prepared = canonical["prepared"]
+    blueprint = blueprint_artifact.payload["blueprint"]
+    design = common["whole_design"]
+    pages = dict(extraction.text_pages())
+    page_indices = {page.page: index for index, page in enumerate(extraction.pages)}
+    inventory = {row["kind"]: row for row in common.get("evidence_inventory", [])}
+    citation_kinds = {"canonical_manifest", "prepared_campaign", "retained_manuscript", "canonical_extraction",
+                      "compact_blueprint", "grounding_report", "asset_coverage", "campaign_design", "book_dossier"}
+    global_canonical = {"source": canonical["source"], "opening_scene_id": canonical["opening_scene_id"]}
+    for name, fields in {
+        "scenes": ("scene_id", "title", "links"),
+        "entities": ("entity_id", "kind", "title", "discovery_flag", "reveal_on", "object_id", "stat_reference", "lair_reference", "surprise"),
+        "objectives": ("canonical_id", "title", "scene_ids", "completion_condition", "engine_requirements", "engine_forbidden", "requires"),
+        "milestones": ("canonical_id", "title", "scene_ids", "completion_condition", "engine_requirements", "engine_forbidden", "requires"),
+        "objects": ("canonical_id", "title", "scene_ids", "operations", "initial_owner", "portable", "consumable", "requires", "reveal_on", "statuses"),
+        "promises": ("canonical_id", "title", "scene_ids", "requires", "reveal_on", "statuses"),
+        "clocks": ("canonical_id", "title", "scene_ids", "clock_max", "requires", "reveal_on", "clock_reveal"),
+    }.items():
+        global_canonical[name] = [{"json_pointer": f"/manifest/{name}/{index}", "record": _fields(row, fields)}
+                                  for index, row in enumerate(canonical.get(name, []))]
+    for row in global_canonical["entities"]:
+        for name in ("stat_reference", "lair_reference"):
+            if name in row["record"]:
+                row["record"][name] = _fields(row["record"][name],
+                    ("kind", "creature_name", "collection", "rules_edition", "passage_id"))
+    global_canonical["prepared"] = {
+        "narrative_mode": prepared.get("narrative_mode", "agent"),
+        "quests": [_fields(row, ("quest_id", "objective_id", "milestone_ids", "required_for_completion",
+                                    "required_milestone_ids", "scene_ids", "prerequisites", "required_approaches"))
+                   for row in prepared.get("quests", [])],
+    }
+    assets = common.get("assets", {})
+    receipt = assets.get("receipt", {})
+    shared = {name: common[name] for name in ("narrative_contract", "actual_party", "critic_finding_schema",
+              "manuscript_artifact_id", "manuscript_artifact_sha256") if name in common}
+    shared.update(
+        binding=_fields(common.get("binding", {}), ("run_id", "run_binding_sha256", "source_binding_sha256",
+                        "hero_party_sha256", "manifest_artifact_id", "prepared_artifact_id", "manuscript_artifact_id")),
+        whole_design={**_fields(design, ("title", "premise", "opening_scene_id", "continuity")),
+                      "acts": [_fields(row, ("act_id", "title", "scene_ids", "summary", "role", "advance_ids", "climax_ids", "source_pages"))
+                               for row in design["acts"]]},
+        review_bindings_sha256=canonical_sha256(common.get("binding", {})),
+        canonical=global_canonical, source_guidance=_lean_guidance(common.get("source_guidance", {})),
+        evidence_inventory=[row for row in common.get("evidence_inventory", []) if row["kind"] in citation_kinds],
+        blueprint_artifact_id=blueprint_artifact.artifact_id,
+        assets={"coverage_count": len(receipt.get("coverage", [])),
+                "coverage_status_counts": {status: sum(row.get("status") == status for row in receipt.get("coverage", []))
+                                           for status in sorted({row.get("status", "unknown") for row in receipt.get("coverage", [])})},
+                "coverage_exceptions": [{"json_pointer": f"/receipt/coverage/{index}",
+                    **_fields(row, ("asset_id", "kind", "required", "status", "player_review_status", "explanation"))}
+                    for index, row in enumerate(receipt.get("coverage", []))
+                    if row.get("status") != "ready" or row.get("player_review_status") not in {"not_required", "approved"}],
+                "findings": receipt.get("findings", []),
+                "visual_reviews": assets.get("visual_reviews", [])},
+        composition=("Read every assigned text character. The complete retained source and authored DM notes are in "
+                     "reviewed_chapters. The scoped blueprint supplies exact source-span references, disclosure gates, "
+                     "encounters and optional tools. Compiler-expanded joins, offsets and digests are verified by code. "
+                     "All json_pointer/text_json_pointer fields address original artifacts; never cite compact array indices."),
+    )
 
-    def evidence(indices, *, interval=None, compact=False):
-        assigned = set(indices)
+    def evidence(indices, *, intervals=None):
         relevant = {scene for index in indices for scene in chapters[index].scene_ids}
         complete = []
+        for index in indices:
+            chapter = chapters[index]
+            start, end = (intervals or {}).get(index, (0, len(chapter.text)))
+            complete.append({**_fields(chapter.model_dump(mode="json"), ("chapter_id", "act_id", "order", "role", "scene_ids")),
+                             "text": chapter.text[start:end], "text_json_pointer": f"/manuscript/chapters/{index}/text",
+                             "text_start": start, "text_end": end,
+                             "complete_chapter": start == 0 and end == len(chapter.text)})
         related = []
-        for index, chapter in enumerate(chapters):
-            pointer = f"/manuscript/chapters/{index}/text"
-            if index in assigned:
-                start, end = interval if interval is not None else (0, len(chapter.text))
-                complete.append({**chapter.model_dump(mode="json"),
-                                 "text": chapter.text[start:end], "text_json_pointer": pointer,
-                                 "text_start": start, "text_end": end,
-                                 "complete_chapter": start == 0 and end == len(chapter.text)})
-            else:
-                text = chapter.text
-                excerpts = [text[:1800], text[-1800:]]
-                marker = text.find("[DM preparation notes]")
-                if marker >= 0 and not compact:
-                    excerpts.append(text[marker:])
-                related.append({"chapter_id": chapter.chapter_id, "act_id": chapter.act_id,
-                                "text_json_pointer": pointer, "exact_excerpts": excerpts})
-        scoped = deepcopy(common)
-        canonical = scoped["canonical"]
-        # Keep actual cross-act definitions/effects/routes. Scope verbose private
-        # packets, provenance and branches to reviewed scenes and retain global
-        # pointers, so compacted array positions never become false citations.
-        def rows(values, path, predicate=lambda row: True):
-            return [{"json_pointer": f"{path}/{index}", "record": row}
-                    for index, row in enumerate(values) if predicate(row)]
-
-        for name in ("passages", "scenes", "resolution_policies"):
-            values = canonical[name]
-            canonical[name] = rows(values, f"/manifest/{name}", lambda row:
-                row.get("scene_id") in relevant or bool(set(row.get("scene_ids", [])) & relevant))
-        prepared = canonical["prepared"]
-        for name in ("scene_packets", "branches", "extensions"):
-            values = prepared[name]
-            prepared[name] = rows(values, f"/manifest/prepared/{name}", lambda row:
-                row.get("scene_id") in relevant or bool(set(row.get("scene_ids", [])) & relevant))
-        branch_ids = {item["record"]["branch_id"] for item in prepared["branches"]}
-        prepared["outcomes"] = rows(prepared["outcomes"], "/manifest/prepared/outcomes",
-                                    lambda row: row["branch_id"] in branch_ids)
-        scoped["cross_act_execution"] = {
-            "policies": [{"json_pointer": f"/manifest/resolution_policies/{i}",
-                          "record": {key: value for key, value in row.items()
-                                     if key not in ("provenance",)}}
-                         for i, row in enumerate(common["canonical"]["resolution_policies"])],
-            "branches": [{key: row[key] for key in ("branch_id", "scene_id", "approach", "requires", "policy_ids", "outcome_ids")}
-                         for row in common["canonical"]["prepared"]["branches"]],
-            "outcomes": [{key: row[key] for key in ("outcome_id", "branch_id", "result", "policy_selections", "requires", "compatible_with")}
-                         for row in common["canonical"]["prepared"]["outcomes"]],
-        }
-        if compact:
-            adjacent = set(relevant)
-            for route in common["canonical"]["prepared"]["routes"]:
-                if route["from_scene_id"] in relevant or route["to_scene_id"] in relevant:
-                    adjacent.update((route["from_scene_id"], route["to_scene_id"]))
-            execution = scoped["cross_act_execution"]
-            execution["policies"] = [item for item in execution["policies"]
-                                     if set(item["record"].get("scene_ids", [])) & adjacent]
-            execution["branches"] = [row for row in execution["branches"] if row["scene_id"] in adjacent]
-            adjacent_branches = {row["branch_id"] for row in execution["branches"]}
-            execution["outcomes"] = [row for row in execution["outcomes"] if row["branch_id"] in adjacent_branches]
-            act_ids = {chapters[index].act_id for index in indices}
-            grounding = scoped["grounding"]
-            grounding["acts"] = [row for row in grounding["acts"] if row["plan"]["act_id"] in act_ids]
-            creature_ids = {member["creature"]["creature_id"] for row in grounding["acts"]
-                            for receipt in row["encounters"] for member in receipt["creatures"]}
-            grounding["verified_creatures"] = {key: row for key, row in grounding["verified_creatures"].items()
-                                               if key in creature_ids}
-        return {**scoped, "reviewed_chapters": complete, "related_chapter_text": related}
+        neighbours = {index for current in indices for index in (current - 1, current + 1)
+                      if 0 <= index < len(chapters) and index not in indices}
+        for index in sorted(neighbours):
+            chapter = chapters[index]
+            related.append({"chapter_id": chapter.chapter_id, "text_json_pointer": f"/manuscript/chapters/{index}/text",
+                            "exact_excerpts": [chapter.text[:900], chapter.text[-900:]]})
+        scoped = {name: blueprint[name] for name in ("resource_plan", "progression_plan") if name in blueprint}
+        for name in ("scenes", "facts", "decisions", "transitions"):
+            scoped[name] = []
+            for index, row in enumerate(blueprint.get(name, [])):
+                if not (row.get("id") in relevant or row.get("scene") in relevant
+                        or set(row.get("scenes", [])) & relevant):
+                    continue
+                # Scene notes/additions are already retained verbatim in the chapter.
+                record = {key: value for key, value in row.items() if name != "scenes" or key not in {"notes", "additions"}}
+                scoped[name].append({"json_pointer": f"/blueprint/{name}/{index}", "record": record})
+        public = []
+        public_scopes = {}
+        for index, passage in enumerate(canonical["passages"]):
+            if passage["audience"] != "player" or not set(passage["scene_ids"]) & relevant:
+                continue
+            scope = _fields(passage, ("scene_ids", "entity_ids", "known_scene_ids", "requires"))
+            identity = json.dumps(scope, sort_keys=True)
+            if identity not in public_scopes:
+                item = {"disclosure_scope": scope, "passages": []}
+                public_scopes[identity] = item
+                public.append(item)
+            row = [f"/manifest/passages/{index}", passage["passage_id"],
+                   f"/pages/{page_indices[passage['page']]}/text", passage["start"], passage["end"]]
+            exact = pages[passage["page"]][passage["start"]:passage["end"]]
+            content = {"exact_text": exact}
+            for chapter in complete:
+                offset = chapter["text"].find(exact)
+                if offset >= 0:
+                    reference = {"text_json_pointer": chapter["text_json_pointer"],
+                                 "text_start": chapter["text_start"] + offset,
+                                 "text_end": chapter["text_start"] + offset + len(exact)}
+                    if len(json.dumps(reference)) < len(json.dumps(content)):
+                        content = reference
+                    break
+            row.append(content)
+            public_scopes[identity]["passages"].append(row)
+        active = {**global_canonical}
+        packets = [{"json_pointer": f"/manifest/prepared/scene_packets/{index}",
+                    "record": _fields(row, ("scene_id", "entry_requires", "entity_ids", "objective_ids", "milestone_ids"))}
+                   for index, row in enumerate(prepared.get("scene_packets", [])) if row["scene_id"] in relevant]
+        entity_ids = {entity for row in packets for entity in row["record"].get("entity_ids", [])}
+        entity_ids.update(entity for row in canonical["passages"] if set(row["scene_ids"]) & relevant
+                          for entity in row.get("entity_ids", []))
+        active["entities"] = [{**row, "record": row["record"] if row["record"]["entity_id"] in entity_ids
+                               else _fields(row["record"], ("entity_id", "kind", "title"))}
+                              for row in global_canonical["entities"]]
+        active["objects"] = [{**row, "record": row["record"] if set(row["record"].get("scene_ids", [])) & relevant
+                              else _fields(row["record"], ("canonical_id", "title", "scene_ids"))}
+                             for row in global_canonical["objects"]]
+        active["prepared"] = {**global_canonical["prepared"], "routes": [
+            {"json_pointer": f"/manifest/prepared/routes/{index}",
+             "record": _fields(row, ("from_scene_id", "to_scene_id", "visibility", "traversal_requires", "reveal_requires"))}
+            for index, row in enumerate(prepared.get("routes", []))
+            if row["from_scene_id"] in relevant or row["to_scene_id"] in relevant], "scene_packets": packets}
+        return {**shared, "canonical": active, "reviewed_chapters": complete, "related_chapter_text": related,
+                "authored_blueprint": scoped,
+                "public_source_excerpts": {"audience": "player", "source_artifact_id": inventory.get("canonical_extraction", {}).get("artifact_id"),
+                    "passage_columns": ["original_json_pointer", "passage_id", "source_text_json_pointer", "start", "end", "exact_text_or_retained_reference"],
+                    "disclosures": public},
+                "grounding": _lean_grounding(common.get("grounding", {}), relevant)}
 
     def count(value):
-        return len(encoding.encode(json.dumps(value, ensure_ascii=False, sort_keys=True),
-                                   disallowed_special=())) + 6000
+        return len(encoding.encode(json.dumps(value, ensure_ascii=False, sort_keys=True), disallowed_special=())) + 6000
 
-    batches, current = [], []
-    for index in range(len(chapters)):
-        proposed = current + [index]
-        if current and count(evidence(proposed)) > target_tokens:
-            batches.append((current, evidence(current)))
-            current = [index]
-        else:
-            current = proposed
+    groups, current = [], []
+    for index, chapter in enumerate(chapters):
+        cursor = 0
+        remaining = []
+        for start, end in sorted((reviewed_ranges or {}).get(chapter.chapter_id, ())):
+            if not 0 <= start < end <= len(chapter.text):
+                raise ValueError("Saved independent review range is outside the retained chapter.")
+            if start > cursor:
+                remaining.append((cursor, start))
+            cursor = max(cursor, end)
+        if cursor < len(chapter.text):
+            remaining.append((cursor, len(chapter.text)))
+        for start, end in remaining:
+            item = (index, start, end)
+            candidate = current + [item]
+            indices = [i for i, _, _ in candidate]
+            intervals = {i: (s, e) for i, s, e in candidate}
+            if current and (index in [i for i, _, _ in current]
+                            or count(evidence(indices, intervals=intervals)) > target_tokens):
+                groups.append(current)
+                current = [item]
+            else:
+                current = candidate
     if current:
-        batches.append((current, evidence(current)))
-    bounded = []
-    for indices, value in batches:
-        if count(value) <= target_tokens or len(indices) != 1:
-            bounded.append((indices, value))
+        groups.append(current)
+    batches = []
+    for items in groups:
+        indices = [i for i, _, _ in items]
+        intervals = {i: (s, e) for i, s, e in items}
+        value = evidence(indices, intervals=intervals)
+        # A small overshoot is cheaper than resending the entire semantic context
+        # for the last few paragraphs of an otherwise complete chapter.
+        if count(value) <= target_tokens * 1.15 or len(indices) != 1:
+            batches.append((indices, value))
             continue
-        index = indices[0]
+        index, start, stop = items[0]
         text = chapters[index].text
-        start = 0
-        # Partitioning is advisory, never a request refusal or a one-character
-        # dispatch loop when shared evidence itself exceeds the preferred size.
-        effective_target = max(target_tokens, count(evidence(indices, interval=(0, 0), compact=True)) + 8000)
-        # A truly long chapter is covered by exact contiguous slices, rather than
-        # refusing the run. No character is skipped and no prose is summarized.
-        while start < len(text):
-            end = len(text)
-            candidate = evidence(indices, interval=(start, end), compact=True)
-            while end - start > 1 and count(candidate) > effective_target:
-                end = start + (end - start) // 2
-                candidate = evidence(indices, interval=(start, end), compact=True)
-            bounded.append((indices, candidate))
+        # A preferred request size never refuses work. Keep enough text per request
+        # even if unusually large semantic context exceeds the preferred size itself.
+        effective_target = max(target_tokens, count(evidence(indices, intervals={index: (0, 0)})) + 8000)
+        while start < stop:
+            low, high, end = start + 1, stop, start + 1
+            while low <= high:
+                middle = (low + high) // 2
+                if count(evidence(indices, intervals={index: (start, middle)})) <= effective_target:
+                    end, low = middle, middle + 1
+                else:
+                    high = middle - 1
+            if end < stop:
+                boundary = text.rfind("\n", start + (end - start) // 2, end)
+                if boundary > start:
+                    end = boundary + 1
+            batches.append((indices, evidence(indices, intervals={index: (start, end)})))
             start = end
-    return bounded
+    return batches

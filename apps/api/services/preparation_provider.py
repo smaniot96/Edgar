@@ -293,7 +293,7 @@ async def invoke_preparation[T: BaseModel](
 
         retained = save_proposal(binding, task, schema,
                                  parsed if parsed is not None else {"raw_output": response.output_text},
-                                 invalid, idempotency_key)
+                                 invalid, idempotency_key, evidence=evidence)
         reject_proposal(*retained, validation_error or ValueError("Invalid provider output."))
         raise PreparationTaskFailure("provider_output_invalid", usage=invalid)
     return result, recorded

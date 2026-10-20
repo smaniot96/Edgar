@@ -213,4 +213,16 @@ its obsolete capacity-harness scenario. Fresh AI requests now enter preparation
 directly. Archive models/readers and a guarded delegate remain; legacy non-private
 generation jobs report conversion required and preserve their saved files rather
 than offering a retry of deleted code. Unrelated turn, summary, source indexing and
-archive-reader checks remain. The combined cleanup removes about 3,400 net lines.
+archive-reader checks remain. The final combined cleanup removes about 3,300 net lines.
+
+The sole pipeline was deployed locally as combined build `443866d` and the saved
+run advanced through P08: all eight acts and 65 artifacts accepted, with no new
+authoring call. It is held at P09 after an inefficient review fallback was found.
+All seven paid reviews are retained and exactly verified; they fully cover chapters
+1–3. The corrected review assembler needs four requests for chapters 4–8, measuring
+approximately 93k/74k/81k/88k tokens including framing allowance. Review assignments
+persist exact inventory and text-range hashes, so restarts reuse completed work.
+The nine substantive critic findings remain open. Current known compact recovery
+estimate is USD11.330152, excluding imported studies/design and the old baseline;
+the fresh-PDF USD5/20min target remains unproven. See the latest state in
+`preparation-pipeline-review-2026-10-20.md`.
