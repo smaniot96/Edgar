@@ -16,7 +16,7 @@ import time
 import uuid
 
 from edgar_core.preparation import (
-    PreparationRunBinding, PreparationStage, PreparationTaskState, StagePlan,
+    PreparationRunBinding, PreparationStage, PreparationTaskState, PreparationTaskStatus, StagePlan,
     build_artifact, canonical_sha256,
 )
 from apps.api.services import adventures_meta as meta_store
@@ -85,7 +85,7 @@ def import_saved_design(slug, original_run_id):
                 receipt_keys.append(key)
             planned.append(task)
             tasks[f"{stage.value}:{task.task_id}"] = PreparationTaskState(task=task,
-                status="accepted", accepted_artifact_ids=tuple(a.artifact_id for a in proposed),
+                status=PreparationTaskStatus.ACCEPTED, accepted_artifact_ids=tuple(a.artifact_id for a in proposed),
                 validation_receipt_ids=tuple(receipt_keys), updated_at=now).model_dump(mode="json")
             # Lineage is an additional output of the accepted design task.
             if stage == PreparationStage.P03:
