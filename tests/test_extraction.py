@@ -108,6 +108,10 @@ def test_identical_overlapping_native_layer_removed_without_dropping_repeated_ta
         ("## Creature\n\nMedium construct, unaligned\nHit Points 9", "incomplete_stat_fields"),
         ("Armor Class 14\nHit Points 9", "missing_stat_heading"),
         (
+            "Armo.r Class 17 (natural armor, shield)\nHit Points 39 (6d8 + 12)\nSpeed 30 ft.",
+            "incomplete_stat_fields",
+        ),
+        (
             "## Creature\n\nMedium construct, unaligned\n\nArmor Class 14\nHit Points 9\n\n"
             "## ACTIONS\n\nBite. The creature hits.\n\n"
             "Armor Class 16\nHit Points 23",
@@ -122,6 +126,11 @@ def test_identical_overlapping_native_layer_removed_without_dropping_repeated_ta
 )
 def test_corrupt_layers_and_stat_boundaries_detected(text, error):
     assert error in check_text(text)["errors"]
+
+
+def test_hit_points_prose_without_a_speed_line_is_not_a_lost_armor_class():
+    prose = "## Healing Surges\n\nHit Points 25 is the most a character can regain in a day."
+    assert "incomplete_stat_fields" not in check_text(prose)["errors"]
 
 
 def test_repeated_numbers_and_list_markers_are_not_a_duplicate_layer():
