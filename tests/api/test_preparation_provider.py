@@ -217,3 +217,85 @@ async def test_invoke_preparation_classifies_sdk_and_internal_failures_safely(
     assert caught.value.usage.provider_called is True
     assert caught.value.usage.usage_known is False
     assert sentinel not in repr(caught.value)
+
+
+def _response(text, *, status="completed", reason=None):
+    return {
+        "id": "resp_offline",
+        "object": "response",
+        "created_at": 1,
+        "status": status,
+        "model": "gpt-6.1-sol",
+        "error": None,
+        "incomplete_details": {"reason": reason} if reason else None,
+        "instructions": None,
+        "metadata": {},
+        "output": [
+            {
+                "id": "msg_offline",
+                "type": "message",
+                "status": status,
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+            }
+        ],
+        "parallel_tool_calls": True,
+        "tools": [],
+        "tool_choice": "auto",
+        "usage": {
+            "input_tokens": 900,
+            "output_tokens": 100,
+            "total_tokens": 1000,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens_details": {"reasoning_tokens": 90},
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "status", "reason"),
+    [
+        ('{"te', "incomplete", "max_output_tokens"),  # reasoning used the cap; answer truncated
+        ('{"other": 1}', "completed", None),  # complete JSON that breaks the schema
+    ],
+)
+async def test_completed_call_with_invalid_answer_is_a_known_retryable_failure(
+    monkeypatch, text, status, reason
+):
+    """The raw response survives an invalid answer, so its usage is known and the task can retry."""
+    from agent import llm
+
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json=_response(text, status=status, reason=reason))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        monkeypatch.setattr(llm, "OPENAI_API_KEY", "test-offline-never-network")
+        monkeypatch.setattr(
+            llm,
+            "ChatOpenAI",
+            lambda **kwargs: ChatOpenAI(
+                **kwargs, http_async_client=client, base_url="https://offline.invalid/v1"
+            ),
+        )
+        with pytest.raises(PreparationTaskFailure) as caught:
+            await invoke_preparation(
+                frozen(),
+                task(),
+                Answer,
+                instruction="Return the assigned text.",
+                evidence={"source": "untrusted"},
+                idempotency_key="offline-key",
+            )
+    assert caught.value.code == "provider_output_invalid"
+    usage = caught.value.usage
+    assert usage.provider_called and usage.usage_known
+    assert (usage.input_tokens, usage.output_tokens) == (900, 100)
+    assert usage.failure_code == "provider_output_invalid"  # retryable for the supervisor
+    text_format = json.loads(requests[0].content)["text"]["format"]
+    assert text_format["type"] == "json_schema" and text_format["strict"] is True
+    assert text_format["name"] == "Answer"
+    assert text_format["schema"]["additionalProperties"] is False

@@ -243,9 +243,16 @@ def _source_groups(binding):
     return groups
 
 
+# Output caps below are sized for the answer itself. Sol at high effort spends output tokens on
+# reasoning first, so every provider cap gets this headroom; a dense PDF page group otherwise ran
+# out mid-answer (Lost Mine of Phandelver, 20 October 2026). Profiles bound it from above.
+REASONING_OUTPUT_HEADROOM = 4
+
+
 def _task(
     stage, name, scopes, deps, *, provider=False, calls=1, input_cap=128000, output_cap=16000
 ):
+    output_cap *= REASONING_OUTPUT_HEADROOM
     return PreparationTask(
         task_id=name,
         stage=stage,
@@ -439,6 +446,7 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
         assert_current_preparation_worker()
         single = task
         if call_limit:
+            call_limit *= REASONING_OUTPUT_HEADROOM
             single = task.model_copy(
                 update={
                     "max_input_tokens": 128000,

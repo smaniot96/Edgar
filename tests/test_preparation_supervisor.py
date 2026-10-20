@@ -205,3 +205,79 @@ async def test_unknown_failed_provider_usage_charges_the_full_reservation(
     assert result.state.tokens_spent == 200
     assert result.state.cost_microusd_spent == 10
     assert result.state.usage_attempts[0].usage_known is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_model_answer_with_known_usage_is_retried_not_blocking(
+    private_store: PreparationStore,
+) -> None:
+    """A completed call whose answer failed validation fails the task retryably; the job goes on."""
+    from apps.api.services.preparation import PreparationTaskFailure
+    from apps.api.services.preparation_runtime import _has_retryable_task
+
+    run = binding()
+    task = PreparationTask(
+        task_id="brief",
+        stage=PreparationStage.P01,
+        task_kind="commission",
+        scope_keys=("brief",),
+        max_input_tokens=100,
+        max_output_tokens=100,
+        max_cost_microusd=10,
+    )
+    plan = StagePlan(stage=PreparationStage.P01, tasks=(task,), required_scope_keys=("brief",))
+    usage = ProviderUsage(
+        provider_called=True,
+        call_count=1,
+        input_tokens=17,
+        output_tokens=23,
+        cost_microusd=2,
+        requested_model="gpt-6.1-sol",
+        reasoning_effort="high",
+        task_version="1",
+    )
+
+    def execute(bound, planned, dependencies, attempt, idempotency_key):
+        if attempt == 1:
+            invalid = usage.model_copy(update={"failure_code": "provider_output_invalid"})
+            raise PreparationTaskFailure("provider_output_invalid", usage=invalid)
+        artifact = build_artifact(
+            bound,
+            stage=planned.stage,
+            task_id=planned.task_id,
+            artifact_kind="commission_record",
+            payload={"ready": True},
+            dependency_artifacts=(),
+            created_at="2026-10-16T00:00:00+00:00",
+            scope_keys=planned.scope_keys,
+        )
+        return StageExecutionResult(proposed_artifacts=(artifact,), usage=usage)
+
+    def validate(bound, planned, artifacts, dependencies):
+        receipt = ValidationReceipt(
+            validator_id="p01_code_check",
+            passed=True,
+            artifact_digests={a.artifact_id: a.content_sha256 for a in artifacts},
+            dependency_digests={},
+            details_sha256=canonical_sha256({"valid": True}),
+            created_at="2026-10-16T00:00:01+00:00",
+        )
+        return ValidationResult(passed=True, receipts=(receipt,))
+
+    validate.validator_id = "p01_code_check"
+    supervisor = PreparationSupervisor(
+        adapters={PreparationStage.P01: StageAdapter(plan=lambda _b, _a: plan, execute=execute)},
+        validators={PreparationStage.P01: (validate,)},
+        store=private_store,
+    )
+    supervisor.create_run(run)
+
+    first = await supervisor.step("mystery", run.run_id, "worker-1", lambda _binding: True)
+    assert first.state.status == "failed"
+    assert first.state.tasks["P01:brief"].status == "failed"
+    assert first.state.tokens_spent == 40  # the known usage, not the reservation ceiling
+    assert _has_retryable_task(first.state)
+
+    second = await supervisor.step("mystery", run.run_id, "worker-1", lambda _binding: True)
+    assert second.state.tasks["P01:brief"].status == "accepted"
+    assert second.state.tasks["P01:brief"].attempt_count == 2

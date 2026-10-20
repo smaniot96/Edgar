@@ -15,6 +15,7 @@ import time
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
+from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
 from agent.llm import make_chat_model
@@ -109,8 +110,11 @@ async def invoke_preparation[T: BaseModel](
         max_retries=0,
         max_tokens=task.max_output_tokens,
     )
+    # The strict JSON schema is sent as a plain format rather than the pydantic class: with a
+    # class the SDK validates inside the call and a truncated or invalid answer raises with its
+    # usage lost. Here the raw response always returns, and Edgar validates it below.
     structured = llm.with_structured_output(
-        schema,
+        {"name": schema.__name__, "schema": to_strict_json_schema(schema), "strict": True},
         method="json_schema",
         include_raw=True,
         extra_headers={"Idempotency-Key": idempotency_key},
@@ -176,6 +180,26 @@ async def invoke_preparation[T: BaseModel](
     if known and (tokens_in > task.max_input_tokens or tokens_out > task.max_output_tokens):
         raise PreparationTaskFailure("provider_token_limit", usage=recorded)
     parsed = response.get("parsed") if isinstance(response, dict) else None
-    if not isinstance(parsed, schema) or response.get("parsing_error"):
-        raise PreparationTaskFailure("provider_output_invalid", usage=recorded)
-    return parsed, recorded
+    result = None
+    if isinstance(parsed, dict) and not response.get("parsing_error"):
+        try:
+            result = schema.model_validate(parsed)
+        except ValueError:
+            result = None
+    if result is None:
+        # A completed call with known usage: retryable within the task's attempt limit.
+        incomplete = metadata.get("incomplete_details")
+        log.warning(
+            "preparation_output_invalid",
+            stage=task.stage.value,
+            task_id=task.task_id,
+            response_status=metadata.get("status"),
+            incomplete_reason=incomplete.get("reason") if isinstance(incomplete, dict) else None,
+            output_tokens=tokens_out if known else None,
+            max_output_tokens=task.max_output_tokens,
+            elapsed_ms=recorded.latency_ms,
+        )
+        # The failure code on known usage marks a completed, retryable attempt for the supervisor.
+        invalid = recorded.model_copy(update={"failure_code": "provider_output_invalid"})
+        raise PreparationTaskFailure("provider_output_invalid", usage=invalid)
+    return result, recorded

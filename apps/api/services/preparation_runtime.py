@@ -28,6 +28,7 @@ from edgar_core.preparation import (
     PreparationPublication,
     PreparationRunBinding,
     PreparationRunState,
+    PreparationTaskStatus,
     PublicPreparationStatus,
     SafePreparationFailure,
     canonical_sha256,
@@ -122,6 +123,17 @@ def make_preparation_supervisor(
     from .preparation_stages import make_preparation_supervisor as make_stages_supervisor
 
     return make_stages_supervisor(store=store, provider=provider, book_client=book_client)
+
+
+def _has_retryable_task(state: PreparationRunState) -> bool:
+    """A FAILED run whose failed task still has attempts left continues in this job."""
+    if state.status != PreparationJobStatus.FAILED or state.cancel_requested:
+        return False
+    limit = state.binding.budget.max_attempts_per_task
+    return any(
+        task.status == PreparationTaskStatus.FAILED and task.attempt_count < limit
+        for task in state.tasks.values()
+    )
 
 
 def _profiles_snapshot(profiles: Any = None) -> tuple[Any, dict[str, Any]]:
@@ -1366,9 +1378,11 @@ async def prepare_adventure(
                 PreparationJobStatus.BLOCKED,
                 PreparationJobStatus.FAILED,
                 PreparationJobStatus.CANCELLED,
-            ):
+            ) and not _has_retryable_task(state):
                 _sync_terminal_meta(slug, current_token, state)
                 return state
+            # A failed task with attempts left (a known, retryable failure such as an invalid model
+            # answer) is retried by the next supervisor step rather than ending the job.
             result = await supervisor.step(
                 slug,
                 run_id,
