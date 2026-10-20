@@ -208,7 +208,19 @@ def _books(deps):
 
 
 def _guidance(deps):
-    return _one(deps, "book_dossier").payload["study"]
+    # Keep the complete receipt in the artifact for validation. Provider prompts only
+    # need exact rule text, policy and citations, not repeated integrity hashes.
+    study = _one(deps, "book_dossier").payload["study"]
+    return {
+        "rules_edition": study["rules_edition"],
+        "requested_references": study["requested_references"],
+        "evidence": [
+            {"role": entry["book_binding"]["role"],
+             "source": entry["book_binding"]["source"],
+             **{key: entry[key] for key in ("page", "page_end", "section", "text", "rule_policy")}}
+            for entry in study["evidence"]
+        ],
+    }
 
 
 def _repair_feedback(deps):
