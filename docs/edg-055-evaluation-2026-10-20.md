@@ -452,3 +452,43 @@ recovery defects. Its findings and the inspected local follow-up patch are in
 `docs/preparation-reliability-audit-2026-10-20.md`. That patch is not deployed over
 the running P04 job. Campaign Ready, post-Ready restart persistence and gameplay
 remain unverified.
+
+
+## Lighter preparation deployed — 13:06 Rome, 20 October 2026
+
+The owner requested substantially fewer semantic calls and authorized sensible small DM additions
+consistent with the campaign theme, accepted facts and future acts. Local authoring commit `6eb27b0`
+is running on combined stack `45cf7ae`. It has not been pushed or merged into main. No test suite or CI
+was run; Python syntax compilation, built-image module imports and API readiness succeeded.
+
+The normal path now authors canonical records, scene packets, encounter requests, resource/progression
+notes, private DM notes and asset requirements together once per act. P05 grounds that saved plan
+with exact tools; P06 derives the saved scene packets; P07 assembles authored assets plus exact clue
+handouts and topology maps; P08 retains original PDF pages with the authored notes and explicit DM
+extensions. These four stages no longer need independent model calls on the new PDF path. Legacy
+accepted acts can receive one supplementary enrichment call without changing their accepted records.
+P09 groups independent reviews using measured request size, compacts repeated evidence, retains
+original citation pointers, and verifies exact contiguous text coverage if a long chapter needs slices.
+P10 continues local search with larger persisted bounds instead of asking a model to regenerate content
+merely because a local search allowance was reached. Later act tasks pin earlier accepted canonical
+definitions. Source quote offsets and all residual private source coverage are compiled in code.
+
+For new PDFs that fit, source inventory is local and design reads the exact pages once. Larger inputs
+use measured larger study batches. The existing rerun's saved studies and accepted design are reused.
+The remaining baseline is eight combined act authoring calls plus independent review batches, with
+additional corrections only when actual validation requires them. This is a call-path expectation,
+not a provider latency or Ready guarantee.
+
+The old running first-act correction stopped itself with provider `incomplete: max_output_tokens`: all
+64,000 output tokens were reasoning, and no usable final answer was returned. No active generation
+was interrupted for deployment. The new build includes the earlier advisory-spend/durable-response
+fixes through `f0a3999` and does not send the optional request-level output-token allowance. Provider
+physical context/output capacity still applies. The normal retry endpoint resumed the same run
+`prep-5d81406d90104c45b253c652a44ceee0` at approximately 11:05:52 UTC. Background response
+`resp_0bbb768078417b34006ad74b1084a887d2a493c6b76d7f0dd5` is in progress for the first combined act.
+All 20 original P01/P02 artifact hashes and accepted design digest
+`bbcfb568a5ed6427956d859ad0b7703cf32cec5913c68981160e4c588dc7b374` are unchanged.
+
+Campaign status remains preparing at P04, with no accepted compiled act yet. Ready publication,
+post-Ready persistence and Bryn's playthrough remain pending. The older P11 broad-repair rewind and
+repair-round stop are still known audit findings; this lighter-path change does not claim to fix them.

@@ -27,6 +27,7 @@ def latest_rejection(binding, task, schema, logical_call):
     for path in directory.glob("*.json"):
         record = json.loads(path.read_text())
         if (record.get("schema") == schema.__name__ and record.get("diagnostics")
+                and record.get("task_id") == task.task_id and record.get("stage") == task.stage.value
                 and (record.get("logical_call") == logical_call or (
                     record.get("logical_call") is None and task.stage.value != "P09"
                 ))
