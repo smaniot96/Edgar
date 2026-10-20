@@ -314,7 +314,11 @@ class PreparationSupervisor:
         def update(payload: dict[str, Any]) -> None:
             changed = False
             for item in payload["tasks"].values():
-                if item["status"] in ("failed", "blocked") and item["attempt_count"] < payload["binding"]["budget"]["max_attempts_per_task"]:
+                if item["status"] in ("failed", "blocked"):
+                    item["retry_attempt_limit"] = max(
+                        item.get("retry_attempt_limit", 0),
+                        item["attempt_count"] + payload["binding"]["budget"]["max_attempts_per_task"],
+                    )
                     item["status"] = "pending"
                     item["last_safe_error_code"] = None
                     item["lease_owner"] = None
@@ -335,14 +339,15 @@ class PreparationSupervisor:
         """Resume retryable provider failures without losing their durable attempt record."""
         retryable = [task for task in state.tasks.values()
                      if task.status == PreparationTaskStatus.FAILED
-                     and task.attempt_count < state.binding.budget.max_attempts_per_task]
+                     and task.attempt_count < task.attempt_limit(state.binding)]
         if not retryable:
             return state
 
         def update(payload: dict[str, Any]) -> None:
             for task in payload["tasks"].values():
                 if (task["status"] == "failed"
-                        and task["attempt_count"] < payload["binding"]["budget"]["max_attempts_per_task"]):
+                        and task["attempt_count"] < max(task.get("retry_attempt_limit", 0),
+                            payload["binding"]["budget"]["max_attempts_per_task"])):
                     task["status"] = "pending"
             payload["status"] = "preparing"
             payload["last_safe_error_code"] = None
@@ -601,7 +606,7 @@ class PreparationSupervisor:
         state: PreparationRunState, task_state: PreparationTaskState,
     ) -> PreparationStep:
         task = task_state.task
-        if task_state.attempt_count >= state.binding.budget.max_attempts_per_task:
+        if task_state.attempt_count >= task_state.attempt_limit(state.binding):
             return PreparationStep(self._block_task(slug, run_id, task, "attempt_budget_exhausted"))
         self._check_live(state, source_guard)
         reserved_calls = task.max_provider_calls if task.requires_provider else 0
@@ -879,7 +884,8 @@ class PreparationSupervisor:
             for finding in findings:
                 current_findings[finding.finding_id] = finding.model_dump(mode="json")
             payload["findings"] = list(current_findings.values())
-            exhausted = saved["attempt_count"] >= payload["binding"]["budget"]["max_attempts_per_task"]
+            exhausted = saved["attempt_count"] >= max(saved.get("retry_attempt_limit", 0),
+                payload["binding"]["budget"]["max_attempts_per_task"])
             saved.update(status="failed" if retryable and not exhausted else "blocked",
                          lease_owner=None, lease_expires_at=None, reserved_provider_calls=0,
                          reserved_tokens=0, reserved_cost_microusd=0,
@@ -1007,7 +1013,6 @@ class PreparationSupervisor:
     @staticmethod
     def _has_retryable_work(state: PreparationRunState) -> bool:
         return any(task.status in (PreparationTaskStatus.FAILED, PreparationTaskStatus.BLOCKED)
-                   and task.attempt_count < state.binding.budget.max_attempts_per_task
                    for task in state.tasks.values())
 
 

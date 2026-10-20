@@ -15,7 +15,6 @@ import time
 
 import structlog
 import tiktoken
-from langchain_core.messages import HumanMessage, SystemMessage
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
@@ -70,11 +69,14 @@ async def invoke_preparation[T: BaseModel](
         "Code independently validates your proposal. Never claim campaign readiness.\n\n"
         + instruction
     )
+    # Attempt counters belong to the checkpoint, not the semantic prompt. Keeping
+    # them out lets another worker retrieve the same exact background request.
+    evidence = {key: value for key, value in evidence.items() if key != "attempt"}
     content = json.dumps(evidence, ensure_ascii=False, sort_keys=True, allow_nan=False)
     estimated_input = len(tiktoken.get_encoding("o200k_base").encode(
         system + content + json.dumps(to_strict_json_schema(schema)), disallowed_special=()
     )) + 4096
-    parts = [{"type": "text", "text": content}]
+    parts = [{"type": "input_text", "text": content}]
     if len(images) > 1:
         raise PreparationTaskFailure("task_context_limit", usage=predispatch)
     for data, media_type in images:
@@ -94,8 +96,8 @@ async def invoke_preparation[T: BaseModel](
         estimated_input += 32768
         parts.append(
             {
-                "type": "image_url",
-                "image_url": {"url": f"data:{media_type};base64,{encoded}", "detail": "high"},
+                "type": "input_image",
+                "image_url": f"data:{media_type};base64,{encoded}", "detail": "high",
             }
         )
     if estimated_input > task.max_input_tokens:
@@ -111,16 +113,17 @@ async def invoke_preparation[T: BaseModel](
         max_retries=0,
         max_tokens=task.max_output_tokens,
     )
-    # The strict JSON schema is sent as a plain format rather than the pydantic class: with a
-    # class the SDK validates inside the call and a truncated or invalid answer raises with its
-    # usage lost. Here the raw response always returns, and Edgar validates it below.
-    structured = llm.with_structured_output(
-        {"name": schema.__name__, "schema": to_strict_json_schema(schema), "strict": True},
-        method="json_schema",
-        include_raw=True,
-        extra_headers={"Idempotency-Key": idempotency_key},
-        service_tier="default",
-    )
+    request = {
+        "model": profile.model,
+        "reasoning": {"effort": profile.reasoning_effort},
+        "max_output_tokens": min(task.max_output_tokens, profile.max_output_tokens)
+        if profile.max_output_tokens is not None else task.max_output_tokens,
+        "input": [{"role": "system", "content": system},
+                  {"role": "user", "content": parts}],
+        "text": {"format": {"type": "json_schema", "name": schema.__name__,
+                            "schema": to_strict_json_schema(schema), "strict": True}},
+        "service_tier": "default",
+    }
     started = time.monotonic()
     unknown = ProviderUsage(
         provider_called=True,
@@ -132,12 +135,9 @@ async def invoke_preparation[T: BaseModel](
         failure_code="provider_request_failed",
     )
     try:
-        response = await structured.ainvoke(
-            [SystemMessage(content=system), HumanMessage(content=parts if images else content)],
-            # One durable attempt retains its key across a duplicate dispatch. Neither
-            # prompt text nor a credential is written to tracing metadata here.
-            config={"metadata": {"preparation_attempt": idempotency_key}},
-        )
+        from .preparation_responses import await_response
+
+        response = await await_response(llm.root_async_client, binding, task, request)
     except asyncio.CancelledError:
         raise  # Supervisor charges its outstanding reservation before propagating cancellation.
     except Exception as exc:
@@ -154,12 +154,11 @@ async def invoke_preparation[T: BaseModel](
         )
         failed_usage = unknown.model_copy(update={"failure_code": code})
         raise PreparationTaskFailure(code, usage=failed_usage) from exc
-    raw = response.get("raw") if isinstance(response, dict) else None
-    usage = getattr(raw, "usage_metadata", None) or {}
-    metadata = getattr(raw, "response_metadata", None) or {}
+    usage = response.usage.model_dump() if response.usage else {}
+    metadata = response.model_dump()
     tokens_in, tokens_out = usage.get("input_tokens"), usage.get("output_tokens")
     known = type(tokens_in) is int and type(tokens_out) is int and min(tokens_in, tokens_out) >= 0
-    resolved = metadata.get("model_name") or metadata.get("model")
+    resolved = response.model
     recorded = ProviderUsage(
         provider_called=True,
         usage_known=known,
@@ -181,13 +180,17 @@ async def invoke_preparation[T: BaseModel](
     if known and (tokens_in > task.max_input_tokens or tokens_out > task.max_output_tokens):
         log.warning("preparation_provider_token_estimate_exceeded", stage=task.stage.value,
                     task_id=task.task_id, input_tokens=tokens_in, output_tokens=tokens_out)
-    parsed = response.get("parsed") if isinstance(response, dict) else None
+    parsed = None
     result = None
-    if isinstance(parsed, dict) and not response.get("parsing_error"):
-        try:
+    validation_error = None
+    try:
+        parsed = json.loads(response.output_text)
+        if response.status == "completed":
             result = schema.model_validate(parsed)
-        except ValueError:
-            result = None
+        else:
+            validation_error = ValueError("Provider response did not complete: " + str(response.status))
+    except ValueError as exc:
+        validation_error = exc
     if result is None:
         # A completed call with known usage: retryable within the task's attempt limit.
         incomplete = metadata.get("incomplete_details")
@@ -203,5 +206,11 @@ async def invoke_preparation[T: BaseModel](
         )
         # The failure code on known usage marks a completed, retryable attempt for the supervisor.
         invalid = recorded.model_copy(update={"failure_code": "provider_output_invalid"})
+        from .preparation_proposals import reject_proposal, save_proposal
+
+        retained = save_proposal(binding, task, schema,
+                                 parsed if parsed is not None else {"raw_output": response.output_text},
+                                 invalid, idempotency_key)
+        reject_proposal(*retained, validation_error or ValueError("Invalid provider output."))
         raise PreparationTaskFailure("provider_output_invalid", usage=invalid)
     return result, recorded

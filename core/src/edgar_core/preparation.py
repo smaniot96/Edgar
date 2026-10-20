@@ -308,6 +308,9 @@ class PreparationTaskState(PreparationRecord):
     task: PreparationTask
     status: PreparationTaskStatus = PreparationTaskStatus.PENDING
     attempt_count: Nonnegative = 0
+    # An explicit Retry may grant another bounded batch without resetting history
+    # or changing the immutable commission/source binding.
+    retry_attempt_limit: Nonnegative = 0
     lease_owner: str | None = None
     lease_fence: Nonnegative = 0
     lease_expires_at: str | None = None
@@ -319,6 +322,9 @@ class PreparationTaskState(PreparationRecord):
     validation_receipt_ids: tuple[str, ...] = ()
     last_safe_error_code: TaskId | None = None
     updated_at: str
+
+    def attempt_limit(self, binding: PreparationRunBinding) -> int:
+        return max(binding.budget.max_attempts_per_task, self.retry_attempt_limit)
 
 
 class PreparationRunState(PreparationRecord):

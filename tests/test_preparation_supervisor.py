@@ -286,3 +286,29 @@ async def test_invalid_model_answer_with_known_usage_is_retried_not_blocking(
     second = await supervisor.step("mystery", run.run_id, "worker-1", lambda _binding: True)
     assert second.state.tasks["P01:brief"].status == "accepted"
     assert second.state.tasks["P01:brief"].attempt_count == 2
+
+
+def test_explicit_retry_extends_exhausted_task_without_changing_binding_or_usage(private_store):
+    run = binding()
+    supervisor = PreparationSupervisor(adapters={}, validators={}, store=private_store)
+    supervisor.create_run(run)
+    planned = PreparationTask(task_id="brief", stage=PreparationStage.P03, task_kind="brief",
+                              max_input_tokens=1, max_output_tokens=1, max_cost_microusd=1)
+
+    def blocked(payload):
+        payload.update(status="blocked", current_stage="P03", provider_calls_spent=2,
+                       tokens_spent=400, cost_microusd_spent=80,
+                       last_safe_error_code="provider_unavailable")
+        payload["tasks"]["P03:brief"] = {
+            "task": planned.model_dump(mode="json"), "status": "blocked", "attempt_count": 2,
+            "last_safe_error_code": "provider_unavailable", "updated_at": payload["updated_at"],
+        }
+
+    before = private_store.mutate_run("mystery", run.run_id, update=blocked)
+    assert supervisor.status("mystery", run.run_id).action == "retry"
+    after = supervisor.retry("mystery", run.run_id)
+    task_state = after.tasks["P03:brief"]
+    assert task_state.status == "pending"
+    assert task_state.attempt_count == 2 and task_state.attempt_limit(after.binding) == 4
+    assert after.binding.binding_sha256 == before.binding.binding_sha256
+    assert (after.provider_calls_spent, after.tokens_spent, after.cost_microusd_spent) == (2, 400, 80)

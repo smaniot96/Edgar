@@ -41,7 +41,7 @@ def save_proposal(binding, task, schema, value, usage, key):
         "stage": task.stage.value,
         "schema": schema.__name__,
         "created_at": datetime.now(UTC).isoformat(),
-        "proposal": value.model_dump(mode="json"),
+        "proposal": value.model_dump(mode="json") if hasattr(value, "model_dump") else value,
         "usage": usage.model_dump(mode="json"),
         "diagnostics": [],
     }
