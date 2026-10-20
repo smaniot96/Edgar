@@ -502,6 +502,14 @@ def _reserve_image_call(
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+def run_image_reserved_microusd(collection: str, run_id: str) -> int:
+    """Image spend a preparation run holds: reserved calls minus refunds of failed ones."""
+    path = _budget_file(collection, "", "", "", run_id=run_id)
+    if not path.is_file():
+        return 0
+    return int(json.loads(path.read_text()).get("reserved_cost_microusd", 0))
+
+
 def _refund_image_budget(
     *,
     collection: str,

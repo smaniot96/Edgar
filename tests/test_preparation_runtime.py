@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from apps.api.limits import JobSpend
 from apps.api.services import adventures_meta, campaign_sources, preparation_runtime as runtime
 from edgar_core.preparation import (
     PreparationBudget,
@@ -736,3 +737,218 @@ def test_commission_level_failures_have_fixed_safe_restart_messages(code):
     assert runtime._needs_new_commission(code)
     assert "private" not in runtime._preparation_failure_message(code).lower()
     assert "start a new" in runtime._preparation_failure_message(code).lower()
+
+
+# --- EDG-055 F3/F5/F6: failures before a run exists, consistent retry state, spend probe -------
+
+
+def _private_upload(slug: str) -> str:
+    """A private PDF upload with a captured setup and an active attempt, as the route leaves it."""
+    adventures_meta.save_meta(
+        slug,
+        {
+            "private_preparation": True,
+            "status": "processing",
+            "title": "Lost Mine",
+            "source_filename": "phandelver.pdf",
+            "preparation_setup": {"request": {"character_ids": [1]}, "heroes": [{"id": 1}]},
+            "job": adventures_meta.new_job("ingestion", "queued", retained_work="source_pdf"),
+        },
+    )
+    return adventures_meta.begin_attempt(slug, job_attempt=True, job_kind="ingestion")
+
+
+def _reject_extraction(monkeypatch, slug: str) -> list[str]:
+    """Make the binding fail at the real extraction gate, after the preview was written."""
+    from ingestion.readiness import IngestionRejected
+
+    monkeypatch.setattr(runtime, "_setup_snapshot", lambda meta: {"request": {}, "heroes": []})
+    monkeypatch.setattr(runtime, "_profiles_snapshot", lambda profiles=None: (None, {}))
+    calls: list[str] = []
+
+    def binding(slug_, meta, setup, profile_data, run_id, pdf_path):
+        calls.append(run_id)
+        directory = runtime._run_source_dir(slug_, run_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{slug_}.extraction.json").write_text("{}", encoding="utf-8")
+        (directory / f"{slug_}.md").write_text("page text", encoding="utf-8")
+        raise IngestionRejected(
+            "extraction_quality", "Extraction needs review on page 59: private page text", {}
+        )
+
+    monkeypatch.setattr(runtime, "_binding_for", binding)
+    return calls
+
+
+def test_extraction_rejection_before_a_run_is_a_logged_retryable_failure(
+    private_meta_dir, monkeypatch
+):
+    import structlog
+
+    from apps.api.routers import adventures as adventures_router
+
+    monkeypatch.setattr(runtime, "log", structlog.get_logger())
+    slug = "lost_mine"
+    token = _private_upload(slug)
+    _reject_extraction(monkeypatch, slug)
+    assert runtime.preparation_job_spend(slug) == JobSpend(0, terminal=False)
+
+    with structlog.testing.capture_logs() as logs:
+        assert asyncio.run(runtime.prepare_adventure(slug, attempt_token=token)) is None
+
+    meta = adventures_meta.load_meta(slug)
+    assert meta["status"] == "failed"
+    assert meta["preparation_blocked_code"] == "source_extraction_rejected"
+    assert "private page text" not in str(meta)
+    # The failure is logged with the same support reference the player sees.
+    logged = [entry for entry in logs if entry["event"] == "preparation_setup_failed"]
+    assert len(logged) == 1
+    assert logged[0]["support_ref"] == meta["support_ref"]
+    assert logged[0]["failure_code"] == "source_extraction_rejected"
+    assert logged[0]["log_level"] == "error"
+
+    projected = runtime.safe_preparation_status(meta, slug)
+    assert projected is not None
+    assert projected.status == PreparationJobStatus.BLOCKED
+    assert projected.action == "retry" and projected.retryable is True
+    assert projected.failure is not None
+    assert projected.failure.code == "source_extraction_rejected"
+    assert projected.failure.retryable is True
+    assert projected.failure.recovery_action == "retry"
+    assert projected.failure.support_ref == meta["support_ref"]
+
+    # The listing shows the real failure, a retry and the preview, not progress or a setup form.
+    read = adventures_router._read_for_slug(slug, has_collection=False)
+    assert read.status == "failed"
+    assert read.failure_code == "source_extraction_rejected"
+    assert read.preparation_setup_required is False
+    assert read.extraction_preview_available is True
+    assert read.can_retry is True
+    assert read.job is not None and read.job.state == "failed"
+    assert read.job.action_label == "Retry preparation"
+    assert read.job.explanation != read.job.action_label
+    assert read.job.failure is not None and read.job.failure.retryable is read.job.retryable
+    preview = adventures_router._extraction_path(slug, f"{slug}.extraction.json")
+    assert preview.parent == runtime._run_source_dir(slug, "prep-" + meta["job"]["job_id"])
+
+    # Nothing was spent: the whole daily-limit reservation can be released.
+    assert runtime.preparation_job_spend(slug) == JobSpend(0, terminal=True)
+
+
+def test_retry_after_a_pre_run_failure_reads_the_source_again(private_meta_dir, monkeypatch):
+    slug = "lost_mine"
+    token = _private_upload(slug)
+    calls = _reject_extraction(monkeypatch, slug)
+    asyncio.run(runtime.prepare_adventure(slug, attempt_token=token))
+    run_id = "prep-" + adventures_meta.load_meta(slug)["job"]["job_id"]
+
+    retried_run, new_token = runtime.retry_preparation(slug)
+
+    assert retried_run == run_id and new_token != token
+    # The stale rejected extraction is gone, so the retry extracts the uploaded PDF again.
+    assert not runtime._run_source_dir(slug, run_id).exists()
+    meta = adventures_meta.load_meta(slug)
+    assert meta["status"] == "processing"
+    assert meta["failure_code"] is None and meta["support_ref"] is None
+    assert "preparation_blocked_code" not in meta
+    asyncio.run(runtime.prepare_adventure(slug, attempt_token=new_token))
+    assert calls == [run_id, run_id]
+
+
+def test_setup_failures_before_a_run_still_use_the_setup_form(private_meta_dir, monkeypatch):
+    slug = "ai_story"
+    adventures_meta.save_meta(
+        slug,
+        {
+            "private_preparation": True,
+            "status": "processing",
+            "generation": {"kind": "ai"},
+            "job": adventures_meta.new_job("generation", "queued"),
+        },
+    )
+    token = adventures_meta.begin_attempt(slug, job_attempt=True, job_kind="generation")
+    asyncio.run(runtime.prepare_adventure(slug, attempt_token=token))
+
+    meta = adventures_meta.load_meta(slug)
+    projected = runtime.safe_preparation_status(meta, slug)
+    assert projected is not None and projected.action == "restart"
+    assert projected.retryable is False
+    assert projected.failure is not None and projected.failure.retryable is False
+    assert runtime.preparation_setup_needed(meta) is True
+    with pytest.raises(runtime.PreparationError):
+        runtime.retry_preparation(slug)
+
+
+def test_legacy_pre_run_record_with_a_canonical_code_is_failed_not_processing(private_meta_dir):
+    # The record EDG-055 found on the stack: stored before the specific code was kept.
+    adventures_meta.save_meta(
+        "legacy",
+        {
+            "private_preparation": True,
+            "status": "failed",
+            "source_filename": "phandelver.pdf",
+            "preparation_setup": {"request": {}},
+            "failure_code": "validation_failed",
+            "support_ref": "err-0c4a71fbd8093891",
+            "job": {"job_id": "e" * 32, "kind": "ingestion", "state": "failed"},
+        },
+    )
+    meta = adventures_meta.load_meta("legacy")
+
+    source = campaign_sources.source_read("legacy")
+
+    assert source.status == "failed"
+    assert source.failure_code == "validation_failed"
+    assert source.job is not None and source.job.failure is not None
+    assert source.job.failure.support_ref == "err-0c4a71fbd8093891"
+    assert runtime.preparation_setup_needed(meta) is True
+
+
+@pytest.mark.parametrize(
+    ("action", "failure_retryable", "recovery"),
+    [("retry", False, "contact_support"), ("restart", True, "retry")],
+)
+def test_job_action_and_failure_never_disagree_about_retrying(
+    private_meta_dir, monkeypatch, action, failure_retryable, recovery
+):
+    from edgar_core.preparation import SafePreparationFailure
+
+    failure = SafePreparationFailure(
+        code="turn_failed",
+        category="internal",
+        message="Something went wrong while processing this action.",
+        recovery_action=recovery,
+        retryable=failure_retryable,
+        support_ref="err-0123456789abcdef",
+        outcome="unknown",
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_preparation_status",
+        lambda meta, slug: PublicPreparationStatus(
+            run_id="prep-" + "f" * 32,
+            status=PreparationJobStatus.BLOCKED,
+            stage="Checking game rules",
+            retryable=True,  # the supervisor marks restart as retryable too
+            action=action,
+            failure=failure,
+        ),
+    )
+    meta = {
+        "private_preparation": True,
+        "preparation_run_id": "prep-" + "f" * 32,
+        "job": {"job_id": "f" * 32, "kind": "generation", "state": "failed"},
+    }
+
+    projected = runtime.safe_preparation_status(meta, "story")
+    job = campaign_sources.safe_job_read(meta, "story")
+
+    assert projected is not None and projected.failure is not None
+    assert projected.retryable is (action == "retry")
+    assert projected.failure.retryable is projected.retryable
+    assert (projected.failure.recovery_action == "retry") is projected.retryable
+    assert job is not None and job.retryable is projected.retryable
+    assert job.failure is not None and job.failure.retryable is job.retryable
+    # One short label and one distinct explanation, never the same sentence twice.
+    assert job.action_label != job.explanation
+    assert job.action_label == ("Retry preparation" if action == "retry" else None)

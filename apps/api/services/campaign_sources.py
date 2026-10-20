@@ -66,9 +66,14 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             "failed": "failed",
             "cancelled": "cancelled",
         }.get(projected.status.value, "running")
-        action_copy = {
+        saved_run = bool(meta.get("preparation_run_id"))
+        # A short button label and a separate sentence, so the card never repeats itself.
+        action_label = "Retry preparation" if projected.action == "retry" else None
+        explanation = {
             "wait": "Preparation is in progress. Check back for an update.",
-            "retry": "Saved preparation work can be retried.",
+            "retry": "Saved preparation work is kept. Retrying continues from the last accepted step."
+            if saved_run
+            else "No preparation work was saved before this failure. Retrying starts again from the same source and setup.",
             "restart": "Preparation needs attention before it can continue.",
             "none": "Your adventure is ready to play.",
         }.get(projected.action)
@@ -80,13 +85,13 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             stage=projected.stage,
             completed_chapters=0,
             total_chapters=None,
-            checkpoint_available=bool(meta.get("preparation_run_id")),
+            checkpoint_available=saved_run,
             retryable=projected.retryable,
             retained_work=(job.get("retained_work") if job.get("retained_work") in {
                 "none", "outline_and_chapters", "complete_manuscript", "source_pdf", "inspected_extraction", "published"
             } else "none"),
-            action_label=action_copy,
-            explanation=action_copy,
+            action_label=action_label,
+            explanation=explanation,
             source_version=(meta.get("prepared_bundle") or {}).get("bundle_sha256")
             if projected.status.value == "ready" else None,
             failure=projected.failure,
@@ -302,8 +307,12 @@ def source_read(slug: str) -> SourceRead:
         from .preparation_runtime import private_preparation_ready, safe_preparation_status
 
         if not private_preparation_ready(slug, raw_meta):
+            from .preparation_runtime import failed_source_preview_dir
+
             projected = safe_preparation_status(raw_meta, slug)
             failed = projected is not None and projected.status.value in ("blocked", "failed", "cancelled")
+            # Only a PDF that failed before any run existed has an inspectable extraction.
+            failed_preview = failed and failed_source_preview_dir(slug, raw_meta) is not None
             return SourceRead(
                 slug=slug,
                 title="Private adventure",
@@ -320,8 +329,8 @@ def source_read(slug: str) -> SourceRead:
                     else "Your adventure is being prepared privately."
                 ),
                 failure_code=projected.failure.code if failed and projected and projected.failure else None,
-                extraction_preview_available=False,
-                extraction_preview_current=False,
+                extraction_preview_available=failed_preview,
+                extraction_preview_current=failed_preview,
                 ingestion=None,
                 job=safe_job_read(raw_meta, slug),
             )

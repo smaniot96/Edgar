@@ -1,5 +1,6 @@
 import { safeFailureFromUnknown, type SafeRecoveryAction } from "../../api/turnStream";
 import { cn } from "../../lib/cn";
+import { dailyBudgetNextStep } from "../../lib/usageLimits";
 import { Button } from "./Button";
 
 /**
@@ -30,12 +31,15 @@ export function ErrorNotice({
     contact_support: "Share the reference below with support if the problem continues.",
     read_history: "Your saved campaign history remains available to read.",
   };
-  // Token-mode refusals (EDG-160) are about access, not the input, so they get their own next step.
-  const accessStep = safe.category === "authentication"
+  // Token-mode refusals (EDG-160) are about access, not the input, so they get their own next step;
+  // a daily-allowance refusal names its reset time and, when it applies, the budget gap.
+  const specificStep = safe.category === "authentication"
     ? "Open Settings and enter a current access token. What you typed is still here."
     : safe.category === "forbidden"
       ? "Use an access token for an administrator account, or ask the operator for one."
-      : null;
+      : safe.code === "daily_budget_exhausted"
+        ? dailyBudgetNextStep(safe.dailyBudget, safe.retryAfterSeconds)
+        : null;
   return (
     <div
       role="alert"
@@ -53,7 +57,7 @@ export function ErrorNotice({
           </Button>
         ) : null}
       </div>
-      <p className="mt-1 text-xs text-ink-muted">{accessStep ?? nextStep[safe.recoveryAction ?? "contact_support"]}</p>
+      <p className="mt-1 text-xs text-ink-muted">{specificStep ?? nextStep[safe.recoveryAction ?? "contact_support"]}</p>
       {safe.supportRef ? <p className="mt-1 text-xs text-ink-subtle">Support reference: {safe.supportRef}</p> : null}
     </div>
   );

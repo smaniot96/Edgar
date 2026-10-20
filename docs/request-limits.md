@@ -48,6 +48,18 @@ every refusal has the same shape:
 
 The response also carries `Retry-After` when a window or the day's reset sets the wait.
 
+A refused job reservation (`daily_budget_exhausted` on an operator route) also says whether the
+job's own budget is the problem, so the UI can tell "used up" apart from "asks for more than is
+left" (EDG-055 F7). Turn pre-checks reserve nothing and omit it.
+
+```json
+"daily_budget": {
+  "requested_microusd": 50000000,
+  "remaining_microusd": 49500000,
+  "daily_limit_microusd": 50000000
+}
+```
+
 | Code | Status | When |
 | --- | --- | --- |
 | `rate_limited` | 429 | A per-client window is exhausted. Retry after `retry_after_seconds`. |
@@ -84,11 +96,17 @@ cancelled. A job that never reaches its background task is undone when the reque
   `LIMIT_UNBUDGETED_JOB_COST_MICROUSD` when it declares none. The reservation is atomic and is
   refused when it would cross the ceiling. A reservation for a request that is refused or fails
   before its job starts is returned.
-- A reservation is not refunded when a job finishes below its declared budget. This is deliberate:
-  the declared budget is the most the job can spend, and the per-run budget in preparation
-  remains the authoritative bound inside a run.
-- Repeated preparation or retry of the same adventure reserves again. This over-counts, which is
-  the safe direction.
+- A private preparation job settles its reservation when it ends in a terminal state (ready,
+  failed, blocked or cancelled), whether it returned or raised (EDG-055 F6). The job's own run
+  ledger is read before it starts and after it ends: the reservation is replaced by what this
+  attempt spent (spent and still-reserved semantic usage plus held image budget), so a job that
+  fails before any provider call returns its whole reservation. Spend above the reservation is
+  added when the starting ledger was readable; otherwise the reservation is the most charged.
+- A job whose ledger is unreadable, or which ends without a terminal state (a stale worker, a
+  process stop), keeps its whole reservation. That over-counts, which is the safe direction.
+  Recovery after a restart runs without a request admission, so it settles nothing.
+- Repeated preparation or retry of the same adventure reserves again; each attempt settles its
+  own reservation against its own share of the run ledger.
 
 The ceiling is an estimate. It is not a billing reconciliation.
 
@@ -144,7 +162,8 @@ adding one here would make replicas disagree.
   refuses them. Set a body-size limit at the reverse proxy as well.
 - A turn that runs longer than `LIMIT_TURN_LEASE_SECONDS` is counted free for the rest of its run.
   Raise the setting if long turns are expected.
-- Refunds for jobs that finish below their declared budget, and per-model spend breakdowns.
+- Settlement for legacy (non-private) ingestion and generation jobs, which keep their
+  reservation, and per-model spend breakdowns.
 - Durable job queueing and restart recovery (T1). Leases limit concurrency, not durability.
 
 ## Verification

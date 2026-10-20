@@ -229,7 +229,7 @@ export function CampaignCard({
             ) : state === "recovery" ? (
               "Recover source"
             ) : state === "failed" ? (
-              "Unavailable"
+              "Not ready to play"
             ) : (
               "Preparing…"
             )}
