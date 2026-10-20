@@ -532,6 +532,12 @@ def compile_blueprint(binding, design, blueprint, *, books):
     for anchor in anchors.values():
         for name in ("scene_ids", "entity_ids", "known_scene_ids"):anchor[name] = sorted(anchor[name])
         fragments[page_act[anchor["page"]]]["passages"].append(anchor)
+    opening_evidence = [a["passage_id"] for a in anchors.values()
+        if a["audience"] == "player" and not a["requires"] and design.opening_scene_id in a["scene_ids"]]
+    if opening_evidence:
+        fragments[scene_act[design.opening_scene_id].act_id]["opening_journal"].append({
+            "kind": "visit", "target_id": design.opening_scene_id, "status": "visited",
+            "passage_ids": opening_evidence[:1]})
 
     compiled = []
     level = binding.hero_party_snapshot["heroes"][0]["level"]
