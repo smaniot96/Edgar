@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+import structlog
+
 from edgar_core.preparation import (
     PreparationArtifact,
     PreparationFinding,
@@ -46,6 +48,8 @@ from edgar_core.preparation import (
 from edgar_core.safe_errors import OutcomeState, classify_failure
 
 from .preparation_store import PreparationStore, StalePreparationRevision
+
+log = structlog.get_logger(__name__)
 
 _WORKER_GUARD: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
     "preparation_worker_guard", default=None
@@ -839,6 +843,17 @@ class PreparationSupervisor:
         )
         retryable = not unknown_provider_outcome and (usage is None or usage.failure_code is not None)
         error_ref = _new_support_ref()
+        log.warning(
+            "preparation_task_failed",
+            run_id=run_id,
+            stage=task.stage.value,
+            task_id=task.task_id,
+            failure_code=code,
+            support_ref=error_ref,
+            provider_called=bool(usage and usage.provider_called),
+            usage_known=bool(usage and usage.usage_known),
+            retryable=retryable,
+        )
         def update(payload: dict[str, Any]) -> None:
             saved = payload["tasks"][_task_key(task)]
             _assert_fence(saved, worker_id, fence)

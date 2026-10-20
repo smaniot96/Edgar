@@ -13,6 +13,7 @@ import io
 import json
 import time
 
+import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
@@ -20,6 +21,8 @@ from agent.llm import make_chat_model
 from edgar_core.model_profiles import ModelProfileSnapshot, effective_profile
 from edgar_core.preparation import PreparationRunBinding, PreparationTask, ProviderUsage
 from edgar_core.safe_errors import provider_error_code
+
+log = structlog.get_logger(__name__)
 
 # Conservative standard-service ceilings, frozen in the commission rather than read
 # again on retry. USD micro-units per token. Long-context requests are disallowed.
@@ -134,6 +137,16 @@ async def invoke_preparation[T: BaseModel](
         raise  # Supervisor charges its outstanding reservation before propagating cancellation.
     except Exception as exc:
         code = provider_error_code(exc)
+        # The exception class and timing only; provider messages and bodies are never logged.
+        log.warning(
+            "preparation_provider_call_failed",
+            stage=task.stage.value,
+            task_id=task.task_id,
+            failure_code=code,
+            error_type=type(exc).__name__,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            timeout_seconds=profile.timeout_seconds,
+        )
         failed_usage = unknown.model_copy(update={"failure_code": code})
         raise PreparationTaskFailure(code, usage=failed_usage) from exc
     raw = response.get("raw") if isinstance(response, dict) else None
