@@ -13,6 +13,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import structlog
 from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
 
 from agent.encounter_budget import apply_solo_budget
@@ -46,6 +47,12 @@ from edgar_core.grounding import (
     validate_mechanic_requirements,
 )
 from edgar_core.manifests import ManifestError
+
+log = structlog.get_logger(__name__)
+# Share of a book's active records that may be uncitable (blank, or no exact page or heading,
+# typically OCR damage) and be left out of verified evidence. They can never be cited; more than
+# this means the index itself is unreliable and the book stays unavailable.
+UNCITABLE_RECORD_BUDGET = 0.01
 
 
 class GroundingUnavailable(ValueError):
@@ -124,6 +131,7 @@ def read_verified_book_snapshot(
 
         state: dict[str, Any] = {}
         text_rows: list[dict[str, Any]] = []
+        uncitable: Counter[str] = Counter()
         with active_index_read(qdrant, binding.collection, state_out=state) as active_filter:
             matching_active = []
             for source, entry in (state.get("sources") or {}).items():
@@ -175,9 +183,8 @@ def read_verified_book_snapshot(
                     page_end = payload.get("page_end", page)
                     section = payload.get("section") or payload.get("heading_path")
                     if not isinstance(text, str) or not text.strip():
-                        raise GroundingUnavailable(
-                            "book_evidence_incomplete", f"The {role.upper()} contains a blank active record."
-                        )
+                        uncitable["book_evidence_incomplete"] += 1
+                        continue
                     if (
                         type(page) is not int
                         or page < 1
@@ -186,9 +193,8 @@ def read_verified_book_snapshot(
                         or not isinstance(section, str)
                         or not section.strip()
                     ):
-                        raise GroundingUnavailable(
-                            "book_citation_incomplete", f"The {role.upper()} contains a record without an exact page or heading."
-                        )
+                        uncitable["book_citation_incomplete"] += 1
+                        continue
                     exact_section = payload.get("section") or payload.get("heading_path") or ""
                     policy = rule_policy({"text": text, "section": exact_section, **payload})
                     text_rows.append(
@@ -205,9 +211,27 @@ def read_verified_book_snapshot(
                 if offset is None:
                     break
         expected_count = receipt.get("chunk_count")
-        if type(expected_count) is not int or expected_count < 1 or len(text_rows) != expected_count:
+        read_count = len(text_rows) + sum(uncitable.values())
+        if type(expected_count) is not int or expected_count < 1 or read_count != expected_count:
             raise GroundingUnavailable(
                 "book_evidence_incomplete", f"The active {role.upper()} text does not cover its complete indexed source."
+            )
+        if uncitable:
+            allowed = max(1, int(UNCITABLE_RECORD_BUDGET * expected_count))
+            if sum(uncitable.values()) > allowed:
+                # A public, recoverable code: the book's index version is not usable as evidence.
+                raise GroundingUnavailable(
+                    "book_version_unavailable",
+                    f"The {role.upper()} has {sum(uncitable.values())} active records without exact "
+                    f"text, page or heading; at most {allowed} may be left out.",
+                )
+            log.warning(
+                "book_records_uncitable",
+                role=role,
+                collection=binding.collection,
+                skipped=dict(uncitable),
+                allowed=allowed,
+                records=expected_count,
             )
         if not text_rows:
             raise GroundingUnavailable("required_book_unavailable", f"No exact text is available for the {role.upper()}.")

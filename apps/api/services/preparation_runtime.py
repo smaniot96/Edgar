@@ -200,7 +200,6 @@ def _binding_for(
 ) -> PreparationRunBinding:
     from edgar_core.artifacts import source_digest
     from edgar_core.preparation import canonical_sha256 as digest
-    from ingestion.extract import load_reviewed_extraction
 
     request = setup["request"]
     heroes = setup["heroes"]
@@ -214,7 +213,9 @@ def _binding_for(
         retained_pdf = source_dir / f"{slug}.pdf"
         extraction_path = source_dir / f"{slug}.extraction.json"
         if retained_pdf.is_file() and extraction_path.is_file():
-            extraction = load_reviewed_extraction(retained_pdf, extraction_path)
+            from .preparation_sources import load_retained
+
+            extraction = load_retained(retained_pdf, extraction_path)
         else:
             candidate = (
                 Path(pdf_path) if pdf_path is not None else meta_store.source_pdf_path(slug, meta)
@@ -373,12 +374,13 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             return False
         if binding.source_mode == "pdf":
             from edgar_core.artifacts import source_digest
-            from ingestion.extract import load_reviewed_extraction
+
+            from .preparation_sources import load_retained
 
             source_dir = _run_source_dir(slug, binding.run_id)
             pdf = source_dir / f"{slug}.pdf"
             report = source_dir / f"{slug}.extraction.json"
-            extraction = load_reviewed_extraction(pdf, report)
+            extraction = load_retained(pdf, report)
             if source_digest(pdf) != binding.source_sha256:
                 return False
             if extraction.text_sha256() != binding.extraction_sha256:
@@ -648,10 +650,13 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
     from ingestion.extract import save_extraction
 
     report_chunks = manifest_chunks(extraction, manifest)
+    from .preparation_sources import page_budget
+
     report = prepare_report(
         extraction,
         source_kind="pdf" if binding.source_mode == "pdf" else "generated",
         chunks=report_chunks,
+        degraded_page_budget=page_budget(binding.source_mode),
     )
     require_ready(report)
     markdown, _ = save_extraction(extraction, source_dir, readiness=report)
@@ -698,6 +703,7 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
         None,
         prepared,
         prepared_chunks=report_chunks,
+        degraded_page_budget=page_budget(binding.source_mode),
     )
     require_ready(report_holder)
     # Keep candidate metadata private and processing while the exact index is activated.
@@ -953,11 +959,11 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
             )
         ):
             return False
-        from ingestion.extract import load_reviewed_extraction
+        from .preparation_sources import load_retained
 
         source_dir = _run_source_dir(slug, run_id)
         pdf = source_dir / f"{slug}.pdf" if binding.source_mode == "pdf" else None
-        retained = load_reviewed_extraction(pdf, source_dir / f"{slug}.extraction.json")
+        retained = load_retained(pdf, source_dir / f"{slug}.extraction.json")
         if (
             retained.source_sha256 != canonical_extraction.source_sha256
             or retained.text_sha256() != canonical_extraction.text_sha256()

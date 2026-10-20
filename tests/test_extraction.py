@@ -1802,3 +1802,35 @@ def test_three_column_word_set_index_is_not_read_as_a_table():
                     Line(f"w{r}{column}{w}", (x0 + w * 36, y, x0 + w * 36 + 33, y + 10), 8)
                 )
     assert _table_band(lines) is None
+
+
+def test_folio_alone_is_not_a_number_ocr_must_keep(tmp_path, monkeypatch):
+    """A map page whose only native text is its folio: OCR drops footers, so nothing is lost."""
+    path = tmp_path / "map.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.draw_rect(pymupdf.Rect(40, 40, 500, 760))
+        page.insert_text((560, page.rect.height - 20), "43")
+        doc.save(path)
+    monkeypatch.setattr(
+        extract.pymupdf4llm,
+        "to_markdown",
+        lambda *_a, **_kw: "Wave Echo Cave map with numbered areas and a legend of terrain.",
+    )
+    assert "partial_native_numbers_lost_in_ocr" not in extract_document(path).pages[0].quality["errors"]
+
+
+def test_require_valid_tolerates_failing_pages_only_within_a_budget():
+    pages = [
+        ExtractedPage(n, f"## Area {n}\n\nRoom {n}.", "native_geometry", {"errors": []})
+        for n in range(1, 21)
+    ]
+    pages[2].quality["errors"] = ["incomplete_stat_fields"]
+    extraction = Extraction("source", "hash", 20, pages, rules_edition="2014")
+    with pytest.raises(ValueError, match="Extraction quality"):
+        extraction.require_valid()
+    extraction.require_valid(degraded_page_budget=0.10)
+    for n in (5, 7):
+        pages[n].quality["errors"] = ["ambiguous_column_gutter"]
+    with pytest.raises(ValueError, match="Extraction quality"):
+        extraction.require_valid(degraded_page_budget=0.10)

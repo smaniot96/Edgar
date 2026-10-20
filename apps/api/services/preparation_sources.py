@@ -13,7 +13,19 @@ from ingestion.extract import (
     load_reviewed_extraction,
     save_extraction,
 )
-from ingestion.readiness import prepare_report, require_ready
+from ingestion.readiness import ADVENTURE_DEGRADED_PAGE_BUDGET, prepare_report, require_ready
+
+
+def page_budget(source_mode: str) -> float | None:
+    """Uploaded PDF adventures tolerate a bounded share of degraded pages; generated text none."""
+    return ADVENTURE_DEGRADED_PAGE_BUDGET if source_mode == "pdf" else None
+
+
+def load_retained(pdf_path: Path | None, report_path: Path) -> Extraction:
+    """Load a retained preparation bundle under its source mode's degraded-page policy."""
+    return load_reviewed_extraction(
+        pdf_path, report_path, degraded_page_budget=page_budget("pdf" if pdf_path else "ai")
+    )
 
 
 def source_directory(slug: str, run_id: str) -> Path:
@@ -37,6 +49,7 @@ def retain_pdf(slug: str, run_id: str, pdf_path: str | Path, edition: str) -> Ex
     report = prepare_report(
         extraction, source_kind="pdf",
         chunks=chunk_pages(extraction.text_pages(), source=slug),
+        degraded_page_budget=page_budget("pdf"),
     )
     save_extraction(extraction, directory, readiness=report)
     require_ready(report)
@@ -45,7 +58,7 @@ def retain_pdf(slug: str, run_id: str, pdf_path: str | Path, edition: str) -> Ex
 
 def load_source(binding: PreparationRunBinding) -> Extraction:
     directory = source_directory(binding.source_slug, binding.run_id)
-    extraction = load_reviewed_extraction(
+    extraction = load_retained(
         directory / f"{binding.source_slug}.pdf" if binding.source_mode == "pdf" else None,
         directory / f"{binding.source_slug}.extraction.json",
     )

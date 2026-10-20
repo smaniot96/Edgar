@@ -290,3 +290,78 @@ def test_unimplemented_monster_trait_blocks_grounding_even_if_not_authored(sourc
     assert receipt.creatures[0].creature.monster_stats["declared"]
     assert "unsupported_creature_mechanics" in receipt.findings
     assert not receipt.valid
+
+
+def _index_rows(client, binding, rows):
+    """Index several records of one book; `rows` are (text, page, section) triples."""
+    collection = binding.collection
+    version = {"phb": "a", "dmg": "b", "mm": "c"}[binding.role] * 64
+    if not client.collection_exists(collection):
+        client.create_collection(
+            collection, vectors_config=VectorParams(size=3, distance=Distance.COSINE)
+        )
+    points = []
+    for index, (text, page, section) in enumerate(rows, 1):
+        payload = {
+            "text": text,
+            "text_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "source": binding.source,
+            "source_sha256": binding.source_sha256,
+            "extraction_sha256": binding.extraction_sha256,
+            "rules_edition": binding.rules_edition,
+            "page": page,
+            "page_end": page,
+            "section": section,
+            "chunk_index": index,
+            "index_version": version,
+        }
+        points.append(PointStruct(id=index, vector=[1.0, 0.0, 0.0], payload=payload))
+    client.upsert(collection, points)
+    token = begin_index(client, collection, binding.source, version)
+    promote_index(
+        client,
+        collection,
+        binding.source,
+        version,
+        token,
+        {
+            "source_sha256": binding.source_sha256,
+            "extraction_sha256": binding.extraction_sha256,
+            "rules_edition": binding.rules_edition,
+            "chunk_count": len(rows),
+        },
+        validate=lambda: None,
+    )
+
+
+@pytest.fixture
+def books_with_an_uncitable_record(tmp_path, monkeypatch):
+    monkeypatch.setenv("EDGAR_INDEX_LOCK_DIR", str(tmp_path / "locks"))
+    invalidate_collection_cache()
+    with closing(QdrantClient(":memory:")) as client:
+        bindings = [_binding(role) for role in ("phb", "dmg", "mm")]
+        for binding in bindings[1:]:
+            text = GOBLIN if binding.role == "mm" else "DMG Character Advancement excerpt."
+            _index(client, binding, text, section="Goblin" if binding.role == "mm" else "Advancement")
+        yield client, bindings
+    invalidate_collection_cache()
+
+
+def test_an_uncitable_ocr_record_is_left_out_not_the_whole_book(books_with_an_uncitable_record):
+    client, bindings = books_with_an_uncitable_record
+    _index_rows(
+        client,
+        bindings[0],
+        [("PHB Character Advancement excerpt.", 42, "Character Advancement"),
+         ("must succeed 00 a Coostitutioo saviog throw", 270, None)],
+    )
+    books = read_verified_book_snapshot(bindings, rules_edition="2014", client=client)
+    assert [c.page for c in books.for_role("phb").chunks] == [42]
+
+
+def test_a_book_with_too_many_uncitable_records_stays_unavailable(books_with_an_uncitable_record):
+    client, bindings = books_with_an_uncitable_record
+    _index_rows(client, bindings[0], [("damaged one", 270, None), ("damaged two", 271, "")])
+    with pytest.raises(GroundingUnavailable) as caught:
+        read_verified_book_snapshot(bindings, rules_edition="2014", client=client)
+    assert caught.value.code == "book_version_unavailable"

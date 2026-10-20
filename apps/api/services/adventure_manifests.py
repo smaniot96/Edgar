@@ -17,6 +17,7 @@ class ManifestSourceUnverified(ManifestError):
 
 def _bundle(slug: str):
     from ingestion.extract import load_reviewed_extraction
+    from ingestion.readiness import ADVENTURE_DEGRADED_PAGE_BUDGET
 
     validate_binding(slug)
     raw_meta = store.load_meta(slug)
@@ -40,6 +41,8 @@ def _bundle(slug: str):
         extraction = load_reviewed_extraction(
             store.source_pdf_path(slug, meta) if kind == "pdf" else None,
             _active_extraction_path(slug, meta),
+            # A published upload may carry the degraded pages its preparation accepted.
+            degraded_page_budget=ADVENTURE_DEGRADED_PAGE_BUDGET if kind == "pdf" else None,
         )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ManifestError(

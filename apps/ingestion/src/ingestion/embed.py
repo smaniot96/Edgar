@@ -195,6 +195,7 @@ def _prepare_extraction(
     on_prepared: Callable[[dict], None] | None,
     extra_issues: list[dict] | None = None,
     prepared_chunks: list[dict] | None = None,
+    degraded_page_budget: float | None = None,
 ) -> list[dict]:
     """One quality/coverage gate shared by PDF and generated manuscript entry points."""
     chunks = (
@@ -212,7 +213,20 @@ def _prepare_extraction(
         require_separate_stat_chunks(chunks)
     except ValueError as exc:
         issues.append({"code": "stat_chunk_integrity", "message": str(exc)})
-    report = prepare_report(extraction, source_kind=source_kind, chunks=chunks, extra_issues=issues)
+    report = prepare_report(
+        extraction,
+        source_kind=source_kind,
+        chunks=chunks,
+        extra_issues=issues,
+        degraded_page_budget=degraded_page_budget,
+    )
+    for degraded in report.get("degraded_pages", []):
+        logger.warning(
+            "Page {} kept as degraded ({}); within the allowance of {} pages",
+            degraded["page"],
+            ", ".join(degraded["causes"]),
+            report.get("degraded_page_allowance"),
+        )
     for skipped in report.get("non_chunkable_pages", []):
         logger.warning(
             "Page {} has {} characters but no chunkable text ({}); not required for coverage",

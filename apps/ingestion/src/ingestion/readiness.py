@@ -16,6 +16,27 @@ from ingestion.quality import diagnostic_message
 
 REPORT_VERSION = 1
 SampleKind = Literal["text", "stat", "scene_candidate"]
+# Share of content pages an uploaded adventure may carry as degraded (read with defects that OCR
+# cannot always avoid) and still be prepared. Rulebooks pass no budget: the engine reads their
+# numbers, so every rulebook page must pass. A scan where more pages fail stays rejected.
+ADVENTURE_DEGRADED_PAGE_BUDGET = 0.10
+# Page-level issue codes that a degraded-page budget may absorb. Whole-document problems
+# (page order, an empty extraction, citations into excluded pages, stat chunking) never are.
+DEGRADABLE_ISSUE_CODES = frozenset({"extraction_quality", "empty_content_page"})
+
+
+def degraded_page_allowance(content_pages: int, budget: float) -> int:
+    """How many content pages may be degraded under `budget`: at least one, never more than all."""
+    if not 0 <= budget < 1:
+        raise ValueError("A degraded-page budget is a share of pages below 1.")
+    return min(content_pages, max(1, int(budget * content_pages)))
+
+
+class DegradedPage(TypedDict):
+    """A content page kept despite failed checks; `causes` are its failing codes."""
+
+    page: int
+    causes: list[str]
 
 
 class NonChunkablePage(TypedDict):
@@ -113,6 +134,8 @@ class ReadinessReport(TypedDict):
     required_pages: list[int]
     covered_pages: list[int]
     non_chunkable_pages: NotRequired[list[NonChunkablePage]]
+    degraded_pages: NotRequired[list[DegradedPage]]
+    degraded_page_allowance: NotRequired[int]
     excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
     text_corrections: NotRequired[list[TextCorrection]]
@@ -135,6 +158,7 @@ class ReadinessSummary(TypedDict):
     extraction_sha256: str
     page_count: int
     required_pages: list[int]
+    degraded_pages: NotRequired[list[DegradedPage]]
     excluded_pages: NotRequired[list[ExcludedPage]]
     exclusions_sha256: NotRequired[str]
     text_corrections: NotRequired[list[TextCorrection]]
@@ -162,8 +186,14 @@ def prepare_report(
     source_kind: Literal["pdf", "generated", "text"],
     chunks: Sequence[ReadinessChunk],
     extra_issues: Sequence[ReadinessIssue] | None = None,
+    degraded_page_budget: float | None = None,
 ) -> ReadinessReport:
-    """Describe the exact extraction and chunk coverage, including rejected output."""
+    """Describe the exact extraction and chunk coverage, including rejected output.
+
+    With `degraded_page_budget` (uploaded adventures only), pages whose own checks fail are kept
+    as degraded pages with their causes instead of blocking, while their number stays within the
+    budget. Without it every page must pass, as rulebooks require.
+    """
     pages = extraction.text_pages()
     page_count = extraction.page_count
     excluded = {int(entry["page"]) for entry in extraction.excluded_pages}
@@ -238,6 +268,12 @@ def prepare_report(
                     "message": "A source page produced no text. Inspect OCR and retry with a readable PDF.",
                 }
             )
+    degraded: list[DegradedPage] = []
+    allowance: int | None = None
+    if degraded_page_budget is not None:
+        issues, degraded, allowance = _absorb_degraded_pages(
+            issues, extraction, excluded, required_pages, covered_pages, degraded_page_budget
+        )
     samples: list[ReadinessPreview] = []
     samples_to_preview: tuple[tuple[SampleKind, ReadinessChunk | None], ...] = (
         ("text", next((c for c in chunks if not c.get("stat_block")), None)),
@@ -283,7 +319,58 @@ def prepare_report(
         report["corrections_sha256"] = corrections_digest(extraction.text_corrections)
     if non_chunkable_pages:
         report["non_chunkable_pages"] = non_chunkable_pages
+    if allowance is not None:
+        report["degraded_page_allowance"] = allowance
+    if degraded:
+        report["degraded_pages"] = degraded
     return report
+
+
+def _absorb_degraded_pages(
+    issues: list[ReadinessIssue],
+    extraction: ExtractionForReadiness,
+    excluded: set[int],
+    required_pages: list[int],
+    covered_pages: list[int],
+    budget: float,
+) -> tuple[list[ReadinessIssue], list[DegradedPage], int]:
+    """Turn page-level failures into degraded pages when few enough pages fail.
+
+    A page's causes are its failing extraction codes, an empty content page, or lost chunk
+    coverage. Over the allowance nothing is absorbed and a first issue states the count, so the
+    host learns how much of the scan failed rather than only the first bad page.
+    """
+    causes: dict[int, set[str]] = {}
+    for issue in issues:
+        if issue["code"] in DEGRADABLE_ISSUE_CODES and "page" in issue:
+            causes.setdefault(issue["page"], set()).add(issue.get("detail_code", issue["code"]))
+    for number in sorted(set(required_pages) - set(covered_pages)):
+        causes.setdefault(number, set()).add("chunk_page_coverage")
+    content_pages = [
+        p for p in extraction.pages if p.page not in excluded and p.method != "blank_page"
+    ]
+    allowance = degraded_page_allowance(len(content_pages), budget)
+    if not causes:
+        return issues, [], allowance
+    if len(causes) > allowance:
+        over: ReadinessIssue = {
+            "code": "degraded_pages_over_budget",
+            "message": (
+                f"{len(causes)} of {len(content_pages)} pages could not be read reliably; "
+                f"at most {allowance} may be. Upload a clearer PDF."
+            ),
+        }
+        return [over, *issues], [], allowance
+    remaining = [
+        issue
+        for issue in issues
+        if not (issue["code"] in DEGRADABLE_ISSUE_CODES and "page" in issue)
+        and issue["code"] != "chunk_page_coverage"
+    ]
+    degraded = [
+        DegradedPage(page=number, causes=sorted(codes)) for number, codes in sorted(causes.items())
+    ]
+    return remaining, degraded, allowance
 
 
 def report_summary(report: ReadinessReport) -> ReadinessSummary:
@@ -310,6 +397,8 @@ def report_summary(report: ReadinessReport) -> ReadinessSummary:
     if "corrections_sha256" in report:
         summary["text_corrections"] = report["text_corrections"]
         summary["corrections_sha256"] = report["corrections_sha256"]
+    if report.get("degraded_pages"):
+        summary["degraded_pages"] = report["degraded_pages"]
     if report.get("index_version"):
         summary["index_version"] = report["index_version"]
     return summary
