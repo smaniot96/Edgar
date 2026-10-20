@@ -280,7 +280,8 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
     # Supply the saved proposal, schema and relevant task context once. Do not resend
     # the full rulebook dossier or require a second copy of the entire authored act.
     context = {name: evidence[name] for name in (
-        "commission", "party", "whole_design", "act", "accepted_registry", "supported_mechanics"
+        "commission", "party", "whole_design", "act", "accepted_registry", "supported_mechanics",
+        "design", "actual_party", "source", "source_span_contract"
     ) if name in evidence}
     if any("quote" in d.get("message", "").lower() for d in diagnostics):
         context["exact_pages"] = evidence.get("exact_pages", [])

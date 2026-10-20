@@ -403,6 +403,8 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             )
             if "image_budget" in binding.commission:
                 expected_commission["image_budget"] = copy.deepcopy(binding.commission["image_budget"])
+            if meta.get("preparation_pipeline") == "compact_v1":
+                expected_commission["preparation_pipeline"] = "compact_v1"
             if canonical_sha256(expected_commission) != binding.commission_sha256:
                 return False
         else:

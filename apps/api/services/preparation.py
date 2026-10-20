@@ -431,8 +431,11 @@ class PreparationSupervisor:
         and reviews. A later independent review must earn a fresh clearance.
         """
         plans = [a for a in state.artifacts.values() if a.artifact_kind == "repair_plan"]
-        if len(plans) != 1 or state.repair_rounds >= state.binding.budget.max_repair_rounds:
-            return self._block_run(slug, run_id, "repair_budget_exhausted")
+        if len(plans) != 1:
+            return self._block_run(slug, run_id, "repair_scope_invalid")
+        if state.repair_rounds >= state.binding.budget.max_repair_rounds:
+            log.warning("preparation_repair_estimate_exceeded", run_id=run_id,
+                        repair_rounds=state.repair_rounds)
         proposal = plans[0]
         material = {f.finding_id for f in state.findings
                     if f.status == "open" and f.severity in ("medium", "high", "critical")}
@@ -441,8 +444,13 @@ class PreparationSupervisor:
             return self._block_run(slug, run_id, "repair_scope_invalid")
         if any(t.status in (PreparationTaskStatus.RUNNING, PreparationTaskStatus.LEASED) for t in state.tasks.values()):
             return state
-        retained = tuple(a for a in state.artifacts.values() if a.stage.ordinal < 3)
-        discarded = tuple(a for a in state.artifacts.values() if a.stage.ordinal >= 3)
+        compact = state.binding.commission.get("preparation_pipeline") == "compact_v1"
+        restart_ordinal = 4 if compact else 3
+        retained = tuple(a for a in state.artifacts.values() if a.stage.ordinal < restart_ordinal)
+        discarded = tuple(a for a in state.artifacts.values() if a.stage.ordinal >= restart_ordinal)
+        blueprints = [a for a in discarded if a.artifact_kind == "compact_blueprint"]
+        if compact and len(blueprints) != 1:
+            return self._block_run(slug, run_id, "repair_scope_invalid")
         round_number = state.repair_rounds + 1
         round_id = f"repair_{round_number}"
         archive = {"round_id": round_id, "artifacts": [a.model_dump(mode="json") for a in discarded],
@@ -455,6 +463,7 @@ class PreparationSupervisor:
         context = build_artifact(state.binding, stage=PreparationStage.P02, task_id=round_id,
             artifact_kind="repair_context", payload={"round_id": round_id,
                 "directions": directions, "findings": proposal.payload.get("findings", []),
+                **({"retained_blueprint": blueprints[0].payload} if compact else {}),
                 "archive_sha256": canonical_sha256(archive)}, dependency_artifacts=retained,
             version=round_number, created_at=_iso(_now()), scope_keys=())
         receipt = build_validation_receipt("p02_repair_context", artifacts=(context,), dependencies=retained,
@@ -469,7 +478,7 @@ class PreparationSupervisor:
             payload["artifacts"] = {a.artifact_id: a.model_dump(mode="json") for a in retained}
             payload["artifacts"][context.artifact_id] = context.model_dump(mode="json")
             payload["tasks"] = {k: t for k, t in payload["tasks"].items()
-                                if PreparationStage(t["task"]["stage"]).ordinal < 3}
+                                if PreparationStage(t["task"]["stage"]).ordinal < restart_ordinal}
             payload["tasks"][_task_key(context_task)] = PreparationTaskState(task=context_task,
                 status=PreparationTaskStatus.ACCEPTED, accepted_artifact_ids=(context.artifact_id,),
                 validation_receipt_ids=(receipt_key,), updated_at=_iso(_now())).model_dump(mode="json")
@@ -478,11 +487,11 @@ class PreparationSupervisor:
                 if set(r["artifact_digests"]) <= kept_ids and set(r["dependency_digests"]) <= kept_ids}
             payload["validation_receipts"][receipt_key] = receipt.model_dump(mode="json")
             for stage in PreparationStage:
-                if stage.ordinal >= 3:
+                if stage.ordinal >= restart_ordinal:
                     payload["stage_plans"].pop(stage.value, None)
                     payload["stage_statuses"].pop(stage.value, None)
             payload["stage_plans"]["P02"]["tasks"].append(context_task.model_dump(mode="json"))
-            payload.update(findings=[], current_stage="P03", status="repairing", last_safe_error_code=None,
+            payload.update(findings=[], current_stage=f"P{restart_ordinal:02}", status="repairing", last_safe_error_code=None,
                            last_safe_error_ref=None,
                            publication_inventory=None, published_bundle_sha256=None)
         try:

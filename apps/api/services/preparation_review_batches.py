@@ -94,7 +94,7 @@ def review_batches(manuscript, common, *, target_tokens=90000):
                     adjacent.update((route["from_scene_id"], route["to_scene_id"]))
             execution = scoped["cross_act_execution"]
             execution["policies"] = [item for item in execution["policies"]
-                                     if item["record"].get("scene_id") in adjacent]
+                                     if set(item["record"].get("scene_ids", [])) & adjacent]
             execution["branches"] = [row for row in execution["branches"] if row["scene_id"] in adjacent]
             adjacent_branches = {row["branch_id"] for row in execution["branches"]}
             execution["outcomes"] = [row for row in execution["outcomes"] if row["branch_id"] in adjacent_branches]
