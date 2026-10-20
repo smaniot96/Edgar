@@ -92,6 +92,10 @@ for _book_code, _book_label in (
             RecoveryAction.RESTART_PREPARATION,
         )
     )
+# The uploaded PDF failed the extraction quality gate before any preparation run existed.
+_register(
+    FailureSpec(ErrorCategory.SOURCE, "source_extraction_rejected", "The uploaded PDF did not pass the extraction quality checks, so no preparation work was started. Inspect the extraction preview, then retry or upload a corrected PDF as a new adventure.", 409, RecoveryAction.REPAIR_SOURCE),
+)
 _register(
     FailureSpec(ErrorCategory.SOURCE, "adventure_source_unverified", "This adventure has no verified source record, so its review draft cannot be prepared. Start a new campaign with the current preparation pipeline, then remove this one.", 409, RecoveryAction.RESTART_PREPARATION),
 )

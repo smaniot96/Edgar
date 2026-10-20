@@ -78,11 +78,20 @@ class LimitConfigurationError(ValueError):
 class LimitRejected(Exception):
     """An action was refused before any paid or heavy work started."""
 
-    def __init__(self, code: str, *, scope: str, retry_after: int | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        *,
+        scope: str,
+        retry_after: int | None = None,
+        daily_budget: dict[str, int] | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.scope = scope
         self.retry_after = retry_after
+        # Integer amounts only, for a refused reservation: what was asked and what is left.
+        self.daily_budget = daily_budget
 
 
 def add_rejection_observer(callback: Callable[[str, str], None]) -> None:
@@ -90,14 +99,20 @@ def add_rejection_observer(callback: Callable[[str, str], None]) -> None:
     _rejection_observers.append(callback)
 
 
-def reject(scope: str, code: str, *, retry_after: int | None = None) -> LimitRejected:
+def reject(
+    scope: str,
+    code: str,
+    *,
+    retry_after: int | None = None,
+    daily_budget: dict[str, int] | None = None,
+) -> LimitRejected:
     """Build the rejection to raise, notifying observers. Observer failures never escape."""
     for observer in list(_rejection_observers):
         try:
             observer(scope, code)
         except Exception:
             log.warning("limits_observer_failed", scope=scope)
-    return LimitRejected(code, scope=scope, retry_after=retry_after)
+    return LimitRejected(code, scope=scope, retry_after=retry_after, daily_budget=daily_budget)
 
 
 def limit_rejection_response(exc: LimitRejected) -> JSONResponse:
@@ -108,6 +123,8 @@ def limit_rejection_response(exc: LimitRejected) -> JSONResponse:
     if exc.retry_after is not None:
         payload["retry_after_seconds"] = exc.retry_after
         headers["Retry-After"] = str(exc.retry_after)
+    if exc.daily_budget is not None:
+        payload["daily_budget"] = dict(exc.daily_budget)
     log.warning(
         "request_limited",
         scope=exc.scope,
@@ -217,7 +234,23 @@ async def _reserve_daily_spend(redis: Redis, amount: int) -> str:
                     if over:
                         await pipe.unwatch()
                         retry_after = max(1, math.ceil(_DAY_SECONDS - (now % _DAY_SECONDS)))
-                        raise reject(SCOPE_DAILY_SPEND, "daily_budget_exhausted", retry_after=retry_after)
+                        # A job reservation says whether its own budget is the problem: it may
+                        # ask for more than is left even though the allowance is not used up.
+                        budget = (
+                            {
+                                "requested_microusd": amount,
+                                "remaining_microusd": max(0, ceiling - spent),
+                                "daily_limit_microusd": ceiling,
+                            }
+                            if amount > 0
+                            else None
+                        )
+                        raise reject(
+                            SCOPE_DAILY_SPEND,
+                            "daily_budget_exhausted",
+                            retry_after=retry_after,
+                            daily_budget=budget,
+                        )
                     pipe.multi()
                     pipe.incrby(key, amount)
                     pipe.expire(key, _SPEND_KEY_TTL_SECONDS)
@@ -272,13 +305,29 @@ async def record_assumed_call(redis: Redis) -> None:
     await record_spend(redis, limit_config.LIMIT_ASSUMED_CALL_COST_MICROUSD)
 
 
+@dataclass(frozen=True, slots=True)
+class JobSpend:
+    """What a background job's own durable ledger says it has spent (USD micro-units).
+
+    `terminal` is true once the job can spend nothing more: ready, failed, blocked or cancelled.
+    """
+
+    spent_microusd: int
+    terminal: bool
+
+
+SpendProbe = Callable[[], JobSpend | None]
+
+
 @dataclass
 class Admission:
     """Leases and one budget reservation held for one admitted action. Never raises on release.
 
     A job that is handed to a background task (`schedule_job`) owns its leases and reservation
-    from then on; `settle` undoes both only for work that never got that far. A reservation is
-    not refunded when a job later finishes below its declared budget.
+    from then on; `settle` undoes both only for work that never got that far. A job scheduled
+    with a spend probe settles its reservation when it ends in a terminal state: the unused part
+    is returned and spend above the reservation is added. A job whose spend is unknown or which
+    has not reached a terminal state keeps its whole reservation.
     """
 
     redis: Redis
@@ -305,6 +354,38 @@ class Admission:
             except RedisError:
                 log.warning("limits_refund_failed", policy="fail_open")
         await self.release()
+
+    async def settle_spend(self, before: JobSpend | None, after: JobSpend | None) -> None:
+        """Replace a handed-over reservation with what the job actually spent."""
+        if not self.reserved_key:
+            return
+        if after is None or not after.terminal:
+            log.info(
+                "limits_reservation_held",
+                reserved_microusd=self.reserved,
+                reason="spend_unknown" if after is None else "not_terminal",
+            )
+            return
+        # Without a baseline, everything the job's ledger holds is attributed to this attempt.
+        baseline = before.spent_microusd if before is not None else 0
+        used = max(0, after.spent_microusd - baseline)
+        adjustment = used - self.reserved
+        if adjustment > 0 and before is None:
+            # Earlier attempts' spend cannot be told apart: never charge more than was reserved.
+            adjustment = 0
+        if adjustment != 0:
+            try:
+                await self.redis.incrby(self.reserved_key, adjustment)
+            except RedisError:
+                log.warning("limits_refund_failed", policy="fail_open")
+                return
+        log.info(
+            "limits_reservation_settled",
+            reserved_microusd=self.reserved,
+            spent_microusd=used,
+            released_microusd=max(0, -adjustment),
+        )
+        self.reserved += adjustment
 
     async def release(self) -> None:
         leases, self.leases = self.leases, []
@@ -375,14 +456,33 @@ def job_budget_microusd(declared: int | None) -> int:
     return limit_config.LIMIT_UNBUDGETED_JOB_COST_MICROUSD
 
 
-async def _run_leased(admission: Admission, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+async def _read_spend(probe: SpendProbe) -> JobSpend | None:
+    try:
+        return await run_in_threadpool(probe)
+    except Exception:
+        log.warning("limits_spend_unreadable")
+        return None
+
+
+async def _run_leased(
+    admission: Admission,
+    fn: Callable[..., Any],
+    *args: Any,
+    spend_probe: SpendProbe | None = None,
+    **kwargs: Any,
+) -> None:
+    before = await _read_spend(spend_probe) if spend_probe is not None else None
     try:
         if inspect.iscoroutinefunction(fn):
             await fn(*args, **kwargs)
         else:
             await run_in_threadpool(fn, *args, **kwargs)
     finally:
-        await admission.release()
+        try:
+            if spend_probe is not None:
+                await admission.settle_spend(before, await _read_spend(spend_probe))
+        finally:
+            await admission.release()
 
 
 def schedule_job(
@@ -390,15 +490,20 @@ def schedule_job(
     admission: Admission | None,
     fn: Callable[..., Any],
     *args: Any,
+    spend_probe: SpendProbe | None = None,
     **kwargs: Any,
 ) -> None:
     """Hand a job to the background queue. With an admission, its job lease is released when the
-    job finishes, however it ends. Without one (direct callers such as tests), it is plain."""
+    job finishes, however it ends. Without one (direct callers such as tests), it is plain.
+
+    `spend_probe` reads the job's own spend ledger. It is read before the job starts and after it
+    ends, and a job that ended in a terminal state keeps only what it spent of its reservation.
+    """
     if admission is None:
         background.add_task(fn, *args, **kwargs)
         return
     admission.handed_over = True
-    background.add_task(_run_leased, admission, fn, *args, **kwargs)
+    background.add_task(_run_leased, admission, fn, *args, spend_probe=spend_probe, **kwargs)
 
 
 def declared_budget_microusd(captured: Any) -> int | None:
@@ -515,6 +620,7 @@ async def usage_snapshot(redis: Redis) -> dict[str, Any]:
 
 __all__ = [
     "Admission",
+    "JobSpend",
     "LimitConfigurationError",
     "LimitRejected",
     "UploadSizeLimitMiddleware",

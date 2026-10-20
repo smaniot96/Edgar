@@ -92,6 +92,11 @@ export class ApiError extends Error {
       code: failure.code, category: failure.category, detail: failure.message,
       message: failure.message, recovery_action: failure.recoveryAction,
       retryable: failure.retryable, outcome: failure.outcome, support_ref: failure.supportRef,
+      retry_after_seconds: failure.retryAfterSeconds,
+      daily_budget: failure.dailyBudget ? {
+        requested_microusd: failure.dailyBudget.requestedMicrousd,
+        remaining_microusd: failure.dailyBudget.remainingMicrousd,
+      } : undefined,
     });
     this.requestId = requestId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId)
       ? requestId : undefined;

@@ -7,6 +7,7 @@ the PDF store tracks the lifecycle (processing -> ready | failed) so it survives
 """
 
 import fcntl
+import functools
 import json
 import re
 import shutil
@@ -135,6 +136,7 @@ def _unique_slug(desired: str, taken: set[str]) -> str:
 def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     meta = load_adventure_metadata(slug)
     from ..services.cover_images import normalize_cover_image
+    from ..services.preparation_runtime import preparation_setup_needed
 
     try:
         cover_image = normalize_cover_image(meta.get("cover_image"))
@@ -172,12 +174,7 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
             else source.source_pdf_available or (meta.get("generation") or {}).get("kind") == "ai"
         ),
         job=job_read,
-        preparation_setup_required=(
-            meta.get("private_preparation") is True
-            and not meta.get("preparation_run_id")
-            and not meta.get("prepared_bundle")
-            and (not meta.get("preparation_setup") or meta.get("status") == "failed")
-        ),
+        preparation_setup_required=preparation_setup_needed(meta),
     )
 
 
@@ -252,13 +249,19 @@ def _extraction_path(slug: str, name: str, *, candidate_attempt_id: str | None =
     from ..services.campaign_sources import validate_binding
 
     validate_binding(slug)
-    from ..services.preparation_privacy import require_public_source
+    raw_meta = load_adventure_metadata(slug)
+    if raw_meta.get("private_preparation") is True:
+        from ..services.preparation_runtime import failed_source_preview_dir
 
-    require_public_source(slug)
+        # A private source exposes only the extraction of a PDF that failed before any
+        # preparation run existed; otherwise it answers like an unknown source.
+        directory = failed_source_preview_dir(slug, raw_meta)
+        if directory is None or not (directory / name).is_file():
+            raise HTTPException(status_code=404, detail="Not found")
+        return directory / name
     from ..services.adventures_meta import attempt_dir
     from ..services.campaign_sources import active_metadata
 
-    raw_meta = load_adventure_metadata(slug)
     if candidate_attempt_id is None:
         job = raw_meta.get("job") or {}
         candidate_attempt_id = job.get("retained_source_attempt_id")
@@ -539,6 +542,13 @@ def _copy_capped(src: BinaryIO, dest: Path, max_bytes: int) -> int:
         raise
 
 
+def _preparation_spend(slug: str):
+    """Settle a private preparation job's daily-limit reservation against its own ledger."""
+    from ..services.preparation_runtime import preparation_job_spend
+
+    return functools.partial(preparation_job_spend, slug)
+
+
 def _reserve_slug(desired: str, meta: dict) -> str:
     """Pick a free slug (no collection, no metadata file) and write its metadata. Blocking."""
     taken = set(_all_collection_names()) | metadata_slugs()
@@ -635,7 +645,15 @@ async def _accept_upload(
     from ..services.adventures_meta import begin_attempt
 
     token = begin_attempt(slug, job_attempt=True, job_kind="ingestion")
-    schedule_job(background, admission, _ingest_adventure, slug, str(pdf_path), attempt_id=token)
+    schedule_job(
+        background,
+        admission,
+        _ingest_adventure,
+        slug,
+        str(pdf_path),
+        attempt_id=token,
+        spend_probe=_preparation_spend(slug),
+    )
     log.info("adventure_upload_accepted", slug=slug, filename=filename, bytes=size)
     return AdventureUploadResponse(slug=slug, title=desired_title, status="processing")
 
@@ -720,6 +738,7 @@ async def _accept_generation(
         body.theme or "",
         body.size,
         attempt_id=token,
+        spend_probe=_preparation_spend(slug),
     )
     log.info("adventure_generate_accepted", slug=slug, size=body.size)
     return _generate_response(slug, stored)
@@ -810,7 +829,7 @@ async def _setup_preparation(
     from ..services import adventures_meta as store
     from ..services.campaign_sources import validate_binding
     from ..services.preparation_commission import capture_setup
-    from ..services.preparation_runtime import prepare_adventure
+    from ..services.preparation_runtime import discard_unbound_source, prepare_adventure
 
     validate_binding(slug)
     captured = await capture_setup(body.preparation)
@@ -827,7 +846,10 @@ async def _setup_preparation(
                 )
             if meta.get("preparation_setup") and meta.get("status") == "processing":
                 raise HTTPException(status_code=409, detail="Preparation is already starting.")
+            # A new setup after a pre-run failure reads the source again, not a stale extraction.
+            discard_unbound_source(slug, meta)
             meta.update(preparation_setup=captured, rules_edition=body.rules_edition)
+            meta.pop("preparation_blocked_code", None)
             store.save_meta(slug, meta)
         token = store.begin_attempt(
             slug,
@@ -836,7 +858,14 @@ async def _setup_preparation(
             if (meta.get("generation") or {}).get("kind") == "ai"
             else "ingestion",
         )
-    schedule_job(background, admission, prepare_adventure, slug, attempt_token=token)
+    schedule_job(
+        background,
+        admission,
+        prepare_adventure,
+        slug,
+        attempt_token=token,
+        spend_probe=_preparation_spend(slug),
+    )
     return AdventureUploadResponse(
         slug=slug, title=meta.get("title") or "Adventure", status="processing"
     )
@@ -868,7 +897,14 @@ def _retry_adventure(
                 status_code=409,
                 detail="Saved preparation cannot be retried. Check its setup or start a new adventure.",
             ) from exc
-        schedule_job(background, admission, prepare_adventure, slug, attempt_token=token)
+        schedule_job(
+            background,
+            admission,
+            prepare_adventure,
+            slug,
+            attempt_token=token,
+            spend_probe=_preparation_spend(slug),
+        )
         return AdventureUploadResponse(
             slug=slug, title=meta.get("title") or "Adventure", status="processing"
         )

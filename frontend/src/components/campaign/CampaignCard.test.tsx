@@ -223,3 +223,46 @@ it("titles a failed generation without its in-progress placeholder and shows no 
   expect(container.querySelector("h3")?.textContent).toBe("Lost Mine of Phandelver");
   expect(container.textContent).not.toContain("D D 5E");
 });
+
+it("shows a private preparation that failed before its run as failed, with a retry and its extraction preview (EDG-055 F3, F5)", async () => {
+  const adventure: AdventureRead = {
+    slug: "phandelver", title: "Private adventure", description: null, level_range: null, cover_image: null,
+    status: "failed", can_retry: true, failure_code: "source_extraction_rejected",
+    extraction_preview_available: true, extraction_preview_current: true,
+    preparation_setup_required: false,
+    job: {
+      version: 1, job_id: "d".repeat(32), kind: "ingestion", state: "failed",
+      stage: "Preparation needs attention", completed_chapters: 0, total_chapters: null,
+      checkpoint_available: false, retryable: true, retained_work: "source_pdf",
+      action_label: "Retry preparation",
+      explanation: "No preparation work was saved before this failure. Retrying starts again from the same source and setup.",
+      source_version: null,
+      failure: {
+        code: "source_extraction_rejected", category: "source",
+        message: "The uploaded PDF did not pass the extraction quality checks.",
+        recovery_action: "retry", retryable: true, support_ref: "err-0c4a71fbd8093891", outcome: "unknown",
+      },
+    },
+  };
+  const card = buildCards([adventure], [], [], 1)[0];
+  vi.mocked(retryAdventure).mockResolvedValue({ ...adventure, status: "processing" });
+  const onRetried = vi.fn();
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} onRetried={onRetried} />));
+
+  const text = container.textContent ?? "";
+  expect(text).toContain("Failed");
+  expect(text).not.toContain("Processing");
+  expect(text).not.toContain("still running");
+  expect(text).not.toContain("Complete your setup");
+  expect(text).toContain("did not pass the extraction quality checks");
+  expect(text).toContain("Support reference: err-0c4a71fbd8093891");
+  expect(text).toContain("Inspect extraction preview");
+  // The retry is offered once as a button, explained once, and nothing calls it unavailable.
+  expect(text.split("No preparation work was saved before this failure").length - 1).toBe(1);
+  expect(text).not.toContain("Unavailable");
+  const buttons = [...container.querySelectorAll("button")];
+  expect(buttons.find((b) => b.textContent === "Not ready to play")?.disabled).toBe(true);
+  await act(async () => buttons.find((b) => b.textContent === "Retry preparation")!.click());
+  expect(retryAdventure).toHaveBeenCalledWith("phandelver", undefined);
+  expect(onRetried).toHaveBeenCalledOnce();
+});
