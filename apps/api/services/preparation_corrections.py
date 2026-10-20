@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from edgar_core.preparation import ProviderUsage, assert_artifact_integrity, canonical_sha256
+from edgar_core.preparation import ProviderUsage, ResponseUsage, assert_artifact_integrity, canonical_sha256
 
 from .preparation_content import ContentRecord
 from .preparation_proposals import proposal_directory
@@ -83,7 +83,8 @@ def apply_correction(proposal, correction, diagnostics):
         if not edit.path.startswith("/"):
             raise ValueError("Corrections must address a field, never replace the entire proposal.")
         parts = edit.path[1:].split("/")
-        if len(parts) < 3:
+        value = json.loads(edit.value_json) if edit.op != "remove" else None
+        if len(parts) == 1 or len(parts) == 2 and isinstance(value, (dict, list)):
             raise ValueError("Corrections must edit individual records or fields, not whole sections.")
         if any("~" in part.replace("~1", "").replace("~0", "") for part in parts):
             raise ValueError("Invalid JSON pointer escape.")
@@ -97,7 +98,6 @@ def apply_correction(proposal, correction, diagnostics):
             else:
                 raise ValueError("Correction parent does not exist.")
         name = parts[-1]
-        value = json.loads(edit.value_json) if edit.op != "remove" else None
         if isinstance(parent, list):
             index = _index(name, len(parent), append=edit.op == "add")
             if edit.op == "add":
@@ -145,6 +145,38 @@ def _index(value, length, *, append):
     return index
 
 
+def _saved_corrections(binding, task, base_digest):
+    """Recover already-paid edits even when older patch application code failed."""
+    from .preparation_provider import request_cost_ceiling
+
+    directory = proposal_directory(binding, task) / "responses"
+    for path in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        record = json.loads(path.read_text())
+        response = record.get("response", {})
+        if (record.get("binding_sha256") != binding.binding_sha256
+                or f":edit:{base_digest}:" not in record.get("logical_call", "")
+                or response.get("status") != "completed" or response.get("model") != "gpt-6.1-sol"):
+            continue
+        usage = response.get("usage") or {}
+        tokens_in, tokens_out = usage.get("input_tokens"), usage.get("output_tokens")
+        if type(tokens_in) is not int or type(tokens_out) is not int:
+            continue
+        try:
+            output = "".join(c.get("text", "") for o in response.get("output", [])
+                             for c in o.get("content", []) if c.get("type") == "output_text")
+            correction = ProposalCorrection.model_validate_json(output)
+        except ValueError:
+            continue
+        cost = request_cost_ceiling(tokens_in, tokens_out)
+        recorded = ProviderUsage(provider_called=True, usage_known=True, call_count=1,
+            input_tokens=tokens_in, output_tokens=tokens_out, cost_microusd=cost,
+            requested_model="gpt-6.1-sol", resolved_model=response["model"], reasoning_effort="high",
+            task_version="retained-correction-recovery-v1",
+            responses=(ResponseUsage(response_id=response["id"], input_tokens=tokens_in,
+                                     output_tokens=tokens_out, cost_microusd=cost),))
+        yield correction, recorded
+
+
 async def correct_retained(provider, binding, task, schema, feedback, *, instruction,
                            evidence, idempotency_key, dependencies, reuse_valid=False):
     from .preparation import PreparationTaskFailure
@@ -170,6 +202,28 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
             pass
     base_digest = canonical_sha256(proposal)
     diagnostics_digest = canonical_sha256(diagnostics)
+    if reuse_valid:
+        for saved_correction, saved_usage in _saved_corrections(binding, task, base_digest):
+            try:
+                patched = apply_correction(proposal, saved_correction, diagnostics)
+            except ValueError:
+                continue
+            usage = _usage_sum([original_usage, saved_usage])
+            recovered_key = idempotency_key + ":recovered:" + saved_usage.responses[0].response_id
+            path, record = save_proposal(binding, task, schema, patched, usage, recovered_key)
+            _atomic_write(proposal_directory(binding, task) / "repairs" / (canonical_sha256(recovered_key) + ".json"), {
+                "binding_sha256": binding.binding_sha256, "task": task.model_dump(mode="json"),
+                "dependency_digests": {a.artifact_id: a.content_sha256 for a in dependencies},
+                "base_proposal_sha256": base_digest, "result_proposal_sha256": canonical_sha256(patched),
+                "version": "retained-json-edits-recovery-v1",
+                "correction": saved_correction.model_dump(mode="json"), "usage": usage.model_dump(mode="json"),
+            })
+            try:
+                return schema.model_validate(patched), usage
+            except ValueError as exc:
+                reject_proposal(path, record, exc)
+                raise PreparationTaskFailure("provider_output_invalid", usage=usage.model_copy(
+                    update={"failure_code": "provider_output_invalid"})) from exc
     logical, separator, attempt = idempotency_key.partition(":attempt:")
     patch_key = logical + ":edit:" + base_digest + ":" + diagnostics_digest
     if separator:
@@ -190,6 +244,9 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
             "and intended consequences. Add narrowly required supporting records when necessary. "
             "Paths address the current proposal; edits apply in order. value_json is the exact JSON "
             "encoding of the new value (use null for a remove). Copy base_proposal_sha256 exactly. "
+            "Edit individual records/fields; never replace /canonical, /support or an entire collection. "
+            "Append new supporting records with e.g. /canonical/objects/-. Text fields such as "
+            "/support/dm_notes may be updated to reflect the corrected mechanics. "
             "Do not weaken validation, remove required content, or fabricate citations/stats. "
             "Encounter/relationship effects target ACTOR entities, never hazards. Trap costs can use "
             "source-backed environment effects on a declared object with a supported operation; "
@@ -205,9 +262,11 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
         idempotency_key=patch_key,
     )
     usage = _usage_sum([original_usage, patch_usage])
+    patch_record = save_proposal(binding, task, ProposalCorrection, correction, patch_usage, patch_key)
     try:
         patched = apply_correction(proposal, correction, diagnostics)
     except ValueError as exc:
+        reject_proposal(*patch_record, exc)
         retained = save_proposal(binding, task, schema, proposal, usage, idempotency_key)
         reject_proposal(*retained, exc)
         raise PreparationTaskFailure("provider_output_invalid", usage=usage.model_copy(
