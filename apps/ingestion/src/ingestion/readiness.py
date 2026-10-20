@@ -10,8 +10,8 @@ from collections.abc import Sequence
 from typing import Literal, NotRequired, Protocol, TypedDict
 
 from edgar_core.sources import SourceEdition
-from ingestion.chunk import has_chunkable_content
 from ingestion.artifacts import ExcludedPage, TextCorrection, corrections_digest, exclusions_digest
+from ingestion.chunk import has_chunkable_content
 from ingestion.quality import diagnostic_message
 
 REPORT_VERSION = 1

@@ -10,8 +10,8 @@ from qdrant_client import QdrantClient
 from db.vector.embeddings import VECTOR_SIZE
 from db.vector.versions import active_index_read, read_index_state
 from ingestion import embed
-from ingestion.chunk import chunk_page_runs
 from ingestion.artifacts import corrections_digest, exclusions_digest, source_digest
+from ingestion.chunk import chunk_page_runs
 from ingestion.extract import ExtractedPage, Extraction, apply_text_corrections, save_extraction
 from ingestion.readiness import (
     IngestionRejected,
