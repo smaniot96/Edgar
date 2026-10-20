@@ -33,7 +33,14 @@ def _reference_feedback(proposal, dependencies):
     earlier = [a.payload["fragment"] for a in dependencies if a.artifact_kind == "canonical_act"]
     sources = [*earlier, canonical]
     passages = {p["passage_id"] for f in sources for p in f.get("passages", [])}
+    passage_records = {p["passage_id"]: p for f in sources for p in f.get("passages", [])}
     entities = {e["entity_id"]: e for f in sources for e in f.get("entities", [])}
+    scenes = {s["scene_id"] for f in sources for s in f.get("scenes", [])}
+    for artifact in dependencies:
+        if artifact.artifact_kind == "campaign_design":
+            scenes.update(s for act in artifact.payload["design"]["acts"] for s in act["scene_ids"])
+    definitions = {name: {d["canonical_id"]: d for f in sources for d in f.get(name, [])}
+                   for name in ("objects", "objectives", "milestones", "promises", "clocks")}
     statuses = {"discovered", "encountered", "visited", "active", "announced", "completed", "failed",
                 "fulfilled", "broken", "advanced", "friendly", "neutral", "hostile", "acquired",
                 "consumed", "moved", "used", "changed"}
@@ -62,6 +69,47 @@ def _reference_feedback(proposal, dependencies):
                 effect_path = f"{path}/{outcome}/{effect_index}"
                 evidence(effect, effect_path)
                 entity = entities.get(effect.get("target_id"))
+                kind = effect.get("kind")
+                evidence_records = [passage_records[pid] for pid in effect.get("passage_ids", [])
+                                    if pid in passage_records]
+                if not any(p.get("audience") == "player" and set(p.get("scene_ids", [])) & set(policy.get("scene_ids", []))
+                           for p in evidence_records):
+                    messages.append(f"{effect_path}/passage_ids needs actual reviewed public source evidence "
+                                    "belonging to one of this policy's scenes; preserve safe disclosure gates.")
+                effect_statuses = {
+                    "discover": {"discovered"}, "encounter": {"encountered"},
+                    "relationship": {"friendly", "neutral", "hostile"}, "move": {"visited"},
+                    "learn_place": {"known"}, "objective": {"announced", "active", "completed", "failed"},
+                    "milestone": {"announced", "active", "completed", "failed"},
+                    "clock": {"advanced", "completed"}, "acquire": {"acquired"}, "consume": {"consumed"},
+                    "transfer": {"moved"}, "use": {"used"}, "environment": {"changed"},
+                }
+                if kind in effect_statuses and effect.get("status") not in effect_statuses[kind]:
+                    messages.append(f"{effect_path}/status must match kind={kind}: {sorted(effect_statuses[kind])}.")
+                if kind in {"discover", "encounter", "relationship"} and entity:
+                    if not any(entity["entity_id"] in p.get("entity_ids", []) for p in evidence_records):
+                        messages.append(f"{effect_path}/passage_ids evidence must actually identify entity "
+                                        f"{entity['entity_id']}. Review the relevant exact anchor's entity_ids, "
+                                        "or choose an appropriate existing source anchor. Never fabricate quotations.")
+                    if kind == "discover" and outcome == "on_failure" and entity.get("reveal_on", "success") != "always":
+                        messages.append(f"{effect_path} is a failure discovery; entity {entity['entity_id']} "
+                                        "must explicitly allow failure disclosure with reveal_on=always.")
+                if kind in {"learn_place", "move"} and effect.get("target_id") not in scenes:
+                    messages.append(f"{effect_path}/target_id must name a SCENE for {kind}, not an object/entity. "
+                                    "For finding an object, use a clue entity bound to the existing object_id, "
+                                    "with its actual physical public evidence and a discover effect; do not acquire "
+                                    "or move goods that were only observed.")
+                if kind == "learn_place" and any(effect.get("target_id") not in p.get("known_scene_ids", [])
+                                                 for p in evidence_records):
+                    messages.append(f"{effect_path}/passage_ids must explicitly mention the destination scene "
+                                    "in known_scene_ids, grounded in the exact quote.")
+                category = {"objective": "objectives", "milestone": "milestones", "clock": "clocks",
+                            "acquire": "objects", "consume": "objects", "transfer": "objects",
+                            "use": "objects", "environment": "objects"}.get(kind)
+                if category and (definition := definitions[category].get(effect.get("target_id"))):
+                    if effect.get("status") not in definition.get("statuses", []):
+                        messages.append(f"{effect_path}/status is absent from its {category} definition's "
+                                        "supported statuses. Keep the actual effect kind and intended consequence consistent.")
                 if effect.get("kind") in {"encounter", "relationship"} and entity and entity["kind"] != "actor":
                     messages.append(f"{effect_path} targets {entity['kind']} {entity['entity_id']}; "
                                     "encounter and relationship effects require actors. Model trap costs using "
