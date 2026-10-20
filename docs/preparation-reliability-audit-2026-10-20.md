@@ -142,3 +142,36 @@ All 20 original P01/P02 artifact hashes and accepted design digest
 Campaign status remains preparing at P04, with no accepted compiled act yet. Ready publication,
 post-Ready persistence and Bryn's playthrough remain pending. The older P11 broad-repair rewind and
 repair-round stop are still known audit findings; this lighter-path change does not claim to fix them.
+
+
+## Retained-proposal recovery — 14:02 Rome, 20 October 2026
+
+The three combined first-act responses completed, using 47,265, 51,495 and 51,285 output
+tokens respectively. All were retained. Schema diagnostics decreased from 21 to 4 to 2,
+but the task blocked at 13:41 Rome with `provider_output_invalid`; no act was accepted.
+The final two schema errors were cost-failure trap policies with only encounter effects.
+Read-only inspection also found their targets were hazards, while encounter effects require
+actors. Changing the failure label alone would not repair that semantic mismatch.
+
+Local commits `db85cf0` and `50acbee`, deployed on combined stack `07eb4b0`, introduce
+JSON-pointer repairs of the retained authored proposal, protected existing identities and
+unreported source/check fields, distinct durable patch requests, exact dependency checks,
+private derived repair receipts and response-ID accounting deduplication. Reusing the
+original response does not bill it again in run accounting. Original rejected work remains
+unchanged. Independent canonical diagnostics are grouped before a repair request, and
+canonical reference checks now run before accepting each act. The full campaign graph,
+independent review, index publication and Ready sealing are still required.
+
+Inspection also found `identified_creature` computed the exact stat-text digest for identity
+but omitted it from its returned record. The fix returns that digest so source verification
+can work. Saved first-act quotes and asset references passed read-only checks. Grounding
+now reaches creature mechanics verification and exposes `unsupported_creature_mechanics`
+for the saved Goblin/Wolf/Bugbear encounters; that finding is being investigated and has
+not been bypassed.
+
+No tests, CI or push were run. Syntax compilation, built-image imports and live API
+readiness succeeded. Deployment occurred while the run was blocked. The normal retry
+endpoint returned 202 around 14:01:53 Rome. The same run is preparing its first act via
+small retained edits in background response `resp_0f57a87682b30e7a006ad75830e43887d2aea15d2009a19623`.
+All 20 original source/rulebook artifact hashes and the accepted design digest remain
+unchanged. **0/8 acts accepted; campaign not Ready.**
