@@ -218,6 +218,14 @@ def engine_check(raw):
         if token in {f"{long}_save", f"{long}_saving_throw", f"{short}_saving_throw"}:
             token = f"{short}_save"
     token = {"thieves_tool": "thieves_tools", "thieves_tools_proficiency": "thieves_tools"}.get(token, token)
+    skills = {"str": ("athletics",), "dex": ("acrobatics", "sleight_of_hand", "stealth", "thieves_tools"),
+        "int": ("arcana", "history", "investigation", "nature", "religion"),
+        "wis": ("animal_handling", "insight", "medicine", "perception", "survival"),
+        "cha": ("deception", "intimidation", "performance", "persuasion")}
+    for long, short in abilities.items():
+        for skill in skills.get(short, ()):
+            if token in {f"{long}_{skill}", f"{short}_{skill}"}:
+                token = skill
     return token if token in _POLICY_CHECKS else raw
 
 
