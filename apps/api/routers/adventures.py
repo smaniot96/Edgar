@@ -763,7 +763,9 @@ async def admit_retry_job(
     admission = await admit_job(request, redis)
     try:
         # The original job already recorded its campaign estimate. Resuming its
-        # checkpoint must not record that entire estimate again.
+        # checkpoint must not record that entire estimate again. A zero estimate
+        # retains the accounting key for incremental usage settlement.
+        await admission.reserve_daily_spend(0)
         yield admission
     finally:
         await admission.settle()
