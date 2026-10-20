@@ -53,7 +53,16 @@ async def await_response(client, binding, task, request, *, idempotency_key):
                     # An earlier rejected receipt must not complete a newer
                     # dispatch whose HTTP result has not yet been persisted.
                     record = None
-        response = Response.model_validate(record["response"]) if record is not None else None
+        if record is not None:
+            # Older SDK dumps used the Python field name schema_, while response
+            # parsing expects the provider's schema alias. Preserve those jobs.
+            response_data = record["response"]
+            output_format = (response_data.get("text") or {}).get("format") or {}
+            if "schema_" in output_format and "schema" not in output_format:
+                output_format["schema"] = output_format.pop("schema_")
+            response = Response.model_validate(response_data)
+        else:
+            response = None
         if response is not None and (record.get("rejected") or response.status in {
             "failed", "cancelled", "incomplete"
         }):
@@ -81,7 +90,7 @@ async def await_response(client, binding, task, request, *, idempotency_key):
         record = {"request_sha256": request_digest, "binding_sha256": binding.binding_sha256,
                   "logical_call": idempotency_key,
                   "dispatch_key": dispatch["key"],
-                  "response": response.model_dump(mode="json")}
+                  "response": response.model_dump(mode="json", by_alias=True)}
         _atomic_write(path, record)
         dispatch["finished"] = True
         _atomic_write(dispatch_path, dispatch)
@@ -95,7 +104,7 @@ async def await_response(client, binding, task, request, *, idempotency_key):
             log.warning("preparation_response_poll_retry", stage=task.stage.value,
                         task_id=task.task_id, error_type=type(exc).__name__)
             continue
-        record["response"] = response.model_dump(mode="json")
+        record["response"] = response.model_dump(mode="json", by_alias=True)
         _atomic_write(path, record)
         assert_current_preparation_worker()
     return response
