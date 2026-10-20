@@ -46,7 +46,7 @@ def latest_proposal(binding, task, schema, logical_call, *, rejected_only=False)
     return max(records, key=lambda record: record["created_at"], default=None)
 
 
-def save_proposal(binding, task, schema, value, usage, key):
+def save_proposal(binding, task, schema, value, usage, key, *, evidence=None):
     binding.assert_integrity()
     path = proposal_directory(binding, task) / (canonical_sha256(key) + ".json")
     record = {
@@ -60,8 +60,40 @@ def save_proposal(binding, task, schema, value, usage, key):
         "usage": usage.model_dump(mode="json"),
         "diagnostics": [],
     }
+    if schema.__name__ == "CriticObservations" and evidence is not None:
+        record["review_assignment"] = critic_assignment(evidence)
     _atomic_write(path, record)
     return path, record
+
+
+def critic_assignment(evidence):
+    """Bind reusable critic coverage to the exact reviewed inventory and text."""
+    from edgar_core.artifacts import text_digest
+
+    return {
+        "bindings_sha256": evidence.get("review_bindings_sha256") or canonical_sha256(evidence["binding"]),
+        "ranges": [{"chapter_id": chapter["chapter_id"],
+                    "start": chapter["text_start"], "end": chapter["text_end"],
+                    "text_sha256": text_digest(chapter["text"])}
+                   for chapter in evidence["reviewed_chapters"]],
+    }
+
+
+def retained_critic_reviews(binding, task, review_bindings):
+    """Read completed paid reviews only when their entire subject inventory agrees."""
+    digest = canonical_sha256(review_bindings)
+    directory = preparation_path(binding.source_slug, binding.run_id).parent / "proposals"
+    records = []
+    for path in directory.glob("*/*.json"):
+        record = json.loads(path.read_text())
+        if (record.get("schema") == "CriticObservations"
+                and record.get("task_id") == task.task_id and record.get("stage") == "P09"
+                and record.get("binding_sha256") == binding.binding_sha256
+                and record.get("review_assignment", {}).get("bindings_sha256") == digest):
+            records.append((path, record))
+    # Keep every paid response, including rejected/overlapping assignments. Usage
+    # deduplicates by response ID; the caller validates and merges exact coverage.
+    return tuple(sorted(records, key=lambda row: row[1]["created_at"]))
 
 
 def reject_proposal(path, record, error):

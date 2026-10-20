@@ -240,3 +240,45 @@ support; hidden progress remains private. Legacy identity hashes and stage
 interfaces were checked read-only. See `preparation-runtime-integration.md` and
 `preparation-supervisor-integration.md` for the current contracts. Old findings
 above remain historical evidence, not instructions to restore scripted paths.
+
+### Deployment and final cleanup state
+
+Source commit `9faa319` was merged into local combined build `443866d` and deployed
+on the sole frontend port 8000. Resuming the original run accepted P04 through P08
+without another authoring request: all eight acts, 50 scenes and 65 total artifacts
+are saved. The original 22 accepted study/design artifact hashes remain unchanged.
+
+The first P09 review exposed a fallback input-assembly bug: shared canonical context
+was already larger than the preferred request size, so slicing chapter text caused
+15 planned requests of roughly 194k–227k input tokens. The worker was fenced through
+the lifecycle store at revision 155, without cancelling its provider response or
+campaign. All seven submitted reviews completed and their original requests were
+reconstructed offline: all seven exact request hashes, 70 inventory hashes and
+24 cited original excerpts match. They fully cover chapters 1–3 and retain nine
+high findings. No paid review work is discarded or copied to a different request key.
+
+The replacement is one lean batching implementation, with persisted, inventory-bound
+review assignments and exact interval reuse. It measures seven requests for a full
+review and four for the remaining five chapters: approximately 93k, 74k, 81k and 88k
+tokens including a 6k framing/schema allowance. All remaining source/manuscript
+references and disclosure predicates were checked locally. The preferred size is
+advisory; no token, price, call or elapsed-time stopping cap was added.
+
+Removed another obsolete per-act scheduling branch, dead non-blueprint correction
+paths and the duplicate P09 accounting wrapper. Local syntax/import/Ruff/diff checks
+pass. No test suite, CI/CD or remote push ran. The run remains intentionally held
+at P09 while cleanup is deployed; Ready has not been reached. Population truncation,
+missing source combat coverage, bridge policy conflation and source-mechanics gaps
+remain open findings, not waived story requirements.
+
+Known compact recovery usage now totals 15 submitted requests (14 completed plus
+one explicit no-credit rejection), 2,343,554 tokens and estimated USD 11.330152.
+Imported studies/design and the older baseline are excluded. Seven review responses
+add USD 6.225068 under the existing estimate rates; no generation was submitted
+after the review hold. This recovery does not demonstrate the fresh-PDF USD5/20min
+target. The final checkpoint is revision 156 after receipt accounting reconciliation.
+The recovery archive verifies all 107 campaign files, the 65 accepted artifacts,
+paid responses and the cancelled comparison run; the local
+`data/recovery-snapshots/phandelver-rerun-3-2026-10-20/latest-review-recovery.json`
+index identifies the latest verified archive. Final cleanup removes approximately
+3,300 net lines across 46 files.

@@ -57,3 +57,16 @@ provider's actual request/context constraints still apply; evidence is measured 
 tokens and review input is partitioned instead of repeating source studies. Long model
 requests retain durable response identity and renewable worker leases. The local
 frontend uses port 8000.
+
+Independent review has one measured semantic batching implementation. It scopes
+blueprint/grounding evidence and avoids repeating compiler-expanded joins, ready
+asset rows and rulebook search duplicates. Exact chapter text, original artifact
+pointers, disclosure predicates and relevant creature statistics remain available.
+Preferred request size partitions input and never stops a run or limits spend.
+
+Each paid critic proposal records its exact review-inventory digest and reviewed
+text ranges/hashes. Restart loads matching observations, revalidates citations and
+assigns only uncovered intervals. Rejected observations retain paid usage without
+earning coverage. Usage deduplicates by provider response ID, independently of
+coverage; repeated findings are merged and distinct findings keep distinct IDs.
+Review uses the normal stage execution/accounting path rather than a P09 wrapper.

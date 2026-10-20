@@ -875,57 +875,10 @@ def compile_blueprint(binding, design, blueprint, *, books):
     return compiled, manifest
 
 
-def compact_review_batches(manuscript, common, blueprint_artifact, extraction, *, target_tokens=90000):
-    """Present every exact chapter once; omit compiler-owned duplicate joins.
-
-    Canonical effects, disclosures, state/ownership, topology and grounded numbers
-    remain available for independent assessment. JSON pointers still refer to the
-    complete immutable artifacts, never to reindexed compact arrays.
-    """
-    canonical = common["canonical"]
-    semantic = {key: canonical[key] for key in (
-        "source", "opening_scene_id", "scenes", "entities", "objectives", "milestones", "objects",
-        "promises", "clocks", "opening_journal", "resolution_policies")}
-    pages = dict(extraction.text_pages())
-    semantic["passages"] = [{"json_pointer": f"/manifest/passages/{i}",
-        "record": row, "exact_text": pages[row["page"]][row["start"]:row["end"]]}
-        for i, row in enumerate(canonical["passages"]) if row["audience"] == "player"]
-    prepared = canonical["prepared"]
-    semantic["prepared"] = {key: prepared[key] for key in (
-        "narrative_mode", "acts", "quests", "routes", "branches", "outcomes")}
-    chapters = [{**chapter.model_dump(mode="json"),
-        "text_json_pointer": f"/manuscript/chapters/{i}/text",
-        "text_start": 0, "text_end": len(chapter.text), "complete_chapter": True}
-        for i, chapter in enumerate(manuscript.chapters)]
-    evidence = {**common, "canonical": semantic, "reviewed_chapters": chapters,
-        "related_chapter_text": [],
-        "blueprint_artifact_id": blueprint_artifact.artifact_id,
-        "authored_blueprint": blueprint_artifact.payload["blueprint"],
-        "composition": "Every chapter includes all assigned physical source pages verbatim, followed by exact authored scene notes and DM additions. The compiler expands the supplied blueprint into the bound canonical inventory; review all source, notes, gates, effects, routes and grounded encounters here. Repeated ID joins and private source offsets are code-validated."}
-    import json
-
-    import tiktoken
-
-    encoding = tiktoken.get_encoding("o200k_base")
-    count = len(encoding.encode(json.dumps(evidence, ensure_ascii=False), disallowed_special=())) + 6000
-    if count <= target_tokens:
-        return [(list(range(len(chapters))), evidence)]
-    # Partition exact chapter coverage when the combined payload needs more room.
-    # Full canonical global facts/effects remain in the existing review protocol;
-    # verbose blueprint records are attached only to their actual scene scopes.
+def compact_review_batches(manuscript, common, blueprint_artifact, extraction, *, target_tokens=90000,
+                           reviewed_ranges=None):
+    """Review exact chapters through the sole lean semantic batching path."""
     from .preparation_review_batches import review_batches
 
-    blueprint = blueprint_artifact.payload["blueprint"]
-    result = []
-    for indices, batch in review_batches(manuscript, common, target_tokens=target_tokens - 12000):
-        relevant = {sid for i in indices for sid in manuscript.chapters[i].scene_ids}
-        scoped = {key: value for key, value in blueprint.items()
-                  if key not in {"scenes", "facts", "decisions", "transitions"}}
-        for key in ("scenes", "facts", "decisions", "transitions"):
-            scoped[key] = [{"json_pointer": f"/blueprint/{key}/{i}", "record": row}
-                for i, row in enumerate(blueprint.get(key, []))
-                if row.get("id") in relevant or row.get("scene") in relevant
-                or bool(set(row.get("scenes", [])) & relevant)]
-        batch.update(blueprint_artifact_id=blueprint_artifact.artifact_id, authored_blueprint=scoped)
-        result.append((indices, batch))
-    return result
+    return review_batches(manuscript, common, blueprint_artifact, extraction,
+                          target_tokens=target_tokens, reviewed_ranges=reviewed_ranges)

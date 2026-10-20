@@ -738,28 +738,6 @@ class PreparationSupervisor:
             saved = payload["tasks"][key]
             if saved["status"] != "pending":
                 raise PreparationError("Task is no longer pending.")
-            if task.stage == PreparationStage.P04 and saved["attempt_count"] == 0:
-                designs = [a for a in payload["artifacts"].values()
-                           if a["artifact_kind"] == "campaign_design"]
-                if designs:
-                    acts = [a["act_id"] for a in designs[0]["payload"]["design"]["acts"]]
-                    earlier = acts[:acts.index(task.scope_keys[0])]
-                    earlier_tasks = [t for t in payload["tasks"].values()
-                                     if t["task"]["stage"] == "P04"
-                                     and set(t["task"]["scope_keys"]) & set(earlier)]
-                    if any(t["status"] != "accepted" for t in earlier_tasks):
-                        raise PreparationError("Earlier act definitions are still being authored.")
-                    dependencies = list(saved["task"]["dependency_artifact_ids"])
-                    for act_id in earlier:
-                        for artifact in payload["artifacts"].values():
-                            if (artifact["artifact_kind"] in ("canonical_act", "act_authoring")
-                                    and artifact["scope_keys"] == [act_id]
-                                    and artifact["artifact_id"] not in dependencies):
-                                dependencies.append(artifact["artifact_id"])
-                    saved["task"]["dependency_artifact_ids"] = dependencies
-                    for planned in payload["stage_plans"]["P04"]["tasks"]:
-                        if planned["task_id"] == task.task_id:
-                            planned["dependency_artifact_ids"] = dependencies
             active = sum(1 for item in payload["tasks"].values()
                          if item["status"] in ("leased", "running"))
             if active >= payload["binding"]["budget"]["max_parallel_tasks"]:
