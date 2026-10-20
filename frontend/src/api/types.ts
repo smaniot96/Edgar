@@ -440,6 +440,16 @@ export interface CampaignRead {
   ended_at: string | null;
 }
 
+/** What happened to a bound adventure source when its campaign was deleted (EDG-055 F16). */
+export type SourceReleaseOutcome =
+  | "removed" | "missing" | "in_use" | "built_in" | "protected"
+  | "not_permitted" | "processing" | "retained" | "unavailable";
+
+export interface CampaignDeleteRead {
+  campaign_id: number;
+  sources: { slug: string; outcome: SourceReleaseOutcome }[];
+}
+
 export interface CharacterRead {
   id: number;
   owner_user_id: number;

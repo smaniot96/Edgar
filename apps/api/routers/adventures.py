@@ -64,6 +64,7 @@ from ..schemas.adventure import (
     AdventureUpdate,
     AdventureUploadResponse,
 )
+from ..schemas.campaign import SourceReleaseOutcome
 from ..services.adventures_meta import (
     ADVENTURES_DIR as _ADVENTURES_DIR,
     PDF_DIR as _PDF_DIR,
@@ -1124,7 +1125,12 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
     from ..services.preparation_privacy import require_mutable_source
 
     require_mutable_source(load_adventure_metadata(slug))
-    if slug in collection_slugs:
+    remove_adventure_source(slug, has_collection=slug in collection_slugs)
+
+
+def remove_adventure_source(slug: str, *, has_collection: bool) -> None:
+    """Remove a source's collection, metadata, uploaded PDF and cover dir; callers check policy."""
+    if has_collection:
         client = get_qdrant_client()
         try:
             client.delete_collection(slug)
@@ -1146,6 +1152,45 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
     cover_dir = _adventure_path(slug)
     if cover_dir.is_dir():
         shutil.rmtree(cover_dir, ignore_errors=True)
+
+
+def release_unused_source(slug: str) -> SourceReleaseOutcome:
+    """Remove a source after its last campaign is deleted, unless it must stay.
+
+    The caller has already checked that no campaign binds the slug. A source that is still
+    being prepared, or a prepared version retained for saved games, is kept.
+    """
+    from ..services.adventures_meta import lifecycle_lock
+    from ..services.campaign_sources import validate_binding
+    from ..services.preparation_privacy import require_mutable_source
+
+    try:
+        validate_binding(slug)
+    except HTTPException:
+        return "protected"
+    with lifecycle_lock(slug):
+        try:
+            has_collection = slug in _adventure_collection_names(_all_collection_names())
+        except HTTPException:
+            return "unavailable"
+        if not has_collection and not _metadata_path(slug).is_file():
+            return "missing"
+        meta = load_adventure_metadata(slug)
+        job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
+        if meta.get("status") == "processing" or job.get("state") in _ACTIVE_JOB_STATES:
+            return "processing"
+        try:
+            require_mutable_source(meta)
+        except HTTPException:
+            return "retained"
+        try:
+            remove_adventure_source(slug, has_collection=has_collection)
+        except HTTPException:
+            return "unavailable"
+    return "removed"
+
+
+_ACTIVE_JOB_STATES = frozenset({"queued", "running", "cancel_requested"})
 
 
 async def recover_source_upload(
