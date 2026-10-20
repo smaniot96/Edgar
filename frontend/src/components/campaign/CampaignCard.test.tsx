@@ -247,7 +247,7 @@ it("shows a private preparation that failed before its run as failed, with a ret
   const card = buildCards([adventure], [], [], 1)[0];
   vi.mocked(retryAdventure).mockResolvedValue({ ...adventure, status: "processing" });
   const onRetried = vi.fn();
-  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} onRetried={onRetried} />));
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
 
   const text = container.textContent ?? "";
   expect(text).toContain("Failed");
