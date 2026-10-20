@@ -139,12 +139,16 @@ async def main():
     path = preparation_path(args.slug, run_id).parent / "benchmark.json"
     report = json.loads(path.read_text())
     report.setdefault("imported_at", report["started_at"])
-    report["started_at"] = datetime.now(UTC).isoformat()
+    state = PreparationStore().load_run(args.slug, run_id)
+    if not state.attempts_total:
+        report["started_at"] = datetime.now(UTC).isoformat()
+    # Worker handoffs resume the exact stored provider response. Preserve the
+    # original wall-clock measurement rather than reporting only the last worker.
+    report.setdefault("execution_started_at", report["started_at"])
     _atomic_write(path, report)
-    start = time.monotonic()
     result = await prepare_adventure(args.slug, attempt_token=token)
     report = json.loads(path.read_text())
-    report.update(elapsed_seconds=time.monotonic() - start,
+    report.update(elapsed_seconds=(datetime.now(UTC) - datetime.fromisoformat(report["execution_started_at"])).total_seconds(),
         status=result.status.value if result else "setup_failed",
         fresh_input_and_output_tokens=result.tokens_spent if result else None,
         fresh_estimated_cost_microusd=result.cost_microusd_spent if result else None,
