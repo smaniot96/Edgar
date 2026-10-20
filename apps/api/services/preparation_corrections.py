@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from typing import Literal
 
@@ -115,6 +116,44 @@ def _reference_feedback(proposal, dependencies):
                                     "encounter and relationship effects require actors. Model trap costs using "
                                     "a declared environment object and operation supported by the same source.")
     return [{"type": "CanonicalReferenceError", "message": m} for m in messages]
+
+
+def _blueprint_source_context(proposal, diagnostics, source):
+    """Retain exact affected passages and neighbours, without resending a whole PDF."""
+    messages = "\n".join(d.get("message", "") for d in diagnostics)
+    numbers = {int(n) for n in re.findall(r"(?:source span |ls_)(\d+)", messages)}
+    records = []
+    for collection, index in re.findall(r"/(facts|scenes|decisions)/(\d+)", messages):
+        rows = proposal.get(collection, [])
+        if int(index) < len(rows):
+            records.append(rows[int(index)])
+    for fact in proposal.get("facts", []):
+        if fact.get("key") and fact["key"] in messages:
+            records.append(fact)
+
+    def collect(value):
+        if isinstance(value, dict):
+            for name, child in value.items():
+                if name in {"sources", "setup", "public"} and isinstance(child, list):
+                    numbers.update(n for n in child if type(n) is int)
+                else:
+                    collect(child)
+        elif isinstance(value, list):
+            for child in value:collect(child)
+
+    for row in records:collect(row)
+    if not numbers:
+        return source
+    wanted = {n + offset for n in numbers for offset in (-1, 0, 1)}
+    matches = list(re.finditer(r"(?m)^\[(?:Physical source page (\d+)|(\d+))\]", source))
+    excerpts, page = [], None
+    for i, match in enumerate(matches):
+        if match[1]:
+            page = int(match[1])
+        elif int(match[2]) in wanted:
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(source)
+            excerpts.append(f"[Physical source page {page}]\n" + source[match.start():end])
+    return "\n".join(excerpts) if excerpts else source
 
 
 def apply_correction(proposal, correction, diagnostics):
@@ -286,14 +325,11 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
         "design", "actual_party", "source", "source_span_contract"
     ) if name in evidence}
     compact = schema.__name__ == "CampaignBlueprint"
-    structural = compact and all(
-        d.get("type") == "ValidationError" or d.get("message", "").startswith("Blueprint structural errors:")
-        for d in diagnostics)
-    if structural:
-        context.pop("source", None)
+    if compact and "source" in context:
+        context["source"] = _blueprint_source_context(proposal, diagnostics, context["source"])
         context["source_context"] = (
-            "These diagnostics concern record types, references or schema shape. Preserve all existing "
-            "source-span IDs. The complete retained source is validated locally after patching.")
+            "Exact affected source spans and neighbouring sentences are supplied with original IDs. "
+            "Preserve valid references; the complete retained PDF is validated locally after patching.")
     examples = (
         "For this blueprint, append facts with /facts/-, and edit /decisions/0/approaches/0/success/0/target "
         "or /scenes/0/notes in place. Append new decisions rather than inserting before existing ones. "
