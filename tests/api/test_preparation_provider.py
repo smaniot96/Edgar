@@ -6,6 +6,7 @@ import httpx
 import pytest
 from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, AuthenticationError, RateLimitError
+from openai.types.responses import Response
 from pydantic import BaseModel
 from test_preparation_supervisor import binding
 
@@ -13,6 +14,12 @@ from apps.api.services.preparation import PreparationTaskFailure
 from apps.api.services.preparation_provider import invoke_preparation, request_cost_ceiling
 from edgar_core.model_profiles import load_model_profiles
 from edgar_core.preparation import PreparationStage, PreparationTask, canonical_sha256
+
+
+@pytest.fixture(autouse=True)
+def response_store(tmp_path, monkeypatch):
+    monkeypatch.setattr("apps.api.services.adventures_meta.ADVENTURES_DIR", tmp_path / "adventures")
+    monkeypatch.setattr("apps.api.services.preparation_responses.POLL_SECONDS", 0)
 
 
 class Answer(BaseModel):
@@ -128,7 +135,8 @@ async def test_actual_provider_request_is_sol_high_responses_without_sdk_retry(m
     assert body["max_output_tokens"] == 100
     assert "temperature" not in body
     assert body["service_tier"] == "default"
-    assert requests[0].headers["Idempotency-Key"] == "offline-key"
+    assert len(requests[0].headers["Idempotency-Key"]) == 64
+    assert body["background"] is True
     assert constructors[0]["max_retries"] == 0
     assert usage.input_tokens == 50 and usage.output_tokens == 20
     if visual:
@@ -150,23 +158,17 @@ async def test_actual_provider_request_is_sol_high_responses_without_sdk_retry(m
 async def test_large_evidence_and_usage_over_estimates_still_return_valid_result(monkeypatch):
     from types import SimpleNamespace
 
-    class Structured:
-        def with_structured_output(self, *args, **kwargs):
-            return self
-
-        async def ainvoke(self, messages, **kwargs):
-            assert len(messages[1].content) > 128000
-            return {
-                "raw": SimpleNamespace(
-                    usage_metadata={"input_tokens": 200000, "output_tokens": 20},
-                    response_metadata={"model_name": "gpt-6.1-sol"},
-                ),
-                "parsed": {"text": "accepted"},
-                "parsing_error": None,
-            }
+    class Responses:
+        async def create(self, **request):
+            assert len(request["input"][1]["content"][0]["text"]) > 128000
+            data = _response('{"text":"accepted"}')
+            data["usage"]["input_tokens"] = 200000
+            data["usage"]["output_tokens"] = 20
+            return Response.model_validate(data)
 
     monkeypatch.setattr(
-        "apps.api.services.preparation_provider.make_chat_model", lambda **_: Structured()
+        "apps.api.services.preparation_provider.make_chat_model",
+        lambda **_: SimpleNamespace(root_async_client=SimpleNamespace(responses=Responses())),
     )
     parsed, usage = await invoke_preparation(
         frozen(), task().model_copy(update={"max_cost_microusd": 1}), Answer,
@@ -208,14 +210,14 @@ async def test_invoke_preparation_classifies_sdk_and_internal_failures_safely(
         response = httpx.Response(401, request=request, json={"error": sentinel})
         failure = AuthenticationError(sentinel, response=response, body={"error": sentinel})
 
-    class Structured:
-        def with_structured_output(self, *_args, **_kwargs):
-            return self
+    from types import SimpleNamespace
 
-        async def ainvoke(self, *_args, **_kwargs):
+    class Responses:
+        async def create(self, **_kwargs):
             raise failure
 
-    monkeypatch.setattr(preparation_provider, "make_chat_model", lambda **_kwargs: Structured())
+    monkeypatch.setattr(preparation_provider, "make_chat_model",
+                        lambda **_: SimpleNamespace(root_async_client=SimpleNamespace(responses=Responses())))
 
     with pytest.raises(PreparationTaskFailure) as caught:
         await invoke_preparation(
@@ -311,3 +313,53 @@ async def test_completed_call_with_invalid_answer_is_a_known_retryable_failure(
     assert text_format["type"] == "json_schema" and text_format["strict"] is True
     assert text_format["name"] == "Answer"
     assert text_format["schema"]["additionalProperties"] is False
+
+
+@pytest.mark.asyncio
+async def test_background_job_survives_worker_interruption_and_temporary_poll_failure(monkeypatch):
+    import asyncio
+
+    from agent import llm
+
+    requests = []
+    polling = asyncio.Event()
+    poll_failure = True
+    finish = False
+
+    async def handle(request):
+        nonlocal poll_failure
+        requests.append(request)
+        if request.method == "POST":
+            data = _response("")
+            data.update(status="queued", output=[], usage=None)
+            return httpx.Response(200, json=data)
+        polling.set()
+        if poll_failure:
+            poll_failure = False
+            return httpx.Response(500, json={"error": {"message": "temporary"}})
+        data = _response('{"text":"recovered"}')
+        if not finish:
+            data.update(status="in_progress", output=[], usage=None)
+        return httpx.Response(200, json=data)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        monkeypatch.setattr(llm, "OPENAI_API_KEY", "test-offline-never-network")
+        monkeypatch.setattr(llm, "ChatOpenAI", lambda **kwargs: ChatOpenAI(
+            **kwargs, http_async_client=client, base_url="https://offline.invalid/v1"))
+
+        async def invoke(attempt):
+            return await invoke_preparation(frozen(), task(), Answer, instruction="Return text.",
+                                            evidence={"source": "saved", "attempt": attempt},
+                                            idempotency_key=f"attempt-{attempt}")
+
+        worker = asyncio.create_task(invoke(1))
+        await asyncio.wait_for(polling.wait(), timeout=5)
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker
+        finish = True
+        answer, usage = await invoke(2)
+    assert answer.text == "recovered"
+    assert usage.usage_known and usage.call_count == 1
+    assert len([r for r in requests if r.method == "POST"]) == 1
+    assert all(r.url.path == "/v1/responses/resp_offline" for r in requests if r.method == "GET")

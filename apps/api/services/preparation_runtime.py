@@ -85,7 +85,6 @@ _RESTART_PREPARATION_CODES = {
     "unsupported_hero_capability",
     "budget_exhausted",
     "run_budget_exhausted",
-    "attempt_budget_exhausted",
     "provider_budget_exhausted",
     "providerbudget_exhausted",
     "repair_budget_exhausted",
@@ -105,7 +104,7 @@ _PREPARATION_FAILURE_MESSAGES = {
     "unsupported_hero_capability": "A selected hero capability is not supported by preparation. Choose a different party and start a new adventure.",
     "budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
     "run_budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
-    "attempt_budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
+    "attempt_budget_exhausted": "This attempt needs attention. Retry to continue the saved preparation work.",
     "provider_budget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
     "providerbudget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
     "repair_budget_exhausted": "The adventure needs more repair work than this commission allows. Start a new preparation with a larger repair budget.",
@@ -114,6 +113,8 @@ _PREPARATION_FAILURE_MESSAGES = {
 
 
 def _needs_new_commission(code: str | None) -> bool:
+    if code == "attempt_budget_exhausted":
+        return False
     return code in _RESTART_PREPARATION_CODES or (
         isinstance(code, str) and "budget" in code.lower()
     )
@@ -157,9 +158,8 @@ def _has_retryable_task(state: PreparationRunState) -> bool:
     """A FAILED run whose failed task still has attempts left continues in this job."""
     if state.status != PreparationJobStatus.FAILED or state.cancel_requested:
         return False
-    limit = state.binding.budget.max_attempts_per_task
     return any(
-        task.status == PreparationTaskStatus.FAILED and task.attempt_count < limit
+        task.status == PreparationTaskStatus.FAILED and task.attempt_count < task.attempt_limit(state.binding)
         for task in state.tasks.values()
     )
 

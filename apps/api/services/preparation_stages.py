@@ -494,6 +494,9 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
             if usage:
                 accumulated.append(usage)
             cause = exc.__cause__
+            if (exc.code == "provider_output_invalid" and usage and usage.usage_known
+                    and correction < 2):
+                continue  # Provider retained the raw answer and schema diagnostics.
             correctable = (exc.code == "stage_evidence_invalid" and last is not None
                            and isinstance(cause, ValueError) and usage is not None
                            and usage.provider_called and usage.usage_known)
