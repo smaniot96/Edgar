@@ -247,9 +247,7 @@ def prepare_report(
         "page_count": page_count,
         "required_pages": required_pages,
         "covered_pages": covered_pages,
-        "excluded_pages": [
-            ExcludedPage(page=e["page"], reason=e["reason"]) for e in extraction.excluded_pages
-        ],
+        "excluded_pages": [ExcludedPage(**e) for e in extraction.excluded_pages],
         "exclusions_sha256": exclusions_digest(extraction.excluded_pages),
         "chunk_count": len(chunks),
         "quality_passed": not issues,

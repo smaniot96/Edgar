@@ -34,7 +34,8 @@ from ingestion.text_quality import is_degraded, prefer_ocr, score_text
 EXTRACTION_VERSION = 1
 SUMMARY_PAGE_LIMIT = 20
 RASTER_ITEMS_PER_PAGE = 6
-EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index")
+QUALITY_FAILED = "quality_failed"
+EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index", QUALITY_FAILED)
 # Tesseract at the 600 dpi used for raster stat headings in layout.ocr_stat_header.
 OCR_LAYOUT_DPI = 600
 OCR_MIN_CONFIDENCE = 30
@@ -144,12 +145,28 @@ class Extraction:
             )
         lines += self._raster_review_lines()
         if self.excluded_pages:
-            listed = [f"page {e['page']} ({e['reason']})" for e in self.excluded_pages]
+            listed = [
+                f"page {e['page']} ({e['reason']}"
+                + (f": {', '.join(e['causes'])}; {e['chars']} chars" if "causes" in e else "")
+                + ")"
+                for e in self.excluded_pages
+            ]
             lines.append(
                 f"Excluded from indexing ({len(listed)}): "
                 + ", ".join(listed[:SUMMARY_PAGE_LIMIT])
                 + ("; more in the extraction bundle" if len(listed) > SUMMARY_PAGE_LIMIT else "")
             )
+            by_reason = Counter(e["reason"] for e in self.excluded_pages)
+            lines.append(
+                "Excluded by reason: "
+                + ", ".join(f"{reason} x{n}" for reason, n in sorted(by_reason.items()))
+            )
+            failed_causes = Counter(c for e in self.excluded_pages for c in e.get("causes", []))
+            if failed_causes:
+                lines.append(
+                    f"Failed pages excluded ({by_reason[QUALITY_FAILED]}) by cause: "
+                    + ", ".join(f"{c} x{n}" for c, n in sorted(failed_causes.items()))
+                )
             for entry in self.excluded_pages:
                 excluded = next(p for p in self.pages if p.page == entry["page"])
                 if has_section_heading(excluded.text):
@@ -224,7 +241,7 @@ def validate_exclusions(
     for entry in entries:
         if (
             not isinstance(entry, dict)
-            or set(entry) != {"page", "reason"}
+            or not {"page", "reason"} <= set(entry) <= {"page", "reason", "causes", "chars"}
             or type(entry["page"]) is not int
         ):
             raise ValueError("Each excluded page needs a physical page number and a reason.")
@@ -236,7 +253,26 @@ def validate_exclusions(
             raise ValueError(f"Excluded page {number} is not an extracted physical PDF page.")
         if number in seen:
             raise ValueError(f"Page {number} is excluded more than once.")
-        if has_stat_record(by_number[number].text):
+        page = by_number[number]
+        if reason == QUALITY_FAILED:
+            # The only reason allowed on a page with a stat record, and only for a page that
+            # truly fails its checks; causes and chars are always derived from the page itself.
+            causes = page.errors()
+            if not causes:
+                raise ValueError(
+                    f"Page {number} passes its quality checks and cannot be excluded as quality_failed."
+                )
+            expected = {"causes": causes, "chars": len(page.text)}
+            if any(key in entry and entry[key] != expected[key] for key in expected):
+                raise ValueError(
+                    f"Recorded causes of excluded page {number} do not match the page."
+                )
+            seen.add(number)
+            cleaned.append({"page": number, "reason": reason, **expected})
+            continue
+        if set(entry) != {"page", "reason"}:
+            raise ValueError("Only quality_failed exclusions record causes and characters.")
+        if has_stat_record(page.text):
             raise ValueError(f"Page {number} contains a stat record and cannot be excluded.")
         seen.add(number)
         cleaned.append({"page": number, "reason": str(reason)})
