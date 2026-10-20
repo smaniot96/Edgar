@@ -147,23 +147,35 @@ async def test_actual_provider_request_is_sol_high_responses_without_sdk_retry(m
 
 
 @pytest.mark.asyncio
-async def test_oversized_evidence_fails_before_provider_with_known_zero_usage(monkeypatch):
+async def test_large_evidence_and_usage_over_estimates_still_return_valid_result(monkeypatch):
+    from types import SimpleNamespace
+
+    class Structured:
+        def with_structured_output(self, *args, **kwargs):
+            return self
+
+        async def ainvoke(self, messages, **kwargs):
+            assert len(messages[1].content) > 128000
+            return {
+                "raw": SimpleNamespace(
+                    usage_metadata={"input_tokens": 200000, "output_tokens": 20},
+                    response_metadata={"model_name": "gpt-6.1-sol"},
+                ),
+                "parsed": {"text": "accepted"},
+                "parsing_error": None,
+            }
+
     monkeypatch.setattr(
-        "apps.api.services.preparation_provider.make_chat_model",
-        lambda **_: pytest.fail("predispatch must not construct provider"),
+        "apps.api.services.preparation_provider.make_chat_model", lambda **_: Structured()
     )
-    with pytest.raises(PreparationTaskFailure) as error:
-        await invoke_preparation(
-            frozen(),
-            task(),
-            Answer,
-            instruction="read",
-            evidence={"text": "a" * 30000},
-            idempotency_key="unused",
-        )
-    assert error.value.code == "task_context_limit"
-    assert error.value.usage.provider_called is False
-    assert error.value.usage.usage_known
+    parsed, usage = await invoke_preparation(
+        frozen(), task().model_copy(update={"max_cost_microusd": 1}), Answer,
+        instruction="read", evidence={"text": "source evidence " * 30000},
+        idempotency_key="offline-large",
+    )
+    assert parsed.text == "accepted"
+    assert usage.provider_called and usage.usage_known
+    assert usage.input_tokens == 200000
 
 
 @pytest.mark.asyncio

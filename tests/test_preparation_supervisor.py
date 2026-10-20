@@ -58,16 +58,21 @@ def binding() -> PreparationRunBinding:
 
 
 @pytest.mark.asyncio
-async def test_supervisor_reserves_usage_and_accepts_bound_receipt(private_store: PreparationStore) -> None:
+@pytest.mark.parametrize("exceed_estimates", [False, True])
+async def test_supervisor_reserves_usage_and_accepts_bound_receipt(private_store: PreparationStore, exceed_estimates: bool) -> None:
     run = binding()
+    if exceed_estimates:
+        run = run.model_copy(update={"budget": run.budget.model_copy(update={
+            "max_provider_calls": 1, "max_total_tokens": 1, "max_cost_microusd": 1,
+        })})
     task = PreparationTask(
         task_id="brief",
         stage=PreparationStage.P01,
         task_kind="commission",
         scope_keys=("brief",),
-        max_input_tokens=100,
-        max_output_tokens=100,
-        max_cost_microusd=10,
+        max_input_tokens=1 if exceed_estimates else 100,
+        max_output_tokens=1 if exceed_estimates else 100,
+        max_cost_microusd=1 if exceed_estimates else 10,
     )
     plan = StagePlan(stage=PreparationStage.P01, tasks=(task,), required_scope_keys=("brief",))
     supervisor: PreparationSupervisor

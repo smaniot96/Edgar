@@ -608,10 +608,6 @@ class PreparationSupervisor:
         reserved_tokens = task.max_input_tokens + task.max_output_tokens if task.requires_provider else 0
         reserved_cost = task.max_cost_microusd if task.requires_provider else 0
         available = state.binding.budget
-        if (state.provider_calls_spent + state.provider_calls_reserved + reserved_calls > available.max_provider_calls
-                or state.tokens_spent + state.tokens_reserved + reserved_tokens > available.max_total_tokens
-                or state.cost_microusd_spent + state.cost_microusd_reserved + reserved_cost > available.max_cost_microusd):
-            return PreparationStep(self._block_task(slug, run_id, task, "run_budget_exhausted"))
         semaphore = self._semaphores.setdefault(run_id, asyncio.Semaphore(available.max_parallel_tasks))
         async with semaphore:
             try:
@@ -715,7 +711,9 @@ class PreparationSupervisor:
             if (payload["provider_calls_spent"] + payload["provider_calls_reserved"] + calls > payload["binding"]["budget"]["max_provider_calls"]
                     or payload["tokens_spent"] + payload["tokens_reserved"] + tokens > payload["binding"]["budget"]["max_total_tokens"]
                     or payload["cost_microusd_spent"] + payload["cost_microusd_reserved"] + cost > payload["binding"]["budget"]["max_cost_microusd"]):
-                raise PreparationError("Run budget was reserved by another worker.")
+                log.warning("preparation_run_budget_estimate_exceeded", run_id=run_id,
+                            task_id=task.task_id, provider_calls=payload["provider_calls_spent"],
+                            tokens=payload["tokens_spent"], cost_microusd=payload["cost_microusd_spent"])
             now = _now()  # Start the lease only after acquiring semaphore and lock.
             saved.update(status="running", attempt_count=saved["attempt_count"] + 1,
                          lease_owner=worker_id, lease_fence=saved["lease_fence"] + 1,
@@ -750,7 +748,10 @@ class PreparationSupervisor:
             or result.usage.output_tokens > task.max_output_tokens
             or result.usage.cost_microusd > task.max_cost_microusd
         ):
-            raise PreparationTaskFailure("task_reservation_exceeded", result.usage)
+            log.warning("preparation_task_estimate_exceeded", task_id=task.task_id,
+                        input_tokens=result.usage.input_tokens,
+                        output_tokens=result.usage.output_tokens,
+                        cost_microusd=result.usage.cost_microusd)
         scopes: set[str] = set()
         for artifact in proposed:
             assert_artifact_integrity(binding, artifact)

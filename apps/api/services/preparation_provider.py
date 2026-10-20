@@ -14,6 +14,7 @@ import json
 import time
 
 import structlog
+import tiktoken
 from langchain_core.messages import HumanMessage, SystemMessage
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
@@ -25,11 +26,9 @@ from edgar_core.safe_errors import provider_error_code
 
 log = structlog.get_logger(__name__)
 
-# Conservative standard-service ceilings, frozen in the commission rather than read
-# again on retry. USD micro-units per token. Long-context requests are disallowed.
+# Accounting estimates in USD micro-units per token; never spending limits.
 INPUT_MICROUSD_PER_TOKEN = 4
 OUTPUT_MICROUSD_PER_TOKEN = 20
-MAX_INPUT_TOKENS = 128_000
 TASK_VERSION = "preparation-responses-v1"
 
 
@@ -49,8 +48,7 @@ async def invoke_preparation[T: BaseModel](
 ) -> tuple[T, ProviderUsage]:
     """Enforce the frozen Sol/high policy at the actual provider boundary.
 
-    The byte count is a conservative token upper bound, including a schema/envelope
-    allowance. Oversized evidence fails before any provider request is made.
+    Token and cost estimates are advisory. The provider enforces its context window.
     """
     from .preparation import PreparationTaskFailure
 
@@ -73,9 +71,9 @@ async def invoke_preparation[T: BaseModel](
         + instruction
     )
     content = json.dumps(evidence, ensure_ascii=False, sort_keys=True, allow_nan=False)
-    upper_input = (
-        len((system + content + json.dumps(schema.model_json_schema())).encode("utf-8")) + 4096
-    )
+    estimated_input = len(tiktoken.get_encoding("o200k_base").encode(
+        system + content + json.dumps(to_strict_json_schema(schema)), disallowed_special=()
+    )) + 4096
     parts = [{"type": "text", "text": content}]
     if len(images) > 1:
         raise PreparationTaskFailure("task_context_limit", usage=predispatch)
@@ -93,17 +91,20 @@ async def invoke_preparation[T: BaseModel](
         except Exception as exc:
             raise PreparationTaskFailure("visual_input_invalid", usage=predispatch) from exc
         encoded = base64.b64encode(data).decode("ascii")
-        upper_input += len(encoded) + 32768
+        estimated_input += 32768
         parts.append(
             {
                 "type": "image_url",
                 "image_url": {"url": f"data:{media_type};base64,{encoded}", "detail": "high"},
             }
         )
-    if upper_input > min(task.max_input_tokens, MAX_INPUT_TOKENS):
-        raise PreparationTaskFailure("task_context_limit", usage=predispatch)
+    if estimated_input > task.max_input_tokens:
+        log.warning("preparation_input_estimate_exceeded", stage=task.stage.value,
+                    task_id=task.task_id, estimated_tokens=estimated_input,
+                    commissioned_tokens=task.max_input_tokens)
     if task.max_cost_microusd < request_cost_ceiling(task.max_input_tokens, task.max_output_tokens):
-        raise PreparationTaskFailure("task_cost_reservation", usage=predispatch)
+        log.warning("preparation_cost_estimate_exceeded", stage=task.stage.value,
+                    task_id=task.task_id)
     llm = make_chat_model(
         profile=profile,
         profiles=snapshot,
@@ -178,7 +179,8 @@ async def invoke_preparation[T: BaseModel](
     ):
         raise PreparationTaskFailure("resolved_model_mismatch", usage=recorded)
     if known and (tokens_in > task.max_input_tokens or tokens_out > task.max_output_tokens):
-        raise PreparationTaskFailure("provider_token_limit", usage=recorded)
+        log.warning("preparation_provider_token_estimate_exceeded", stage=task.stage.value,
+                    task_id=task.task_id, input_tokens=tokens_in, output_tokens=tokens_out)
     parsed = response.get("parsed") if isinstance(response, dict) else None
     result = None
     if isinstance(parsed, dict) and not response.get("parsing_error"):

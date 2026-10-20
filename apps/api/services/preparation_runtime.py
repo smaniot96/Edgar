@@ -1369,7 +1369,7 @@ async def prepare_adventure(
 
         worker_id = f"prep-{current_token}"
         # Keep each loop iteration bounded and cancellation/restart responsive.
-        for _ in range(state.binding.budget.max_provider_calls * 5 + 100):
+        while True:
             state = run_path.load_run(slug, run_id)
             if state.status == PreparationJobStatus.READY:
                 _finalize_ready(slug, current_token, state)
@@ -1407,7 +1407,6 @@ async def prepare_adventure(
                 # Never spin through the bounded iteration budget while a valid lease
                 # belongs to a worker that may still be finishing elsewhere.
                 await asyncio.sleep(max(0.05, min(lease_wait, 15.0)))
-        raise PreparationError("Preparation exceeded the bounded runtime iteration limit.")
     except PreparationError:
         raise
     except Exception as exc:

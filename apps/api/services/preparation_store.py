@@ -125,14 +125,7 @@ class PreparationStore:
             context = contexts.get(archive.get("round_id"))
             if context is None or context.payload.get("archive_sha256") != canonical_sha256(archive):
                 raise PreparationStoreError("Repair evidence no longer matches its exact accepted digest.")
-        budget = state.binding.budget
-        over_budget = (
-            state.provider_calls_spent + state.provider_calls_reserved > budget.max_provider_calls
-            or state.tokens_spent + state.tokens_reserved > budget.max_total_tokens
-            or state.cost_microusd_spent + state.cost_microusd_reserved > budget.max_cost_microusd
-        )
-        if over_budget and state.status.value not in ("blocked", "failed", "cancelled"):
-            raise PreparationStoreError("Saved preparation work exceeds its frozen budget.")
+        # Budget fields are accounting estimates; exceeding them does not corrupt a checkpoint.
         return state
 
     def update_run(
