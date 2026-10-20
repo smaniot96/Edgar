@@ -112,6 +112,13 @@ class ClockReveal(Record):
     completion_requires: dict[Identifier, str] | None = None
 
 
+class GoalEngineRequirement(Record):
+    """Optional combat-state boundary; never a script for resolving a story goal."""
+
+    actor_id: Identifier
+    statuses: list[Literal["dead", "defeated", "captive", "released"]] = Field(min_length=1)
+
+
 class StoryDefinition(Record):
     """Optional explicitly reviewed story identity; never automatically player knowledge."""
 
@@ -129,6 +136,10 @@ class StoryDefinition(Record):
     initial_owner: str | None = Field(default=None, max_length=200)
     announcement_passage_ids: list[Identifier] = Field(default_factory=list)
     clock_reveal: ClockReveal | None = None
+    # Source describes the achievement; the live DM judges when play earns it.
+    completion_condition: str | None = None
+    engine_requirements: list[GoalEngineRequirement] = Field(default_factory=list)
+    engine_forbidden: list[GoalEngineRequirement] = Field(default_factory=list)
 
 
 class OpeningJournalSeed(Record):
@@ -482,6 +493,11 @@ class AdventureManifest(Record):
         if len({p.policy_id for p in self.resolution_policies}) != len(self.resolution_policies):
             raise ValueError("Resolution policy IDs must be unique within an adventure.")
         entities_by_id = {entity.entity_id: entity for entity in self.entities}
+        for definition in (*self.objectives, *self.milestones):
+            for requirement in (*definition.engine_requirements, *definition.engine_forbidden):
+                actor = entities_by_id.get(requirement.actor_id)
+                if actor is None or actor.kind != "actor":
+                    raise ValueError("Goal engine constraints must name an existing actor.")
         definitions = {
             kind: {item.canonical_id: item for item in getattr(self, category)}
             for kind, category in _POLICY_CATEGORIES.items()
@@ -755,6 +771,8 @@ def manifest_digest(manifest: AdventureManifest) -> str:
         if not policy["requires_facts"]:
             policy.pop("requires_facts")
     if body["prepared"] is not None:
+        if body["prepared"]["narrative_mode"] == "scripted":
+            body["prepared"].pop("narrative_mode")
         for quest in body["prepared"]["quests"]:
             if quest["required_for_completion"]:
                 quest.pop("required_for_completion")
@@ -762,6 +780,9 @@ def manifest_digest(manifest: AdventureManifest) -> str:
                 quest.pop("required_milestone_ids")
     for category in ("objects", "objectives", "milestones", "promises", "clocks"):
         for definition in body[category]:
+            for field in ("completion_condition", "engine_requirements", "engine_forbidden"):
+                if not definition[field]:
+                    definition.pop(field)
             if not definition["announcement_passage_ids"]:
                 definition.pop("announcement_passage_ids")
             if definition["clock_reveal"] is None:

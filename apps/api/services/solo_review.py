@@ -20,7 +20,7 @@ from edgar_core.prepared import validate_prepared_campaign
 from ingestion.manifest import validate_spans
 
 from . import adventures_meta as store
-from .adventure_manifests import _bundle
+from .adventure_manifests import _bundle, _page_budget
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +208,7 @@ def build_solo_review(slug: str) -> SoloReview:
     checks.append(_check("draft_well_formed", True))
 
     try:
-        validate_spans(extraction, manifest)
+        validate_spans(extraction, manifest, degraded_page_budget=_page_budget(meta))
         spans_ok = True
     except (ManifestError, ValueError):
         spans_ok = False

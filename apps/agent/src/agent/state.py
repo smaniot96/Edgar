@@ -102,13 +102,8 @@ class AgentState(TypedDict, total=False):
     story_state: dict  # Serialized edgar_core.story.StoryState; committed session facts only
     prepared_campaign_overlays: dict[
         str, dict
-    ]  # Session-local accepted additions to reviewed prepared definitions
-    prepared_amendment_events: list[
-        dict
-    ]  # Exact session event snapshot used for stale-write checks
-    accepted_prepared_amendment: (
-        dict | None
-    )  # Engine-sealed proposal; API persists atomically with narration
+    ]  # Retained historical additions; live play does not author prepared amendments
+    prepared_amendment_events: list[dict]  # Retained event snapshot used for stale-write checks
     exact_recall: dict  # Exact text/source from one committed public clue, narrator-only
     policy_rejection: bool  # Safe generic rejection for unavailable reviewed actions
     policy_narration: str  # Deterministic narration for an engine-resolved reviewed policy

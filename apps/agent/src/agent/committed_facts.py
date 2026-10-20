@@ -69,6 +69,7 @@ def committed_prepared_facts(
                     ref["passage_id"]
                     for ref in item.source_refs
                     if isinstance(ref.get("passage_id"), str)
+                    and ref.get("audience") == "player"
                     and ref.get("collection") == collection
                     and ref.get("source_sha256") == manifest.source_sha256
                     and ref.get("manifest_sha256") == item.target.manifest_sha256
@@ -89,13 +90,14 @@ def committed_prepared_facts(
             passage_id = ref.get("passage_id")
             if (
                 not isinstance(passage_id, str)
+                or ref.get("audience") != "player"
                 or ref.get("collection") != collection
                 or ref.get("source_sha256") != manifest.source_sha256
                 or ref.get("manifest_sha256") != item.target.manifest_sha256
             ):
                 continue
             passage = passage_by_id.get(passage_id)
-            if passage is not None:
+            if passage is not None and passage.audience == "player":
                 facts.append(
                     CommittedPreparedFact(
                         kind="passage",

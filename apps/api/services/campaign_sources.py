@@ -107,6 +107,8 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
     retained_work = "none"
     action_label = explanation = None
     if kind == "generation":
+        # Archived chapter jobs remain readable, but their retired worker cannot resume.
+        retryable = False
         checkpoint_error = bool(job.get("checkpoint_corrupt"))
         try:
             from .adventures_meta import load_generation_checkpoint
@@ -128,25 +130,23 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             checkpoint_error = True
         if checkpoint_error:
             checkpoint = False
-            retryable = False
             explanation = (
-                "Saved generation progress is unreadable. Create a new campaign to generate again; "
-                "any previously published source remains available."
+                "Saved generation progress is unreadable. Its files and any previously "
+                "published source are preserved."
             )
         elif complete:
             retained_work = "complete_manuscript"
-            action_label = "Rebuild index from saved manuscript"
-            explanation = "The outline and every chapter are saved. Retrying rebuilds the index without another generation call."
+            explanation = "The outline and every chapter are saved."
         elif checkpoint:
             retained_work = "outline_and_chapters"
-            action_label = "Resume saved chapters"
             explanation = (
-                f"The outline and {chapters} of {total or 'the required'} chapters are saved. "
-                "Retry generates only chapters that are still missing."
+                f"The outline and {chapters} of {total or 'the required'} chapters are saved."
             )
         else:
-            action_label = "Restart generation"
-            explanation = "No generation checkpoint is available. Retrying starts over and repeats paid model generation calls."
+            explanation = "No generation checkpoint is available."
+        if state != "completed":
+            action_label = "Preparation conversion required"
+            explanation += " Continuing this saved campaign requires conversion to the current preparation workflow."
     elif job.get("retained_source_attempt_id") or source_pdf_path(slug, meta).is_file():
         retained_work = "source_pdf"
         action_label = "Retry extraction and indexing"

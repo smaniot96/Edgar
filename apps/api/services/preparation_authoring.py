@@ -1,4 +1,4 @@
-"""One authoring result per act; exact source compilation stays in code."""
+"""Local act support and exact source compilation for the campaign blueprint."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from edgar_core.artifacts import text_digest
 from edgar_core.assets import AssetRequirement
 from edgar_core.grounding import EncounterPlan, MechanicRequirement
 from edgar_core.identifiers import Identifier
-from edgar_core.manifests import AdventureManifest, Passage, Scene
+from edgar_core.manifests import Passage
 
 from .preparation_content import (
     CanonicalAct,
@@ -57,11 +57,6 @@ class ActSupport(ContentRecord):
     # PDFs retain their original chapters. AI campaigns need original full prose.
     chapter_text: str | None = None
     asset_requirements: list[AssetRequirement] = Field(default_factory=list)
-
-
-class AuthoredAct(ContentRecord):
-    canonical: CanonicalDraft
-    support: ActSupport
 
 
 def compile_quotes(binding, design, draft: CanonicalDraft) -> CanonicalAct:
@@ -119,27 +114,6 @@ def _private_gap(page, start, end, text, scenes):
                    scene_ids=list(scenes), audience="planner")
 
 
-def validate_authored_references(binding, design, fragment, artifacts):
-    """Validate defined records now, while their owning proposal is correctable.
-
-    Planned future scenes have stable identities but no authored content yet. They
-    only stand in for link destinations here; full preparation still validates all
-    authored scenes, branches and outcomes before accepting the last act.
-    """
-    fragments = [CanonicalAct.model_validate(a.payload["fragment"]) for a in artifacts
-                 if a.artifact_kind == "canonical_act"] + [fragment]
-    fields = {name: [item for f in fragments for item in getattr(f, name)] for name in (
-        "scenes", "entities", "passages", "objectives", "milestones", "objects",
-        "promises", "clocks", "opening_journal", "resolution_policies")}
-    defined_scenes = {s.scene_id for s in fields["scenes"]}
-    fields["scenes"] += [Scene(scene_id=scene_id, title=act.title) for act in design.acts
-                         for scene_id in act.scene_ids if scene_id not in defined_scenes]
-    source = extraction_for_design(binding, design)
-    AdventureManifest(source=binding.source_slug, source_sha256=source.source_sha256,
-                      extraction_sha256=source.text_sha256(), rules_edition=binding.rules_edition,
-                      opening_scene_id=design.opening_scene_id, **fields)
-
-
 def scene_work(fragment: CanonicalAct, support: ActSupport) -> ScenePreparation:
     return ScenePreparation(act_id=fragment.act_id, packets=fragment.scene_packets,
                             # The canonical fragment already owns its extensions.
@@ -177,15 +151,6 @@ def saved_support(artifacts, act_id):
     return ActSupport.model_validate(matches[0].payload["support"])
 
 
-def canonical_registry(artifacts):
-    """Exact previously accepted definitions for consistent cross-act references."""
-    fields = ("entities", "objectives", "milestones", "objects", "promises", "clocks", "resolution_policies")
-    return [{"act_id": a.scope_keys[0],
-             **{name: a.payload["fragment"].get(name, []) for name in fields},
-             "scene_ids": [s["scene_id"] for s in a.payload["fragment"]["scenes"]]}
-            for a in artifacts if a.artifact_kind == "canonical_act"]
-
-
 def source_inventory(binding):
     from .preparation_sources import load_source
 
@@ -210,7 +175,8 @@ def grounding_payload(binding, act, support, books, party, *, client=None, actor
         raise ValueError("Unsupported act, progression, mechanic or encounter scene.")
     from .preparation_sources import load_source
 
-    pages = dict(load_source(binding).text_pages()) if actor_manifest is not None else None
+    pages = (dict(load_source(binding).text_pages())
+             if actor_manifest is not None and binding.source_mode == "pdf" else None)
     receipts = ground_prepared_encounters(plan.encounters, party, books, client=client,
         actor_manifest=actor_manifest, source_pages=pages) if plan.encounters else []
     # A named actor is an explicit participant, never inferred from a nearby scene

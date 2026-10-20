@@ -1,5 +1,7 @@
 # EDG-055 product evaluation — run of 20 October 2026
 
+Current architecture: the lighter pipeline is now the only implementation. The dated findings below retain the investigation history; scripted producer chains and exhaustive completion proofs were superseded by the owner’s agent-led story direction. See [current preparation contract](preparation-runtime-integration.md). Campaign data and paid responses remain preserved.
+
 Owner-instructed run of the [EDG-055 evaluation procedure](../work-register/stories/EDG-055-evaluate-full-campaigns-fun-human-ux-and-accessibility.md#evaluation-procedure--owner-instruction-19-october-2026-binding),
 driven by the orchestrator in the built-in browser pane (no subagents). Owner choices: **Lost Mine of Phandelver** PDF;
 scope **play-through plus the narrator set and the classification evaluation**; caps USD 10 (narrator) and USD 5
@@ -555,3 +557,63 @@ limitations; this does not claim those mechanics are implemented.
 No test suite, CI or push was run. Built-image imports and API readiness passed.
 All new fixes remain local; `main` has not been updated. Publication, restart
 durability, Bryn's playthrough and the known P11 broad-repair issue remain pending.
+
+
+## Compact recovery held for general contract repairs — 20 October 2026
+
+The original per-act run remains cancelled and preserved for comparison. Compact
+run `prep-95ea542c81af43ec9dea3f61a77e9f85` reused all saved studies/design and
+retains 22 accepted artifacts. It has not accepted a compiled campaign and is
+blocked at P04. The original compact start remains 14:44:31 Rome.
+
+Reviewed source commit `2143b5a` was deployed in combined build `8a34b10`. A focused
+correction completed at 16:12:31 Rome, then final validation found missing Sildar
+release producers. The latest proposal and raw response are saved. Follow-up
+GPT-6.1 Sol extra-high review identified five missing state roots blocking twelve
+transitions through the ending, additional unperformed action prerequisites, and
+a generic template-plus-source-modifier representation gap. These are structural
+preparation/runtime-contract issues; new-PDF reliability is not established.
+
+Local follow-up repairs add optimistic dependency diagnostics before paid repair,
+clarify story-rescue milestones versus actual combat dispositions, classify only
+recognized authored causal findings as correctable, preserve the newest paid
+proposal across local failures, and retain private cause-chain diagnostics.
+Read-only validation of the saved proposal returns the same twelve blocked
+transitions as the independent review. Syntax/import/schema/Ruff/diff checks
+passed; no test suites, CI/CD or remote pushes ran. The newest follow-up edits
+have not restarted the live stack. Port 8000 remains healthy.
+
+Paid preparation is held pending the remaining general contract/source repairs.
+Known compact usage is eight submitted requests (seven completed, one exhausted-
+credit rejection), 856,547 tokens, estimated USD 5.105084 before acceptance.
+Imported studies/design and old baseline spend are excluded; this is an estimate,
+not an invoice. The twenty-minute/USD5 fresh-PDF target is not yet demonstrated.
+
+Verified snapshot `causal-review-hold-20261020T142128Z` preserves all 85 campaign/
+source/job files, including the latest correction; all 22 accepted artifact digests
+match the prior backup. Archive SHA256:
+`5e97f8f4c92a2b0baf55087fedacf738c86946e1326ac0fd3da4d59cd7efd22e`.
+The source/bindings, accepted design, paid proposals, receipts and cancelled
+baseline remain retained. EDG-055 stays Open. Ready, restart durability, Bryn's
+playthrough and general fresh-PDF acceptance remain unproven.
+
+### Sole pipeline cleanup and retained proposal evaluation
+
+The owner clarified that narration and recognition of earned goals belong to the
+live DM, while combat/UI/persisted state remain structured. The compact flow is
+now the sole PDF/AI scheduler. Obsolete authoring/enrichment/chapter alternatives,
+scripted path search, producer closure and the live branch-amendment tool were
+removed. Source and checkpoint compatibility readers remain; saved paid work was
+not discarded. Current runtime/supervisor contracts document this architecture.
+
+Read-only production evaluation of the newest retained correction passed local
+compilation, all eight act groundings, assembly and the independently recomputed
+source-scaffold validator: 8 acts, 50 scenes, 26 goals, 24 encounters, no authored
+branches/outcomes, zero findings, 3.7 seconds and zero provider calls. The stored
+run remained blocked with its original 22 accepted artifacts during this audit.
+This does not establish source-modifier fidelity, solo balance or final readiness.
+
+Subagents reviewed integration, legacy identity hashes and private goal projection.
+The reported journal paraphrase leak was fixed. Syntax/import/schema/Ruff/diff
+checks passed. No test suite, CI/CD or remote push ran. Deployment, final critic,
+publication, restart durability and Bryn's playthrough are still pending here.

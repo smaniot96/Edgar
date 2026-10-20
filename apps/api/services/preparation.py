@@ -430,11 +430,11 @@ class PreparationSupervisor:
         return self.store.mutate_run(slug, run_id, update=update)
 
     def _restart_for_repair(self, slug: str, run_id: str, state: PreparationRunState) -> PreparationRunState:
-        """Archive exact review evidence and rewind all dependent authoring atomically.
+        """Archive exact review evidence and rewind blueprint compilation atomically.
 
-        The P11 model only proposes repair directions. Code selects the immutable
-        source/hero boundary and invalidates design, mechanics, scenes, prose, assets
-        and reviews. A later independent review must earn a fresh clearance.
+        P11 retains local repair directions and the accepted blueprint. Source study
+        and design stay accepted; compiled dependents and independent reviews must
+        be rebuilt from the retained blueprint and earn fresh clearance.
         """
         plans = [a for a in state.artifacts.values() if a.artifact_kind == "repair_plan"]
         if len(plans) != 1:
@@ -450,13 +450,14 @@ class PreparationSupervisor:
             return self._block_run(slug, run_id, "repair_scope_invalid")
         if any(t.status in (PreparationTaskStatus.RUNNING, PreparationTaskStatus.LEASED) for t in state.tasks.values()):
             return state
-        compact = state.binding.commission.get("preparation_pipeline") == "compact_v1"
-        restart_ordinal = 4 if compact else 3
+        restart_ordinal = 4
         retained = tuple(a for a in state.artifacts.values() if a.stage.ordinal < restart_ordinal)
         discarded = tuple(a for a in state.artifacts.values() if a.stage.ordinal >= restart_ordinal)
         blueprints = [a for a in discarded if a.artifact_kind == "compact_blueprint"]
-        if compact and len(blueprints) != 1:
-            return self._block_run(slug, run_id, "repair_scope_invalid")
+        if len(blueprints) != 1:
+            log.warning("preparation_blueprint_conversion_required", run_id=run_id,
+                        reason="Historical authoring needs one retained campaign blueprint; completed work is saved.")
+            return self._block_run(slug, run_id, "preparation_compile_invalid")
         round_number = state.repair_rounds + 1
         round_id = f"repair_{round_number}"
         archive = {"round_id": round_id, "artifacts": [a.model_dump(mode="json") for a in discarded],
@@ -469,7 +470,7 @@ class PreparationSupervisor:
         context = build_artifact(state.binding, stage=PreparationStage.P02, task_id=round_id,
             artifact_kind="repair_context", payload={"round_id": round_id,
                 "directions": directions, "findings": proposal.payload.get("findings", []),
-                **({"retained_blueprint": blueprints[0].payload} if compact else {}),
+                "retained_blueprint": blueprints[0].payload,
                 "archive_sha256": canonical_sha256(archive)}, dependency_artifacts=retained,
             version=round_number, created_at=_iso(_now()), scope_keys=())
         receipt = build_validation_receipt("p02_repair_context", artifacts=(context,), dependencies=retained,

@@ -198,14 +198,6 @@ async def test_public_turn_reload_keeps_versions_and_ruling_evidence(
     assert refs[2]["reference_id"] not in adjudication
 
 
-def test_declared_generation_edition_reaches_outline_and_chapter_prompts():
-    from apps.api.services.campaign_generator import _chapter_system, _outline_system
-
-    assert "2024 edition" in _outline_system("small", 3, "2024")
-    assert "2024 edition" in _chapter_system("2024")
-    assert "2014 edition" in _chapter_system()
-
-
 async def test_unreviewed_module_turns_stop_before_agent_calls(api_client, monkeypatch):
     from apps.api.routers import session
 

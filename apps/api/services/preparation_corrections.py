@@ -365,7 +365,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
             + ("Cite the supplied integer source-span IDs. sources/setup/public have the exact disclosure "
                "meaning in the authoritative blueprint contract below; do not invent passage IDs or quote records. "
                "Append straightforward actions to /transitions/-, using requires_facts for earned state. "
-               "Patch all reported missing producers/advances together while keeping valid content. " if compact else
+               "Patch the reported source, goal-criteria and optional-tool defects together while keeping valid content. " if compact else
                "When evidence needs a public physical excerpt, split a broad private anchor into exact nonoverlapping "
                "private/public quotes. Preserve its old passage_id on the appropriate private portion; add a distinct "
                "ID for the narrowly observable excerpt and cite it for the effect. ")

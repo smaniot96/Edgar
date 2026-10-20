@@ -84,9 +84,24 @@ Fill out:
   promises, relationships, clocks or supported object operations only from the eligible candidates.
   Copy the complete canonical target and exact supporting source_reference_ids; knowledge_fact_ids
   may reference committed facts only. Definitions and recent conversation are not earned knowledge.
-  Never invent promises, completion, source IDs, object availability or clock progress. Private
-  planner material must never appear in player_text or mechanical_summary. The validator supplies
-  exact reviewed player text after acceptance. For an actual explicit first-person player promise,
+  Never invent promises, completion, source IDs, object availability or clock progress. For
+  objectives/milestones, act as the live DM: use the reviewed
+  completion_condition (or source-described goal), the actual current player action, established
+  history and authoritative engine outcomes to judge whether play earns the proposed status.
+  Every such transition needs a private achievement_basis explaining the concrete action and
+  established evidence that earns it. Arrival, an available goal, a player's intention or claim,
+  and success=true without a roll do not by themselves complete a goal. Completion must satisfy
+  engine_requirements and avoid engine_forbidden statuses; failure must reflect what actually
+  happened. Never invent a death, defeat, captivity, release, combat outcome or numeric effect
+  to satisfy a goal. Preserve terminal goals and previously resolved engine states. This semantic
+  judgment is your responsibility; the engine checks source eligibility and mechanical boundaries.
+  If the action has a reviewed selected policy, its supplied engine-authored effects are final;
+  propose only additional earned objectives/milestones, without changing those effects.
+  For a goal, player_text may describe only the earned consequence the player can
+  observe or already knows. Omit player_text for a hidden goal with no public consequence. Never
+  copy private goal criteria, hidden goal titles, unrevealed rewards or achievement_basis into
+  player_text or mechanical_summary. Other source-backed effects receive exact reviewed player
+  text from the validator. For an actual explicit first-person player promise,
   use a supplied Player promise candidate and its promise_actor/knowledge/source references.
   Its quotation comes from this player event, not from a source book. Later fulfilled/broken
   updates must reference that committed promise; preserve the original quotation and never

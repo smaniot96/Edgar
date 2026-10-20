@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
@@ -54,29 +52,6 @@ def _generation_metadata(slug: str, *, stage: str, state: str, total_chapters: i
     return token, job
 
 
-def _outline() -> dict:
-    return {
-        "title": "The Quiet Keep",
-        "premise": "A missing bell has unsettled the valley.",
-        "setting": "A village at the edge of a pine forest.",
-        "hook": "A keeper asks the characters to find the bell.",
-        "factions": ["The valley wardens"],
-        "key_npcs": ["Mara, the watchful keeper"],
-        "chapters": [
-            {"name": f"Chapter {index + 1}", "summary": f"The party follows clue {index + 1}."}
-            for index in range(3)
-        ],
-    }
-
-
-def _checkpoint_chapters() -> dict[str, str]:
-    return {
-        str(index): f"## Chapter {index + 1}\n\n"
-        + f"Chapter {index + 1} preserves its own saved story and clue. " * 8
-        for index in range(3)
-    }
-
-
 def test_failed_job_projection_uses_safe_copy_and_stable_support_reference():
     private_detail = "private generation prompt and sk-secret-123"
     metadata = {
@@ -103,14 +78,10 @@ def test_failed_job_projection_uses_safe_copy_and_stable_support_reference():
     assert private_detail not in first.model_dump_json()
 
 
-def test_restart_at_outline_stage_reports_paid_restart_without_calling_provider(
-    recovery_store, monkeypatch
+def test_archived_outline_reports_conversion_without_calling_provider(
+    recovery_store,
 ):
-    from apps.api.services import campaign_generator as generator
-
     _generation_metadata("outline_only", stage="outline", state="running")
-    provider_calls = []
-    monkeypatch.setattr(generator, "make_chat_model", lambda *_a, **_kw: provider_calls.append(True))
 
     assert store.fail_stale_processing() == ["outline_only"]
     job = campaign_sources.safe_job_read(store.load_meta("outline_only"), "outline_only")
@@ -119,129 +90,9 @@ def test_restart_at_outline_stage_reports_paid_restart_without_calling_provider(
     assert job.state == "interrupted"
     assert job.stage == "outline"
     assert not job.checkpoint_available
-    assert job.retryable
-    assert job.action_label == "Restart generation"
-    assert "repeats paid model generation calls" in (job.explanation or "")
-    assert provider_calls == []
-
-
-@pytest.mark.asyncio
-async def test_queued_cancellation_before_worker_start_skips_generation_provider(
-    recovery_store, monkeypatch
-):
-    from apps.api.services import campaign_generator as generator
-
-    token, _ = _generation_metadata("cancel_before_start", stage="queued", state="queued")
-    store.request_job_cancel("cancel_before_start")
-    provider_calls = []
-    monkeypatch.setattr(generator, "make_chat_model", lambda *_a, **_kw: provider_calls.append(True))
-
-    await generator.build_generated_campaign(
-        "cancel_before_start", "", "", "small", attempt_id=token
-    )
-
-    metadata = store.load_meta("cancel_before_start")
-    assert metadata["job"]["state"] == "cancelled"
-    assert not metadata["job"].get("attempt_id")
-    assert provider_calls == []
-
-
-@pytest.mark.asyncio
-async def test_retry_with_complete_checkpoint_rebuilds_without_generation_calls(
-    recovery_store, monkeypatch
-):
-    from apps.api.services import campaign_generator as generator
-
-    job = store.new_job("generation", "failed", total_chapters=3, retryable=True)
-    job.update(state="failed", completed_chapters=3, checkpoint_available=True)
-    store.save_meta(
-        "complete_checkpoint",
-        {
-            "title": "The Quiet Keep",
-            "rules_edition": "2014",
-            "status": "failed",
-            "generation": {
-                "kind": "ai",
-                "size": "small",
-                "theme": "a mystery",
-                "title_hint": "The Quiet Keep",
-            },
-            "job": job,
-        },
-    )
-    checkpoint_dir = store.job_dir("complete_checkpoint", job["job_id"])
-    checkpoint_dir.mkdir(parents=True)
-    (checkpoint_dir / "checkpoint.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "job_id": job["job_id"],
-                "outline": _outline(),
-                "chapters": _checkpoint_chapters(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    generation_provider_calls = []
-
-    def unexpected_provider_call(*_args, **_kwargs):
-        generation_provider_calls.append(True)
-        raise AssertionError("A complete saved manuscript must not invoke generation.")
-
-    monkeypatch.setattr(generator, "make_chat_model", unexpected_provider_call)
-
-    def ingest_pages(_pages, _source, _collection, **kwargs):
-        kwargs["on_prepared"](
-            {
-                "report_version": 1,
-                "source_kind": "generated",
-                "rules_edition": "2014",
-                "source_sha256": "1" * 64,
-                "extraction_sha256": "2" * 64,
-                "page_count": 3,
-                "required_pages": [1, 2, 3],
-                "covered_pages": [1, 2, 3],
-                "chunk_count": 3,
-                "quality_passed": True,
-                "warning_count": 0,
-                "review_note": "Synthetic generated source.",
-                "issues": [],
-                "previews": [],
-                "scene_preview_reviewed": False,
-                "index_version": "synthetic-index-version",
-            }
-        )
-        with kwargs["publication_guard"]():
-            pass
-        return 3
-
-    from ingestion import embed
-
-    monkeypatch.setattr(embed, "ingest_pages", ingest_pages)
-    monkeypatch.setattr(
-        campaign_sources,
-        "inspect_ingestion_source",
-        lambda slug, _meta: {
-            "slug": slug,
-            "status": "ready",
-            "usable_chunks": 3,
-            "expected_chunks": 3,
-            "collection_exists": True,
-            "source_file_matches": True,
-        },
-    )
-
-    tasks = BackgroundTasks()
-    accepted = adventures.retry_adventure("complete_checkpoint", tasks)
-    assert accepted.status == "processing"
-    await tasks()
-
-    completed = store.load_meta("complete_checkpoint")
-    assert completed["status"] == "ready"
-    assert completed["job"]["state"] == "completed"
-    assert completed["job"]["retained_work"] == "published"
-    assert generation_provider_calls == []
+    assert not job.retryable
+    assert job.action_label == "Preparation conversion required"
+    assert "conversion to the current preparation workflow" in (job.explanation or "")
 
 
 @pytest.mark.parametrize(

@@ -18,14 +18,15 @@ if TYPE_CHECKING:
 
 
 def compile_manifest(
-    extraction: Extraction, *, rules_edition: str = "unspecified"
+    extraction: Extraction, *, rules_edition: str = "unspecified",
+    degraded_page_budget: float | None = None,
 ) -> AdventureManifest:
     """Deterministic page/paragraph candidates, deliberately without audience or opening claims.
 
     Reviewers edit this JSON: merge/rename scene IDs, add actors/clues/hazards/endings,
     split exact spans if a paragraph mixes public and private facts, and classify all text.
     """
-    extraction.require_valid()
+    extraction.require_valid(degraded_page_budget)
     scenes, passages = [], []
     for page, text in extraction.text_pages():
         if not text.strip():
@@ -55,10 +56,11 @@ def compile_manifest(
 
 
 def validate_spans(
-    extraction: Extraction, manifest: AdventureManifest, *, check_digests: bool = True
+    extraction: Extraction, manifest: AdventureManifest, *, check_digests: bool = True,
+    degraded_page_budget: float | None = None,
 ) -> None:
     """Every source character is classified exactly once; whitespace may remain between spans."""
-    extraction.require_valid()
+    extraction.require_valid(degraded_page_budget)
     if (
         manifest.source != extraction.source
         or manifest.source_sha256 != extraction.source_sha256
@@ -98,12 +100,13 @@ def review_manifest(
     *,
     reviewed_digest: str,
     reviewer: str,
+    degraded_page_budget: float | None = None,
 ) -> AdventureManifest:
     """Acknowledge the exact inspected/editable draft; changed drafts require a fresh review."""
     manifest = AdventureManifest.model_validate(
         value.model_dump() if isinstance(value, AdventureManifest) else value
     )
-    validate_spans(extraction, manifest)
+    validate_spans(extraction, manifest, degraded_page_budget=degraded_page_budget)
     if reviewed_digest != manifest_digest(manifest):
         raise ManifestError("The inspected manifest changed. Inspect it again before publishing.")
     manifest.reviewed_sha256 = reviewed_digest
@@ -111,10 +114,13 @@ def review_manifest(
     return require_published(manifest)
 
 
-def manifest_chunks(extraction: Extraction, value: dict | AdventureManifest) -> list[dict]:
+def manifest_chunks(
+    extraction: Extraction, value: dict | AdventureManifest, *,
+    degraded_page_budget: float | None = None,
+) -> list[dict]:
     """Materialize reviewed spans for the existing embedding pipeline, retaining all identities."""
     manifest = require_published(value)
-    validate_spans(extraction, manifest)
+    validate_spans(extraction, manifest, degraded_page_budget=degraded_page_budget)
     pages = dict(extraction.text_pages())
     chunks = []
     for index, passage in enumerate(manifest.passages):
