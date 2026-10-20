@@ -41,7 +41,7 @@ from .preparation import PreparationSupervisor, PreparationTaskFailure, StageAda
 from .preparation_authoring import (
     ActMechanics, ActSupport, AuthoredAct, asset_requirements, canonical_registry, compile_quotes,
     fragment_for, grounding_payload, retained_chapter, saved_support, scene_work,
-    source_inventory, support_for, validate_support_assets,
+    source_inventory, support_for, validate_support_assets, validate_authored_references,
 )
 from .preparation_content import (
     CampaignDesign,
@@ -491,6 +491,18 @@ async def _execute(stage, binding, task, deps, attempt, key, *, provider, book_c
 
             assert_current_preparation_worker()
             feedback = latest_rejection(binding, planned, schema, kwargs["idempotency_key"])
+            # An authored act can be tens of thousands of tokens. Correct its saved
+            # fields instead of asking the provider to rewrite all of it repeatedly.
+            if feedback and schema is AuthoredAct:
+                from .preparation_corrections import correct_retained
+
+                kwargs["idempotency_key"] += f":attempt:{attempt}:correction:{_correction}"
+                result, usage = await correct_retained(
+                    provider, bound, planned, schema, feedback, dependencies=deps,
+                    reuse_valid=_correction == 0, **kwargs)
+                assert_current_preparation_worker()
+                last = save_proposal(binding, planned, schema, result, usage, kwargs["idempotency_key"])
+                return result, usage
             if feedback:
                 kwargs["evidence"] = {
                     **kwargs["evidence"],
@@ -732,6 +744,9 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                 "Opening has no impossible entry gate. Global shared records belong to their first act; reference IDs consistently. "
                 "Reuse EXACT previously accepted registry IDs; never redefine an earlier shared record. "
                 "Only use/environment effects may set operation; objective effects must have operation=null. "
+                "Encounter/relationship effects target actors only, never hazards. Trap costs use a source-backed "
+                "environment effect on a declared object and its explicit operation. Cost failures require a "
+                "clock, consume or environment effect. Keep the actual separate saving throws in the DM notes. "
                 "Private routes require nonempty reveal_requires. Automatic policies have automatic effects and no check/DC. "
                 "Only the opening act may define opening_journal seeds, earned from opening evidence. Never invent PDF pages. "
                 "Encounter requests use exact MM names and actual party levels; never invent stats or future levels. "
@@ -758,6 +773,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
             if authored.canonical.act_id != act.act_id:
                 raise ValueError("The authored canonical act_id must match the assigned act exactly.")
             fragment = compile_quotes(binding, design, authored.canonical)
+            validate_authored_references(binding, design, fragment, deps)
             validate_support_assets(binding, design, fragment, authored.support, deps)
             grounding_payload(binding, act, authored.support, _books(deps), _party(binding),
                               client=book_client)
@@ -1299,6 +1315,7 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
             fragment = CanonicalAct.model_validate(_one(proposed, "canonical_act").payload["fragment"])
             design = design_from(deps)
             validate_fragment(binding, design, fragment)
+            validate_authored_references(binding, design, fragment, deps)
             support = saved_support(proposed, fragment.act_id)
             if support is None:
                 raise ValueError("Combined act authoring result is missing.")

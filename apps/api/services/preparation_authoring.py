@@ -10,7 +10,7 @@ from edgar_core.artifacts import text_digest
 from edgar_core.assets import AssetRequirement
 from edgar_core.grounding import EncounterPlan, MechanicRequirement
 from edgar_core.identifiers import Identifier
-from edgar_core.manifests import Passage
+from edgar_core.manifests import AdventureManifest, Passage, Scene
 
 from .preparation_content import (
     CanonicalAct, CompleteChapter, ContentRecord, ScenePreparation, extraction_for_design,
@@ -113,6 +113,27 @@ def _private_gap(page, start, end, text, scenes):
     return Passage(passage_id=f"source_private_p{page}_{start}_{end}", page=page,
                    start=start, end=end, text_sha256=text_digest(text[start:end]),
                    scene_ids=list(scenes), audience="planner")
+
+
+def validate_authored_references(binding, design, fragment, artifacts):
+    """Validate defined records now, while their owning proposal is correctable.
+
+    Planned future scenes have stable identities but no authored content yet. They
+    only stand in for link destinations here; full preparation still validates all
+    authored scenes, branches and outcomes before accepting the last act.
+    """
+    fragments = [CanonicalAct.model_validate(a.payload["fragment"]) for a in artifacts
+                 if a.artifact_kind == "canonical_act"] + [fragment]
+    fields = {name: [item for f in fragments for item in getattr(f, name)] for name in (
+        "scenes", "entities", "passages", "objectives", "milestones", "objects",
+        "promises", "clocks", "opening_journal", "resolution_policies")}
+    defined_scenes = {s.scene_id for s in fields["scenes"]}
+    fields["scenes"] += [Scene(scene_id=scene_id, title=act.title) for act in design.acts
+                         for scene_id in act.scene_ids if scene_id not in defined_scenes]
+    source = extraction_for_design(binding, design)
+    AdventureManifest(source=binding.source_slug, source_sha256=source.source_sha256,
+                      extraction_sha256=source.text_sha256(), rules_edition=binding.rules_edition,
+                      opening_scene_id=design.opening_scene_id, **fields)
 
 
 def scene_work(fragment: CanonicalAct, support: ActSupport) -> ScenePreparation:

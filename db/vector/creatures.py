@@ -78,6 +78,7 @@ def identified_creature(chunk: dict[str, Any]) -> dict[str, Any] | None:
     return {
         **chunk,
         **fields,
+        "text_sha256": identity["text_sha256"],
         "creature_id": text_digest(json.dumps(identity, sort_keys=True, separators=(",", ":"))),
         "identity_status": "resolved",
     }
