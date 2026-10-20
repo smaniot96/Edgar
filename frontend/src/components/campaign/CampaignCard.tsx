@@ -50,14 +50,12 @@ export function CampaignCard({
   onPlay,
   onDelete,
   opening,
-  deleting,
   onRetried,
 }: {
   card: CardModel;
   onPlay: (card: CardModel) => void;
   onDelete: (card: CardModel) => void;
   opening: boolean;
-  deleting: boolean;
   onRetried?: () => void;
 }) {
   const { isDev } = useMode();
@@ -240,12 +238,11 @@ export function CampaignCard({
               <Button
                 variant="danger"
                 size="sm"
-                loading={deleting}
-                loadingText="Deleting…"
                 onClick={() => onDelete(card)}
                 aria-label={`Delete ${name}`}
+                aria-haspopup="dialog"
               >
-                Delete campaign
+                {card.campaign ? "Delete campaign" : "Delete adventure"}
               </Button>
             </div>
           </details>

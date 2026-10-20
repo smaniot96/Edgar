@@ -8,7 +8,6 @@ import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
-  deleteCampaign,
   endCampaign,
   getAdventure,
   getCampaign,
@@ -23,8 +22,11 @@ import {
 import { SourceRecovery } from "../components/campaign/SourceRecovery";
 import { ReadinessNotice } from "../components/campaign/ReadinessNotice";
 import { AdventureReview } from "../components/campaign/AdventureReview";
+import { DeleteCampaignDialog } from "../components/campaign/DeleteCampaignDialog";
+import type { DeleteTarget } from "../lib/campaignDelete";
 import { Pill } from "../components/Pill";
 import { Button, ButtonLink } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Field } from "../components/ui/Field";
 import { controlClasses } from "../components/ui/styles";
 import { EmptyState, LoadingText } from "../components/ui/EmptyState";
@@ -85,8 +87,10 @@ export default function CampaignView() {
   const adventure = useQuery(slug ? `adventure:${slug}` : null, (s) => getAdventure(slug!, s));
   const sessions = useQuery(validId ? `sessions:${campaignId}` : null, (s) => listSessions(campaignId, s));
 
-  const [busy, setBusy] = useState<"end" | "reopen" | "delete" | null>(null);
+  const [busy, setBusy] = useState<"end" | "reopen" | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
+  const [confirming, setConfirming] = useState<"end" | "delete" | null>(null);
+  const [endError, setEndError] = useState<unknown>(null);
 
   function selectTab(next: TabId) {
     setParams(
@@ -138,29 +142,30 @@ export default function CampaignView() {
   const canReadStory = savedSession?.has_history === true && savedSession.readiness?.history_allowed === true;
   const canStartSession = !ended && c.readiness?.play_allowed === true;
 
-  async function run(kind: "end" | "reopen" | "delete") {
+  // The same delete as the campaign list card: the campaign, its saves, then any source it alone used.
+  const deleteTarget: DeleteTarget = {
+    name,
+    campaigns: [c],
+    sources: c.source_mode === "homebrew" ? [] : c.adventure_collections.map((slug) => {
+      const source = c.sources?.find((s) => s.slug === slug);
+      const title = source?.title ?? (adventure.data?.slug === slug ? adventure.data.title : slug);
+      return { slug, title, missing: source?.status === "missing" };
+    }),
+  };
+
+  // End is confirmed in a dialog, so a failure stays there; Reopen runs straight away.
+  async function run(kind: "end" | "reopen") {
     if (!c) return;
-    if (
-      kind === "end" &&
-      !window.confirm(
-        `End "${name}"? Its characters are freed for other campaigns. You can reopen it later.`,
-      )
-    )
-      return;
-    if (kind === "delete" && !window.confirm(`Delete "${name}" and all its sessions? This cannot be undone.`))
-      return;
     setBusy(kind);
     setActionError(null);
+    setEndError(null);
     try {
-      if (kind === "delete") {
-        await deleteCampaign(c.id);
-        navigate("/campaigns");
-        return;
-      }
       const updated = kind === "end" ? await endCampaign(c.id) : await reopenCampaign(c.id);
       campaign.setData(() => updated);
+      setConfirming(null);
     } catch (e) {
-      setActionError(e);
+      if (kind === "end") setEndError(e);
+      else setActionError(e);
     } finally {
       setBusy(null);
     }
@@ -264,9 +269,9 @@ export default function CampaignView() {
             {ended ? (
               <Button size="sm" loading={busy === "reopen"} loadingText="Reopening…" disabled={busy != null} onClick={() => void run("reopen")}>Reopen campaign</Button>
             ) : (
-              <Button variant="secondary" size="sm" loading={busy === "end"} loadingText="Ending…" disabled={busy != null} onClick={() => void run("end")}>End campaign</Button>
+              <Button variant="secondary" size="sm" disabled={busy != null} aria-haspopup="dialog" onClick={() => { setEndError(null); setConfirming("end"); }}>End campaign</Button>
             )}
-            <Button variant="danger" size="sm" loading={busy === "delete"} loadingText="Deleting…" disabled={busy != null} onClick={() => void run("delete")} aria-label="Delete campaign and all its saved playthroughs">Delete campaign</Button>
+            <Button variant="danger" size="sm" disabled={busy != null} aria-haspopup="dialog" onClick={() => setConfirming("delete")} aria-label="Delete campaign and all its saved playthroughs">Delete campaign</Button>
           </div>
         </div>
       </details>
@@ -281,6 +286,25 @@ export default function CampaignView() {
           {tab === "world" ? <WorldTab campaignId={c.id} /> : null}
         </TabPanel>
       </div>
+      <ConfirmDialog
+        open={confirming === "end"}
+        title={`End “${name}”?`}
+        confirmLabel="End campaign"
+        busyLabel="Ending…"
+        variant="primary"
+        busy={busy === "end"}
+        error={endError}
+        onConfirm={() => void run("end")}
+        onCancel={() => setConfirming(null)}
+      >
+        <p>Its characters are freed for other campaigns. You can reopen it later.</p>
+      </ConfirmDialog>
+      <DeleteCampaignDialog
+        target={confirming === "delete" ? deleteTarget : null}
+        sessions={sessions.data}
+        onClose={() => setConfirming(null)}
+        onDeleted={(notice) => navigate("/campaigns", { state: { notice } })}
+      />
     </Page>
   );
 }

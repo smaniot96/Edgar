@@ -11,6 +11,7 @@ import type {
   ManifestInspection,
   SoloAdventureReview,
   CampaignCharacterRead,
+  CampaignDeleteRead,
   CampaignRead,
   CharacterAssignmentHistoryRead,
   CharacterListItem,
@@ -342,6 +343,17 @@ export function reopenCampaign(id: number): Promise<CampaignRead> {
 
 export function deleteCampaign(id: number): Promise<void> {
   return send("DELETE", `/api/campaigns/${id}`);
+}
+
+/**
+ * Delete a campaign and its saves, then each bound adventure source that no other campaign uses
+ * and that may still change (EDG-055 F16). The outcome says what happened to every source.
+ */
+export async function deleteCampaignAndUnusedSources(id: number): Promise<CampaignDeleteRead> {
+  return json(await apiFetch(`/api/campaigns/${id}?remove_unused_sources=true`, {
+    method: "DELETE",
+    headers: { "X-Confirm-Delete": "yes" },
+  }));
 }
 
 export function listCampaignCharacters(

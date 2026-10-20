@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, Ref } from "react";
 import { Link } from "react-router-dom";
 import type { LinkProps } from "react-router-dom";
 
@@ -6,6 +6,7 @@ import { buttonClasses } from "./styles";
 import type { ButtonSize, ButtonVariant } from "./styles";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  ref?: Ref<HTMLButtonElement>;
   variant?: ButtonVariant;
   size?: ButtonSize;
   /** Shows `loadingText` (or the children) and disables the button. */

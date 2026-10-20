@@ -34,6 +34,31 @@ class SourceRead(BaseModel):
     job: AdventureJobRead | None = None
 
 
+SourceReleaseOutcome = Literal[
+    "removed",  # no campaign used it any more, so the source was deleted
+    "missing",  # it was already gone
+    "in_use",  # another campaign still binds it
+    "built_in",  # a bundled module; never removed with a campaign
+    "protected",  # not an adventure source binding
+    "not_permitted",  # only an admin may delete shared sources
+    "processing",  # preparation is still running
+    "retained",  # a prepared version kept for saved games (require_mutable_source)
+    "unavailable",  # the vector store failed; nothing was removed
+]
+
+
+class SourceRelease(BaseModel):
+    slug: str
+    outcome: SourceReleaseOutcome
+
+
+class CampaignDeleteRead(BaseModel):
+    """What `DELETE /campaigns/{id}?remove_unused_sources=true` removed besides the campaign."""
+
+    campaign_id: int
+    sources: list[SourceRelease] = Field(default_factory=list)
+
+
 class CampaignCreate(BaseModel):
     """Request body for POST /campaigns. The owner is always the current user (any
     client-sent `created_by` is ignored)."""
