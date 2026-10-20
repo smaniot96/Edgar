@@ -14,7 +14,9 @@ from pydantic import Field
 
 from edgar_core.artifacts import text_digest
 from edgar_core.grounding import EncounterPlan, EncounterCreatureRequest
-from edgar_core.manifests import AdventureManifest, manifest_digest, require_published
+from edgar_core.manifests import (
+    AdventureManifest, ResolutionPolicy, _POLICY_CHECKS, manifest_digest, require_published,
+)
 from edgar_core.prepared import validate_prepared_campaign
 from ingestion.manifest import validate_spans
 
@@ -198,8 +200,87 @@ Aim for concise, useful content rather than exhaustive serialization. This is no
 """
 
 
+EFFECT_DEFAULTS = {"discover": "discovered", "encounter": "encountered", "move": "visited",
+    "learn_place": "known", "acquire": "acquired", "consume": "consumed", "transfer": "moved",
+    "use": "used", "environment": "changed", "clock": "advanced"}
+
+
+def engine_check(raw):
+    """Normalize spelling only; never replace an unsupported mechanic with another."""
+    token = re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
+    if token.endswith("_check"):
+        token = token[:-6]
+    abilities = dict(strength="str", dexterity="dex", constitution="con",
+                     intelligence="int", wisdom="wis", charisma="cha")
+    if token in abilities:
+        token = abilities[token]
+    for long, short in abilities.items():
+        if token in {f"{long}_save", f"{long}_saving_throw", f"{short}_saving_throw"}:
+            token = f"{short}_save"
+    token = {"thieves_tool": "thieves_tools", "thieves_tools_proficiency": "thieves_tools"}.get(token, token)
+    return token if token in _POLICY_CHECKS else raw
+
+
+def blueprint_preflight(blueprint, design):
+    """Collect structural defects before requesting any paid semantic correction."""
+    scenes = {sid for act in design.acts for sid in act.scene_ids}
+    facts = {f.key: f for f in blueprint.facts}
+    errors = []
+    missing = {key for act in design.acts for key in act.advance_ids} - facts.keys()
+    if missing:
+        errors.append(f"/facts is missing accepted design advance IDs: {sorted(missing)}")
+    targets = {"discover": {"clue", "hint", "hazard", "ending"},
+        "encounter": {"actor"}, "relationship": {"actor"}, "objective": {"objective"},
+        "milestone": {"milestone"}, "clock": {"clock"},
+        **{k: {"object"} for k in ("acquire", "consume", "transfer", "use", "environment")}}
+    for i, decision in enumerate(blueprint.decisions):
+        base = f"/decisions/{i}"
+        if decision.objective not in facts or facts[decision.objective].kind != "objective":
+            errors.append(f"{base}/objective must name an objective fact")
+        if decision.scene not in scenes:
+            errors.append(f"{base}/scene must name an accepted scene")
+        for j, approach in enumerate(decision.approaches):
+            path = f"{base}/approaches/{j}"
+            outcomes = {}
+            for name in ("success", "failure"):
+                outcomes[name] = []
+                for k, effect in enumerate(getattr(approach, name)):
+                    ep = f"{path}/{name}/{k}"
+                    if effect.kind in {"move", "learn_place"}:
+                        if effect.target not in scenes:
+                            errors.append(f"{ep}/target must name an accepted scene")
+                    elif effect.target not in facts or facts[effect.target].kind not in targets[effect.kind]:
+                        errors.append(f"{ep}/target must name a fact with kind in {sorted(targets[effect.kind])}; got {effect.target}")
+                    value = dict(kind=effect.kind, target_id="preflight_target",
+                        status=effect.status or EFFECT_DEFAULTS.get(effect.kind, ""), passage_ids=["preflight_source"])
+                    if effect.operation is not None:
+                        value["operation"] = effect.operation
+                    if effect.destination is not None:
+                        value["destination"] = effect.destination
+                    if effect.kind == "clock":
+                        value["quantity_delta"] = 1 if effect.quantity is None else effect.quantity
+                    if effect.kind in {"use", "environment"} and effect.target in facts:
+                        if effect.operation not in facts[effect.target].operations:
+                            errors.append(f"{ep}/operation must be declared on target fact {effect.target}")
+                    if effect.destination is not None and effect.destination not in scenes and effect.destination != "character":
+                        errors.append(f"{ep}/destination must name an accepted scene or character")
+                    # Distinct IDs preserve duplicate-target checking without requiring canonical IDs yet.
+                    value["target_id"] = f"target_{list(facts).index(effect.target)}" if effect.target in facts else effect.target
+                    outcomes[name].append(value)
+            try:
+                ResolutionPolicy.model_validate(dict(policy_id="preflight_policy", action=approach.action,
+                    scene_ids=["preflight_scene"], passage_ids=["preflight_source"], mode="check",
+                    check=engine_check(approach.check), dc=approach.dc, failure_mode=approach.failure_mode,
+                    on_success=outcomes["success"], on_failure=outcomes["failure"]))
+            except ValueError as exc:
+                errors.append(f"{path}: {exc}")
+    if errors:
+        raise ValueError("Blueprint structural errors:\n" + "\n".join(errors))
+
+
 def compile_blueprint(binding, design, blueprint, *, books):
     """Expand semantic decisions without inventing effects, routes or disclosures."""
+    blueprint_preflight(blueprint, design)
     extraction = extraction_for_design(binding, design)
     spans = {s.id: s for s in source_spans(extraction)}
     scene_act = {sid: act for act in design.acts for sid in act.scene_ids}
@@ -325,10 +406,6 @@ def compile_blueprint(binding, design, blueprint, *, books):
             fragment[category].append(record)
             definition_records[key] = record
 
-    defaults = {"discover": "discovered", "encounter": "encountered", "move": "visited",
-        "learn_place": "known", "acquire": "acquired", "consume": "consumed", "transfer": "moved",
-        "use": "used", "environment": "changed", "clock": "advanced"}
-
     def effects(rows, scene, *, failure=False):
         compiled = []
         for row in rows:
@@ -338,13 +415,13 @@ def compile_blueprint(binding, design, blueprint, *, books):
             evidence = cite(row.sources, [scene], audience="player",
                 gate=({**facts[row.target].requires, row.target: "discovered"}
                       if row.kind == "discover" else None), entities=entity_ids, known=known)
-            status = row.status or defaults.get(row.kind)
+            status = row.status or EFFECT_DEFAULTS.get(row.kind)
             if not status:
                 raise ValueError(f"{row.kind} needs an explicit intended status.")
             value = {"kind": row.kind, "target_id": target, "status": status, "passage_ids": evidence}
             if row.operation is not None:value["operation"] = row.operation
             if row.destination is not None:value["destination"] = row.destination
-            if row.kind == "clock":value["quantity_delta"] = row.quantity or 1
+            if row.kind == "clock":value["quantity_delta"] = 1 if row.quantity is None else row.quantity
             compiled.append(value)
             if row.target in definition_records:
                 record = definition_records[row.target]
@@ -373,7 +450,7 @@ def compile_blueprint(binding, design, blueprint, *, books):
                     for number in approach.sources:anchors[number]["entity_ids"].add(effect["target_id"])
             fragment["resolution_policies"].append({"policy_id": pid, "action": approach.action,
                 "scene_ids": [decision.scene], "passage_ids": pids, "mode": "check",
-                "check": approach.check, "dc": approach.dc, "requires": conditions(approach.requires),
+                "check": engine_check(approach.check), "dc": approach.dc, "requires": conditions(approach.requires),
                 "failure_mode": approach.failure_mode, "on_success": success, "on_failure": failure})
             prov = provenance(approach.sources, decision.addition_rationale)
             outcomes = []

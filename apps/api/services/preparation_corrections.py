@@ -285,6 +285,22 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
         "commission", "party", "whole_design", "act", "accepted_registry", "supported_mechanics",
         "design", "actual_party", "source", "source_span_contract"
     ) if name in evidence}
+    compact = schema.__name__ == "CampaignBlueprint"
+    structural = compact and all(
+        d.get("type") == "ValidationError" or d.get("message", "").startswith("Blueprint structural errors:")
+        for d in diagnostics)
+    if structural:
+        context.pop("source", None)
+        context["source_context"] = (
+            "These diagnostics concern record types, references or schema shape. Preserve all existing "
+            "source-span IDs. The complete retained source is validated locally after patching.")
+    examples = (
+        "For this blueprint, append facts with /facts/-, and edit /decisions/0/approaches/0/success/0/target "
+        "or /scenes/0/notes in place. Append new decisions rather than inserting before existing ones. "
+        "There is no /canonical or /support wrapper. Span IDs refer to the retained exact source. "
+        if compact else
+        "Append supporting records with e.g. /canonical/objects/-. Text fields such as "
+        "/support/dm_notes may be updated to reflect the corrected mechanics. ")
     if any("quote" in d.get("message", "").lower() for d in diagnostics):
         context["exact_pages"] = evidence.get("exact_pages", [])
     correction, patch_usage = await provider(
@@ -296,8 +312,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
             "Paths address the current proposal; edits apply in order. value_json is the exact JSON "
             "encoding of the new value (use null for a remove). Copy base_proposal_sha256 exactly. "
             "Edit individual records/fields; never replace /canonical, /support or an entire collection. "
-            "Append new supporting records with e.g. /canonical/objects/-. Text fields such as "
-            "/support/dm_notes may be updated to reflect the corrected mechanics. "
+            + examples +
             "Do not weaken validation, remove required content, or fabricate citations/stats. "
             "Encounter/relationship effects target ACTOR entities, never hazards. Trap costs can use "
             "source-backed environment effects on a declared object with a supported operation; "
