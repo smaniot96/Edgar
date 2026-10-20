@@ -433,6 +433,18 @@ def ground_encounter_plan(
             raise GroundingUnavailable("solo_encounter_empty", "Solo adaptation removed every creature from the encounter.")
 
     active_members = [member for member in members if member.effective_quantity]
+    for member in active_members:
+        stats = member.creature.monster_stats
+        casting = stats.get("spellcasting") or {}
+        if not stats.get("attacks") and not casting.get("spells"):
+            raise GroundingUnavailable("creature_mechanics_unreadable",
+                                       "The exact creature has no executable attack or listed supported spell.")
+        # The parser explicitly discloses the simplified runtime's omissions in
+        # combat. They are not claims of supported required mechanics. Preserve
+        # every exact limitation in the preparation receipt instead of making
+        # ordinary Speed entries block every real creature in every PDF.
+        adaptation_notes.extend(f"{member.creature.creature_name}: {note}"
+                                for note in stats.get("declared", []))
     monster_count = sum(member.effective_quantity for member in active_members)
     raw_xp = sum(member.creature.xp * member.effective_quantity for member in active_members)
     multiplier = encounter_multiplier(monster_count, len(party.heroes))
@@ -440,8 +452,6 @@ def ground_encounter_plan(
     thresholds = encounter_thresholds(party)
     difficulty = encounter_difficulty(adjusted_xp, thresholds)
     findings = []
-    if any(member.creature.monster_stats.get("declared") for member in members):
-        findings.append("unsupported_creature_mechanics")
     if difficulty_exceeds(difficulty, plan.maximum_difficulty):
         findings.append("encounter_exceeds_authored_maximum_difficulty")
     if any(hero.level != plan.target_level for hero in party.heroes):
