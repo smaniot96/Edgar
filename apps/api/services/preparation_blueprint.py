@@ -262,8 +262,12 @@ def blueprint_preflight(blueprint, design):
                     if effect.kind in {"use", "environment"} and effect.target in facts:
                         if effect.operation not in facts[effect.target].operations:
                             errors.append(f"{ep}/operation must be declared on target fact {effect.target}")
-                    if effect.destination is not None and effect.destination not in scenes and effect.destination != "character":
-                        errors.append(f"{ep}/destination must name an accepted scene or character")
+                    if effect.kind == "transfer" and effect.destination != decision.scene:
+                        errors.append(f"{ep}/destination must be the policy's current scene {decision.scene}")
+                    if effect.kind == "use" and effect.destination is not None:
+                        dest = facts.get(effect.destination)
+                        if dest is None or dest.kind != "object" or decision.scene not in dest.scenes:
+                            errors.append(f"{ep}/destination must name an object fact present in the policy's scene")
                     # Distinct IDs preserve duplicate-target checking without requiring canonical IDs yet.
                     value["target_id"] = f"target_{list(facts).index(effect.target)}" if effect.target in facts else effect.target
                     outcomes[name].append(value)
@@ -420,7 +424,8 @@ def compile_blueprint(binding, design, blueprint, *, books):
                 raise ValueError(f"{row.kind} needs an explicit intended status.")
             value = {"kind": row.kind, "target_id": target, "status": status, "passage_ids": evidence}
             if row.operation is not None:value["operation"] = row.operation
-            if row.destination is not None:value["destination"] = row.destination
+            if row.destination is not None:
+                value["destination"] = ids[row.destination] if row.kind == "use" else row.destination
             if row.kind == "clock":value["quantity_delta"] = 1 if row.quantity is None else row.quantity
             compiled.append(value)
             if row.target in definition_records:
