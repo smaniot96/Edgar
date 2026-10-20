@@ -7,22 +7,26 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from copy import deepcopy
-from datetime import UTC, datetime
 import hashlib
 import json
 import shutil
-import time
 import uuid
+from copy import deepcopy
+from datetime import UTC, datetime
 
-from edgar_core.preparation import (
-    PreparationRunBinding, PreparationStage, PreparationTaskState, PreparationTaskStatus, StagePlan,
-    build_artifact, canonical_sha256,
-)
 from apps.api.services import adventures_meta as meta_store
-from apps.api.services.preparation_sources import source_directory, load_source
-from apps.api.services.preparation_store import PreparationStore, preparation_path, _atomic_write
+from apps.api.services.preparation_sources import load_source, source_directory
 from apps.api.services.preparation_stages import _validator
+from apps.api.services.preparation_store import PreparationStore, _atomic_write, preparation_path
+from edgar_core.preparation import (
+    PreparationRunBinding,
+    PreparationStage,
+    PreparationTaskState,
+    PreparationTaskStatus,
+    StagePlan,
+    build_artifact,
+    canonical_sha256,
+)
 
 
 def import_saved_design(slug, original_run_id):
@@ -114,7 +118,7 @@ def import_saved_design(slug, original_run_id):
         meta_store.save_meta(slug, meta)
     _atomic_write(preparation_path(slug, binding.run_id).parent / "benchmark.json", {
         "started_at": now, "run_id": binding.run_id, "lineage": lineage,
-        "target_minutes": 10, "target_usd": 2, "targets_are_caps": False})
+        "target_minutes": 20, "target_usd": 5, "targets_are_caps": False})
     return binding.run_id, token
 
 
@@ -131,10 +135,21 @@ async def main():
         run_id, token = meta["preparation_run_id"], meta["attempt"]["id"]
         if run_id != args.resume_run:
             raise ValueError("Resume must match the current imported run identity.")
+        state = PreparationStore().load_run(args.slug, run_id)
+        if state.cancel_requested or state.status.value == "cancelled":
+            raise ValueError("A cancelled baseline cannot be resumed by this command.")
+        if state.status.value in {"blocked", "failed"}:
+            from apps.api.services.preparation_runtime import retry_preparation
+
+            resumed_run, token = retry_preparation(args.slug)
+            if resumed_run != run_id:
+                raise ValueError("Retry changed the saved run identity.")
     else:
         run_id, token = import_saved_design(args.slug, args.from_run)
-    print(json.dumps({"run_id": run_id, "state": "imported", "new_provider_calls": 0}), flush=True)
-    if args.import_only:return
+    print(json.dumps({"run_id": run_id, "state": "resumed" if args.resume_run else "imported",
+                      "new_provider_calls": 0}), flush=True)
+    if args.import_only:
+        return
     from apps.api.services.preparation_runtime import prepare_adventure
     path = preparation_path(args.slug, run_id).parent / "benchmark.json"
     report = json.loads(path.read_text())

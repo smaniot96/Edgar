@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import re
 
+from agent.committed_facts import committed_prepared_facts
 from agent.models.parsed_input import ParsedInput
 from agent.resolution import normalise_check
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import (
     AdventureManifest,
     ManifestError,
+    policy_fact_requirements_met,
     require_published,
     select_scene_context,
 )
+from edgar_core.prepared import PreparedCampaign, prepared_policy_available
 from edgar_core.sources import source_citation
 from edgar_core.story import StoryEffect, StoryRef, StoryState, player_story_effect
 
@@ -100,6 +103,12 @@ def policies_for_state(state: dict) -> list[dict]:
             None,
         )
         source_ready = source_status is None or source_status.get("status") == "ready"
+        committed = committed_prepared_facts(state, collection, manifest)
+        overlay = (state.get("prepared_campaign_overlays") or {}).get(collection)
+        try:
+            prepared = PreparedCampaign.model_validate(overlay) if overlay is not None else manifest.prepared
+        except ValueError:
+            continue
         for policy in manifest.resolution_policies:
             if scene_id not in policy.scene_ids:
                 continue
@@ -114,9 +123,12 @@ def policies_for_state(state: dict) -> list[dict]:
             prerequisites_met = all(
                 (state.get("world_flags") or {}).get(key) == value
                 for key, value in policy.requires.items()
-            )
+            ) and policy_fact_requirements_met(policy.requires_facts, committed)
             gear_met = all(match_inventory_item(items, item) for item in policy.requires_items)
             evidence_met = set(policy.passage_ids) <= readable_ids
+            branch_met = prepared_policy_available(
+                prepared, policy.policy_id, scene_id, state.get("world_flags") or {}, committed
+            )
             edition_met = (
                 manifest.rules_edition in {"2014", "2024"} and manifest.rules_edition == edition
             )
@@ -128,12 +140,14 @@ def policies_for_state(state: dict) -> list[dict]:
                     "manifest_sha256": manifest.reviewed_sha256,
                     "rules_edition": manifest.rules_edition,
                     "policy": policy,
+                    "prepared": prepared,
                     "available": bool(
                         source_ready
                         and supported_check
                         and prerequisites_met
                         and gear_met
                         and evidence_met
+                        and branch_met
                         and edition_met
                     ),
                     "rejection_reason": "That approach is not available in the current circumstances.",
@@ -290,6 +304,30 @@ def policy_effects_for_outcome(
     selected["expected_effect_count"] = len(definitions)
     selected["authorized_effect_keys"] = []
     selected["existing_effects"] = []
+    current = next(
+        (item for item in policies_for_state(state) if item["policy_key"] == selected.get("policy_key")),
+        None,
+    )
+    if (
+        current is None
+        or not current["available"]
+        or current["source_sha256"] != selected.get("source_sha256")
+        or current["manifest_sha256"] != selected.get("manifest_sha256")
+        or current["policy"] != policy
+        or not policy_source_is_fresh(current, state)
+        or not prepared_policy_available(
+            current["prepared"], policy.policy_id, state.get("current_scene_id"),
+            state.get("world_flags") or {},
+            committed_prepared_facts(
+                state, current["collection"], require_published(
+                    state["adventure_manifests"][current["collection"]]
+                )
+            ),
+            result="automatic" if policy.mode == "automatic" else "success" if success else "failure",
+        )
+    ):
+        selected["generation_failed"] = True
+        return [], []
     if not definitions:
         return [], []
 

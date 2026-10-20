@@ -13,7 +13,11 @@ from edgar_core.identifiers import Identifier
 from edgar_core.manifests import AdventureManifest, Passage, Scene
 
 from .preparation_content import (
-    CanonicalAct, CompleteChapter, ContentRecord, ScenePreparation, extraction_for_design,
+    CanonicalAct,
+    CompleteChapter,
+    ContentRecord,
+    ScenePreparation,
+    extraction_for_design,
     validate_fragment,
 )
 
@@ -191,10 +195,11 @@ def source_inventory(binding):
                        "characters": len(p.text)} for p in source.pages if p.text.strip()]}
 
 
-def grounding_payload(binding, act, support, books, party, *, client=None):
+def grounding_payload(binding, act, support, books, party, *, client=None, actor_manifest=None):
     """Check mechanics while the authoring proposal can still be corrected."""
     from agent.supported_rules import SUPPORTED_MECHANICS
     from edgar_core.grounding import validate_mechanic_requirements
+
     from .preparation_grounding import ground_prepared_encounters
 
     plan = support.mechanics
@@ -203,7 +208,50 @@ def grounding_payload(binding, act, support, books, party, *, client=None):
     if (plan.act_id != act.act_id or plan.level_changes or unsupported
             or any(e.scene_id not in act.scene_ids for e in plan.encounters)):
         raise ValueError("Unsupported act, progression, mechanic or encounter scene.")
-    receipts = ground_prepared_encounters(plan.encounters, party, books, client=client) if plan.encounters else []
+    from .preparation_sources import load_source
+
+    pages = dict(load_source(binding).text_pages()) if actor_manifest is not None else None
+    receipts = ground_prepared_encounters(plan.encounters, party, books, client=client,
+        actor_manifest=actor_manifest, source_pages=pages) if plan.encounters else []
+    # A named actor is an explicit participant, never inferred from a nearby scene
+    # or a generic template name. Adaptation must retain every claimed participant.
+    from collections import Counter
+
+    actors = {e.entity_id: e for e in actor_manifest.entities if e.kind == "actor"} if actor_manifest else {}
+    stamped = []
+    for encounter, receipt in zip(plan.encounters, receipts, strict=True):
+        if len(encounter.actor_ids) != len(set(encounter.actor_ids)):
+            raise ValueError(f"Encounter {encounter.encounter_id} repeats a named actor.")
+        allocated = Counter()
+        for actor_id in encounter.actor_ids:
+            actor = actors.get(actor_id)
+            if actor is None or actor.stat_reference is None:
+                raise ValueError(f"Encounter {encounter.encounter_id}: actor {actor_id} has no explicit exact statistics binding.")
+            if not any(encounter.scene_id in p.scene_ids and actor_id in p.entity_ids
+                       for p in actor_manifest.passages):
+                raise ValueError(f"Encounter {encounter.encounter_id}: actor {actor_id} is outside its source-backed scene.")
+            ref = actor.stat_reference
+            matching = [m for m in receipt.creatures if m.effective_quantity > 0
+                and m.actor_id == actor_id
+                and m.creature.creature_name.casefold().strip() == ref.creature_name.casefold().strip()
+                and ((ref.kind == "template" and m.creature.collection == ref.collection
+                      and m.creature.source_sha256 == ref.source_sha256
+                      and m.creature.rules_edition == ref.rules_edition)
+                     or (ref.kind == "module" and m.creature.collection == actor_manifest.source
+                         and m.creature.source_sha256 == actor_manifest.source_sha256
+                         and m.creature.extraction_sha256 == actor_manifest.extraction_sha256
+                         and m.creature.evidence_origin == "prepared_module"
+                         and m.creature.module_evidence is not None
+                         and m.creature.module_evidence.actor_id == actor_id))]
+            if len(matching) != 1:
+                raise ValueError(f"Encounter {encounter.encounter_id}: actor {actor_id} needs its exact source-bound participating creature.")
+            member = matching[0]
+            member_key = (member.creature.creature_id, member.actor_id)
+            allocated[member_key] += 1
+            if allocated[member_key] > member.effective_quantity:
+                raise ValueError(f"Encounter {encounter.encounter_id}: solo adaptation removed a declared actor; preserve named participants and source encounter groups.")
+        stamped.append(receipt.model_copy(update={"actor_ids": list(encounter.actor_ids)}))
+    receipts = stamped
     problems = [{"encounter_id": r.encounter_id, "findings": r.findings,
                  "unsupported": [m.model_dump(mode="json") for m in r.unsupported_mechanics]}
                 for r in receipts if r.findings or r.unsupported_mechanics]

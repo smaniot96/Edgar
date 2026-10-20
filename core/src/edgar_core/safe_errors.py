@@ -75,6 +75,8 @@ _register(
     "source_missing", "extraction_quality", "index_coverage", "checkpoint_unreadable",
     "required_books_unavailable", "required_book_unavailable", "required_books_missing",
     "book_version_unavailable", "required_assets_unavailable",
+    "creature_unresolved", "creature_record_incomplete", "creature_mechanics_unreadable",
+    "creature_identity_changed",
 )
 # One exact, actionable code per required rulebook: the message names the book that has no
 # exact indexed version for the campaign's edition. Pre-versioning data needs re-ingestion.
@@ -104,6 +106,9 @@ _register(
     "manifest_review_required", "review_required", "source_review_required",
     "source_review_needed", "adventure_review_needed",
     "saved_version_conflict",
+)
+_register(
+    FailureSpec(ErrorCategory.REVIEW, "preparation_compile_invalid", "Prepared campaign data needs a local repair. Completed work is saved.", 409, RecoveryAction.CONTACT_SUPPORT),
 )
 _register(
     FailureSpec(ErrorCategory.VALIDATION, "validation_failed", "Check the highlighted information and correct it before continuing.", 422, RecoveryAction.FIX_INPUT),
@@ -191,10 +196,15 @@ _register(
     "rate_limited", "provider_rate_limited",
 )
 _register(
-    FailureSpec(ErrorCategory.QUOTA_EXCEEDED, "quota_exceeded", "The configured service allowance has been reached. Review the provider setup before continuing.", 429, RecoveryAction.CONFIGURE_PROVIDER),
-    "quota_exceeded", "provider_quota_exceeded", "budget_exhausted", "run_budget_exhausted",
-    "attempt_budget_exhausted", "provider_budget_exhausted", "providerbudgetexhausted",
-    "task_cost_reservation",
+    FailureSpec(ErrorCategory.QUOTA_EXCEEDED, "quota_exceeded", "The model provider account has no available credits or quota. Restore provider access, then retry the saved work.", 429, RecoveryAction.CONFIGURE_PROVIDER),
+    "quota_exceeded", "provider_quota_exceeded", "credit_balance_exhausted", "insufficient_quota",
+    "billing_hard_limit_reached",
+)
+_register(
+    FailureSpec(ErrorCategory.SOURCE, "preparation_paused", "Preparation is paused with completed work saved. Retry to continue the saved preparation.", 409, RecoveryAction.RETRY, True),
+    "budget_exhausted", "run_budget_exhausted", "attempt_budget_exhausted",
+    "provider_budget_exhausted", "providerbudgetexhausted", "providerbudget_exhausted",
+    "repair_budget_exhausted", "task_cost_reservation",
 )
 _register(
     FailureSpec(ErrorCategory.PROVIDER_CONFIGURATION, "provider_configuration", "The Dungeon Master service needs configuration before it can continue.", 503, RecoveryAction.CONFIGURE_PROVIDER),
@@ -336,6 +346,29 @@ def safe_code(value: object) -> str | None:
     return value if isinstance(value, str) and value in _SPECS else None
 
 
+def provider_response_error_code(error: object) -> str:
+    """Classify structured provider enums without copying messages or arbitrary codes."""
+    if hasattr(error, "model_dump"):
+        error = error.model_dump()
+    if not isinstance(error, dict):
+        return "provider_request_failed"
+    nested = error.get("error")
+    details = nested if isinstance(nested, dict) else error
+    codes = {value for key in ("code", "type")
+             if isinstance(value := details.get(key), str)}
+    if codes & {"credit_balance_exhausted", "insufficient_quota", "billing_hard_limit_reached"}:
+        return "quota_exceeded"
+    if codes & {"rate_limit_exceeded", "rate_limit_error", "too_many_requests"}:
+        return "rate_limited"
+    if codes & {"invalid_request_error", "invalid_json_schema", "context_length_exceeded",
+                "model_not_found", "unsupported_parameter", "authentication_error",
+                "invalid_api_key", "permission_denied"}:
+        return "provider_configuration"
+    if codes & {"server_error", "internal_error", "service_unavailable"}:
+        return "provider_unavailable"
+    return "provider_request_failed"
+
+
 def _provider_spec(exc: BaseException) -> FailureSpec | None:
     """Classify provider failures by SDK class/status, never message or response body."""
     try:
@@ -350,15 +383,15 @@ def _provider_spec(exc: BaseException) -> FailureSpec | None:
     except ImportError:  # The core package is also used without provider extras.
         return None
 
+    if (isinstance(exc, APIStatusError)
+            and provider_response_error_code(getattr(exc, "body", None)) == "quota_exceeded"):
+        return _SPECS["quota_exceeded"]
+
     if isinstance(exc, RateLimitError):
         # The provider body is consulted only for a tiny, fixed enum. It is never copied,
         # stringified, logged, or returned to a caller.
         body = getattr(exc, "body", None)
-        provider_code = None
-        if isinstance(body, dict):
-            nested = body.get("error")
-            provider_code = nested.get("code") if isinstance(nested, dict) else body.get("code")
-        if isinstance(provider_code, str) and provider_code in {"insufficient_quota", "billing_hard_limit_reached"}:
+        if provider_response_error_code(body) == "quota_exceeded":
             return _SPECS["quota_exceeded"]
         return _SPECS["rate_limited"]
     if isinstance(exc, APIConnectionError):
@@ -369,11 +402,7 @@ def _provider_spec(exc: BaseException) -> FailureSpec | None:
         status = getattr(exc, "status_code", None)
         if status == 429:
             body = getattr(exc, "body", None)
-            provider_code = None
-            if isinstance(body, dict):
-                nested = body.get("error")
-                provider_code = nested.get("code") if isinstance(nested, dict) else body.get("code")
-            if isinstance(provider_code, str) and provider_code in {"insufficient_quota", "billing_hard_limit_reached"}:
+            if provider_response_error_code(body) == "quota_exceeded":
                 return _SPECS["quota_exceeded"]
             return _SPECS["rate_limited"]
         if isinstance(status, int) and status >= 500:

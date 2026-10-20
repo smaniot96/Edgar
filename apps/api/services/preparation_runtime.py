@@ -29,7 +29,6 @@ from edgar_core.preparation import (
     PreparationPublication,
     PreparationRunBinding,
     PreparationRunState,
-    PreparationTaskStatus,
     PublicPreparationStatus,
     SafePreparationFailure,
     canonical_sha256,
@@ -38,7 +37,11 @@ from edgar_core.preparation import (
 from edgar_core.safe_errors import safe_code
 
 from . import adventures_meta as meta_store
-from .preparation import PreparationError, PreparationSupervisor
+from .preparation import (
+    PreparationError,
+    PreparationSupervisor,
+    automatically_retryable_preparation_task,
+)
 from .preparation_store import PreparationStore, PreparationStoreError, preparation_path
 from .safe_errors import classify_error, new_support_ref, safe_failure_metadata
 
@@ -83,11 +86,6 @@ _RESTART_PREPARATION_CODES = {
     "unsupported_edition",
     "unsupported_progression",
     "unsupported_hero_capability",
-    "budget_exhausted",
-    "run_budget_exhausted",
-    "provider_budget_exhausted",
-    "providerbudget_exhausted",
-    "repair_budget_exhausted",
     "required_assets_unavailable",
 }
 _PREPARATION_FAILURE_MESSAGES = {
@@ -102,29 +100,37 @@ _PREPARATION_FAILURE_MESSAGES = {
     "unsupported_edition": "This rules edition is not supported for preparation. Choose a supported edition and start a new adventure.",
     "unsupported_progression": "The requested character progression is not supported. Change the target level or party and start a new adventure.",
     "unsupported_hero_capability": "A selected hero capability is not supported by preparation. Choose a different party and start a new adventure.",
-    "budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
-    "run_budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
-    "attempt_budget_exhausted": "This attempt needs attention. Retry to continue the saved preparation work.",
-    "provider_budget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
-    "providerbudget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
-    "repair_budget_exhausted": "The adventure needs more repair work than this commission allows. Start a new preparation with a larger repair budget.",
+    "budget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "run_budget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "attempt_budget_exhausted": "Retry to continue the saved preparation work.",
+    "provider_budget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "providerbudget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "repair_budget_exhausted": "Retry to continue the saved preparation repairs.",
+    "quota_exceeded": "The model provider account has no available credits or quota. Restore provider access, then retry this saved preparation.",
+    "provider_quota_exceeded": "The model provider account has no available credits or quota. Restore provider access, then retry this saved preparation.",
+    "credit_balance_exhausted": "The model provider account has no available credits. Add credits, then retry this saved preparation.",
+    "insufficient_quota": "The model provider account has no available quota. Restore provider access, then retry this saved preparation.",
+    "billing_hard_limit_reached": "The model provider account needs billing attention. Restore provider access, then retry this saved preparation.",
+    "provider_configuration": "The model provider configuration needs attention. Correct it, then retry this saved preparation.",
+    "provider_output_invalid": "The retained preparation needs a content correction. Its completed work is saved.",
+    "preparation_compile_invalid": "Prepared campaign data needs a local repair. Its completed work is saved.",
+    "creature_unresolved": "Exact creature evidence needs a local source repair. Retry this saved preparation after the repair.",
+    "creature_record_incomplete": "Exact creature evidence is incomplete. Retry this saved preparation after the source repair.",
+    "creature_mechanics_unreadable": "Exact creature mechanics need a local source repair. Retry this saved preparation after the repair.",
+    "creature_identity_changed": "The creature source identity changed. Review its source binding before retrying the saved preparation.",
     "required_assets_unavailable": "Required maps or handouts could not be prepared. Change asset requirements and start a new preparation.",
 }
 
 
 def _needs_new_commission(code: str | None) -> bool:
-    if code == "attempt_budget_exhausted":
-        return False
-    return code in _RESTART_PREPARATION_CODES or (
-        isinstance(code, str) and "budget" in code.lower()
-    )
+    return code in _RESTART_PREPARATION_CODES
 
 
 def _preparation_failure_message(code: str | None) -> str:
     if isinstance(code, str):
         return _PREPARATION_FAILURE_MESSAGES.get(
             code,
-            "The preparation needs a new commission. Review the party, rules edition, sourcebooks, assets, and budget before starting again."
+            "The preparation needs a new commission. Review the party, rules edition, sourcebooks, and assets before starting again."
             if _needs_new_commission(code)
             else "Preparation needs attention. Retry the saved work or start a new adventure.",
         )
@@ -155,11 +161,11 @@ def make_preparation_supervisor(
 
 
 def _has_retryable_task(state: PreparationRunState) -> bool:
-    """A FAILED run whose failed task still has attempts left continues in this job."""
+    """Confirmed transient failures continue with backoff and no attempt cap."""
     if state.status != PreparationJobStatus.FAILED or state.cancel_requested:
         return False
     return any(
-        task.status == PreparationTaskStatus.FAILED and task.attempt_count < task.attempt_limit(state.binding)
+        automatically_retryable_preparation_task(task)
         for task in state.tasks.values()
     )
 
@@ -268,7 +274,8 @@ def _binding_for(
         source_sha = source_digest(retained_pdf)
         extraction_sha = extraction.text_sha256()
         commission = copy.deepcopy(request)
-        commission.update({"source_kind": "pdf", "source_sha256": source_sha})
+        commission.update({"source_kind": "pdf", "source_sha256": source_sha,
+                           "preparation_pipeline": "compact_v1"})
         version = f"pdf-{source_sha[:24]}-{extraction_sha[:16]}"
     else:
         commission = _generation_commission(meta, setup)
@@ -1544,8 +1551,8 @@ async def prepare_adventure(
             ) and not _has_retryable_task(state):
                 _sync_terminal_meta(slug, current_token, state)
                 return state
-            # A failed task with attempts left (a known, retryable failure such as an invalid model
-            # answer) is retried by the next supervisor step rather than ending the job.
+            # Only confirmed transient failures retry automatically. Quota, unknown
+            # outcomes and unchanged invalid requests pause with retained work.
             result = await supervisor.step(
                 slug,
                 run_id,

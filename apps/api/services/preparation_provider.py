@@ -1,7 +1,7 @@
 """One accounted Responses request per supervised semantic task.
 
-The supervisor reserves the complete task ceiling before calling this module. SDK
-retries are disabled; failed/unknown usage keeps that reservation charged. Source
+The supervisor reserves an advisory task estimate before calling this module. SDK
+retries are disabled; unknown inference usage remains an explicit unresolved estimate. Source
 text is evidence inside a JSON value, never tool or system instructions.
 """
 
@@ -15,14 +15,20 @@ import time
 
 import structlog
 import tiktoken
-from openai import BadRequestError
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
 from agent.llm import make_chat_model
 from edgar_core.model_profiles import ModelProfileSnapshot, effective_profile
-from edgar_core.preparation import PreparationRunBinding, PreparationTask, ProviderUsage, ResponseUsage
-from edgar_core.safe_errors import provider_error_code
+from edgar_core.preparation import (
+    PreparationRunBinding,
+    PreparationTask,
+    ProviderUsage,
+    ResponseUsage,
+    UnresolvedProviderCall,
+    canonical_sha256,
+)
+from edgar_core.safe_errors import provider_error_code, provider_response_error_code
 
 log = structlog.get_logger(__name__)
 
@@ -30,6 +36,26 @@ log = structlog.get_logger(__name__)
 INPUT_MICROUSD_PER_TOKEN = 4
 OUTPUT_MICROUSD_PER_TOKEN = 20
 TASK_VERSION = "preparation-responses-v1"
+
+
+def _explicit_preinference_rejection(error: object, *, has_output: bool = False) -> bool:
+    """Only fixed rejection enums with no inference output justify known zero usage."""
+    if has_output:
+        return False
+    if hasattr(error, "model_dump"):
+        error = error.model_dump()
+    if not isinstance(error, dict):
+        return False
+    nested = error.get("error")
+    details = nested if isinstance(nested, dict) else error
+    codes = {value for key in ("code", "type")
+             if isinstance(value := details.get(key), str)}
+    return bool(codes & {
+        "credit_balance_exhausted", "insufficient_quota", "billing_hard_limit_reached",
+        "rate_limit_exceeded", "rate_limit_error", "invalid_request_error",
+        "invalid_json_schema", "context_length_exceeded", "model_not_found",
+        "unsupported_parameter", "authentication_error", "invalid_api_key", "permission_denied",
+    })
 
 
 def _dynamic_objects(value):
@@ -145,6 +171,7 @@ async def invoke_preparation[T: BaseModel](
         "service_tier": "default",
     }
     started = time.monotonic()
+    dispatch_id = canonical_sha256({"idempotency_key": idempotency_key})
     unknown = ProviderUsage(
         provider_called=True,
         usage_known=False,
@@ -153,6 +180,11 @@ async def invoke_preparation[T: BaseModel](
         reasoning_effort=profile.reasoning_effort,
         task_version=TASK_VERSION,
         failure_code="provider_request_failed",
+        unresolved_calls=(UnresolvedProviderCall(
+            dispatch_id=dispatch_id,
+            estimated_tokens=estimated_input + task.max_output_tokens,
+            estimated_cost_microusd=request_cost_ceiling(estimated_input, task.max_output_tokens),
+        ),),
     )
     try:
         from .preparation_responses import await_response
@@ -160,7 +192,7 @@ async def invoke_preparation[T: BaseModel](
         response = await await_response(llm.root_async_client, binding, task, request,
                                         idempotency_key=idempotency_key)
     except asyncio.CancelledError:
-        raise  # Supervisor charges its outstanding reservation before propagating cancellation.
+        raise  # Supervisor retains its unresolved estimate before propagating cancellation.
     except Exception as exc:
         code = provider_error_code(exc)
         from .preparation_proposals import proposal_directory
@@ -184,15 +216,19 @@ async def invoke_preparation[T: BaseModel](
             timeout_seconds=profile.timeout_seconds,
         )
         failed_usage = unknown.model_copy(update={"failure_code": code})
-        if isinstance(exc, BadRequestError):
-            # A rejected request never ran inference. Keep the request in the audit
-            # without charging its full token/cost reservation as unknown spending.
-            failed_usage = unknown.model_copy(update={"usage_known": True, "failure_code": None})
+        if _explicit_preinference_rejection(getattr(exc, "body", None)):
+            # HTTP status/class alone does not establish zero inference usage.
+            failed_usage = unknown.model_copy(update={"usage_known": True, "unresolved_calls": ()})
         raise PreparationTaskFailure(code, usage=failed_usage) from exc
     usage = response.usage.model_dump() if response.usage else {}
     metadata = response.model_dump()
     tokens_in, tokens_out = usage.get("input_tokens"), usage.get("output_tokens")
     known = type(tokens_in) is int and type(tokens_out) is int and min(tokens_in, tokens_out) >= 0
+    response_error = metadata.get("error")
+    if (not known and response.status == "failed"
+            and _explicit_preinference_rejection(response_error, has_output=bool(metadata.get("output")))):
+        tokens_in = tokens_out = 0
+        known = True
     resolved = response.model
     recorded = ProviderUsage(
         provider_called=True,
@@ -208,8 +244,17 @@ async def invoke_preparation[T: BaseModel](
         latency_ms=int((time.monotonic() - started) * 1000),
         responses=(ResponseUsage(response_id=response.id, input_tokens=tokens_in,
                    output_tokens=tokens_out,
-                   cost_microusd=request_cost_ceiling(tokens_in, tokens_out)),) if known else (),
+                   cost_microusd=request_cost_ceiling(tokens_in, tokens_out),
+                   dispatch_id=dispatch_id),) if known else (),
+        unresolved_calls=() if known else (
+            unknown.unresolved_calls[0].model_copy(update={"response_id": response.id}),),
     )
+    if response_error is not None or response.status in {"failed", "cancelled"}:
+        code = provider_response_error_code(response_error)
+        log.warning("preparation_provider_response_failed", stage=task.stage.value,
+                    task_id=task.task_id, failure_code=code,
+                    response_status=response.status, usage_known=known)
+        raise PreparationTaskFailure(code, usage=recorded.model_copy(update={"failure_code": code}))
     if resolved is not None and (
         not isinstance(resolved, str)
         or (resolved != profile.model and not resolved.startswith(profile.model + "-"))
@@ -230,7 +275,7 @@ async def invoke_preparation[T: BaseModel](
     except ValueError as exc:
         validation_error = exc
     if result is None:
-        # A completed call with known usage: retryable within the task's attempt limit.
+        # Retain semantic output and diagnostics; infrastructure failures returned above.
         incomplete = metadata.get("incomplete_details")
         log.warning(
             "preparation_output_invalid",

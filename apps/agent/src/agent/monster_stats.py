@@ -82,7 +82,7 @@ _STAT_LINE = re.compile(
     r"Damage (?:Resistances|Immunities|Vulnerabilities)|Condition Immunities|Proficiency Bonus)\b",
     re.IGNORECASE,
 )
-_ENTRY = re.compile(r"^([A-Z][\w'’ ()/,\u2013\u2014-]{0,70}?)\.\s+(\S.*)$")
+_ENTRY = re.compile(r"^([A-Z][\w'’ ()}/{,\u2013\u2014-]{0,70}?)\.\s+(\S.*)$")
 _LOWER_ATTACK_ENTRY = re.compile(r"^([a-z][\w'’ ()/,\u2013\u2014-]{0,70}?)\.\s+(\S.*)$")
 _ATTACK = re.compile(
     r"^(Melee or Ranged|Melee|Ranged) Weapon Attack:\s*\+(-?\d+) to hit\b.*?\bHit:\s*([0-9lI]+)\s*"
@@ -702,10 +702,12 @@ def _multiattack(
 
 
 _SPELLCAST_ABILITY = re.compile(
-    r"spellcasting ability is (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)",
+    r"spellcasting ability is (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)|"
+    r"uses (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) as "
+    r"(?:its|his|her|their) spellcasting ability",
     re.IGNORECASE,
 )
-_SPELLCAST_LEVEL = re.compile(r"\b(\d+)(?:st|nd|rd|th)-level spellcaster\b", re.IGNORECASE)
+_SPELLCAST_LEVEL = re.compile(r"\b(\d+)(?:st|nd|rd|th)[·‐‑–—-]level spell\s*caster\b", re.IGNORECASE)
 _SPELLCAST_DC = re.compile(r"spell save DC\s+(\d+)", re.IGNORECASE)
 _SPELLCAST_ATTACK = re.compile(r"([+-]\d+) to hit with spell attacks?", re.IGNORECASE)
 _SPELL_LIST_HEADING = re.compile(
@@ -751,7 +753,7 @@ def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[st
     if not spells:
         unsupported.append("no listed spell is in the engine's action-spell catalog")
     result = MonsterSpellcasting(
-        ability=ability.group(1).upper()[:3],
+        ability=(ability.group(1) or ability.group(2)).upper()[:3],
         caster_level=int(caster_level_match.group(1)),
         save_dc=int(dc.group(1)),
         attack_bonus=int(attack.group(1)),
@@ -790,7 +792,7 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
     section = "traits"
     current: list[str] | None = None
     for line in lines:
-        heading = _SECTION_HEADINGS.get(line.lower().rstrip(":"))
+        heading = _SECTION_HEADINGS.get(line.strip(" #*_`").lower().rstrip(":"))
         if heading is not None:
             section, current = heading, None
             if heading == "lair":

@@ -56,7 +56,8 @@ def save_proposal(binding, task, schema, value, usage, key):
 
 def reject_proposal(path, record, error):
     # This detail can contain private model/source text, so retain it only here.
-    record["diagnostics"] = [{"type": type(error).__name__, "message": str(error)[:12000]}]
+    record["diagnostics"] = getattr(error, "diagnostics", None) or [
+        {"type": type(error).__name__, "message": str(error)}]
     _atomic_write(path, record)
     from .preparation_responses import reject_responses
 

@@ -20,13 +20,14 @@ the attack bonus to +4 and the damage to 3 per hit, because the level-1 deadly t
 A test recomputes this worst case for all 20 levels from the DMG tables.
 
 Enforcement is deterministic and never empties the roster:
-  * Foes beyond the count limit, or that would push total HP over budget, are LEFT OUT. Bosses are
-    kept first, then the builder's order. The first kept foe is never removed.
+  * Exact named actors are kept first, including when their number exceeds the ordinary count
+    limit. Other foes beyond the count limit, or that would push total HP over budget, are LEFT
+    OUT. Bosses precede other optional foes, followed by the builder's order.
   * Only the first generic boss takes the boss HP band; a later generic boss takes the foe band.
   * Numbers outside a range are CLAMPED into it. Damage is trimmed by dropping extra dice, then
     smaller die sizes, then the modifier, until the average fits. Generic foes only.
   * An exact creature (one with a `creature_id`) is never rescaled (EDG-004): its HP, AC, attacks
-    and traits come from its verified record. The budget limits only how many foes take part, and
+    and traits come from its verified record. The budget limits only optional foe counts, and
     notes ("unscaled exact creature: ...") any exact foe whose record exceeds a per-foe band.
   * Names, `creature_id`, `source_reference` and every other field are never changed.
   * Armor class is not budgeted.
@@ -166,6 +167,16 @@ UNSCALED_PREFIX = "unscaled exact creature"
 def is_exact(enemy: dict) -> bool:
     """An exact creature: a roster entry that names a verified creature record."""
     return bool(enemy.get("creature_id"))
+
+
+def _named_actor_slot(enemy: dict) -> tuple | None:
+    """Only a verified creature with an explicit canonical actor binding owns a required slot."""
+    source = enemy.get("source_reference")
+    if (not is_exact(enemy) or not isinstance(source, dict)
+            or not isinstance(source.get("actor_id"), str) or not source["actor_id"]):
+        return None
+    return tuple(source.get(key) for key in
+                 ("actor_collection", "actor_manifest_sha256", "actor_source_sha256", "actor_id"))
 
 
 def _clamp_foe(enemy: dict, budget: SoloBudget, notes: list[str], *, boss: bool) -> dict:
@@ -316,9 +327,15 @@ def apply_solo_budget(
     if not enemies:
         return [], _summary(budget, notes, None)
 
-    # Bosses are kept first so a count or HP trim never removes the climactic foe.
-    priority = sorted(range(len(enemies)), key=lambda i: (not enemies[i].get("is_boss"), i))
+    # Canonical participants cannot disappear during fitting. Optional populations use
+    # the remaining slots; a boss label is independent of an actor's story identity.
+    named_count = len({slot for enemy in enemies if (slot := _named_actor_slot(enemy)) is not None})
+    if named_count > budget.max_foes:
+        notes.append(f"All {named_count} named actors retained above the ordinary solo limit of {budget.max_foes} foes; exact statistics and encounter danger are preserved")
+    priority = sorted(range(len(enemies)),
+                      key=lambda i: (_named_actor_slot(enemies[i]) is None, not enemies[i].get("is_boss"), i))
     kept: list[int] = []
+    kept_actors: set[tuple] = set()
     boss_band: dict[int, bool] = {}
     boss_band_taken = False
     generic_total = 0
@@ -326,7 +343,13 @@ def apply_solo_budget(
     for i in priority:
         foe = enemies[i]
         name = foe.get("name", "?")
-        if len(kept) >= budget.max_foes:
+        actor_slot = _named_actor_slot(foe)
+        if actor_slot is not None and actor_slot in kept_actors:
+            notes.append(f"{name} duplicate named actor left out; its canonical participant is already retained")
+        elif actor_slot is not None:
+            kept.append(i)
+            kept_actors.add(actor_slot)
+        elif len(kept) >= budget.max_foes:
             notes.append(f"{name} left out (solo limit of {budget.max_foes} foes)")
         elif is_exact(foe):
             kept.append(i)  # exact records are not rescaled, so only the count limit applies

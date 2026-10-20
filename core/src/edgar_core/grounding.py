@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -184,6 +185,7 @@ class EncounterCreatureRequest(GroundingRecord):
     creature_name: str = Field(min_length=1, max_length=200)
     quantity: int = Field(ge=1, le=100)
     role: Literal["boss", "foe"] = "foe"
+    actor_id: Identifier | None = None
 
 
 class MechanicRequirement(GroundingRecord):
@@ -203,17 +205,110 @@ class EncounterPlan(GroundingRecord):
     creatures: list[EncounterCreatureRequest] = Field(min_length=1, max_length=100)
     maximum_difficulty: Difficulty
     mechanics: list[MechanicRequirement] = Field(default_factory=list, max_length=200)
+    actor_ids: list[Identifier] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def no_duplicate_creature_names(self) -> EncounterPlan:
-        normalized = [" ".join(row.creature_name.casefold().split()) for row in self.creatures]
+        normalized = [(" ".join(row.creature_name.casefold().split()), row.actor_id)
+                      for row in self.creatures]
         if len(normalized) != len(set(normalized)):
-            raise ValueError("Group repeated creature names into one exact quantity row.")
+            raise ValueError("Group repeated unnamed creatures into one quantity row; named actors need distinct actor IDs.")
+        actors = [row.actor_id for row in self.creatures if row.actor_id is not None]
+        if len(actors) != len(set(actors)):
+            raise ValueError("A canonical actor can occupy only one encounter slot.")
+        if any(row.actor_id is not None and row.quantity != 1 for row in self.creatures):
+            raise ValueError("A named actor request must have quantity one.")
         return self
 
     @property
     def plan_sha256(self) -> str:
         return _canonical_digest(self.model_dump(mode="json"))
+
+
+class CreatureSourceRegion(GroundingRecord):
+    bounds: list[float] = Field(min_length=4, max_length=4)
+    text_sha256: Digest
+    selected_start: int = Field(ge=0)
+    selected_end: int = Field(ge=1)
+    reviewed_suffix: str | None = None
+    reviewed_prefix: str | None = None
+
+    @model_validator(mode="after")
+    def valid_region(self) -> CreatureSourceRegion:
+        left, top, right, bottom = self.bounds
+        if not all(math.isfinite(value) for value in self.bounds) or left < 0 or top < 0 or right <= left or bottom <= top:
+            raise ValueError("Supplemental creature region needs ordered page bounds.")
+        if self.selected_end <= self.selected_start:
+            raise ValueError("Supplemental creature region needs a nonempty exact text selection.")
+        return self
+
+
+class CreatureSourceEvidence(GroundingRecord):
+    """Supplemental exact PDF proof; this text was not supplied by the active index."""
+
+    pdf_sha256: Digest
+    physical_page: int = Field(ge=1)
+    bounds: list[float] = Field(min_length=4, max_length=4)
+    regions: list[CreatureSourceRegion] = Field(min_length=1)
+    parser: str = Field(min_length=1, max_length=200)
+    parser_version: str = Field(min_length=1, max_length=100)
+    page_text_sha256: Digest
+    extracted_text_sha256: Digest
+    record_text_sha256: Digest
+    reviewed_labels: list[str] = Field(default_factory=list, max_length=2)
+    reviewed_by: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def valid_bounds(self) -> CreatureSourceEvidence:
+        left, top, right, bottom = self.bounds
+        if not all(math.isfinite(value) for value in self.bounds) or left < 0 or top < 0 or right <= left or bottom <= top:
+            raise ValueError("Supplemental creature evidence needs exact ordered page bounds.")
+        if self.bounds != [min(r.bounds[0] for r in self.regions), min(r.bounds[1] for r in self.regions),
+                           max(r.bounds[2] for r in self.regions), max(r.bounds[3] for r in self.regions)]:
+            raise ValueError("Supplemental creature bounds must enclose exactly its reviewed regions.")
+        return self
+
+
+class CreatureTextCorrection(GroundingRecord):
+    """A source-checksum-bound glyph explicitly read from the printed PDF."""
+
+    start: int = Field(ge=0)
+    end: int = Field(ge=1)
+    original: str = Field(min_length=1)
+    reviewed: str = Field(min_length=1)
+    physical_page: int = Field(ge=1)
+    bounds: list[float] = Field(min_length=4, max_length=4)
+    reviewed_by: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def valid_correction(self) -> CreatureTextCorrection:
+        left, top, right, bottom = self.bounds
+        if (self.end - self.start != len(self.original)
+                or not all(math.isfinite(v) for v in self.bounds)
+                or left < 0 or top < 0 or right <= left or bottom <= top):
+            raise ValueError("A reviewed source glyph needs exact original offsets and PDF bounds.")
+        return self
+
+
+class ModuleCreatureEvidence(GroundingRecord):
+    """One exact prepared-module passage from the verified frozen extraction."""
+
+    source_sha256: Digest
+    extraction_sha256: Digest
+    actor_id: Identifier
+    passage_id: Identifier
+    page: int = Field(ge=1)
+    start: int = Field(ge=0)
+    end: int = Field(ge=1)
+    text_sha256: Digest
+    parsing_text_sha256: Digest | None = None
+    source_corrections: list[CreatureTextCorrection] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def valid_span(self) -> ModuleCreatureEvidence:
+        if self.end <= self.start:
+            raise ValueError("Prepared module creature evidence needs a nonempty exact span.")
+        return self
 
 
 class GroundedCreature(GroundingRecord):
@@ -226,7 +321,7 @@ class GroundedCreature(GroundingRecord):
     source_sha256: Digest
     extraction_sha256: Digest
     rules_edition: RulesEdition
-    index_version: Digest
+    index_version: Digest | None
     page: int = Field(ge=1)
     page_end: int = Field(ge=1)
     text_sha256: Digest
@@ -234,6 +329,9 @@ class GroundedCreature(GroundingRecord):
     challenge_rating: str = Field(min_length=1, max_length=10)
     xp: int = Field(ge=0)
     monster_stats: dict[str, Any] = Field(min_length=1, max_length=100)
+    evidence_origin: Literal["active_index", "source_pdf", "prepared_module"] = "active_index"
+    source_evidence: CreatureSourceEvidence | None = None
+    module_evidence: ModuleCreatureEvidence | None = None
 
     @model_validator(mode="after")
     def citation_and_text_match(self) -> GroundedCreature:
@@ -241,11 +339,51 @@ class GroundedCreature(GroundingRecord):
             raise ValueError("Creature citation page_end must be at or after page.")
         if hashlib.sha256(self.stat_block_text.encode("utf-8")).hexdigest() != self.text_sha256:
             raise ValueError("Creature stat text does not match its text digest.")
+        if self.evidence_origin == "source_pdf":
+            proof = self.source_evidence
+            if (
+                proof is None or proof.pdf_sha256 != self.source_sha256
+                or proof.physical_page != self.page or self.page_end != self.page
+                or proof.record_text_sha256 != self.text_sha256
+            ):
+                raise ValueError("Supplemental creature text needs its matching frozen PDF proof.")
+            if self.index_version is None or self.module_evidence is not None:
+                raise ValueError("Supplemental PDF proof needs the frozen index binding and no module proof.")
+        elif self.evidence_origin == "prepared_module":
+            proof = self.module_evidence
+            if (
+                proof is None or self.index_version is not None or self.source_evidence is not None
+                or proof.source_sha256 != self.source_sha256
+                or proof.extraction_sha256 != self.extraction_sha256
+                or proof.page != self.page or self.page_end != self.page
+                or proof.text_sha256 != self.text_sha256
+                or proof.end - proof.start != len(self.stat_block_text)
+            ):
+                raise ValueError("Prepared module creature text needs its exact frozen passage proof.")
+            parsed_text = self.stat_block_text
+            previous_end = 0
+            for correction in proof.source_corrections:
+                if (correction.physical_page != self.page or correction.start < previous_end
+                        or self.stat_block_text[correction.start:correction.end] != correction.original):
+                    raise ValueError("Reviewed creature glyphs must match nonoverlapping original source spans.")
+                previous_end = correction.end
+            for correction in reversed(proof.source_corrections):
+                parsed_text = parsed_text[:correction.start] + correction.reviewed + parsed_text[correction.end:]
+            if proof.source_corrections:
+                if hashlib.sha256(parsed_text.encode("utf-8")).hexdigest() != proof.parsing_text_sha256:
+                    raise ValueError("Reviewed creature parsing text must match its recorded digest.")
+            elif proof.parsing_text_sha256 is not None:
+                raise ValueError("A parsing-text digest requires explicit reviewed source corrections.")
+        elif self.source_evidence is not None:
+            raise ValueError("Active-index creature text cannot claim supplemental PDF proof.")
+        elif self.index_version is None or self.module_evidence is not None:
+            raise ValueError("Active-index creature text needs its index version and no module proof.")
         return self
 
 
 class GroundedEncounterMember(GroundingRecord):
     creature: GroundedCreature
+    actor_id: Identifier | None = None
     requested_quantity: int = Field(ge=1, le=100)
     effective_quantity: int = Field(ge=0, le=100)
     role: Literal["boss", "foe"]
@@ -279,6 +417,7 @@ class EncounterGroundingReceipt(GroundingRecord):
     supported_mechanics: list[MechanicRequirement] = Field(default_factory=list, max_length=200)
     unsupported_mechanics: list[MechanicRequirement] = Field(default_factory=list, max_length=200)
     findings: list[str] = Field(default_factory=list, max_length=500)
+    actor_ids: list[Identifier] = Field(default_factory=list)
 
     @property
     def valid(self) -> bool:
@@ -326,7 +465,7 @@ _CR_XP = {
     "30": 155000,
 }
 _CHALLENGE_LINE = re.compile(
-    r"^Challenge\s+(\d+(?:/\d+)?)(?:\s+\(([\d,]+)\s+XP\))?\s*$", re.IGNORECASE
+    r"^Challenge\s+(\d+(?:/\d+)?)(?:\s+\((\d{1,3}(?:\s*,\s*\d{3})+|\d+)\s+XP\))?\s*$", re.IGNORECASE
 )
 
 
@@ -345,7 +484,7 @@ def challenge_xp_from_stat_block(text: str) -> tuple[str, int]:
     expected_xp = _CR_XP.get(rating)
     if expected_xp is None or printed_xp is None:
         raise ValueError("Creature CR/XP is missing or outside the engine's 2014 table.")
-    if int(printed_xp.replace(",", "")) != expected_xp:
+    if int(re.sub(r"[\s,]", "", printed_xp)) != expected_xp:
         raise ValueError("Printed XP conflicts with the engine-owned 2014 CR/XP table.")
     return rating, expected_xp
 
@@ -463,7 +602,8 @@ def validate_mechanic_requirements(
 __all__ = [
     "BookBinding", "BookReferenceRequest", "BookRole", "BookStudyReceipt", "BookTextEvidence",
     "Difficulty", "EncounterCreatureRequest", "EncounterGroundingReceipt", "EncounterPlan",
-    "EncounterThresholds", "GroundedCreature", "GroundedEncounterMember", "HeroPartySnapshot",
+    "EncounterThresholds", "CreatureSourceRegion", "CreatureSourceEvidence", "CreatureTextCorrection", "ModuleCreatureEvidence",
+    "GroundedCreature", "GroundedEncounterMember", "HeroPartySnapshot",
     "HeroSnapshot", "MechanicCategory", "MechanicRequirement", "RulesEdition", "VerifiedBookEvidence",
     "VerifiedBookSnapshot", "challenge_xp_from_stat_block", "difficulty_exceeds", "encounter_difficulty",
     "encounter_multiplier", "encounter_thresholds", "select_book_evidence", "validate_mechanic_requirements",
