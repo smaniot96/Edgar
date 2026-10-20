@@ -626,6 +626,7 @@ class PreparationSupervisor:
                 # run was cancelled while this worker waited for its semaphore.
                 return PreparationStep(self.store.load_run(slug, run_id))
             task_state = state.tasks[_task_key(task)]
+            task = task_state.task
             deps = tuple(state.artifacts[artifact_id] for artifact_id in task.dependency_artifact_ids)
             adapter = self.adapters[task.stage]
             idem_key = task_state.provider_idempotency_key or canonical_sha256(
@@ -634,14 +635,19 @@ class PreparationSupervisor:
             )
             try:
                 self._check_live(state, source_guard)
-                result = await self._execute_with_lease(
+                async def execute_and_validate():
+                    result = await _call(adapter.execute, state.binding, task, deps,
+                                         task_state.attempt_count, idem_key)
+                    if not isinstance(result, StageExecutionResult):
+                        raise PreparationTaskFailure("worker_result_invalid")
+                    self._check_live(self.store.load_run(slug, run_id), source_guard)
+                    receipts, findings = await self._validate_outputs(state.binding, task, result, deps)
+                    return result, receipts, findings
+
+                result, receipts, findings = await self._execute_with_lease(
                     slug, run_id, worker_id, task, task_state.lease_fence, source_guard,
-                    adapter.execute, state.binding, task, deps, task_state.attempt_count, idem_key,
+                    execute_and_validate,
                 )
-                if not isinstance(result, StageExecutionResult):
-                    raise PreparationTaskFailure("worker_result_invalid")
-                self._check_live(self.store.load_run(slug, run_id), source_guard)
-                receipts, findings = await self._validate_outputs(state.binding, task, result, deps)
                 self._check_live(self.store.load_run(slug, run_id), source_guard)
                 saved = self._accept_task(slug, run_id, worker_id, task, task_state.lease_fence,
                                           result, receipts, findings, reserved_calls, reserved_tokens, reserved_cost)
@@ -712,6 +718,28 @@ class PreparationSupervisor:
             saved = payload["tasks"][key]
             if saved["status"] != "pending":
                 raise PreparationError("Task is no longer pending.")
+            if task.stage == PreparationStage.P04 and saved["attempt_count"] == 0:
+                designs = [a for a in payload["artifacts"].values()
+                           if a["artifact_kind"] == "campaign_design"]
+                if designs:
+                    acts = [a["act_id"] for a in designs[0]["payload"]["design"]["acts"]]
+                    earlier = acts[:acts.index(task.scope_keys[0])]
+                    earlier_tasks = [t for t in payload["tasks"].values()
+                                     if t["task"]["stage"] == "P04"
+                                     and set(t["task"]["scope_keys"]) & set(earlier)]
+                    if any(t["status"] != "accepted" for t in earlier_tasks):
+                        raise PreparationError("Earlier act definitions are still being authored.")
+                    dependencies = list(saved["task"]["dependency_artifact_ids"])
+                    for act_id in earlier:
+                        for artifact in payload["artifacts"].values():
+                            if (artifact["artifact_kind"] in ("canonical_act", "act_authoring")
+                                    and artifact["scope_keys"] == [act_id]
+                                    and artifact["artifact_id"] not in dependencies):
+                                dependencies.append(artifact["artifact_id"])
+                    saved["task"]["dependency_artifact_ids"] = dependencies
+                    for planned in payload["stage_plans"]["P04"]["tasks"]:
+                        if planned["task_id"] == task.task_id:
+                            planned["dependency_artifact_ids"] = dependencies
             active = sum(1 for item in payload["tasks"].values()
                          if item["status"] in ("leased", "running"))
             if active >= payload["binding"]["budget"]["max_parallel_tasks"]:
@@ -780,7 +808,10 @@ class PreparationSupervisor:
             validator_id = getattr(validator, "validator_id", "")
             if not validator_id:
                 raise PreparationTaskFailure("validator_contract_invalid", result.usage)
-            outcome = await _call(validator, binding, task, proposed, dependencies)
+            if inspect.iscoroutinefunction(validator):
+                outcome = await validator(binding, task, proposed, dependencies)
+            else:
+                outcome = await asyncio.to_thread(validator, binding, task, proposed, dependencies)
             if not isinstance(outcome, ValidationResult) or not outcome.passed:
                 raise PreparationTaskFailure(
                     outcome.block_code if isinstance(outcome, ValidationResult) and outcome.block_code else "validation_failed",

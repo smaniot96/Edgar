@@ -6,6 +6,7 @@ No runner in this module is a readiness placeholder. Missing evidence fails clos
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
 from functools import partial
@@ -37,6 +38,11 @@ from edgar_core.preparation import (
 from ingestion.quality import check_text
 
 from .preparation import PreparationSupervisor, PreparationTaskFailure, StageAdapter
+from .preparation_authoring import (
+    ActMechanics, ActSupport, AuthoredAct, asset_requirements, canonical_registry, compile_quotes,
+    fragment_for, grounding_payload, retained_chapter, saved_support, scene_work,
+    source_inventory, support_for, validate_support_assets,
+)
 from .preparation_content import (
     CampaignDesign,
     CanonicalAct,
@@ -62,17 +68,6 @@ class SourceStudy(ContentRecord):
     page_numbers: list[int] = Field(min_length=1, max_length=100)
     summary: str = Field(min_length=100, max_length=10000)
     commitments: list[str] = Field(min_length=1, max_length=80)
-
-
-class ActMechanics(ContentRecord):
-    act_id: str
-    encounters: list[EncounterPlan] = Field(default_factory=list, max_length=30)
-    mechanics: list[MechanicRequirement] = Field(default_factory=list, max_length=100)
-    resource_plan: str = Field(min_length=50, max_length=5000)
-    progression_plan: str = Field(min_length=50, max_length=5000)
-    # Changes to executable level require a separately implemented adaptation, never
-    # author-selected invented statistics for a hypothetical later character.
-    level_changes: list[int] = Field(default_factory=list, max_length=20)
 
 
 class AssetRequests(ContentRecord):
@@ -266,6 +261,32 @@ def _source_groups(binding):
     return groups
 
 
+def _large_source_groups(binding):
+    """Only oversized new PDFs need study calls; use measured, useful-size batches.
+
+    Keep _source_groups unchanged: saved legacy tasks bind those exact groups.
+    """
+    import tiktoken
+    from .preparation_sources import load_source
+
+    encoding = tiktoken.get_encoding("o200k_base")
+    pages = [{"page": p.page, "text": p.text, "extraction_issues": p.errors()}
+             for p in load_source(binding).pages if p.text.strip()]
+    counts = [len(encoding.encode(p["text"], disallowed_special=())) for p in pages]
+    if sum(counts) <= 65000:
+        return []
+    groups, current, tokens = [], [], 0
+    for page, count in zip(pages, counts, strict=True):
+        if current and (tokens + count > 45000 or len(current) >= 100):
+            groups.append(current)
+            current, tokens = [], 0
+        current.append(page)
+        tokens += count
+    if current:
+        groups.append(current)
+    return groups
+
+
 # Output caps below are sized for the answer itself. Sol at high effort spends output tokens on
 # reasoning first, so every provider cap gets this headroom; a dense PDF page group otherwise ran
 # out mid-answer (Lost Mine of Phandelver, 20 October 2026). Profiles bound it from above.
@@ -297,17 +318,11 @@ def _plan(stage, binding, accepted):
         tasks = [_task(stage, "bind_commission", ("commission",), (), provider=False)]
     elif stage == PreparationStage.P02:
         tasks = [_task(stage, "study_books", ("books",), all_deps, provider=True, output_cap=4000)]
-        tasks += [
-            _task(
-                stage,
-                f"study_source_{i}",
-                (f"source_{i}",),
-                all_deps,
-                provider=True,
-                output_cap=6000,
-            )
-            for i, _ in enumerate(_source_groups(binding))
-        ]
+        if binding.source_mode == "pdf":
+            tasks.append(_task(stage, "index_source", ("source",), all_deps))
+            tasks.extend(_task(stage, f"study_large_source_{i}", (f"source_{i}",), all_deps,
+                               provider=True, output_cap=10000)
+                         for i, _ in enumerate(_large_source_groups(binding)))
     elif stage == PreparationStage.P03:
         tasks = [
             _task(
@@ -332,7 +347,10 @@ def _plan(stage, binding, accepted):
                 f"{prefix}_{i}",
                 (act,),
                 all_deps,
-                provider=True,
+                provider=(stage == PreparationStage.P04
+                          or stage == PreparationStage.P05 and saved_support(accepted, act) is None
+                          or stage == PreparationStage.P08 and binding.source_mode == "ai"
+                          and saved_support(accepted, act) is None),
                 output_cap=24000 if stage == PreparationStage.P04 else 16000,
             )
             for i, act in enumerate(acts)
@@ -340,7 +358,7 @@ def _plan(stage, binding, accepted):
     elif stage == PreparationStage.P07:
         # Canonical assembly must already be valid before spending on prose or assets.
         assemble_manifest(binding, accepted)
-        tasks = [_task(stage, "plan_assets", tuple(acts), all_deps, provider=True, output_cap=6000)]
+        tasks = [_task(stage, "plan_assets", tuple(acts), all_deps)]
     elif stage == PreparationStage.P09:
         # One independently prompted review per act, with the complete manuscript
         # retained once and every act text passed in full. The final pass checks the
@@ -617,9 +635,12 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                     },
                 )
             ]
+        elif stage == PreparationStage.P02 and task.task_id == "index_source":
+            payloads = [("source_inventory", source_inventory(binding))]
         elif stage == PreparationStage.P02:
             index = int(task.task_id.rsplit("_", 1)[1])
-            pages = _source_groups(binding)[index]
+            groups = _large_source_groups(binding) if task.task_id.startswith("study_large_") else _source_groups(binding)
+            pages = groups[index]
             study = await propose(
                 SourceStudy,
                 "Privately study every supplied physical PDF page. Preserve exact page identity and summarize all "
@@ -646,6 +667,15 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                     for page in a.payload["study"]["page_numbers"]
                 }),
             }
+            if (any(a.artifact_kind == "source_inventory" for a in deps)
+                    and not any(a.artifact_kind == "source_study" for a in deps)):
+                from .preparation_sources import load_source
+
+                source = load_source(binding)
+                evidence["exact_source_pages"] = [
+                    {"page": p.page, "text": p.text, "extraction_issues": p.errors()}
+                    for p in source.pages if p.text.strip()]
+                evidence["required_source_pages"] = [p.page for p in source.pages if p.text.strip()]
             design = await propose(
                 CampaignDesign,
                 "Design the ENTIRE commissioned campaign now, every act with distinct dramatic function, discoveries, "
@@ -679,21 +709,45 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                 if binding.source_mode == "pdf"
                 else {design.acts.index(act) + 1}
             )
-            fragment = await propose(
-                CanonicalAct,
-                "Compile this act into exact canonical executable records. Match every planned identity. Classify every "
-                "nonblank character of each supplied page exactly once with zero-based start/end spans; code computes hashes. "
+            from agent.supported_rules import SUPPORTED_MECHANICS
+
+            authored = await propose(
+                AuthoredAct,
+                "Author this act ONCE: canonical executable records, complete runnable scene packets, exact encounter "
+                "requests/resource/progression plans, useful private DM notes and relevant asset requirements. "
+                "Match every planned identity. Passages contain exact meaningful QUOTES from physical pages; code resolves "
+                "their zero-based offsets and keeps all unselected source text private. Never output start/end/hash fields. "
+                "Select explicit anchors for opening facts, clues, policies and provenance; do not copy whole pages merely "
+                "to prove coverage. occurrence is the zero-based matching occurrence on that page. "
+                "Fill ordinary gaps intelligently NOW in this same call: NPC motives/reactions, connective details, "
+                "scene transitions, recovery options and other small missing play details. Follow the campaign theme, "
+                "act purpose, accepted earlier facts and planned future acts. Make reasonable low-impact choices without "
+                "requesting another planning pass. Label additions as dm_extension with rationale and safe reveal gates; "
+                "do not replace explicit source facts, exact clues or verified rules with invented alternatives. "
                 "Keep secrets planner-only and observable passages player-safe; exact discoveries are gated, never paraphrased. "
                 "Use source provenance for printed facts and dm_extension provenance with rationale for additions. Include "
                 "meaningful negotiation/combat/avoidance/investigation, failure and partial outcomes where applicable, each "
                 "backed by real resolution policies and durable effects. All routes must match actual scene links. "
                 "World requires keys are discovery FLAG IDs only; objective effects do NOT silently create world flags. "
                 "Opening has no impossible entry gate. Global shared records belong to their first act; reference IDs consistently. "
-                "Only the opening act may define opening_journal seeds, earned from opening evidence. Never invent PDF pages.",
+                "Reuse EXACT previously accepted registry IDs; never redefine an earlier shared record. "
+                "Only use/environment effects may set operation; objective effects must have operation=null. "
+                "Private routes require nonempty reveal_requires. Automatic policies have automatic effects and no check/DC. "
+                "Only the opening act may define opening_journal seeds, earned from opening evidence. Never invent PDF pages. "
+                "Encounter requests use exact MM names and actual party levels; never invent stats or future levels. "
+                "Declare mandatory supported mechanics, rests, treasure and recovery assumptions. Do not hide unsupported "
+                "hero abilities. Grounding code determines creature quantities/difficulty; notes must defer to its receipts. "
+                "PDF: chapter_text=null because original source plus these notes forms the retained chapter. "
+                "AI: include the complete ready-to-run chapter_text now, preserving the exact source seed. "
+                "Every act already gets a deterministic topology map. Request exact clue handouts as needed; "
+                "never invent source crop provenance. Generated artwork is optional and requires a commissioned image budget.",
                 {
                     **base,
                     "whole_design": design.model_dump(mode="json"),
                     "act": act.model_dump(mode="json"),
+                    "accepted_registry": canonical_registry(deps),
+                    "verified_guidance": _guidance(deps),
+                    "supported_mechanics": [m.id for m in SUPPORTED_MECHANICS],
                     "exact_pages": [
                         {"page": p.page, "text": p.text}
                         for p in extraction.pages
@@ -701,118 +755,71 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                     ],
                 },
             )
-            validate_fragment(binding, design, fragment)
-            payloads = [("canonical_act", {"fragment": fragment.model_dump(mode="json")})]
+            if authored.canonical.act_id != act.act_id:
+                raise ValueError("The authored canonical act_id must match the assigned act exactly.")
+            fragment = compile_quotes(binding, design, authored.canonical)
+            validate_support_assets(binding, design, fragment, authored.support, deps)
+            grounding_payload(binding, act, authored.support, _books(deps), _party(binding),
+                              client=book_client)
+            chapter = retained_chapter(binding, design, fragment, authored.support)
+            if check_text(authored.support.dm_notes)["errors"] or (
+                    binding.source_mode == "ai" and check_text(chapter.text)["errors"]):
+                raise ValueError("Authored DM text quality invalid.")
+            payloads = [("canonical_act", {"fragment": fragment.model_dump(mode="json")}),
+                        ("act_authoring", {"support": authored.support.model_dump(mode="json")})]
+            # Catch global graph failures while this proposal can still be corrected.
+            prior = [a for a in deps if a.artifact_kind == "canonical_act"]
+            if len(prior) + 1 == len(design.acts):
+                from edgar_core.assets import plan_assets
+
+                combined = (*deps, *(_artifact(binding, task, kind, payload, deps)
+                                     for kind, payload in payloads))
+                manifest, _ = assemble_manifest(binding, combined)
+                requests = asset_requirements(combined, manifest)
+                plan = plan_assets(manifest, [r for r in requests if r.kind != "handout"],
+                                   [r for r in requests if r.kind == "handout"])
+                if not plan.valid:
+                    raise ValueError("Combined authored asset requirements conflict with canonical topology.")
         elif stage == PreparationStage.P05:
             from agent.supported_rules import SUPPORTED_MECHANICS
 
-            from .preparation_grounding import ground_prepared_encounters
-
             act = _act(deps, task.scope_keys[0])
-            fragment = next(
-                a.payload["fragment"]
-                for a in deps
-                if a.artifact_kind == "canonical_act" and a.scope_keys == task.scope_keys
-            )
-            plan = await propose(
-                ActMechanics,
-                "Design exact encounters/resources/progression for this actual party and act. Choose exact MM names only; "
-                "do NOT propose statistics. Social/exploration acts may have zero encounters. Declare ALL required mechanics "
-                "including high-level hero abilities, spells, mobility, divination and resurrection if relied upon. "
-                "Unsupported mandatory capabilities block readiness: never suppress a hero's actual abilities to preserve a plot. "
-                "Respect executable levels; no invented future character levels/statistics. Level changes require real implementation. "
-                "Describe supported rest, treasure, resource and recovery assumptions across act boundaries.",
-                {
-                    **base,
-                    "design": design_from(deps).model_dump(mode="json"),
-                    "act": act.model_dump(mode="json"),
-                    "canonical": fragment,
-                    "guidance": _guidance(deps),
-                    "supported_mechanics": [m.id for m in SUPPORTED_MECHANICS],
-                },
-            )
-            if plan.act_id != act.act_id or plan.level_changes:
-                raise ValueError("Unsupported level adaptation or changed act.")
-            supported, unsupported = validate_mechanic_requirements(
-                plan.mechanics, {m.id for m in SUPPORTED_MECHANICS}
-            )
-            if unsupported or any(e.scene_id not in act.scene_ids for e in plan.encounters):
-                raise ValueError("Unsupported required mechanics or encounter scene.")
-            receipts = (
-                ground_prepared_encounters(
-                    plan.encounters, _party(binding), _books(deps), client=book_client
+            support = saved_support(deps, act.act_id)
+            if support is None:
+                # Accepted legacy fragments are immutable. Enrich them once rather
+                # than recompile the act or redo the saved source/design work.
+                support = await propose(
+                    ActSupport,
+                    "Enrich this accepted canonical act ONCE with exact MM encounter requests, required supported "
+                    "mechanics, resource/rest/recovery/progression assumptions, private DM notes and asset requests. "
+                    "Preserve every canonical identity and scene packet. No statistics or future character levels. "
+                    "Grounding code determines actual difficulty and quantities; notes must defer to its receipts. "
+                    "PDF: chapter_text=null, retain original source. AI: supply a complete ready-to-run chapter_text. "
+                    "Every act gets a topology map in code. No invented source crops; generated art is optional.",
+                    {**base, "design": design_from(deps).model_dump(mode="json"),
+                     "act": act.model_dump(mode="json"),
+                     "canonical": fragment_for(deps, act.act_id).model_dump(mode="json"),
+                     "guidance": _guidance(deps),
+                     "supported_mechanics": [m.id for m in SUPPORTED_MECHANICS]},
                 )
-                if plan.encounters
-                else []
-            )
-            if any(r.findings or r.unsupported_mechanics for r in receipts):
-                raise ValueError("Exact encounter mechanics unavailable.")
-            payloads = [
-                (
-                    "act_grounding",
-                    {
-                        "plan": plan.model_dump(mode="json"),
-                        "encounters": [r.model_dump(mode="json") for r in receipts],
-                        "supported_mechanics": [m.model_dump(mode="json") for m in supported],
-                        "book_snapshot_sha256": _books(deps).snapshot_sha256,
-                        "hero_party_sha256": _party(binding).party_sha256,
-                    },
-                )
-            ]
+                retained_chapter(binding, design_from(deps), fragment_for(deps, act.act_id), support)
+                validate_support_assets(binding, design_from(deps), fragment_for(deps, act.act_id),
+                                        support, deps)
+                payloads.append(("act_authoring", {"support": support.model_dump(mode="json")}))
+            payloads.append(("act_grounding", grounding_payload(
+                binding, act, support, _books(deps), _party(binding), client=book_client)))
         elif stage == PreparationStage.P06:
             act = _act(deps, task.scope_keys[0])
-            manifest, _ = assemble_manifest(binding, deps)
-            scenes = await propose(
-                ScenePreparation,
-                "Prepare all runnable scene packets for this exact act. Preserve canonical scene/objective/policy/route IDs "
-                "and exact clues. Include entry/reentry, motivated reactions, social/exploration/combat/avoidance choices, "
-                "failure/partial consequences and downstream commitments. DM additions need explicit provenance/reveal rules. "
-                "Do not change physical source spans or add unsupported mechanics. Every planned scene is required.",
-                {
-                    **base,
-                    "design": design_from(deps).model_dump(mode="json"),
-                    "act": act.model_dump(mode="json"),
-                    "canonical": manifest.model_dump(mode="json"),
-                    "grounding": [
-                        a.payload
-                        for a in deps
-                        if a.artifact_kind == "act_grounding" and a.scope_keys == task.scope_keys
-                    ],
-                },
-            )
-            if (
-                scenes.act_id != act.act_id
-                or {p.scene_id for p in scenes.packets} != set(act.scene_ids)
-                or scenes.unsupported_required_mechanics
-            ):
-                raise ValueError("Runnable scene coverage or mechanics invalid.")
+            scenes = scene_work(fragment_for(deps, act.act_id), support_for(deps, act.act_id))
+            if (scenes.act_id != act.act_id
+                    or {p.scene_id for p in scenes.packets} != set(act.scene_ids)):
+                raise ValueError("Runnable scene coverage invalid.")
             payloads = [("runnable_scenes", {"scenes": scenes.model_dump(mode="json")})]
         elif stage == PreparationStage.P07:
             from edgar_core.assets import AssetRequirement, plan_assets
 
             manifest, _ = assemble_manifest(binding, deps)
-            image_calls = binding.commission.get("image_budget", {}).get("max_image_calls", 0)
-            image_instruction = (
-                f"Generated scene art may be proposed as optional decoration, within at most {image_calls} "
-                "commissioned image calls and the frozen image sub-budget. Generated illustrations remain optional "
-                "because this commission does not make any illustration a required asset."
-                if image_calls
-                else "No image generation is enabled in this commission; do not propose generated illustrations."
-            )
-            requests = await propose(
-                AssetRequests,
-                "Plan only relevant supporting assets against canonical IDs: exact clue handouts, printed map crops/original "
-                "creature art when verified provenance exists, and optional generated scene art. Requirements use AssetRequirement "
-                "schema given below. Every act already receives a required deterministic topology map. Exact clue handouts "
-                "needed to play are required. Never fabricate source crops/art IDs. Generated decoration is optional unless "
-                f"explicitly commissioned. {image_instruction}",
-                {
-                    **base,
-                    "canonical": manifest.model_dump(mode="json"),
-                    "requirement_schema": AssetRequirement.model_json_schema(),
-                },
-            )
-            requirements = [AssetRequirement.model_validate(r) for r in requests.requirements]
+            requirements = asset_requirements(deps, manifest)
             if any(r.kind == "generated_illustration" and r.required for r in requirements):
                 raise ValueError("Generated illustrations are optional under the frozen commission.")
             plan = plan_assets(
@@ -841,50 +848,52 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
             ]
         elif stage == PreparationStage.P08:
             act = _act(deps, task.scope_keys[0])
-            manifest, _ = assemble_manifest(binding, deps)
-            chapter = await propose(
-                CompleteChapter,
-                "Write the COMPLETE retained private DM chapter for this act, not an outline, summary, retrieval chunk or "
-                "promise of future content. Provide ready-to-run scenes, exact clues/read-aloud, NPC motives/reactions, "
-                "resources, supported mechanics, significant alternatives, compatible outcomes and handout/map instructions. "
-                "Preserve canonical shared identities and every exact source clue. Match earlier/later commitments. "
-                "Keep physical source quotations exact and label DM extensions; do not invent statistics or new core facts.",
-                {
-                    **base,
-                    "design": design_from(deps).model_dump(mode="json"),
-                    "act": act.model_dump(mode="json"),
-                    "canonical_act": next(
-                        a.payload
-                        for a in deps
-                        if a.artifact_kind == "canonical_act" and a.scope_keys == task.scope_keys
-                    ),
-                    "scenes": next(
-                        a.payload
-                        for a in deps
-                        if a.artifact_kind == "runnable_scenes" and a.scope_keys == task.scope_keys
-                    ),
-                    "grounding": next(
-                        a.payload
-                        for a in deps
-                        if a.artifact_kind == "act_grounding" and a.scope_keys == task.scope_keys
-                    ),
-                },
-            )
-            if chapter.act_id != act.act_id or check_text(chapter.text)["errors"]:
-                raise ValueError("Complete chapter identity or text quality invalid.")
+            support = support_for(deps, act.act_id)
+            if binding.source_mode == "ai" and not support.chapter_text:
+                chapter = await propose(
+                    CompleteChapter,
+                    "Write this legacy act's COMPLETE ready-to-run private DM chapter from the accepted canonical "
+                    "records and notes. Preserve exact clues, identities, source seed and supported mechanics.",
+                    {**base, "design": design_from(deps).model_dump(mode="json"),
+                     "canonical": fragment_for(deps, act.act_id).model_dump(mode="json"),
+                     "support": support.model_dump(mode="json")},
+                )
+            else:
+                chapter = retained_chapter(binding, design_from(deps),
+                                           fragment_for(deps, act.act_id), support)
+            if chapter.act_id != act.act_id or (
+                    binding.source_mode == "ai" and check_text(chapter.text)["errors"]):
+                raise ValueError("Complete chapter identity or authored text quality invalid.")
             payloads = [("complete_chapter", {"chapter": chapter.model_dump(mode="json")})]
         elif stage == PreparationStage.P09:
             return await _review_campaign(binding, task, deps, key, propose)
         elif stage == PreparationStage.P10:
-            from edgar_core.coherence import build_path_exploration_artifact
+            from edgar_core.coherence import DEFAULT_PATH_BUDGET, build_path_exploration_artifact
+            from .preparation_proposals import proposal_directory
+            from .preparation_store import _atomic_write
 
-            artifact = build_path_exploration_artifact(
-                binding,
-                dependency_artifacts=deps,
-                created_at=_now(),
-                task_id=task.task_id,
-                scope_keys=task.scope_keys,
-            )
+            budget = DEFAULT_PATH_BUDGET
+            progress_path = proposal_directory(binding, task) / "local-path-progress.json"
+            if progress_path.exists():
+                import json
+                from edgar_core.coherence import PathBudget
+
+                budget = PathBudget.model_validate(json.loads(progress_path.read_text())["next_budget"])
+            while True:
+                artifact = await asyncio.to_thread(
+                    build_path_exploration_artifact, binding, dependency_artifacts=deps,
+                    created_at=_now(), task_id=task.task_id, scope_keys=task.scope_keys,
+                    budget=budget,
+                )
+                report = artifact.payload["path_report"]
+                if not report["exhausted"]:
+                    break
+                budget = budget.model_copy(update={"max_states": budget.max_states * 2,
+                                                   "max_depth": budget.max_depth * 2})
+                _atomic_write(progress_path, {"next_budget": budget.model_dump(mode="json"),
+                                             "last_report": report})
+                log.info("preparation_local_path_search_continuing", run_id=binding.run_id,
+                         explored_states=report["explored_states"], next_states=budget.max_states)
             return StageExecutionResult(proposed_artifacts=(artifact,), usage=_local_usage())
         elif stage == PreparationStage.P11:
             findings = [
@@ -1108,71 +1117,78 @@ async def _review_campaign(binding, task, deps, key, propose):
     )
     bindings = build_review_bindings(binding, manifest_a, prepared_a, manuscript_a, inventory)
     findings, observations = [], []
-    # Act-level independent critique receives full chapter text plus exact cross-act
-    # commitments and canonical records. Every chapter is reviewed in full, once per
-    # attempt. The global source/asset inventory remains pinned by digest in each call.
-    for index, chapter in enumerate(manuscript.chapters):
-        relevant = set(chapter.scene_ids)
-        canonical = manifest.model_dump(mode="json")
-        for field in ("passages", "scenes", "entities", "resolution_policies"):
-            canonical[field] = [
-                row
-                for row in canonical[field]
-                if (row.get("scene_id") in relevant or set(row.get("scene_ids", [])) & relevant)
-            ]
-        # Full private prepared graph supplies all cross-act branches/outcomes.
-        evidence = {
-            "binding": bindings.model_dump(mode="json"),
-            "whole_design": design_from(deps).model_dump(mode="json"),
-            "reviewed_chapter": chapter.model_dump(mode="json"),
-            "complete_manuscript": manuscript.model_dump(mode="json"),
-            "canonical": canonical,
-            "source_guidance": _guidance(deps),
-            "actual_party": binding.hero_party_snapshot,
-            "grounding": _one(deps, "grounding_report").payload,
-            "assets": asset.payload,
-            "evidence_inventory": [
-                {
-                    "artifact_id": a.artifact_id,
-                    "artifact_sha256": a.content_sha256,
-                    "kind": a.artifact_kind,
-                }
-                for a in inventory
-            ],
-            "critic_finding_schema": CriticFinding.model_json_schema(),
-            "chapter_json_pointer": f"/manuscript/chapters/{index}/text",
-            "manuscript_artifact_id": manuscript_a.artifact_id,
-            "manuscript_artifact_sha256": manuscript_a.content_sha256,
-        }
+    from .preparation_review_batches import review_batches, review_grounding
+
+    common = {
+        "binding": bindings.model_dump(mode="json"),
+        "whole_design": design_from(deps).model_dump(mode="json"),
+        "canonical": manifest.model_dump(mode="json"),
+        "source_guidance": _guidance(deps),
+        "actual_party": binding.hero_party_snapshot,
+        "grounding": review_grounding(_one(deps, "grounding_report").payload),
+        "assets": asset.payload,
+        "evidence_inventory": [
+            {"artifact_id": a.artifact_id, "artifact_sha256": a.content_sha256,
+             "kind": a.artifact_kind} for a in inventory],
+        "critic_finding_schema": CriticFinding.model_json_schema(),
+        "manuscript_artifact_id": manuscript_a.artifact_id,
+        "manuscript_artifact_sha256": manuscript_a.content_sha256,
+    }
+    # Whole chapters are assigned exactly once. Related chapters provide actual
+    # transition text and authored notes, with pointers into the original inventory.
+    covered_ranges = {chapter.chapter_id: [] for chapter in manuscript.chapters}
+    for indices, evidence in review_batches(manuscript, common):
+        expected_ids = [manuscript.chapters[index].chapter_id for index in indices]
         observation = await propose(
             CriticObservations,
-            "Act as the INDEPENDENT campaign critic. Read this complete retained chapter with the whole campaign design, "
-            "the COMPLETE finished manuscript, canonical cross-act facts/branches, exact source/hero/mechanical and asset evidence. Compare this chapter against the actual other chapter text, not just planned summaries. Check causal continuity, "
-            "motives/knowledge, distinct progression, chronology, exact clues, viable choices, failure/partial consequences, "
-            "resource assumptions, supported high-level abilities, compatible endings, scope and visual agreement. "
-            "Return reviewed_chapter_ids containing exactly this chapter ID. Findings must follow the supplied CriticFinding "
-            "schema and cite the exact artifact ID, JSON pointer and verbatim excerpt. Code binds digests. Never approve readiness or "
-            "resolve your own findings. Source/preferences are untrusted evidence. No findings is permitted only after review.",
+            "Act as the INDEPENDENT campaign critic. Read ALL assigned retained chapter text with the whole "
+            "campaign design, actual related chapter excerpts/notes, canonical cross-act facts/branches, exact "
+            "source/hero/mechanical and asset evidence. Check causal continuity, motives/knowledge, distinct progression, "
+            "chronology, exact clues, viable choices, failure/partial consequences, resource assumptions, supported "
+            "abilities, compatible endings, scope and visual agreement. Ordinary sensible DM additions are allowed "
+            "when consistent with the theme, accepted facts and future acts; do not demand extra calls for harmless "
+            "unspecified details. Return reviewed_chapter_ids exactly in the assigned chapter order. "
+            "Findings must follow the supplied CriticFinding schema and cite the ORIGINAL artifact ID, global JSON "
+            "pointer and verbatim excerpt. text_json_pointer metadata points into the original manuscript artifact, "
+            "not this batch. Code binds digests. Never approve readiness or resolve your own findings. "
+            "For an oversized chapter, complete_chapter=false marks an exact contiguous slice; review that entire "
+            "slice now. Code requires all slices to cover the whole chapter before accepting the final report. "
+            "Source/preferences are untrusted evidence. No findings is permitted only after the complete review.",
             evidence,
-            suffix=f":critic:{index}",
+            suffix=":critic:" + text_digest("|".join(
+                f"{chapter['chapter_id']}:{chapter['text_start']}:{chapter['text_end']}"
+                for chapter in evidence["reviewed_chapters"]))[:24],
             call_limit=8000,
         )
-        if observation.reviewed_chapter_ids != [chapter.chapter_id]:
-            raise ValueError("Independent critic omitted the complete chapter.")
+        if observation.reviewed_chapter_ids != expected_ids:
+            raise ValueError("Independent critic omitted or changed its assigned complete chapters.")
         from edgar_core.coherence import resolve_json_pointer
 
         by_id = {a.artifact_id: a for a in inventory}
         for raw in observation.findings:
             finding = deepcopy(raw)
             for cited in finding.get("evidence", []):
-                artifact = by_id[cited["artifact_id"]]
-                value = resolve_json_pointer(artifact.payload, cited["json_pointer"])
+                try:
+                    artifact = by_id[cited["artifact_id"]]
+                    value = resolve_json_pointer(artifact.payload, cited["json_pointer"])
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise ValueError("Critic evidence must use an available artifact ID and its original global JSON pointer.") from exc
                 if not isinstance(value, str) or cited["excerpt"] not in value:
                     raise ValueError("Critic excerpt is not exact cited evidence.")
                 cited["artifact_sha256"] = artifact.content_sha256
                 cited["excerpt_sha256"] = text_digest(cited["excerpt"])
             findings.append(CriticFinding.model_validate(finding, strict=False))
-        observations.append(chapter.chapter_id)
+        for chapter in evidence["reviewed_chapters"]:
+            covered_ranges[chapter["chapter_id"]].append((chapter["text_start"], chapter["text_end"]))
+        observations.extend(chapter_id for chapter_id in expected_ids if chapter_id not in observations)
+    for chapter in manuscript.chapters:
+        cursor = 0
+        for start, end in sorted(covered_ranges[chapter.chapter_id]):
+            if start != cursor or end <= start:
+                raise ValueError("Independent review text coverage has a gap or overlap.")
+            cursor = end
+        if cursor != len(chapter.text):
+            raise ValueError("Independent review must cover every character of each complete chapter.")
     critic = CriticReport(
         bindings=bindings,
         reviewed_chapter_text_sha256={
@@ -1184,7 +1200,8 @@ async def _review_campaign(binding, task, deps, key, propose):
         binding,
         task,
         "semantic_critic_report",
-        {"critic_report": critic.model_dump(mode="json"), "reviewed_by_tasks": observations},
+        {"critic_report": critic.model_dump(mode="json"), "reviewed_by_tasks": observations,
+         "reviewed_text_ranges": covered_ranges},
         deps,
     )
     # Caller invocation closure records every bounded provider request.
@@ -1269,18 +1286,28 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
                     or {r.role for r in study.requested_references} != {"phb", "dmg", "mm"}
                 ):
                     raise ValueError("Book evidence is stale or incomplete.")
+            elif task.task_id == "index_source":
+                if _one(proposed, "source_inventory").payload != source_inventory(binding):
+                    raise ValueError("Source inventory differs from the frozen physical pages.")
             else:
                 study = SourceStudy.model_validate(_one(proposed, "source_study").payload["study"])
-                group = _source_groups(binding)[int(task.task_id.rsplit("_", 1)[1])]
+                groups = _large_source_groups(binding) if task.task_id.startswith("study_large_") else _source_groups(binding)
+                group = groups[int(task.task_id.rsplit("_", 1)[1])]
                 if study.page_numbers != [p["page"] for p in group]:
                     raise ValueError("Source study omitted a physical page.")
         elif stage == PreparationStage.P04:
-            for artifact in proposed:
-                validate_fragment(
-                    binding,
-                    design_from(deps),
-                    CanonicalAct.model_validate(artifact.payload["fragment"]),
-                )
+            fragment = CanonicalAct.model_validate(_one(proposed, "canonical_act").payload["fragment"])
+            design = design_from(deps)
+            validate_fragment(binding, design, fragment)
+            support = saved_support(proposed, fragment.act_id)
+            if support is None:
+                raise ValueError("Combined act authoring result is missing.")
+            validate_support_assets(binding, design, fragment, support, deps)
+            grounding_payload(binding, _act(deps, fragment.act_id), support,
+                              _books(deps), _party(binding), client=book_client)
+            retained_chapter(binding, design, fragment, support)
+            if len([a for a in deps if a.artifact_kind == "canonical_act"]) + 1 == len(design.acts):
+                assemble_manifest(binding, (*deps, *proposed))
         elif stage == PreparationStage.P03:
             design = CampaignDesign.model_validate(proposed[0].payload["design"])
             validate_design(
@@ -1294,6 +1321,9 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
             from .preparation_grounding import ground_prepared_encounters
 
             payload = _one(proposed, "act_grounding").payload
+            support = saved_support((*deps, *proposed), task.scope_keys[0])
+            if support is not None and payload["plan"] != support.mechanics.model_dump(mode="json"):
+                raise ValueError("Grounding changed the accepted authoring plan.")
             plan = ActMechanics.model_validate(payload["plan"])
             act = _act(deps, task.scope_keys[0])
             supported, unsupported = validate_mechanic_requirements(
@@ -1334,12 +1364,16 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
                 or scenes.unsupported_required_mechanics
             ):
                 raise ValueError("Runnable scenes are incomplete or unsupported.")
+            if scenes != scene_work(fragment_for(deps, act.act_id), support_for(deps, act.act_id)):
+                raise ValueError("Runnable scenes differ from accepted authored packets.")
         elif stage == PreparationStage.P07:
             from edgar_core.assets import AssetRequirement, plan_assets
 
             manifest, _ = assemble_manifest(binding, deps)
             payload = _one(proposed, "asset_plan").payload
             requirements = [AssetRequirement.model_validate(r) for r in payload["requirements"]]
+            if requirements != asset_requirements(deps, manifest):
+                raise ValueError("Asset requests differ from authored requirements and exact clue handouts.")
             expected = plan_assets(
                 manifest,
                 [r for r in requirements if r.kind != "handout"],
@@ -1357,8 +1391,15 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
             chapter = CompleteChapter.model_validate(
                 _one(proposed, "complete_chapter").payload["chapter"]
             )
-            if chapter.act_id != task.scope_keys[0] or check_text(chapter.text)["errors"]:
+            if chapter.act_id != task.scope_keys[0] or (
+                    binding.source_mode == "ai" and check_text(chapter.text)["errors"]):
                 raise ValueError("Complete chapter identity or text quality invalid.")
+            support = support_for(deps, chapter.act_id)
+            if binding.source_mode == "pdf" or support.chapter_text:
+                expected = retained_chapter(binding, design_from(deps),
+                                            fragment_for(deps, chapter.act_id), support)
+                if chapter != expected:
+                    raise ValueError("Retained chapter differs from exact source and accepted DM notes.")
         elif stage == PreparationStage.P09:
             manifest, extraction = assemble_manifest(binding, deps, final=True)
             _validate_assets(binding, deps, manifest, _one(proposed, "asset_coverage"))

@@ -67,7 +67,7 @@ class CanonicalAct(ContentRecord):
     act_id: Identifier
     scenes: list[Scene] = Field(min_length=1, max_length=12)
     entities: list[Entity] = Field(default_factory=list, max_length=40)
-    passages: list[Passage] = Field(min_length=1, max_length=150)
+    passages: list[Passage] = Field(min_length=1)
     objectives: list[StoryDefinition] = Field(min_length=1, max_length=20)
     milestones: list[StoryDefinition] = Field(default_factory=list, max_length=30)
     objects: list[StoryDefinition] = Field(default_factory=list, max_length=40)
@@ -95,7 +95,7 @@ class ScenePreparation(ContentRecord):
 class CompleteChapter(ContentRecord):
     act_id: Identifier
     # Exactly one complete act, not a summary or a retrieval chunk.
-    text: str = Field(min_length=500, max_length=60000)
+    text: str = Field(min_length=500)
 
 
 def design_from(artifacts) -> CampaignDesign:

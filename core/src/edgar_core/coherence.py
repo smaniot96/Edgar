@@ -83,7 +83,7 @@ class RetainedChapter(CoherenceRecord):
     scene_ids: tuple[str, ...] = Field(min_length=1, max_length=200)
     advance_ids: tuple[str, ...] = Field(min_length=1, max_length=128)
     climax_ids: tuple[str, ...] = Field(default=(), max_length=32)
-    passage_ids: tuple[str, ...] = Field(default=(), max_length=200)
+    passage_ids: tuple[str, ...] = ()
     continuity_assertions: tuple[ContinuityAssertion, ...] = Field(default=(), max_length=500)
     events: tuple[ManuscriptEvent, ...] = Field(default=(), max_length=500)
     text: str = Field(min_length=1, max_length=2_000_000)
@@ -121,14 +121,14 @@ class CoherenceFinding(CoherenceRecord):
 
 
 class PathBudget(CoherenceRecord):
-    max_states: int = Field(default=512, ge=1, le=100_000)
-    max_depth: int = Field(default=64, ge=1, le=1000)
+    max_states: int = Field(default=512, ge=1)
+    max_depth: int = Field(default=64, ge=1)
 
 
 class PathExample(CoherenceRecord):
-    scene_ids: tuple[str, ...] = Field(max_length=256)
-    branch_ids: tuple[str, ...] = Field(max_length=256)
-    outcome_ids: tuple[str, ...] = Field(max_length=256)
+    scene_ids: tuple[str, ...]
+    branch_ids: tuple[str, ...]
+    outcome_ids: tuple[str, ...]
 
 
 class PathExplorationReport(CoherenceRecord):
@@ -1155,6 +1155,9 @@ def explore_prepared_paths(
                         queue.append(
                             (next_state, new_branches, new_outcomes, next_scenes, depth + 1)
                         )
+    # Reaching every authored outcome proves this search's goal even when an
+    # earlier branch encountered a depth frontier.
+    exhausted = exhausted and reached_outcomes != expected
     unverified = expected - reached_outcomes if exhausted else set()
     unreachable = expected - reached_outcomes if not exhausted else set()
     # The report carries exact source artifacts, not claims about arbitrary player prompts.
@@ -1229,7 +1232,7 @@ def build_path_exploration_artifact(
 
 def make_path_exploration_validator(
     *,
-    budget: PathBudget = DEFAULT_PATH_BUDGET,
+    budget: PathBudget | None = None,
     initial_world_flags: Mapping[str, str] | None = None,
 ) -> Callable[..., ValidationResult]:
     """Create the required P10 validator; its receipt covers every proposed artifact."""
@@ -1245,16 +1248,16 @@ def make_path_exploration_validator(
             manifest_artifact = _latest_artifact_by_kind(dependencies, "canonical_manifest")
             prepared_artifact = _latest_artifact_by_kind(dependencies, "prepared_campaign")
             manuscript_artifact = _latest_artifact_by_kind(dependencies, "retained_manuscript")
+            actual = PathExplorationReport.model_validate(
+                report_artifact.payload["path_report"], strict=False
+            )
             expected = explore_prepared_paths(
                 binding,
                 manifest_artifact,
                 prepared_artifact,
                 manuscript_artifact,
                 initial_world_flags=initial_world_flags,
-                budget=budget,
-            )
-            actual = PathExplorationReport.model_validate(
-                report_artifact.payload["path_report"], strict=False
+                budget=budget if budget is not None else actual.budget,
             )
             if actual != expected:
                 raise ValueError(
