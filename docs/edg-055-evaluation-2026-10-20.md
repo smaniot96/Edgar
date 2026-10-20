@@ -352,3 +352,53 @@ Bryn and the gameplay checklist are **not yet verified**.
 Recovery spend ledger: **0 provider calls, 0 tokens, USD 0.00**. Rerun 3's prior spend remains
 at 19 calls / 193,307 tokens / USD 2.114524 by Edgar's configured accounting rates; no claim
 is made about the provider's invoice.
+
+
+### Rerun 3 resumed — 12:00:58 Europe/Rome, 20 October 2026
+
+After the owner's explicit instruction to resume rerun 3, the normal application retry
+endpoint returned HTTP 202 at 10:00:57 UTC. The built-in browser connection still returned
+no available browsers, so this was an API retry; it does not verify the UI retry action.
+The same run (`5d81406d90104c45b253c652a44ceee0`) resumed P03 `design_campaign`.
+All 19 P02 tasks remain accepted, and all 20 pre-existing artifact hashes are unchanged.
+No extraction or study was repeated. At dispatch, the recorded prior usage remained
+19 calls / 193,307 tokens / USD 2.114524; new usage will be added when the call settles.
+The owner also confirmed that deletion is working on the restarted combined stack.
+
+
+### Rerun 3 after recovery — design returned, semantic evidence rejected
+
+**Current outcome: blocked at P03; Ready and play have not been reached.**
+At 10:02:59 UTC (12:02:59 Europe/Rome), the resumed design request returned HTTP 200 after
+about 121 seconds. Actual usage was **94,438 input + 5,595 output = 100,033 tokens**,
+USD **0.489652** by Edgar's configured accounting rates. This confirms the byte-based
+predispatch block is removed and the lean guidance fits this call.
+
+At 10:03:00 UTC, the executor rejected the result with `stage_evidence_invalid`, support
+reference `err-4f2b98025965900b`. It was recorded as known usage and **not retryable**,
+so the supervisor blocked the run instead of continuing. The executor replaces the underlying
+exception with a generic code and the rejected design was not retained; the exact validation
+reason cannot be established from this attempt's saved evidence. `validate_design` checks
+unique act/scene IDs, the opening identity and exact physical-page ownership. Those are
+possible checks to investigate, not proven causes of this specific failure.
+
+**F18 (Blocker, diagnosis/recovery): a completed design rejected by semantic validation is
+neither retained for diagnosis nor retried.** The generic failure loses the reason needed to
+repair the prompt or proposal. A follow-up should preserve private rejected proposals and
+structured validation diagnostics, then allow bounded correction with that feedback while
+retaining the acceptance gate. No such code change was made during this evaluation.
+
+Read-only checks after the failure: `PreparationStore.load_run` verifies the checkpoint;
+`load_source` verifies the exact frozen PDF and extraction; 64 nonblank physical pages are
+available; all 20 previously accepted artifacts remain saved. Source study was not repeated.
+The owner reported deletion working on the rebuilt combined stack.
+
+| Rerun 3 usage | Calls | Tokens | USD, configured accounting |
+| --- | ---: | ---: | ---: |
+| Saved studies before recovery | 19 | 193,307 | 2.114524 |
+| Resumed P03 design, rejected | 1 | 100,033 | 0.489652 |
+| **Rerun 3 total** | **20** | **293,340** | **2.604176** |
+
+These are application accounting figures, not a statement about the provider invoice.
+No further retry was dispatched after this rejection. No reliable Ready ETA is available
+while P03 remains blocked. Gameplay and the required restart-after-Ready test remain pending.
