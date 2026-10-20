@@ -132,7 +132,9 @@ def apply_correction(proposal, correction, diagnostics):
             raise ValueError("Corrections must address a field, never replace the entire proposal.")
         parts = edit.path[1:].split("/")
         value = json.loads(edit.value_json) if edit.op != "remove" else None
-        if len(parts) == 1 or len(parts) == 2 and isinstance(value, (dict, list)):
+        top = proposal.get(parts[0]) if isinstance(proposal, dict) else None
+        if (len(parts) == 1 and (isinstance(top, (dict, list)) or isinstance(value, (dict, list)))
+                or len(parts) == 2 and isinstance(value, (dict, list)) and not isinstance(top, list)):
             raise ValueError("Corrections must edit individual records or fields, not whole sections.")
         if any("~" in part.replace("~1", "").replace("~0", "") for part in parts):
             raise ValueError("Invalid JSON pointer escape.")

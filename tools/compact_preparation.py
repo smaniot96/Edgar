@@ -121,16 +121,28 @@ def import_saved_design(slug, original_run_id):
 async def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("slug")
-    parser.add_argument("--from-run", required=True)
+    sources = parser.add_mutually_exclusive_group(required=True)
+    sources.add_argument("--from-run")
+    sources.add_argument("--resume-run")
     parser.add_argument("--import-only", action="store_true")
     args = parser.parse_args()
-    run_id, token = import_saved_design(args.slug, args.from_run)
+    if args.resume_run:
+        meta = meta_store.load_meta(args.slug)
+        run_id, token = meta["preparation_run_id"], meta["attempt"]["id"]
+        if run_id != args.resume_run:
+            raise ValueError("Resume must match the current imported run identity.")
+    else:
+        run_id, token = import_saved_design(args.slug, args.from_run)
     print(json.dumps({"run_id": run_id, "state": "imported", "new_provider_calls": 0}), flush=True)
     if args.import_only:return
     from apps.api.services.preparation_runtime import prepare_adventure
+    path = preparation_path(args.slug, run_id).parent / "benchmark.json"
+    report = json.loads(path.read_text())
+    report.setdefault("imported_at", report["started_at"])
+    report["started_at"] = datetime.now(UTC).isoformat()
+    _atomic_write(path, report)
     start = time.monotonic()
     result = await prepare_adventure(args.slug, attempt_token=token)
-    path = preparation_path(args.slug, run_id).parent / "benchmark.json"
     report = json.loads(path.read_text())
     report.update(elapsed_seconds=time.monotonic() - start,
         status=result.status.value if result else "setup_failed",

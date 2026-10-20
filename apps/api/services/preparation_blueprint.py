@@ -132,10 +132,17 @@ def source_spans(extraction):
 
 
 def blueprint_evidence(binding, design, spans):
+    indexed = []
+    previous_page = None
+    for span in spans:
+        if span.page != previous_page:
+            indexed.append(f"[Physical source page {span.page}]")
+            previous_page = span.page
+        indexed.append(f"[{span.id}] {span.text}")
     return {
         "design": design.model_dump(mode="json"),
         "actual_party": binding.hero_party_snapshot,
-        "source": "\n".join(f"[{s.id} p{s.page}] {s.text}" for s in spans),
+        "source": "\n".join(indexed),
         "source_span_contract": "Each bracket names an exact physical source span. Cite integer IDs; never repeat source prose.",
     }
 
