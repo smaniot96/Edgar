@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, func, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +29,7 @@ if TYPE_CHECKING:
 class Campaign(Base):
     __tablename__ = "campaigns"
     __table_args__ = (
+        UniqueConstraint("created_by", "creation_request_id", name="uq_campaign_creation_request"),
         CheckConstraint("status IN ('active', 'ended')", name="campaigns_status_valid"),
         CheckConstraint(
             "source_mode IN ('module', 'homebrew')", name="campaigns_source_mode_valid"
@@ -34,6 +44,8 @@ class Campaign(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    creation_request_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    creation_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     system: Mapped[str] = mapped_column(String(255), nullable=False)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)

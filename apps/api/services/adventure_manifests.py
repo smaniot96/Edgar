@@ -15,11 +15,28 @@ class ManifestSourceUnverified(ManifestError):
     """No verified source kind exists, so no reviewed extraction can be trusted for this adventure."""
 
 
+def _require_editable_source(slug: str) -> None:
+    """Semantic preparations publish only through their independently reviewed graph.
+
+    The manual span editor remains useful for independent, retained source manifests. It
+    must never replace a graph's compiled records or invalidate its publication receipt.
+    """
+    validate_binding(slug)
+    if store.load_meta(slug).get("private_preparation") is True:
+        raise ManifestError(
+            "Prepared campaign records are managed by their preparation workflow. "
+            "Their published manifest cannot be recompiled, edited or republished manually."
+        )
+
+
 def _page_budget(meta: dict) -> float | None:
     from ingestion.readiness import ADVENTURE_DEGRADED_PAGE_BUDGET
 
-    return (ADVENTURE_DEGRADED_PAGE_BUDGET
-            if (meta.get("ingestion") or {}).get("source_kind") == "pdf" else None)
+    return (
+        ADVENTURE_DEGRADED_PAGE_BUDGET
+        if (meta.get("ingestion") or {}).get("source_kind") == "pdf"
+        else None
+    )
 
 
 def _bundle(slug: str):
@@ -29,10 +46,19 @@ def _bundle(slug: str):
     validate_binding(slug)
     raw_meta = store.load_meta(slug)
     if raw_meta.get("private_preparation") is True:
-        from .preparation_runtime import private_preparation_ready
+        from .campaign_prep.runtime import private_preparation_ready
 
         if not private_preparation_ready(slug, raw_meta):
             raise ManifestError("This private adventure is not ready to play yet.")
+    if raw_meta.get("preparation_workflow") == "campaign-graph-2.0":
+        from .campaign_prep.compile import make_extraction
+        from .campaign_prep.store import Store
+
+        graph_store = Store(slug)
+        compiled = graph_store.get("compiled")
+        if compiled is None:
+            raise ManifestError("Prepared playable records are unavailable.")
+        return raw_meta, make_extraction(compiled)
     meta = active_metadata(slug, raw_meta)
     if raw_meta.get("status") == "processing" and meta.get("artifact_attempt") != (
         raw_meta.get("attempt") or {}
@@ -43,7 +69,9 @@ def _bundle(slug: str):
     ingestion = meta.get("ingestion") or {}
     kind = ingestion.get("source_kind")
     if kind not in ("pdf", "generated", "text"):
-        raise ManifestSourceUnverified("Source kind is unverified. Recover its canonical extraction first.")
+        raise ManifestSourceUnverified(
+            "Source kind is unverified. Recover its canonical extraction first."
+        )
     try:
         extraction = load_reviewed_extraction(
             store.source_pdf_path(slug, meta) if kind == "pdf" else None,
@@ -119,22 +147,29 @@ def inspect_manifest(slug: str) -> dict:
 
 
 def compile_draft(slug: str) -> dict:
+    _require_editable_source(slug)
     from ingestion.manifest import compile_manifest
 
     meta, extraction = _bundle(slug)
-    draft = compile_manifest(extraction, rules_edition=meta.get("rules_edition", "unspecified"),
-                             degraded_page_budget=_page_budget(meta))
+    draft = compile_manifest(
+        extraction,
+        rules_edition=meta.get("rules_edition", "unspecified"),
+        degraded_page_budget=_page_budget(meta),
+    )
     meta["manifest_draft"] = draft.model_dump()
     store.save_meta(slug, meta)
     return inspect_manifest(slug)
 
 
 def edit_draft(slug: str, manifest: AdventureManifest) -> dict:
+    _require_editable_source(slug)
     from ingestion.artifacts import text_digest
     from ingestion.manifest import validate_spans
 
     meta, extraction = _bundle(slug)
-    validate_spans(extraction, manifest, check_digests=False, degraded_page_budget=_page_budget(meta))
+    validate_spans(
+        extraction, manifest, check_digests=False, degraded_page_budget=_page_budget(meta)
+    )
     pages = dict(extraction.text_pages())
     for passage in manifest.passages:
         passage.text_sha256 = text_digest(pages[passage.page][passage.start : passage.end])
@@ -148,6 +183,7 @@ def edit_draft(slug: str, manifest: AdventureManifest) -> dict:
 
 def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
     """Index exact reviewed passages, then publish metadata; failures never certify a draft."""
+    _require_editable_source(slug)
     from ingestion.embed import _embed_and_upsert, _prepare_extraction, run_pipeline
     from ingestion.manifest import manifest_chunks, review_manifest
     from ingestion.readiness import report_summary
@@ -158,14 +194,18 @@ def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
         # A repeated submission (double click or a retry after a lost response) for the exact
         # digest that is already published is a success, not a second publication.
         published = meta.get("manifest") or {}
-        if (
-            meta.get("status") == "ready"
-            and published.get("reviewed_sha256") == reviewed_digest
-        ):
-            return {"status": "ready", "manifest_sha256": reviewed_digest, "chunks": meta.get("chunks")}
+        if meta.get("status") == "ready" and published.get("reviewed_sha256") == reviewed_digest:
+            return {
+                "status": "ready",
+                "manifest_sha256": reviewed_digest,
+                "chunks": meta.get("chunks"),
+            }
         raise ManifestError("No editable manifest draft is awaiting review.")
     manifest = review_manifest(
-        extraction, draft, reviewed_digest=reviewed_digest, reviewer=reviewer,
+        extraction,
+        draft,
+        reviewed_digest=reviewed_digest,
+        reviewer=reviewer,
         degraded_page_budget=_page_budget(meta),
     )
     if manifest.rules_edition != meta.get("rules_edition", "unspecified"):

@@ -25,6 +25,7 @@ from agent.prompts import INPUT_PARSER, wrap_player_action
 from agent.provider_trace import traced_call
 from agent.resolution import PENDING_COMPLETION_FLAG, normalise_check
 from agent.resolution_policies import parser_earned_clues, parser_policy_choices
+from agent.scene_guidance import parser_guidance, preload_scene_context
 from agent.state import AgentState
 from edgar_core.config import OPENAI_API_KEY
 from edgar_core.log_safety import error_summary
@@ -44,6 +45,8 @@ _NO_FIGHT = re.compile(
 def _parser_context(state: AgentState) -> str:
     """Minimal scene context so `retrieval_query`/`target` can be grounded."""
     parts: list[str] = []
+    if guidance := parser_guidance(state):
+        parts.append(guidance)
     scene = state.get("current_scene_id")
     if scene:
         parts.append(f"Current scene id: {scene}")
@@ -78,7 +81,9 @@ def _parser_context(state: AgentState) -> str:
     continuity_slot = len(parts)
     facts = public_earned_facts(state)
     if facts:
-        parts.append(f"Committed player-known story facts and exact source quotations: {json.dumps(facts)}")
+        parts.append(
+            f"Committed player-known story facts and exact source quotations: {json.dumps(facts)}"
+        )
     outcomes = [
         {"id": outcome.get("id"), "outcome": outcome.get("outcome"), "round": outcome.get("round")}
         for outcome in state.get("resolved_combat_outcomes") or []
@@ -107,6 +112,14 @@ async def input_parser_node(state: AgentState) -> dict:
             "error_code": "provider_configuration",
         }
 
+    try:
+        scene_context = await preload_scene_context(state)
+    except Exception as exc:
+        # The normal retriever reports the authoritative availability/manifest error.
+        log.warning("parser_scene_guidance_unavailable", extra={"error": error_summary(exc)})
+        scene_context = None
+    if scene_context is not None:
+        state = {**state, "parser_scene_context": scene_context}
     llm = make_chat_model(profile="play.parser", temperature=0)
     structured_llm = llm.with_structured_output(ParsedInput, method="function_calling")
 
@@ -140,4 +153,4 @@ async def input_parser_node(state: AgentState) -> dict:
             # Avoiding or talking about a fight declares no hostile action, so it starts no combat.
             parsed = parsed.model_copy(update={"intent": "exploration"})
 
-    return {"parsed_input": parsed}
+    return {"parsed_input": parsed, "parser_scene_context": scene_context or {}}

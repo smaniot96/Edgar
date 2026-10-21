@@ -8,12 +8,10 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
-    Request,
     Response,
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from redis.asyncio import Redis
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -22,9 +20,9 @@ from db.postgres.models import Campaign, CharacterAssignment
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 from ..auth import Auth, campaign_scope, member_campaign, owned_campaign, require_admin
-from ..dependencies import current_user_id, get_redis, get_session
-from ..limits import admit_job
+from ..dependencies import current_user_id, get_session
 from ..schemas.campaign import (
+    AdventureCampaignOpen,
     CampaignCreate,
     CampaignDeleteRead,
     CampaignRead,
@@ -34,6 +32,7 @@ from ..schemas.campaign import (
 )
 from ..services.campaign_completion import close_campaign, lock_campaign
 from ..services.campaign_sources import campaign_read, require_sources, validate_binding
+from ..services.setup_requests import creation_identity, creation_replay
 from ._common import Page
 
 router = APIRouter(tags=["campaigns"])
@@ -69,41 +68,52 @@ async def get_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(
 @router.post("/adventures/{slug}/campaign", response_model=CampaignRead)
 async def open_campaign_for_adventure(
     slug: str,
+    body: AdventureCampaignOpen | None = None,
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
-    """Get-or-create the playable campaign for an uploaded adventure module.
+    """Start an independent playthrough, or continue the latest for legacy clients.
 
-    The 'campaigns' the player browses are the uploaded modules; opening one lands on the
-    campaign that owns its sessions. We reuse an existing active campaign for this
-    (user, adventure) pair so a module maps to one ongoing campaign rather than spawning a new
-    one on every click; a fresh one is created on first open (or after the previous ended).
+    Explicit new requests never copy a campaign's sessions, outcomes or hero assignments.
+    Retrying their owner-scoped request ID returns the same campaign without resetting it.
     """
     from .adventures import load_adventure_metadata
 
-    result = await db.execute(
-        select(Campaign)
-        .where(
-            Campaign.created_by == owner_id,
-            Campaign.adventure_collections.any(slug),
-            Campaign.status == "active",
+    request = body or AdventureCampaignOpen()
+    context = {"adventure_slug": slug}
+    existing = await creation_replay(db, Campaign, owner_id, request, context=context)
+    if existing is None and not request.new_campaign:
+        result = await db.execute(
+            select(Campaign)
+            .where(
+                Campaign.created_by == owner_id,
+                Campaign.adventure_collections.any(slug),
+                Campaign.status == "active",
+            )
+            .order_by(Campaign.created_at.desc())
+            .limit(1)
         )
-        .order_by(Campaign.created_at.desc())
-        .limit(1)
-    )
-    existing = result.scalar_one_or_none()
+        existing = result.scalar_one_or_none()
     if existing is not None:
         return await campaign_read(existing)
 
     await require_sources([slug], "module")
     meta = await run_in_threadpool(load_adventure_metadata, slug)
-    title = meta.get("title") or slug.replace("_", " ").title()
+    from ..services.campaign_library import display_title
+    from ..services.prepared_play import require_prepared_play
+
+    edition = meta.get("rules_edition", "2014")
+    await run_in_threadpool(require_prepared_play, [slug], edition)
+    title = await run_in_threadpool(
+        display_title, slug, meta.get("title") or slug.replace("_", " ").title()
+    )
     campaign = Campaign(
         title=title,
-        rules_edition=meta.get("rules_edition", "2014"),
+        rules_edition=edition,
         system="D&D 5e",
         created_by=owner_id,
         adventure_collections=[slug],
+        **(creation_identity(request, context=context) if request.new_campaign else {}),
     )
     db.add(campaign)
     await db.commit()
@@ -303,9 +313,8 @@ async def reopen_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depen
 
 @router.post(
     "/campaigns/{campaign_id}/sources/{slug}/upload",
-    status_code=202,
-    # Recovery rewrites a shared source-library file, so it is an operator action as well as
-    # an ownership check on the campaign that is bound to it.
+    status_code=409,
+    # Retained for existing clients; source bindings are immutable under the new workflow.
     dependencies=[Depends(require_admin)],
 )
 async def recover_campaign_source(
@@ -313,26 +322,17 @@ async def recover_campaign_source(
     slug: str,
     background: BackgroundTasks,
     auth: Auth,
-    request: Request,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_session),
-    redis: Redis = Depends(get_redis),
 ):
-    """Recover an unusable bound source at its original slug using the player's PDF.
+    """Explain immutable source recovery after checking campaign ownership and binding.
 
-    Bindings and session history stay intact. This does not replace a ready source and never
-    synthesizes a lost PDF from old logs or metadata. Ingestion uses the existing pipeline.
-    Rate and job-concurrency limits apply (EDG-066).
+    Create a fresh adventure through the current preparation workflow. This compatibility
+    endpoint never stages a replacement PDF, changes archived records or starts a job.
     """
     from .adventures import recover_source_upload
 
-    admission = await admit_job(request, redis)
-    try:
-        campaign = await owned_campaign(db, campaign_id, auth)
-        if slug not in campaign.adventure_collections:
-            raise HTTPException(
-                status_code=422, detail="That source is not bound to this campaign."
-            )
-        return await recover_source_upload(slug, file, background, admission)
-    finally:
-        await admission.settle()
+    campaign = await owned_campaign(db, campaign_id, auth)
+    if slug not in campaign.adventure_collections:
+        raise HTTPException(status_code=422, detail="That source is not bound to this campaign.")
+    return await recover_source_upload(slug, file, background)

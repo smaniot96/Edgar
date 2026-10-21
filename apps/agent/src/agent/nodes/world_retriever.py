@@ -9,6 +9,7 @@ import asyncio
 import logging
 import time
 
+from agent.scene_guidance import cached_scene_context
 from agent.state import AgentState
 from agent.turn_diagnostics import current_collector
 from db.vector import search_rules_context
@@ -188,6 +189,8 @@ async def _retrieve(state: AgentState) -> dict:
         if state.get("source_mode") == "module" or manifests:
             if set(manifests) != set(names):
                 raise ManifestError("Every bound adventure needs its reviewed scene manifest.")
+            if cached := cached_scene_context(state):
+                return cached
             return {
                 **retrieve_active_scene(
                     manifests,

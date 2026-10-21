@@ -2,11 +2,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cancelAdventure, getCampaign, recoverCampaignSource, setCampaignSourceMode } from "../../api/client";
+import { cancelAdventure, getCampaign, setCampaignSourceMode } from "../../api/client";
 import type { CampaignRead } from "../../api/types";
 import { SourceRecovery } from "./SourceRecovery";
 vi.mock("../../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
-vi.mock("../../api/client", async (original) => ({ ...await original<object>(), cancelAdventure: vi.fn(), getCampaign: vi.fn(), recoverCampaignSource: vi.fn(), setCampaignSourceMode: vi.fn(), retryAdventure: vi.fn() }));
+vi.mock("../../api/client", async (original) => ({ ...await original<object>(), cancelAdventure: vi.fn(), getCampaign: vi.fn(), setCampaignSourceMode: vi.fn(), retryAdventure: vi.fn() }));
 const missing: CampaignRead = {
   id: 2, title: "Lost module", system: "5e", created_by: 1, created_at: "2026-10-14",
   adventure_collections: ["lost_module"], source_mode: "module", status: "active", ended_at: null,
@@ -19,7 +19,7 @@ let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-it("requires the player's explicit fallback click and preserves recovery controls", async () => {
+it("requires the player's explicit fallback click and preserves archived bindings", async () => {
   const updated = { ...missing, source_mode: "homebrew" as const, play_allowed: true };
   vi.mocked(getCampaign).mockResolvedValue(updated); vi.mocked(setCampaignSourceMode).mockResolvedValue(updated);
   const onUpdated = vi.fn();
@@ -30,17 +30,13 @@ it("requires the player's explicit fallback click and preserves recovery control
   await act(async () => { choose.click(); });
   expect(setCampaignSourceMode).toHaveBeenCalledWith(2, "homebrew"); expect(onUpdated).toHaveBeenCalledWith(updated);
   await act(() => root.render(<SourceRecovery campaign={updated} onUpdated={onUpdated} />));
-  expect(container.textContent).toContain("Homebrew play selected"); expect(container.querySelector('input[aria-label="Recover Lost module PDF"]')).not.toBeNull();
+  expect(container.textContent).toContain("Homebrew play selected"); expect(container.querySelector('input[type="file"]')).toBeNull();
 });
-it("routes a provided PDF to the intended bound slug", async () => {
-  vi.mocked(getCampaign).mockResolvedValue(missing);
-  vi.mocked(recoverCampaignSource).mockResolvedValue({ slug: "lost_module", title: "Lost module", description: null, level_range: null, cover_image: null, status: "processing" });
+it("directs held source recovery to fresh preparation without upload controls", async () => {
   await act(() => root.render(<SourceRecovery campaign={missing} onUpdated={vi.fn()} />));
-  const input = container.querySelector("input")!;
-  const file = new File(["%PDF supplied"], "Original.pdf", { type: "application/pdf" });
-  Object.defineProperty(input, "files", { value: [file] });
-  await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
-  expect(recoverCampaignSource).toHaveBeenCalledWith(2, "lost_module", file); expect(setCampaignSourceMode).not.toHaveBeenCalled();
+  expect(container.querySelector('input[type="file"]')).toBeNull();
+  expect(container.querySelector('a[href="/ui/campaigns"]')?.textContent).toContain("Prepare a fresh adventure");
+  expect(setCampaignSourceMode).not.toHaveBeenCalled();
 });
 
 it("shows replacement progress and cancellation while the last ready source remains playable", async () => {

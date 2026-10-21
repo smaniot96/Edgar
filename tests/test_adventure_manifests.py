@@ -1,5 +1,6 @@
 """Real synthetic PDF -> review -> disposable index; no live storage or provider calls."""
 
+import hashlib
 import json
 import logging
 from contextlib import closing
@@ -615,7 +616,6 @@ def test_exact_generated_original_and_structured_references_survive_reviewed_rei
     from apps.api.services import adventure_manifests as service, adventures_meta as store
     from apps.api.services.manuscript import (
         export_canonical_manuscript,
-        save_candidate_manuscript,
     )
 
     monkeypatch.setattr(store, "ADVENTURES_DIR", tmp_path / "adventures")
@@ -633,7 +633,21 @@ def test_exact_generated_original_and_structured_references_survive_reviewed_rei
     original = "\n\n".join(text for _, text in pages).encode()
     store.save_meta("authored", {"status": "failed", "rules_edition": "2014"})
     token = store.begin_attempt("authored")
-    save_candidate_manuscript("authored", token, original.decode())
+    retained_dir = store.attempt_dir("authored", token)
+    retained_dir.mkdir(parents=True, exist_ok=True)
+    (retained_dir / "authored.manuscript.md").write_bytes(original)
+    original_hash = hashlib.sha256(original).hexdigest()
+    metadata = store.load_meta("authored")
+    metadata["manuscript"] = {
+        "attempt_id": token,
+        "filename": "authored.manuscript.md",
+        "version": original_hash,
+        "sha256": original_hash,
+        "source_sha256": None,
+        "extraction_sha256": None,
+        "index_version": None,
+    }
+    store.save_meta("authored", metadata)
     chunks = embed.ingest_pages(
         pages,
         "authored",

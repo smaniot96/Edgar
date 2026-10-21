@@ -39,6 +39,8 @@ data/
 !apps/*/README.md
 !db/README.md
 !tools/README.md
+# Versioned campaign prompts are runtime package data, not documentation.
+!apps/api/services/campaign_prep/prompts/*.md
 
 # Secrets must never be baked into image layers (Dockerfile does `COPY . .`).
 .env

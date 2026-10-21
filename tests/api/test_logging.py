@@ -147,7 +147,6 @@ async def test_lifespan_disposes_database_even_when_serving_or_redis_close_fails
     monkeypatch,
 ) -> None:
     from apps.api import dependencies, main
-    from apps.api.services import adventures_meta
     from db.postgres import session as session_module
 
     calls = []
@@ -160,7 +159,6 @@ async def test_lifespan_disposes_database_even_when_serving_or_redis_close_fails
         calls.append("postgres")
 
     monkeypatch.setattr(main, "configure_logging", lambda: None)
-    monkeypatch.setattr(adventures_meta, "fail_stale_processing", lambda: [])
     monkeypatch.setattr(dependencies, "close_redis", close_redis)
     monkeypatch.setattr(session_module, "engine", SimpleNamespace(dispose=dispose))
     with pytest.raises(RuntimeError, match="redis cleanup failed"):

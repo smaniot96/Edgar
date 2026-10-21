@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from fractions import Fraction
 
-from edgar_core.grounding import challenge_xp_from_stat_block
+from edgar_core.creature_xp import challenge_xp_from_stat_block
 
 MIN_LEVEL = 1
 MAX_LEVEL = 20

@@ -18,6 +18,7 @@ dependencies = [
     # The upload / AI-authoring endpoints embed PDFs in-process via `ingestion.embed`.
     "ingestion",
     "langchain-core>=1.2.19",
+    "langgraph>=1.1.2",
     "openai>=2.24.0",
     "loguru>=0.7.0",
     "pillow>=11.2.0",
@@ -49,4 +50,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["apps.api", "apps.api.routers", "apps.api.schemas", "apps.api.services"]
+packages = ["apps.api", "apps.api.routers", "apps.api.schemas", "apps.api.services", "apps.api.services.campaign_prep"]
+
+[tool.setuptools.package-data]
+"apps.api.services.campaign_prep" = ["prompts/*.md"]

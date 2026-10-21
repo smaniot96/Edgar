@@ -109,10 +109,11 @@ at the top level varied more (summary N=32 ranged from 17 to 32 across runs), so
    limits how many run together. In the harness, 32 summary jobs fill the pool and queue 17 of them.
    A bound is needed (see the recommended defaults).
 
-5. **Generation fan-out is bounded per generation only.** Each generation keeps six chapter calls in
-   flight (the semaphore in `campaign_generator`), so N generations keep 6N provider calls in flight
-   and nothing bounds the total. Generation does no database work in this path, so it does not
-   affect the pool.
+5. **Preparation has bounded operational concurrency.** The campaign runtime admits two
+   active graph workers per API process. Each graph permits three concurrent semantic requests,
+   giving at most six active preparation requests per process. Redis also bounds admitted jobs
+   across the deployment. These limits constrain concurrent work; they never terminate a run
+   because it has used a particular number of calls or dollars.
 
 6. **The readiness probe holds one connection across its Redis and Qdrant checks.** `/ready` runs its
    two database checks on the request session and does not commit before the Redis and Qdrant checks

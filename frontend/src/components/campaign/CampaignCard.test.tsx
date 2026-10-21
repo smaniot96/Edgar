@@ -61,7 +61,7 @@ it("shows real chapter progress and lets the owner cancel while the published so
   const onRetried = vi.fn();
   await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
   expect(container.textContent).toContain("Generating campaign chapters — 2 of 6 saved.");
-  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Start adventure") && !button.disabled)).toBe(true);
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Start campaign") && !button.disabled)).toBe(true);
   await act(async () => {
     [...container.querySelectorAll("button")].find((button) => button.textContent === "Cancel preparation")!.click();
   });
@@ -113,10 +113,12 @@ it.each([false, true])("never advertises index-only standalone modules as playab
   const onPlay = vi.fn();
   const onRetried = vi.fn();
   await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
-  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Start adventure")).toBe(false);
-  const blocked = [...container.querySelectorAll("button")].find((button) => button.textContent === (hasProjection ? "Needs attention" : "Readiness unknown"))!;
-  expect(blocked.disabled).toBe(true);
-  await act(() => blocked.click());
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Start campaign")).toBe(false);
+  // The status pill and notice carry the state; no dead button competes with them.
+  const labels = [...container.querySelectorAll("button")].map((button) => button.textContent?.trim());
+  expect(labels).not.toContain("Needs attention");
+  expect(labels).not.toContain("Readiness unknown");
+  expect(container.querySelectorAll("button:disabled").length).toBe(0);
   expect(onPlay).not.toHaveBeenCalled();
   if (hasProjection) {
     expect(container.textContent).toContain("Review and publish the adventure before starting or continuing play.");
@@ -139,7 +141,7 @@ it("renders the public cover from a nested UI route and preserves the action aft
   await act(() => image.dispatchEvent(new Event("error")));
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector('[aria-hidden]')?.textContent).toBe("B");
-  const play = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Start adventure")!;
+  const play = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Start campaign")!;
   await act(() => play.click());
   expect(onPlay).toHaveBeenCalledOnce();
   window.history.replaceState({}, "", "/");
@@ -261,8 +263,162 @@ it("shows a private preparation that failed before its run as failed, with a ret
   expect(text.split("No preparation work was saved before this failure").length - 1).toBe(1);
   expect(text).not.toContain("Unavailable");
   const buttons = [...container.querySelectorAll("button")];
-  expect(buttons.find((b) => b.textContent === "Not ready to play")?.disabled).toBe(true);
+  expect(buttons.some((b) => b.textContent === "Not ready to play")).toBe(false);
   await act(async () => buttons.find((b) => b.textContent === "Retry preparation")!.click());
   expect(retryAdventure).toHaveBeenCalledWith("phandelver", undefined);
   expect(onRetried).toHaveBeenCalledOnce();
+});
+
+it("labels an ended campaign Open even when it has readable saved history, because that is where it goes", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "ready" };
+  const campaign: CampaignRead = {
+    id: 7, title: "Bridge", system: "5e", created_by: 1, created_at: "2026-10-14",
+    adventure_collections: ["bridge"], source_mode: "module", status: "ended", ended_at: "2026-10-15",
+    retrieval_degraded: false, play_allowed: true, sources: [],
+  };
+  const session = {
+    id: 3, campaign_id: 7, started_at: "2026-10-14T10:00:00Z", ended_at: "2026-10-15T10:00:00Z", current_scene_id: null,
+    active_character_id: 1, character_name: "Brom", has_history: true, last_played_at: "2026-10-15T10:00:00Z",
+    readiness: { play_allowed: false, history_allowed: true, state: "completed" as const, primary_action: "reopen_campaign" as const, blockers: [] },
+  };
+  const card = buildCards([adventure], [campaign], [session], 1)[0];
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const labels = [...container.querySelectorAll("button")].map((button) => button.textContent?.trim());
+  expect(labels).toContain("Open");
+  expect(labels).not.toContain("Read story");
+});
+
+it("makes the retry the card's primary action and shows no disabled placeholder while a job is processing", async () => {
+  const failed: AdventureRead = {
+    slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "failed", can_retry: true,
+    job: {
+      version: 1, job_id: "e".repeat(32), kind: "generation", state: "interrupted", stage: "generating_chapters",
+      completed_chapters: 5, total_chapters: 9, checkpoint_available: true, retryable: true, retained_work: "outline_and_chapters",
+      action_label: "Resume saved chapters", explanation: null, source_version: null,
+    },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([failed], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const resume = [...container.querySelectorAll("button")].find((button) => button.textContent === "Resume saved chapters")!;
+  expect(resume.className).toContain("bg-ember-500");
+  expect(container.querySelectorAll("button:disabled").length).toBe(0);
+
+  const processing: AdventureRead = { slug: "ember", title: "Ember", description: null, level_range: null, cover_image: null, status: "processing" };
+  await act(() => root.render(<CampaignCard card={buildCards([processing], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  expect(container.textContent).not.toContain("Preparing…");
+  expect(container.querySelectorAll("button:disabled").length).toBe(0);
+});
+
+it("moves the private preparation setup into a dialog instead of growing the card", async () => {
+  const adventure: AdventureRead = {
+    slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "processing",
+    preparation_setup_required: true,
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  expect(container.textContent).not.toContain("Your adventure setup");
+  expect(container.textContent).not.toContain("You can leave this page");
+  await act(async () => [...container.querySelectorAll("button")].find((button) => button.textContent === "Set up preparation")!.click());
+  const dialog = document.body.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("Your adventure setup");
+  expect(dialog.textContent).toContain("Start private preparation");
+});
+
+it("labels an interrupted run Interrupted, not Failed, and keeps its failure in one non-nested, single announcement", async () => {
+  const adventure: AdventureRead = {
+    slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "failed", can_retry: true,
+    job: {
+      version: 1, job_id: "f".repeat(32), kind: "generation", state: "interrupted", stage: "generating_chapters",
+      completed_chapters: 5, total_chapters: 9, checkpoint_available: true, retryable: true, retained_work: "outline_and_chapters",
+      action_label: "Resume saved chapters", explanation: null, source_version: null,
+      failure: { code: "provider_unavailable", category: "provider_unavailable", message: "The model provider was unavailable.", recovery_action: "retry", retryable: true, support_ref: "err-1", outcome: "not_committed" },
+    },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const pill = container.querySelector("h3")!.previousElementSibling!;
+  expect(pill.textContent).toBe("Interrupted");
+  expect(pill.textContent).not.toContain("Failed");
+  // One live region for the failure, with no alert nested inside it and no box inside the box.
+  expect(container.querySelectorAll("[role='status']").length).toBe(1);
+  expect(container.querySelector("[role='alert']")).toBeNull();
+  expect(container.querySelector("[role='status'] .border-danger-strong\\/60")).toBeNull();
+});
+
+it("states when a save was last played once, grouped with the hero, and says nothing twice without a save", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "ready", readiness: { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] } };
+  const campaign: CampaignRead = {
+    id: 7, title: "Bridge", system: "5e", created_by: 1, created_at: "2026-10-14",
+    adventure_collections: ["bridge"], source_mode: "module", status: "active", ended_at: null,
+    retrieval_degraded: false, play_allowed: true, sources: [],
+  };
+  const played = new Date(Date.now() - 3 * 3600_000).toISOString();
+  const session = {
+    id: 3, campaign_id: 7, started_at: played, ended_at: null, current_scene_id: null, active_character_id: 1,
+    character_name: "Brom", has_history: true, last_played_at: played,
+    readiness: { play_allowed: true, history_allowed: true, state: "ready" as const, primary_action: "play" as const, blockers: [] },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [session], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  expect(countOf(container.textContent ?? "", "ago")).toBe(1);
+  expect(container.textContent).toContain("Brom · last played 3 hours ago");
+
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  expect(container.textContent).toContain("No saved playthrough yet");
+  expect(container.textContent).not.toContain("Not played yet");
+});
+
+it("keeps every control on a card at least 44px tall by class and leaves status regions to real changes", async () => {
+  const adventure: AdventureRead = {
+    slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "ready",
+    readiness: { play_allowed: false, history_allowed: true, state: "adventure_review_needed", primary_action: "review_adventure", blockers: [{ code: "adventure_review_needed", message: "Review and publish the adventure.", action: "review_adventure" }] },
+    extraction_preview_available: true,
+    job: { version: 1, job_id: "a".repeat(32), kind: "generation", state: "running", stage: "generating_chapters", completed_chapters: 1, total_chapters: 4, checkpoint_available: true, retryable: false, retained_work: "outline_and_chapters", action_label: null, explanation: null, source_version: null },
+  };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const short = [...container.querySelectorAll("button, summary")].filter((el) => !el.className.includes("min-h-11"));
+  // Only the Delete item, tucked in the closed More menu, keeps its compact size.
+  expect(short.map((el) => el.textContent?.trim())).toEqual(["Delete adventure"]);
+  // The readiness notice is static on the card; the progress block is its one live region.
+  expect(container.querySelectorAll("[role='status']").length).toBe(1);
+});
+
+it("closes the More menu on Escape and on an outside press, returning focus to its button", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "processing" };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const more = [...container.querySelectorAll("button")].find((button) => button.textContent === "More")!;
+  const panel = document.getElementById(more.getAttribute("aria-controls")!)!;
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  expect(panel.hidden).toBe(true);
+  await act(async () => more.click());
+  expect(more.getAttribute("aria-expanded")).toBe("true");
+  expect(panel.hidden).toBe(false);
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(panel.hidden).toBe(true);
+  expect(document.activeElement).toBe(more);
+  await act(async () => more.click());
+  await act(async () => { document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+  expect(panel.hidden).toBe(true);
+});
+
+it("choosing Delete from the More menu closes it and asks the page to confirm", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "processing" };
+  const onDelete = vi.fn();
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={onDelete} opening={false} />));
+  const more = [...container.querySelectorAll("button")].find((button) => button.textContent === "More")!;
+  await act(async () => more.click());
+  await act(async () => [...container.querySelectorAll("button")].find((button) => button.textContent === "Delete adventure")!.click());
+  expect(onDelete).toHaveBeenCalledOnce();
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(more);
+});
+
+it("shows a long campaign title in full, with its status above it and no separate disclosure", async () => {
+  const title = "The Sunken Citadel of the Seven Whispering Moons and the Forgotten Kings of Ashenvale Who Bargained With the Tide";
+  const adventure: AdventureRead = { slug: "citadel", title, description: null, level_range: null, cover_image: null, status: "processing" };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const heading = container.querySelector("h3")!;
+  expect(heading.textContent).toBe(title);
+  expect(heading.className).not.toContain("line-clamp");
+  // In the stacked header an unbroken word must wrap inside the card rather than widen it.
+  expect(heading.className).toContain("max-w-full");
+  expect(container.textContent).not.toContain("Full campaign title");
+  // The status always comes first, so every title starts at the same place.
+  expect(heading.previousElementSibling!.textContent).toContain("Processing");
 });

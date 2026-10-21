@@ -166,6 +166,8 @@ def public_adjudication(adjudication) -> dict | None:
         exclude={
             "story_effects",
             "accepted_story_effects",
+            "accepted_observations",
+            "observation_diagnostics",
             "proposed_prepared_amendment",
             "accepted_prepared_amendment",
         }
@@ -504,6 +506,7 @@ async def persist_turn(
                     "turn_id": turn_id,
                     "roll_status": roll_status,
                     "roll": turn_roll,
+                    "public_adjudication": public_adjudication(adjudication),
                     **journal_tracking_marker(),
                 },
             )

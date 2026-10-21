@@ -20,14 +20,12 @@ inherits `LLM_MODEL`; if that selected model supports reasoning and the stage om
 values are fallback defaults only; configured profile values win. Per-stage timeout and retry
 settings default to 60 seconds and 3 retries for text and may be overridden in TOML.
 
-The profile file is read when a turn or campaign-generation run starts. That operation keeps
-one immutable snapshot through sync graph calls, SSE streaming, and chapter fanout. Durable
-workers persist `snapshot.to_dict()` and restore with `ModelProfileSnapshot.from_dict()`.
-Historical snapshots and their digests remain unchanged when campaign model policy changes.
-`effective_profile()` applies the current code-owned campaign model and effort to each new
-semantic call, including resumed runs, while preserving commissioned budgets, timeouts and
-retries. Play and image settings remain frozen as saved. The snapshot digest is SHA-256 over
-its canonical JSON representation and identifies the historical commission.
+The profile file is read when a turn starts, and that turn keeps one immutable snapshot
+through graph calls and SSE streaming. Campaign preparation uses a direct background Responses
+client with a code-owned Luna/medium policy. Its authoritative SQLite ledger records actual
+request identity, prompt/schema versions, provider receipts, usage and accepted output before
+any graph step consumes the result. Old saved receipts retain their original attribution and
+hashes; startup never dispatches an archived preparation.
 
 Changing process environment values such as API credentials, `LLM_MODEL`,
 `LLM_REASONING_EFFORT`, or `MODEL_PROFILES_PATH` requires the normal service restart. The
@@ -64,29 +62,29 @@ profiles.
 Campaign semantics always use the following policy-bound roles, independent of ordinary play
 settings:
 
-- `authoring.outline`, `authoring.chapter`, `authoring.coherence`, and `authoring.manifest`
-- `preparation.p01` through `preparation.p12`
+- `campaign.spine`: campaign overview and chapter briefs
+- `campaign.chapters`: useful chapter bundles
+- `campaign.source_reading`: measured evidence partitions for long PDFs
+- `campaign.visual`: targeted page interpretation
+- `campaign.continuity`: explicit shared-record joins
+- `campaign.review`: independent final semantic review
+- `campaign.repair`: affected records and actual dependencies
 
-Each is enforced as `gpt-6-luna`, `medium`, and the Responses API at every complexity, for
-AI manuscripts, PDF studies, design, blueprint, semantic/visual review and corrections.
-Attempting to override its
-model, effort, or API fails configuration validation. The effective profiles carry distinct
-output budgets and may use stage-specific timeouts and retries. This offline policy does not
-make provider calls or certify account access.
+Each role is enforced as `gpt-6-luna`, `medium`, and the Responses API. Attempting to
+override its model, effort, or API fails local configuration validation. Campaign dispatch
+has no output-token, cost, call-count, repair-round or overall duration stopping cap. The
+source adapter partitions measured evidence against the real context capacity, and provider
+concurrency is operationally bounded.
 
-Retained proposals, corrections and completed/in-flight Responses jobs keep their original
-model attribution and accounting. A historical response is recovered only when its request
-hash proves the exact same logical task, evidence and schema (allowing the prior model/effort
-only). Every fresh submission uses Luna/medium, with no
-Sol fallback. An old HTTP dispatch with no saved response ID remains unresolved rather than
-being resubmitted under a different model. Rejected historical output remains retained for
-diagnostics and narrowly scoped correction under the current policy.
+Retained archived Responses outputs remain evidence of their original paid work. New graph
+responses are saved before parsing and are reused by exact task identity after restart. A
+known background response is polled and recovered. An ambiguous submission with no response
+ID is held for explicit reconciliation; no blind duplicate generation occurs.
 
-New Luna text accounting uses standard input/output rates of $0.10/$0.50 per million tokens,
-$0.01 per million cached input tokens, and the documented long-context multipliers above
-272,000 input tokens. Integer micro-USD totals round upwards once per response. Historical
-Sol receipts retain their original rates and stored totals. These are accounting estimates,
-not spending limits. Image generation and embeddings use their separate model types.
+Cost records distinguish provider-reported tokens from rate-based estimates, which are not
+billed amounts. Image generation and embeddings retain their separate model types and
+accounting. The approximate USD 5 / twenty-minute preparation targets are measurements and
+never terminate useful work.
 
 ## Input budgets
 
@@ -138,10 +136,10 @@ from agent.llm import make_chat_model
 snapshot = load_model_profiles()
 frozen_record = snapshot.to_dict()  # persist with a durable authoring run
 restored = ModelProfileSnapshot.from_dict(frozen_record)  # no env/file read
-profile = effective_profile("preparation.p03", restored)
+profile = effective_profile("campaign.spine", restored)
 
 with model_profile_snapshot(restored):
-    model = make_chat_model(profile="preparation.p03")
+    model = make_chat_model(profile="play.narrator")
 ```
 
 `profile.to_dict()` and `snapshot.to_dict()` contain non-secret effective settings only.

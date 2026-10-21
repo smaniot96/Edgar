@@ -19,7 +19,7 @@ from agent.dmg_thresholds import (
     thresholds,
 )
 from agent.encounter_budget import solo_budget
-from edgar_core import grounding
+from edgar_core import creature_xp
 
 # --- literal spot checks against DMG p.82 (XP thresholds), p.275 (CR XP), p.82-83 (multipliers) ---
 
@@ -81,27 +81,11 @@ def test_adjusted_xp_is_the_sum_times_the_multiplier() -> None:
     assert adjusted_xp([25, 25]) == 100  # two monsters at x2
 
 
-# --- the threshold parity with edgar_core (the preparation grounding path) ---
+# --- parity with the independent verified creature parser ---
 
 
-def test_thresholds_and_cr_xp_agree_with_the_engine_grounding_tables() -> None:
-    for level in range(1, 21):
-        assert tuple(grounding._XP_THRESHOLDS[level]) == thresholds(level)
-    assert dict(grounding._CR_XP) == CR_XP
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "edgar_core.grounding.encounter_multiplier caps a small party at x4 for 15+ monsters; "
-        "DMG p.83 gives x5. Owned by edgar_core, reported to root (EDG-153)."
-    ),
-)
-def test_grounding_small_party_multiplier_for_fifteen_monsters_is_five() -> None:
-    assert grounding.encounter_multiplier(15, 1) == 5.0
-
-
-# --- difficulty (DMG p.82 step 5: the closest threshold LOWER than the adjusted XP) ----------
+def test_cr_xp_agrees_with_verified_parser() -> None:
+    assert dict(creature_xp._CR_XP) == CR_XP
 
 
 @pytest.mark.parametrize(

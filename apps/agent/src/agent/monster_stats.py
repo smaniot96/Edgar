@@ -127,7 +127,7 @@ _RECHARGE_NAME = re.compile(r"\s*\(Recharge\s*(?:([2-5])\s*[-–]\s*6|(6))\)\s*$
 # its side). Extra clauses ("provided that ...", a rider after the damage) are not matched, so the
 # action stays declared. The mind flayer's Mind Blast is worded the same way with "magically emits".
 _SAVE_LEAD = (
-    r"^The [^.]+? (?:exhales|magically emits) [^.]+? in an? \d+-foot "
+    r"^The [^.]+? (?:exhales|magically emits|sends? out) [^.]+? in an? \d+-foot "
     r"(?:cone|line that is \d+ feet wide)\.\s*Each creature in that (?:area|line) must "
 )
 _SAVE_ABILITY = r"(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)"
@@ -387,7 +387,9 @@ class MonsterStats:
                 legendary_actions=int(raw.get("legendary_actions") or 0),
                 legendary=tuple(
                     LegendaryOption(
-                        str(o["name"]), int(o["cost"]), _attack_from(o["attack"]),
+                        str(o["name"]),
+                        int(o["cost"]),
+                        _attack_from(o["attack"]),
                         bool(o.get("flight_after", False)),
                     )
                     for o in raw.get("legendary") or ()
@@ -472,8 +474,13 @@ def _saves(text: str) -> dict[str, int]:
     if not line:
         return {}
     return {
-        a.upper(): int(v)
-        for a, v in re.findall(r"\b(STR|DEX|CON|INT|WIS|CHA)\s+([+-]\d+)", line, re.I)
+        a.upper()[:3]: int(v)
+        for a, v in re.findall(
+            r"\b(STR(?:ength)?|DEX(?:terity)?|CON(?:stitution)?|INT(?:elligence)?|"
+            r"WIS(?:dom)?|CHA(?:risma)?)\s+([+-]\d+)",
+            line,
+            re.I,
+        )
     }
 
 
@@ -572,11 +579,24 @@ def _attack(body: str, name: str) -> tuple[MonsterAttack | None, str | None]:
     elif short := _TURN_RIDER.match(rest):
         dc, ability, condition = short.groups()
         rider = AttackRider(condition.lower(), int(dc), ability[:3].upper(), duration_rounds=None)
+    target_clause = re.split(r"\bHit:", body, maxsplit=1, flags=re.IGNORECASE)[0]
+    multiple_targets = re.search(
+        r"\b([2-9]\d*|two|three|four|five|six)\s+(?:(?:separate|seperate|distinct|different)\s+)?targets?\b",
+        target_clause,
+        re.IGNORECASE,
+    )
+    target_note = None
+    if multiple_targets:
+        target_note = (
+            f"{name}: multiple distinct targets are not executed; one current target is attacked"
+        )
     if rider:
         return MonsterAttack(
             name, int(bonus), dice, damage_type, kind.lower() == "ranged", None, rider
-        ), None
+        ), target_note
     declared = f"{name}: damage rider or extra effect not executed" if rest.strip(" .") else None
+    if target_note:
+        declared = "; ".join(note for note in (declared, target_note) if note)
     attack = MonsterAttack(name, int(bonus), dice, damage_type, ranged=kind.lower() == "ranged")
     return attack, declared
 
@@ -636,17 +656,19 @@ def parse_lair_actions(text: str) -> tuple[LairAction, ...]:
     )
     if lead is None:
         return ()
-    options = re.split(r"[•●]|(?:^|\n)\s*[-*]\s+", raw[lead.end():])
+    options = re.split(r"[•●]|(?:^|\n)\s*[-*]\s+", raw[lead.end() :])
     magma = re.compile(
         r"Magma erupts from a point on the ground the dragon can see within 120 feet of it, "
         r"creating a 20-foot-high, 5-foot-radius geyser\. Each creature in the geyser's area "
         r"must make a DC (\d+) Dexterity saving throw, taking (\d+) \(([^)]*)\) fire damage "
-        r"on a failed save, or half as much damage on a successful one\.", re.I,
+        r"on a failed save, or half as much damage on a successful one\.",
+        re.I,
     )
     tremor = re.compile(
         r"A tremor shakes the lair in a 60-foot radius around the dragon\. Each creature other "
         r"than the dragon on the ground in that area must succeed on a DC (\d+) Dexterity "
-        r"saving throw or be knocked prone\.", re.I,
+        r"saving throw or be knocked prone\.",
+        re.I,
     )
     actions: dict[str, LairAction] = {}
     for option in options:
@@ -660,7 +682,8 @@ def parse_lair_actions(text: str) -> tuple[LairAction, ...]:
                 )
         elif match := tremor.fullmatch(body):
             actions.setdefault(
-                "Tremor", LairAction("Tremor", "DEX", int(match.group(1)), condition="prone"),
+                "Tremor",
+                LairAction("Tremor", "DEX", int(match.group(1)), condition="prone"),
             )
     return tuple(actions.values())
 
@@ -668,11 +691,17 @@ def parse_lair_actions(text: str) -> tuple[LairAction, ...]:
 def _multiattack(
     body: str, attacks: tuple[MonsterAttack, ...]
 ) -> tuple[tuple[str, int], ...] | None:
+    names = {_norm(a.name): a.name for a in attacks}
+    named = re.fullmatch(r"The [^.]+? makes (\w+) ([A-Za-z]+) attacks?\.?", body, re.IGNORECASE)
+    if named:
+        count, key = _count(named.group(1)), _norm(named.group(2))
+        if count and key in names:
+            return ((names[key], count),)
+        return None
     total_match = re.search(r"\bmakes?\s+(\w+)\s+(?:melee\s+)?attacks?\b", body, re.IGNORECASE)
     total = _count(total_match.group(1)) if total_match else None
     if not total or not attacks:
         return None
-    names = {_norm(a.name): a.name for a in attacks}
     pairs = re.findall(r"\b(\w+)\s+with\s+(?:its|his|her|their|the)?\s*([A-Za-z]+)", body, re.I)
     counts: dict[str, int] = {}
     single = _MULTI_WITH.search(body)
@@ -707,12 +736,28 @@ _SPELLCAST_ABILITY = re.compile(
     r"(?:its|his|her|their) spellcasting ability",
     re.IGNORECASE,
 )
-_SPELLCAST_LEVEL = re.compile(r"\b(\d+)(?:st|nd|rd|th)[·‐‑–—-]level spell\s*caster\b", re.IGNORECASE)
+_SPELLCAST_LEVEL = re.compile(
+    r"\b(\d+)(?:st|nd|rd|th)(?:[·‐‑–—-]|\s+)level spell\s*caster\b", re.IGNORECASE
+)
 _SPELLCAST_DC = re.compile(r"spell save DC\s+(\d+)", re.IGNORECASE)
-_SPELLCAST_ATTACK = re.compile(r"([+-]\d+) to hit with spell attacks?", re.IGNORECASE)
+_SPELLCAST_ATTACK = re.compile(
+    r"([+-]\d+) to hit with spell attacks?|spell attacks?\s*([+-]\d+) to hit", re.IGNORECASE
+)
+_SPELL_LEVEL_WORDS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+}
 _SPELL_LIST_HEADING = re.compile(
     r"\b(Cantrips?)\s*\(at will\)\s*:|"
-    r"\b(\d+)(?:st|nd|rd|th)\s+level\s*\((\d+)\s+slots?\)\s*:",
+    r"\b(\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)"
+    r"\s+level\s*\((\d+|one|two|three|four|five|six)\s+slots?\)\s*:",
     re.IGNORECASE,
 )
 
@@ -724,16 +769,28 @@ def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[st
     dc = _SPELLCAST_DC.search(body)
     attack = _SPELLCAST_ATTACK.search(body)
     headings = list(_SPELL_LIST_HEADING.finditer(body))
-    if ability is None or caster_level_match is None or dc is None or attack is None or not headings:
+    if (
+        ability is None
+        or caster_level_match is None
+        or dc is None
+        or attack is None
+        or not headings
+    ):
         return None, ("spellcasting: incomplete ability, save DC, attack bonus or spell list",)
 
     slots: dict[str, int] = {}
     spells: list[tuple[int, str]] = []
     unsupported: list[str] = []
     for index, heading in enumerate(headings):
-        listed_level = 0 if heading.group(1) else int(heading.group(2))
+        level_text = (heading.group(2) or "").lower()
+        if heading.group(1):
+            listed_level = 0
+        elif level_text in _SPELL_LEVEL_WORDS:
+            listed_level = _SPELL_LEVEL_WORDS[level_text]
+        else:
+            listed_level = int(re.match(r"\d+", level_text).group())
         if listed_level:
-            slots[str(listed_level)] = int(heading.group(3))
+            slots[str(listed_level)] = _count(heading.group(3))
         end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
         listed = body[heading.end() : end].strip()
         # A period followed by whitespace ends the spell-list sentence. A few extracted stat
@@ -756,12 +813,14 @@ def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[st
         ability=(ability.group(1) or ability.group(2)).upper()[:3],
         caster_level=int(caster_level_match.group(1)),
         save_dc=int(dc.group(1)),
-        attack_bonus=int(attack.group(1)),
+        attack_bonus=int(attack.group(1) or attack.group(2)),
         spells=tuple(dict.fromkeys(spells)),
         slots=slots,
     )
     notes = (
-        (f"spellcasting: {len(unsupported)} unsupported spell list entr{'y' if len(unsupported) == 1 else 'ies'} not executed",)
+        (
+            f"spellcasting: {len(unsupported)} unsupported spell list entr{'y' if len(unsupported) == 1 else 'ies'} not executed",
+        )
         if unsupported
         else ()
     )
@@ -885,8 +944,11 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
                 declared.append(f"{entry_name}: no spellcasting effect is executed")
             elif not spellcasting.spells:
                 declared.append(f"{entry_name}: no supported spell is executed")
-        elif (lowered == "brute" and entry_section == "traits"
-              and re.search(r"\bincluded in the attack\b", body, re.IGNORECASE)):
+        elif (
+            lowered == "brute"
+            and entry_section == "traits"
+            and re.search(r"\bincluded in the attack\b", body, re.IGNORECASE)
+        ):
             # The source's attack dice already include this trait. Do not count
             # it twice or declare those existing dice an unexecuted ability.
             pass

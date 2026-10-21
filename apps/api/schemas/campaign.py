@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,6 +58,13 @@ class CampaignDeleteRead(BaseModel):
 
     campaign_id: int
     sources: list[SourceRelease] = Field(default_factory=list)
+
+
+class AdventureCampaignOpen(BaseModel):
+    """Explicit new playthrough; omitted body retains legacy continue behavior."""
+
+    new_campaign: bool = False
+    request_id: UUID | None = None
 
 
 class CampaignCreate(BaseModel):

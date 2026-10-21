@@ -17,6 +17,29 @@ def test_request_identity_is_optional_bounded_and_not_silently_discarded():
             TurnRequest(message="Wait.", request_id=invalid)
 
 
+async def test_replay_preserves_complete_public_adjudication(
+    api_client, fake_llm_turn, fake_retrieval, monkeypatch
+):
+    sid = (await api_client.post("/api/seed")).json()["session_id"]
+    body = {"message": "I inspect the trail.", "request_id": "complete-public-receipt"}
+    first = await api_client.post(f"/api/sessions/{sid}/turn", json=body)
+    assert first.status_code == 200, first.text
+    original = first.json()
+    assert original["adjudication"] is not None
+    assert "accepted_observations" not in original["adjudication"]
+    assert "observation_diagnostics" not in original["adjudication"]
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Receipt replay attempted generation")
+
+    monkeypatch.setattr("apps.api.routers.session.run_turn", forbidden)
+    replay = await api_client.post(f"/api/sessions/{sid}/turn", json=body)
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == original
+    receipt = await api_client.get(f"/api/sessions/{sid}/turns/{body['request_id']}")
+    assert receipt.json()["result"] == original
+
+
 @pytest.mark.parametrize("first_stream", [False, True])
 async def test_lost_ack_replay_never_runs_provider_or_repeats_state(
     api_client, fake_llm_schema, fake_retrieval, monkeypatch, first_stream

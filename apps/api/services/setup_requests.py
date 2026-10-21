@@ -13,15 +13,18 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.postgres.models import Character, Session
+from db.postgres.models import Campaign, Character, Session
 
 
-def creation_identity(body: BaseModel) -> dict[str, str | None]:
+def creation_identity(body: BaseModel, *, context: dict | None = None) -> dict[str, str | None]:
     request_id = getattr(body, "request_id", None)
     if request_id is None:
         return {"creation_request_id": None, "creation_request_hash": None}
+    value = body.model_dump(mode="json", exclude={"request_id"})
+    if context is not None:
+        value = {"request": value, "context": context}
     payload = json.dumps(
-        body.model_dump(mode="json", exclude={"request_id"}),
+        value,
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )
     return {
@@ -30,17 +33,22 @@ def creation_identity(body: BaseModel) -> dict[str, str | None]:
     }
 
 
-async def creation_replay[CreationModel: (Character, Session)](
+async def creation_replay[CreationModel: (Character, Session, Campaign)](
     db: AsyncSession, model: type[CreationModel], scope_id: int, body: BaseModel,
+    *, context: dict | None = None,
 ) -> CreationModel | None:
-    identity = creation_identity(body)
+    identity = creation_identity(body, context=context)
     key = identity["creation_request_id"]
     if key is None:
         return None
     lock_name = f"setup:{model.__tablename__}:{scope_id}:{key}"
     lock_id = int.from_bytes(hashlib.sha256(lock_name.encode()).digest()[:8], "big", signed=True)
     await db.execute(select(func.pg_advisory_xact_lock(lock_id)))
-    scope = Character.owner_user_id if model is Character else Session.campaign_id
+    scope = {
+        Character: Character.owner_user_id,
+        Session: Session.campaign_id,
+        Campaign: Campaign.created_by,
+    }[model]
     existing = await db.scalar(select(model).where(
         scope == scope_id, model.creation_request_id == key,
     ))

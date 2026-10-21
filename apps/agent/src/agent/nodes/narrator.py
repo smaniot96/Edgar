@@ -101,9 +101,7 @@ def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
     )
 
 
-def build_narrator_prompt(
-    state: AgentState, profile: str = "play.narrator"
-) -> list[BaseMessage]:
+def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> list[BaseMessage]:
     player_input = state.get("player_input", "")
     adjudication = state.get("adjudication_result")
     edition = state.get("rules_edition", "2014")
@@ -132,9 +130,7 @@ def build_narrator_prompt(
     party = [m for m in (state.get("party") or []) if isinstance(m, dict) and m.get("name")]
     if len(party) > 1:
         # Multi-PC table (EDG-046): the roster is shared context; only the acting PC's action is resolved.
-        roster = "; ".join(
-            f"{m['name']} ({m.get('class')}, level {m.get('level')})" for m in party
-        )
+        roster = "; ".join(f"{m['name']} ({m.get('class')}, level {m.get('level')})" for m in party)
         context_parts.append(
             f"Party at the table: {roster}. Narrate for the whole party. The acting player character "
             f"is {character.get('name') if character else 'the spotlight character'}; do not resolve "
@@ -156,13 +152,20 @@ def build_narrator_prompt(
     if earned:
         context_parts.append(f"Committed player-known story facts: {earned}")
     if adjudication:
+        if adjudication.accepted_observations:
+            context_parts.append(
+                "Validated source observations and ordinary answers earned by this action "
+                "(convey their concrete information naturally, including responsive NPC dialogue; "
+                "these are approved answers, not private notes to recite): "
+                + str(adjudication.accepted_observations)
+            )
         accepted = [
             public
             for effect in adjudication.accepted_story_effects
             if (public := player_story_effect(effect)) is not None
         ]
         context_parts.append(
-            f"Validated story consequences this turn (describe only these as new discoveries or accomplishments): {accepted}"
+            f"Validated canonical story consequences this turn (persistent discoveries/accomplishments; validated source observations also answer this action): {accepted}"
         )
         if state.get("source_mode") == "homebrew" and accepted:
             context_parts.append(

@@ -1,5 +1,5 @@
 import type { AdventureRead, CampaignRead, ReadinessRead, SessionRead } from "../api/types";
-import { campaignDisplayName, stripGenerationPlaceholder } from "./campaign";
+import { adventureTitleForDisplay, campaignDisplayName, stripGenerationPlaceholder } from "./campaign";
 
 export interface CardModel {
   adventure: AdventureRead;
@@ -46,6 +46,7 @@ export function buildCards(
   campaigns: CampaignRead[] | undefined,
   sessions: SessionRead[] | undefined,
   userId: number,
+  includeArchived = false,
 ): CardModel[] {
   const lastByCampaign = new Map<number, string>();
   for (const s of sessions ?? []) {
@@ -69,7 +70,9 @@ export function buildCards(
         description: null, level_range: null, cover_image: null, status: "ready" });
     }
   }
-  const cards = [...modules.values()].map((adventure): CardModel => {
+  const cards = [...modules.values()]
+    .filter((adventure) => includeArchived || !adventure.library_archived)
+    .map((adventure): CardModel => {
     const mine = (campaigns ?? [])
       .filter((c) => c.created_by === userId && (c.adventure_collections.includes(adventure.slug) || (c.source_mode === "homebrew" && adventure.slug === `homebrew_${c.id}`)))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -92,7 +95,7 @@ export function buildCards(
           : campaign?.status === "ended"
             ? "ended"
             : "ready";
-    const name = campaign
+    const name = campaign && (campaign.source_mode === "homebrew" || !adventureTitleForDisplay(adventure))
       ? campaignDisplayName(campaign, adventure)
       : stripGenerationPlaceholder(adventure.title);
     return { adventure, name, campaign, campaigns: mine, state, lastPlayed, primarySession, readiness: campaign?.readiness ?? adventure.readiness ?? null };

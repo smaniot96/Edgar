@@ -20,8 +20,8 @@ type Cta = {
 
 const CTAS: Cta[] = [
   {
-    to: "/campaigns",
-    label: "Enter the Campaigns",
+    to: "/adventures",
+    label: "Explore adventures",
     blurb: "Generate or upload an adventure, then play.",
     primary: true,
   },

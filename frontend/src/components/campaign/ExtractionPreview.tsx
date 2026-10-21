@@ -40,7 +40,7 @@ export function ExtractionPreview({ slug, onUsePreview }: { slug: string; onUseP
 
   return (
     <details className="mb-3 text-sm" onToggle={(e) => { if (e.currentTarget.open && !preview && !loading) void load(); }}>
-      <summary className="cursor-pointer text-ink-muted">Inspect extraction preview</summary>
+      <summary className="min-h-11 cursor-pointer py-3 text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">Inspect extraction preview</summary>
       {loading ? <p>Loading preview…</p> : null}
       {preview ? <div className="mt-2 space-y-2">
         {preview.source_current === false ? <p className="text-warning">This preview describes a previous source. Retry extraction to inspect the current source.</p> : null}
@@ -55,15 +55,15 @@ export function ExtractionPreview({ slug, onUsePreview }: { slug: string; onUseP
         <ApiDownloadLink
           url={`${apiBase}/api/adventures/${encodeURIComponent(slug)}/extraction/markdown`}
           filename={`${slug}-extracted.md`}
-          className="block text-left underline"
+          className="inline-flex min-h-11 items-center text-left underline"
         >
           Download full extracted Markdown
         </ApiDownloadLink>
         {onUsePreview && preview.source_current && preview.quality_passed ? <div className="space-y-2">
           <p className="text-xs text-ink-muted">After inspecting the full extracted text, use this exact preview to replace the retained PDF's old index.</p>
-          <Button size="sm" variant="secondary" loading={indexing} onClick={() => void indexPreview()}>Index inspected PDF preview</Button>
+          <Button size="sm" variant="secondary" className="min-h-11" loading={indexing} onClick={() => void indexPreview()}>Index inspected PDF preview</Button>
         </div> : null}
-        <details className="text-xs text-ink-muted"><summary>Source identity</summary><p className="break-all">SHA256: {preview.source_sha256}</p></details>
+        <details className="text-xs text-ink-muted"><summary className="min-h-11 cursor-pointer py-3">Source identity</summary><p className="break-all">SHA256: {preview.source_sha256}</p></details>
       </div> : null}
       <ErrorNotice error={error} onRetry={() => void load()} />
     </details>

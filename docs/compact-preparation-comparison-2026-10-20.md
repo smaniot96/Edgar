@@ -1,6 +1,6 @@
 # Phandelver compact preparation comparison — 20 October 2026
 
-Current architecture: the lighter pipeline is now the only implementation. The dated findings below retain the investigation history; scripted producer chains and exhaustive completion proofs were superseded by the owner’s agent-led story direction. See [current preparation contract](preparation-runtime-integration.md). Campaign data and paid responses remain preserved.
+Historical evaluation of the retired preparation implementation. Its executor, stages and prompts have been removed. See [the replacement specification](campaign-preparation-rework-plan.md) for the current workflow. Dated observations below preserve the comparison history; archived campaign data and paid responses remain untouched.
 
 The owner requested a lighter preparation path after stopping the original P04
 authoring run. The current comparison targets are twenty minutes and USD 5,

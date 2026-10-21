@@ -21,4 +21,7 @@ async def load_turn_receipt(
     if row is None or not isinstance((row.payload or {}).get("done"), dict):
         return None
     # Response schema is the same allowlist used by the synchronous endpoint.
-    return str(row.payload.get("player_input", "")), TurnResponse.model_validate(row.payload["done"])
+    saved = dict(row.payload["done"])
+    if "public_adjudication" in row.payload:
+        saved["adjudication"] = row.payload["public_adjudication"]
+    return str(row.payload.get("player_input", "")), TurnResponse.model_validate(saved)

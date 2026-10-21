@@ -1,21 +1,20 @@
 /**
- * Campaigns page — the canonical `/campaigns` route (the landing splash lives at `/`).
+ * Reusable adventure library; campaigns below each template are independent playthroughs.
  *
- * A "campaign" comes from an adventure module: an uploaded PDF or one authored by AI. Modules
- * embed/author in the background; once ready, Play opens the campaign hub (sessions = saves).
- * Returning players see their campaigns first; the create/upload panel sits behind
- * "New campaign" (expanded by default only when there are no campaigns yet).
+ * PDF and AI adventures prepare once; each campaign keeps its own heroes, sessions and outcomes.
+ * The create/upload panel sits behind "New adventure" and opens by default for an empty library.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   getMe,
-  getOrCreateCampaign,
   listAdventures,
   listCampaigns,
   listSessions,
+  setAdventureLibraryArchived,
+  startAdventureCampaign,
 } from "../api/client";
 import type { AdventureRead } from "../api/types";
 import { CampaignCard } from "../components/campaign/CampaignCard";
@@ -63,6 +62,9 @@ export default function Home() {
   const [actionError, setActionError] = useState<unknown>(null);
   const [openingSlug, setOpeningSlug] = useState<string | null>(null);
   const [deleteCard, setDeleteCard] = useState<CardModel | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [restoringSlug, setRestoringSlug] = useState<string | null>(null);
+  const startRequests = useRef(new Map<string, string>());
   // Set by a confirmed delete here, or handed over by the campaign page after its delete.
   const handedOver = (location.state as { notice?: string } | null)?.notice;
   const [notice, setNotice] = useState<string | null>(handedOver ?? null);
@@ -89,14 +91,23 @@ export default function Home() {
     if (lastSessionGone) forgetLastSession();
   }, [lastSessionGone]);
 
-  const resumeSession = selectResumeSession(sessions.data);
+  const archivedSlugs = useMemo(() => new Set(
+    (adventures.data ?? []).filter((a) => a.library_archived).map((a) => a.slug),
+  ), [adventures.data]);
+  const visibleCampaignIds = new Set((campaigns.data ?? []).filter((campaign) =>
+    showArchived || campaign.adventure_collections.length === 0 ||
+    campaign.adventure_collections.some((slug) => !archivedSlugs.has(slug)),
+  ).map((campaign) => campaign.id));
+  const resumeSession = selectResumeSession(sessions.data?.filter((session) =>
+    visibleCampaignIds.has(session.campaign_id),
+  ));
 
   const cards = useMemo(
     () =>
       user && adventures.data
-        ? buildCards(adventures.data, campaigns.data, sessions.data, user.id)
+        ? buildCards(adventures.data, campaigns.data, sessions.data, user.id, showArchived)
         : [],
-    [user, adventures.data, campaigns.data, sessions.data],
+    [user, adventures.data, campaigns.data, sessions.data, showArchived],
   );
 
   const resumeName = useMemo(() => {
@@ -128,9 +139,18 @@ export default function Home() {
       navigate(`/campaigns/${card.campaign.id}/setup`);
       return;
     }
-    setOpeningSlug(card.adventure.slug);
+    await handleNewCampaign(card);
+  }
+
+  async function handleNewCampaign(card: CardModel) {
+    setActionError(null);
+    const slug = card.adventure.slug;
+    const requestId = startRequests.current.get(slug) ?? crypto.randomUUID();
+    startRequests.current.set(slug, requestId);
+    setOpeningSlug(slug);
     try {
-      const campaign = await getOrCreateCampaign(card.adventure.slug);
+      const campaign = await startAdventureCampaign(slug, requestId);
+      startRequests.current.delete(slug);
       navigate(`/campaigns/${campaign.id}/setup`);
     } catch (err) {
       setActionError(err);
@@ -144,6 +164,21 @@ export default function Home() {
     adventures.refetch();
     campaigns.refetch();
     sessions.refetch();
+  }
+
+  async function restoreArchived(slug: string) {
+    setActionError(null);
+    setRestoringSlug(slug);
+    try {
+      const restored = await setAdventureLibraryArchived(slug, false);
+      adventures.setData((previous) => previous?.map((a) => a.slug === slug
+        ? { ...a, library_archived: restored.library_archived } : a));
+      setNotice("Adventure restored to your library. Its campaigns and saved games are unchanged.");
+    } catch (error) {
+      setActionError(error);
+    } finally {
+      setRestoringSlug(null);
+    }
   }
 
   // Shared by Upload and Generate: show the processing card immediately; polling flips it.
@@ -188,8 +223,8 @@ export default function Home() {
   return (
     <Page>
       <PageHeader
-        title="Campaigns"
-        description={`Welcome back, ${user.display_name || user.email}. Each campaign can hold many sessions (saves).`}
+        title="Adventures"
+        description={`Welcome back, ${user.display_name || user.email}. Choose an adventure, then start a campaign with your own hero. Each campaign keeps its own story and saves.`}
         actions={
           <>
             {resumeSession ? (
@@ -219,7 +254,7 @@ export default function Home() {
               aria-controls="new-campaign"
               onClick={() => setCreateOpen(!showCreate)}
             >
-              <PlusIcon className="h-4 w-4" /> New campaign
+              <PlusIcon className="h-4 w-4" /> New adventure
               <ChevronIcon
                 className={cn("h-4 w-4 transition-transform", showCreate && "rotate-180")}
               />
@@ -231,7 +266,7 @@ export default function Home() {
       {showCreate ? (
         <section id="new-campaign" aria-labelledby="new-campaign-title" className="space-y-3">
           <SectionTitle>
-            <span id="new-campaign-title">New campaign</span>
+            <span id="new-campaign-title">New adventure</span>
           </SectionTitle>
           <CreatePanel onCreated={handleCreated} />
         </section>
@@ -249,27 +284,43 @@ export default function Home() {
 
       <section aria-labelledby="your-campaigns" className="space-y-3">
         <SectionTitle>
-          <span id="your-campaigns">Your campaigns</span>
+          <span id="your-campaigns">Your adventures</span>
         </SectionTitle>
+        {archivedSlugs.size > 0 ? (
+          <Button variant="ghost" size="sm" aria-pressed={showArchived} onClick={() => setShowArchived(!showArchived)}>
+            {showArchived ? "Hide archived adventures" : `Show archived adventures (${archivedSlugs.size})`}
+          </Button>
+        ) : null}
         {listError ? (
           <ErrorNotice error={listError} onRetry={() => { adventures.refetch(); campaigns.refetch(); }} />
         ) : !listsLoaded ? (
           <LoadingText>Loading campaigns…</LoadingText>
         ) : isEmpty ? (
-          <EmptyState title="No campaigns yet">
-            Generate one with AI or upload a PDF above — then hit Play.
+          <EmptyState title="No adventures yet">
+            Generate an adventure with AI or upload a PDF above, then start your campaign.
           </EmptyState>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((card) => (
-              <CampaignCard
-                key={card.adventure.slug}
-                card={card}
-                onPlay={(c) => void handlePlay(c)}
-                onDelete={(c) => { setActionError(null); setNotice(null); setDeleteCard(c); }}
-                opening={openingSlug === card.adventure.slug}
-                onRetried={() => { adventures.refetch(); campaigns.refetch(); }}
-              />
+              <div key={card.adventure.slug} className="flex flex-col gap-2">
+                {card.adventure.library_archived ? (
+                  <div className="flex items-center justify-between gap-2 text-sm text-ink-muted">
+                    <span>Archived · saved games retained</span>
+                    <Button variant="secondary" size="sm" loading={restoringSlug === card.adventure.slug} onClick={() => void restoreArchived(card.adventure.slug)}>
+                      Restore to library
+                    </Button>
+                  </div>
+                ) : null}
+                <CampaignCard
+                  card={card}
+                  onPlay={(c) => void handlePlay(c)}
+                  onNewCampaign={(c) => void handleNewCampaign(c)}
+                  onOpenCampaign={(id) => navigate(`/campaigns/${id}`)}
+                  onDelete={(c) => { setActionError(null); setNotice(null); setDeleteCard(c); }}
+                  opening={openingSlug === card.adventure.slug}
+                  onRetried={() => { adventures.refetch(); campaigns.refetch(); }}
+                />
+              </div>
             ))}
           </div>
         )}

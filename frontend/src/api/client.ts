@@ -223,6 +223,10 @@ export function getAdventure(slug: string, signal?: AbortSignal): Promise<Advent
   return getJson(`/api/adventures/${encodeURIComponent(slug)}`, signal);
 }
 
+export function setAdventureLibraryArchived(slug: string, archived: boolean): Promise<AdventureRead> {
+  return sendJson("PATCH", `/api/adventures/${encodeURIComponent(slug)}/library`, { archived });
+}
+
 export async function uploadAdventure(file: File, title?: string, rulesEdition: "2014" | "2024" | "unspecified" = "unspecified", preparation?: import("./types").PreparationSetup): Promise<AdventureRead> {
   const form = new FormData();
   form.append("file", file);
@@ -253,6 +257,13 @@ export async function deleteAdventure(slug: string): Promise<void> {
 /** Get-or-create the playable campaign row for an adventure module. */
 export function getOrCreateCampaign(slug: string): Promise<CampaignRead> {
   return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/campaign`);
+}
+
+/** Start an independent playthrough; reuse the request ID when retrying an ambiguous response. */
+export function startAdventureCampaign(slug: string, requestId: string): Promise<CampaignRead> {
+  return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/campaign`, {
+    new_campaign: true, request_id: requestId,
+  });
 }
 
 // ── Campaigns ───────────────────────────────────────────────────────────────────
@@ -295,12 +306,6 @@ export function levelUpCampaignCharacter(
   body: import("./types").LevelUpRequestBody,
 ): Promise<import("./types").LevelUpRead> {
   return sendJson("POST", `/api/campaigns/${campaignId}/characters/${characterId}/level-up`, body);
-}
-
-export async function recoverCampaignSource(id: number, slug: string, file: File): Promise<AdventureRead> {
-  const form = new FormData();
-  form.append("file", file);
-  return json(await apiFetch(`/api/campaigns/${id}/sources/${encodeURIComponent(slug)}/upload`, { method: "POST", body: form }));
 }
 
 export function retryAdventure(slug: string, reviewed?: { reviewed_source_sha256: string; reviewed_extraction_sha256: string }): Promise<AdventureRead> {

@@ -1,6 +1,6 @@
 # Campaign preparation pipeline review — 2026-10-20
 
-Current architecture: the lighter pipeline is now the only implementation. The dated findings below retain the investigation history; scripted producer chains and exhaustive completion proofs were superseded by the owner’s agent-led story direction. See [current preparation contract](preparation-runtime-integration.md). Campaign data and paid responses remain preserved.
+Historical evaluation of the retired preparation implementation. Its executor, stages and prompts have been removed. See [the replacement specification](campaign-preparation-rework-plan.md) for the current workflow. Dated observations below preserve the comparison history; archived campaign data and paid responses remain untouched.
 
 Review basis: development HEAD `fbc6162` plus the existing uncommitted route/title/preflight changes; held runtime HEAD `46a5170`; retained artifacts for `prep-95ea542c81af43ec9dea3f61a77e9f85`, adventure `lost_mine_of_phandelver_edg_055_rerun_3`. Line references below describe that reviewed state and may move during remediation.
 
@@ -237,8 +237,8 @@ provider calls. Independent critic and publication gates still determine Ready.
 Final subagent integration review found a private journal disclosure gap. Goal
 progress now emits only a canonical title already present in eligible public
 support; hidden progress remains private. Legacy identity hashes and stage
-interfaces were checked read-only. See `preparation-runtime-integration.md` and
-`preparation-supervisor-integration.md` for the current contracts. Old findings
+interfaces were checked read-only. The former runtime/supervisor contracts referenced here were retired by
+`campaign-preparation-rework-plan.md`. Old findings
 above remain historical evidence, not instructions to restore scripted paths.
 
 ### Deployment and final cleanup state

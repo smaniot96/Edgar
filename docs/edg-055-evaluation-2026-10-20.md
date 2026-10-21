@@ -1,6 +1,6 @@
 # EDG-055 product evaluation — run of 20 October 2026
 
-Current architecture: the lighter pipeline is now the only implementation. The dated findings below retain the investigation history; scripted producer chains and exhaustive completion proofs were superseded by the owner’s agent-led story direction. See [current preparation contract](preparation-runtime-integration.md). Campaign data and paid responses remain preserved.
+Historical evaluation of the retired preparation implementation. Its executor, stages and prompts have been removed. See [the replacement specification](campaign-preparation-rework-plan.md) for the current workflow. Dated observations below preserve the comparison history; archived campaign data and paid responses remain untouched.
 
 Owner-instructed run of the [EDG-055 evaluation procedure](../work-register/stories/EDG-055-evaluate-full-campaigns-fun-human-ux-and-accessibility.md#evaluation-procedure--owner-instruction-19-october-2026-binding),
 driven by the orchestrator in the built-in browser pane (no subagents). Owner choices: **Lost Mine of Phandelver** PDF;

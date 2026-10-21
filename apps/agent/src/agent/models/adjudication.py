@@ -21,7 +21,7 @@ Keep field names stable: changing them silently breaks the LLM's structured outp
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from edgar_core.story import AcceptedStoryEffect, StoryEffect
@@ -87,7 +87,63 @@ class FlagUpdate(BaseModel):
     value: str  # stringified; world_flags.value is varchar
 
 
+def _require_source_span(schema: dict) -> None:
+    if "source_span_id" in schema.get("properties", {}):
+        required = schema.setdefault("required", [])
+        if "source_span_id" not in required:
+            required.append("source_span_id")
+
+
+class SourceObservation(BaseModel):
+    """The live DM selects a short source-backed answer earned by this action."""
+
+    model_config = ConfigDict(json_schema_extra=_require_source_span)
+
+    text: str = Field(
+        min_length=1,
+        max_length=600,
+        description="Concrete player-safe answer or observation earned now, in natural wording. Every fact must follow from the selected source span and actual action. No hidden reasons, future facts or mechanical/state claims.",
+    )
+    source_span_id: str = Field(
+        default="",
+        min_length=1,
+        max_length=80,
+        description="Required: copy the inline source_span ID of the eligible current-scene evidence supporting this earned answer. Select its ID instead of retyping or paraphrasing a source quote. Private evidence binding, never player text.",
+    )
+    source_quote: SkipJsonSchema[str] = Field(
+        default="",
+        min_length=1,
+        max_length=1200,
+        description="Legacy quotation compatibility only; omit for new responses and select source_span_id instead.",
+    )
+    source_reference_id: SkipJsonSchema[str] = Field(
+        default="",
+        description="Legacy quote compatibility; selected source_span_id already binds the exact source reference.",
+    )
+    action_quote: str = Field(
+        min_length=1,
+        description="Exact words from the current player action that earn this answer.",
+    )
+    achievement_basis: str = Field(
+        min_length=1,
+        description="Private DM reasoning: explain how the actual action and known engine result earn this specific information now, including any disclosure condition.",
+    )
+
+
+def _require_answer_decision(schema: dict) -> None:
+    # Saved rulings and engine-only constructors keep their backwards-compatible
+    # default. The model must explicitly decide which answers this turn earns.
+    required = schema.setdefault("required", [])
+    if (
+        "source_observations" in schema.get("properties", {})
+        and "source_observations" not in required
+    ):
+        required.append("source_observations")
+
+
 class AdjudicationResult(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_require_answer_decision)
+
     success: bool
     damage: int | None = None
     conditions: list[str] = []
@@ -102,6 +158,13 @@ class AdjudicationResult(BaseModel):
 
     story_effects: list[StoryEffect] = Field(default_factory=list)
     accepted_story_effects: SkipJsonSchema[list[AcceptedStoryEffect]] = Field(default_factory=list)
+    source_observations: list[SourceObservation] = Field(
+        default_factory=list,
+        exclude=True,
+        description="Required explicit answer decision: return player-safe answers earned by this action, each bound to an inline source_span_id from eligible current-scene evidence. Empty only when no source-backed information is earned. No future secrets or mechanical/state changes.",
+    )
+    accepted_observations: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    observation_diagnostics: SkipJsonSchema[dict] = Field(default_factory=dict)
     # Homebrew only (EDG-169): model-proposed improvised places, people, clues and threats. The
     # validator turns accepted ones into homebrew story effects and clears this list.
     # exclude=True keeps it out of every serialized ruling, frame and golden snapshot.
@@ -140,6 +203,8 @@ class AdjudicationResult(BaseModel):
     @field_validator(
         "story_effects",
         "accepted_story_effects",
+        "source_observations",
+        "accepted_observations",
         "homebrew_proposals",
         "flags_set",
         "flags_cleared",

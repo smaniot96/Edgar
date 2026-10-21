@@ -38,129 +38,7 @@ max_output_tokens = 600
 
 # Campaign preparation semantic work is deliberately policy-bound. The loader rejects a
 # file that attempts to change these settings; no account access is claimed by this config.
-[profiles.authoring.outline]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 4000
-timeout_seconds = 180
-retries = 2
 
-[profiles.authoring.chapter]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 7000
-timeout_seconds = 240
-retries = 2
-
-[profiles.authoring.coherence]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 5000
-timeout_seconds = 180
-retries = 2
-
-[profiles.authoring.manifest]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 5000
-timeout_seconds = 180
-retries = 2
-
-# P01..P12 are the durable EDG-155 preparation stage roles. Stages with deterministic work
-# may not call a model; when a stage does call one, use its mapped profile and frozen snapshot.
-# Source studies and semantic reviews retain a generous 300 s per HTTP request.
-# Output caps include medium-effort reasoning tokens; the profile bounds per-task caps
-# from above. Background generation itself has no overall preparation deadline.
-[profiles.preparation.p01]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p02]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p03]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p04]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p05]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p06]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p07]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p08]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p09]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p10]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p11]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-[profiles.preparation.p12]
-model = "gpt-6-luna"
-reasoning_effort = "medium"
-api = "responses"
-max_output_tokens = 64000
-timeout_seconds = 300
-
-# Images have their own model/options. These names are configuration targets only; offline
-# validation does not imply that the deployed provider account can access a given image model.
 [images.image.adventure_map]
 model = "gpt-image-1"
 size = "1536x1024"
@@ -184,3 +62,5 @@ quality = "medium"
 output_format = "png"
 timeout_seconds = 180
 retries = 2
+
+# Campaign semantic roles are policy-bound to gpt-6-luna / medium.

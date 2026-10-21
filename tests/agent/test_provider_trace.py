@@ -156,15 +156,6 @@ def test_cost_needs_both_token_counts_and_a_configured_model() -> None:
     assert cost_microusd("gpt-6.1-sol", None) is None
 
 
-def test_price_table_mirrors_the_frozen_preparation_ceiling() -> None:
-    from apps.api.services.preparation_provider import (
-        INPUT_MICROUSD_PER_TOKEN,
-        OUTPUT_MICROUSD_PER_TOKEN,
-    )
-
-    assert CONFIGURED_PRICES["gpt-6.1-sol"] == (INPUT_MICROUSD_PER_TOKEN, OUTPUT_MICROUSD_PER_TOKEN)
-
-
 def _status_error(cls, status: int):
     request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
     response = httpx.Response(status, request=request)
@@ -176,8 +167,10 @@ def _status_error(cls, status: int):
     [
         (_status_error(RateLimitError, 429), "rate_limited"),
         (APITimeoutError(request=httpx.Request("POST", "https://example.invalid")), "timeout"),
-        (APIConnectionError(message=SECRET, request=httpx.Request("POST", "https://x.invalid")),
-         "unavailable"),
+        (
+            APIConnectionError(message=SECRET, request=httpx.Request("POST", "https://x.invalid")),
+            "unavailable",
+        ),
         (_status_error(BadRequestError, 400), "invalid_request"),
         (_status_error(AuthenticationError, 401), "auth"),
         (asyncio.CancelledError(), "cancelled"),
@@ -254,7 +247,9 @@ async def test_stream_without_usage_reports_unknown_and_no_text_means_no_first_t
     async def silent():
         yield AIMessageChunk(content="")
 
-    async for _ in traced_stream(silent(), kind="narrate", profile="play.narrator", collector=collector):
+    async for _ in traced_stream(
+        silent(), kind="narrate", profile="play.narrator", collector=collector
+    ):
         pass
 
     (call,) = _calls(collector)
@@ -270,7 +265,9 @@ async def test_abandoned_stream_is_recorded_as_cancelled() -> None:
         yield AIMessageChunk(content="one ")
         yield AIMessageChunk(content="two ")
 
-    stream = traced_stream(long_stream(), kind="narrate", profile="play.narrator", collector=collector)
+    stream = traced_stream(
+        long_stream(), kind="narrate", profile="play.narrator", collector=collector
+    )
     first = await stream.__anext__()
     assert first.content == "one "
     await stream.aclose()
