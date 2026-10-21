@@ -92,11 +92,18 @@ No routine per-chapter critic is added. Saved accepted responses replay without 
 submission. Old completed bundle shapes retain their original registry/fingerprint inventory;
 archived Phandelver has no executable recovery path.
 Before assembly, a local join check detects concrete ID collisions, dangling event links and
-missing encounter/reveal references. Valid bundles add no call. A defective bundle receives
-one repair restricted to the named fields and actual reference consumers; unrelated rows,
-source prose and mechanics remain identical. The original and paid repair receipts are kept.
-The compiler projects only permitted join fields onto the original bundles locally. It
-does not depend on a model copying unchanged prose exactly. Previously retained proposals
+missing encounter/reveal references. Valid bundles add no call. New structural repair requests
+return sparse, typed field edits identified by chapter, collection, original row index and
+expected stable ID. They return full records only for specifically permitted missing NPCs.
+Encounter actor edits refer to existing encounter indexes; reveal edits refer to existing
+reveal indexes, so accepted descriptions, conditions, quantities and mechanics are copied
+locally. A nine-link correction does not require returning four complete chapters.
+The original and paid repair receipts are kept. Previously dispatched graph-v2 chapter-shaped
+repair responses remain recoverable: uniquely identified permitted rows are projected onto
+original records, omitted rows remain unchanged, and only the recomputed residual defects
+can trigger a distinct sparse request. Ambiguous identities are never matched by position.
+The full assembled candidate still passes scope and semantic checks before acceptance.
+The compiler does not depend on a model copying unchanged prose exactly. Previously retained proposals
 can be reprocessed after a representation fix without another provider request; original
 discovery wording and conditions stay intact even when an invalid reveal becomes guidance.
 Ordinary scoped patches likewise preserve existing identities outside the repair closure
@@ -140,7 +147,9 @@ failure text does not itself commit discoveries or other persistent outcomes.
 
 Versioned prompts are in `apps/api/services/campaign_prep/prompts/`: `principles-v2.md`,
 `spine-v2.md`, `chapters-v2.md`, `chapter-part-v2.md`, `review-v2.md`, `repair-v2.md`, `continuity-v2.md` and
-`structural-repair-v2.md`, plus `read-source-v2.md` (oversized planning evidence only). The obsolete standalone `visual-v2.md`
+`structural-joins-v2.md`, plus `read-source-v2.md` (oversized planning evidence only).
+`structural-repair-v2.md` is used only to read already dispatched graph-v2 repair receipts;
+new structural work uses the sparse joins contract. The obsolete standalone `visual-v2.md`
 prompt and `VisualEvidence` dispatch schema were removed. The earlier replacement commit
 `2b7fb4d` contains the removal of the superseded blueprint executor and its callers; this
 change does not reintroduce it.
