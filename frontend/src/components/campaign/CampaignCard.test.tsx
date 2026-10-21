@@ -333,7 +333,7 @@ it("labels an interrupted run Interrupted, not Failed, and keeps its failure in 
     },
   };
   await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
-  const pill = container.querySelector("h3")!.nextElementSibling!;
+  const pill = container.querySelector("h3")!.previousElementSibling!;
   expect(pill.textContent).toBe("Interrupted");
   expect(pill.textContent).not.toContain("Failed");
   // One live region for the failure, with no alert nested inside it and no box inside the box.
@@ -419,8 +419,6 @@ it("shows a long campaign title in full, with its status above it and no separat
   // In the stacked header an unbroken word must wrap inside the card rather than widen it.
   expect(heading.className).toContain("max-w-full");
   expect(container.textContent).not.toContain("Full campaign title");
-  // Visually first, but after the title in reading order.
-  const badge = heading.nextElementSibling!;
-  expect(badge.textContent).toContain("Processing");
-  expect(badge.className).toContain("order-first");
+  // The status always comes first, so every title starts at the same place.
+  expect(heading.previousElementSibling!.textContent).toContain("Processing");
 });

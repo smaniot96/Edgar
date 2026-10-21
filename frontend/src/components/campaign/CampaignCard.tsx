@@ -128,13 +128,15 @@ export function CampaignCard({
   const { adventure, name, state, lastPlayed, primarySession } = card;
   const job = adventure.job;
   const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
-  const showReadiness = (state === "ready" && card.readiness?.play_allowed !== true) || card.readiness?.play_allowed === false;
+  const jobFailureShown = job != null && ["interrupted", "failed", "cancelled"].includes(job.state);
+  // A failed run explains itself (and offers its retry); the generic readiness gate would repeat it.
+  const showReadiness = !jobFailureShown &&
+    ((state === "ready" && card.readiness?.play_allowed !== true) || card.readiness?.play_allowed === false);
   const adventureSubtitle = adventureTitleForDisplay(adventure);
   const showAdventureTitle = adventureSubtitle != null && adventureSubtitle !== name;
   const homebrewWithoutSource = card.campaign?.source_mode === "homebrew" &&
     (adventure.slug.startsWith("homebrew_") || adventure.status !== "ready");
   const recoverable = state === "failed" || state === "recovery";
-  const jobFailureShown = job != null && ["interrupted", "failed", "cancelled"].includes(job.state);
   const canRetryJob = job
     ? job.retryable && ["interrupted", "failed", "cancelled"].includes(job.state)
     : recoverable && !!adventure.can_retry;
@@ -195,14 +197,10 @@ export function CampaignCard({
         <AdventureCover coverImage={adventure.cover_image} name={name} />
       </div>
       <div className="flex flex-1 flex-col p-4">
-        {/* Cards size to their content, so a long title is shown whole. Its badge moves above it so the
-            title keeps the card's full width instead of a narrow column beside the badge. */}
-        <div className={cn("mb-1 flex min-w-0 gap-2", longName ? "flex-col items-start" : "items-start justify-between")}>
-          <h3 className={cn("min-w-0 max-w-full break-words [overflow-wrap:anywhere] font-display leading-tight", longName ? "text-lg" : "text-xl")}>{name}</h3>
-          <div className={cn("shrink-0", longName && "order-first")}>
-            <StatusBadge state={state} readiness={card.readiness} homebrewWithoutSource={homebrewWithoutSource} jobState={job?.state} />
-          </div>
-        </div>
+        {/* The status always sits above the title, so every card's title starts at the same place
+            whatever its length. */}
+        <div className="mb-2"><StatusBadge state={state} readiness={card.readiness} homebrewWithoutSource={homebrewWithoutSource} jobState={job?.state} /></div>
+        <h3 className={cn("mb-1 min-w-0 max-w-full break-words [overflow-wrap:anywhere] font-display leading-tight", longName ? "text-lg" : "text-xl")}>{name}</h3>
         {showAdventureTitle ? (
           <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventureSubtitle}</p>
         ) : null}
@@ -231,8 +229,12 @@ export function CampaignCard({
         {showReadiness ? (
           <ReadinessNotice readiness={card.readiness} onRetry={onRetried} announce={false} className="mb-3 text-xs" />
         ) : null}
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {adventure.level_range ? <Pill>Levels {adventure.level_range}</Pill> : null}
+        {adventure.level_range ? (
+          <p className="mb-3 text-xs text-ink-subtle [overflow-wrap:anywhere]">
+            <span className="font-medium">Levels</span> {adventure.level_range}
+          </p>
+        ) : null}
+        <div className="mb-3 flex flex-wrap gap-1.5 empty:hidden">
           {isDev ? <Pill className="font-mono">{adventure.slug}</Pill> : null}
           {isDev && adventure.chunks != null ? <Pill>{adventure.chunks} chunks</Pill> : null}
           {isDev && card.campaign ? <Pill className="font-mono">campaign #{card.campaign.id}</Pill> : null}
