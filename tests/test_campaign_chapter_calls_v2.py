@@ -254,7 +254,7 @@ async def test_planning_must_cover_real_physical_pages(pdf_store, assignment, ma
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("inventory", [[1], [1, 3, 9]])
+@pytest.mark.parametrize("inventory", [[1, 3, 9]])
 async def test_chapter_must_acknowledge_exact_assigned_pages_without_paid_resubmit(
     pdf_store, inventory
 ):
@@ -263,14 +263,33 @@ async def test_chapter_must_acknowledge_exact_assigned_pages_without_paid_resubm
     responses = ChapterResponses(pdf_store, bad_inventory=inventory)
     active = workflow(pdf_store, responses)
     await active.source({"slug": pdf_store.slug})
-    with pytest.raises(NeedsAttention, match="complete assigned source-page inventory"):
+    with pytest.raises(NeedsAttention, match="outside its supplied evidence"):
         await active.bundles({"slug": pdf_store.slug})
     assert pdf_store.get("bundles") is None
     assert pdf_store.get("chapter-ch_bell") is None
     assert len(responses.requests) == 1
-    with pytest.raises(NeedsAttention, match="complete assigned source-page inventory"):
+    with pytest.raises(NeedsAttention, match="outside its supplied evidence"):
         await workflow(Store(pdf_store.slug), responses).bundles({"slug": pdf_store.slug})
     assert len(responses.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_page_ownership_is_local_and_does_not_regenerate_paid_content(pdf_store):
+    spine, bundles = chapter_fixture()
+    pdf_store.put("spine", spine)
+    responses = ChapterResponses(pdf_store, bad_inventory=[])
+    active = workflow(pdf_store, responses)
+    await active.source({"slug": pdf_store.slug})
+    await active.bundles({"slug": pdf_store.slug})
+    assert pdf_store.get("bundles") == bundles
+    assert len(responses.requests) == 2
+    for chapter in spine["chapters"]:
+        context = pdf_store.get("chapter-context-" + chapter["id"])
+        assert context["model_source_pages"] == []
+        assert context["model_omitted_inventory_pages"] == chapter["pages"]
+        assert [row["page"] for row in context["source_pages"]] == chapter["pages"]
+    await workflow(Store(pdf_store.slug), responses).bundles({"slug": pdf_store.slug})
+    assert len(responses.requests) == 2
 
 
 @pytest.mark.asyncio

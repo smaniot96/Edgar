@@ -1,14 +1,16 @@
 # Source-preserving chapter preparation
 
 The sole campaign preparation graph lives in `apps/api/services/campaign_prep/graph.py`.
-The ordinary path is local full-page OCR, one planning call, one authoring call per chapter,
-local continuity/assembly, and one independent final review. For N chapters this is N+2
-semantic calls if no concrete repair or identity collision is found. Every semantic call
+The ordinary path is local full-page OCR, one planning call, chapter authoring,
+local continuity/assembly, and one independent final review. Small chapters use one call;
+dense chapters use several page groups assembled locally into the same chapter. For N small
+chapters this is N+2 semantic calls if no concrete repair or identity collision is found. Every semantic call
 uses `gpt-6-luna` with medium reasoning. Large evidence can require measured context packets;
 there is no overall money, duration, token or repair-round stopping cap. Planning and
 authoring compare the full prompt, strict schema, evidence and conservative image estimate
 with Luna’s published context window; a 60k/180k text threshold no longer forces summaries.
-Original pages stay in the request whenever they fit. Context estimates are stored separately
+Original pages stay in authoring requests; chapter packets never replace them with summaries.
+Context estimates are stored separately
 from actual provider token usage and never presented as billed usage.
 
 The planner assigns every physical source page to at least one chapter. Appendix/map/item
@@ -20,12 +22,42 @@ The local context join also follows the page references of identities and secret
 that chapter. This supplies a shared appendix even when the planner allocated it elsewhere.
 Uncertain shared source references attach their original page images in the same calls.
 The chapter's base page inventory remains distinct from this supporting evidence inventory.
-If an author includes supplied supporting pages in that base inventory, local assembly
-projects it back to the assigned base pages and records the model's original inventory in
-the context receipt. Missing assigned pages or pages outside the supplied evidence still
-hold preparation. The paid output and all authored detail stay unchanged.
+Local assembly projects the author's inventory back to assigned base pages and records
+the model's original inventory and omitted inventory rows in the context receipt. Page
+ownership is a local planner fact; repeating its list is not proof that content was authored.
+Final review checks actual coverage against all original assigned pages. Citations outside
+supplied evidence still hold preparation. The paid output and authored detail stay unchanged.
 Local visual diagnostics and saved earlier interpretation receipts remain readable evidence.
 AI campaigns create their spine directly from the request and use the same chapter path.
+
+`chapter_parts.py` separates the chapter artifact from a provider response. A local source
+token sizing target groups original core pages into useful work units; it is not a request,
+output, money or time stopping cap. Shared appendix pages, neighboring page boundaries,
+shared identities/future truths and existing record commitments accompany each group.
+Within one chapter groups run sequentially to reuse IDs; independent chapters remain parallel.
+`chapter-part-v2.md` requests additions rather than repeated chapters, and permits empty
+goal/event lists for reference-only work. Exact duplicate records deduplicate; conflicting
+records hold for explicit repair. Every owned page needs an explicit completed part receipt;
+a citation or a recovered source_pages field is not proof of complete coverage.
+
+If a provider output exhausts its real output window, its original task, raw response
+(including whitespace), usage and incomplete status remain unchanged. Only lexically closed,
+fully serialized typed records are recovered into a separate provisional artifact. Missing
+origins or open strings/records are never filled by defaults. A distinct completion request
+receives the original evidence, retained records and unfinished fields, and authors only
+missing material. Closed fields of an unfinished identified record remain constraints.
+A fully closed valid chapter/part surviving missing outer syntax can be derived locally.
+The assembled chapter still passes structural checks and the independent final review.
+Continuation with no new content holds rather than repeating paid work. Restart replays
+original and completion receipts; explicitly matching saved original chapter inputs can
+reuse their earlier prompt receipt without submitting the whole chapter again.
+
+This follows the useful long-form pattern documented by
+[Re3](https://arxiv.org/abs/2210.06774), [DOC](https://arxiv.org/abs/2212.10077), and
+[LangGraph's section-writing workflow](https://docs.langchain.com/oss/python/langgraph/workflows-agents#orchestrator-worker):
+maintain the plan and relevant context, write smaller durable units, then assemble and
+check consistency. These sources describe workflows and several-thousand-word stories;
+they do not establish that an entire commercial book is reliably generated in one response.
 
 Original source files live under each campaign's `preparation-v2/source/<pdf-hash>-<ocr-config-hash>/`:
 200-DPI PNG pages, raw TXT OCR, word/coordinate/confidence TSV, layout HOCR, JSON page receipts
@@ -107,8 +139,8 @@ Source check policies currently execute the fixed-DC roll only; their private su
 failure text does not itself commit discoveries or other persistent outcomes.
 
 Versioned prompts are in `apps/api/services/campaign_prep/prompts/`: `principles-v2.md`,
-`spine-v2.md`, `chapters-v2.md`, `review-v2.md`, `repair-v2.md`, `continuity-v2.md` and
-`structural-repair-v2.md`, plus `read-source-v2.md` (oversized source fallback). The obsolete standalone `visual-v2.md`
+`spine-v2.md`, `chapters-v2.md`, `chapter-part-v2.md`, `review-v2.md`, `repair-v2.md`, `continuity-v2.md` and
+`structural-repair-v2.md`, plus `read-source-v2.md` (oversized planning evidence only). The obsolete standalone `visual-v2.md`
 prompt and `VisualEvidence` dispatch schema were removed. The earlier replacement commit
 `2b7fb4d` contains the removal of the superseded blueprint executor and its callers; this
 change does not reintroduce it.

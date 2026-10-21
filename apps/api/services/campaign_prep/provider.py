@@ -102,6 +102,117 @@ def response_text(response):
     )
 
 
+class OutputExhausted(NeedsAttention):
+    """A terminal output-limit receipt retained for explicit, scoped recovery.
+
+    This exception never accepts its output or retries the original request. Callers
+    can inspect completed JSON values and plan distinct missing work, preserving the
+    exact original response, output whitespace and provider usage in the task store.
+    """
+
+    def __init__(self, task_id: str, response: dict):
+        self.task_id = task_id
+        self.response_id = response.get("id")
+        self.response = response
+        self.output_text = response_text(response)
+        super().__init__(
+            "Retained provider output exhausted the model's output window: "
+            + str(self.response_id or task_id)
+            + " (task "
+            + task_id
+            + "). Original output and usage are preserved; no request was resubmitted."
+        )
+
+
+def completed_json_values(text: str) -> list[dict]:
+    """Extract closed JSON values with their exact paths from a possibly partial root.
+
+    An incomplete container is never returned as a complete record. Its completed
+    fields/list items are returned with explicit paths instead; an empty path means
+    the entire root is syntactically closed. No braces, quotes, scalar suffixes or
+    missing fields are invented. At EOF an unclosed numeric/literal token is omitted
+    conservatively, because its delimiter has not arrived. This is source recovery,
+    not schema acceptance or proof that the retained response completed successfully.
+    """
+
+    def reject_constant(value):
+        raise ValueError("Non-JSON constant " + value)
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate JSON field")
+            result[key] = value
+        return result
+
+    decoder = json.JSONDecoder(object_pairs_hook=unique_object, parse_constant=reject_constant)
+    recovered = []
+    length = len(text)
+
+    def whitespace(index):
+        while index < length and text[index] in " \t\r\n":
+            index += 1
+        return index
+
+    def value(index, path):
+        index = whitespace(index)
+        if index == length:
+            return None
+        try:
+            parsed, end = decoder.raw_decode(text, index)
+        except (ValueError, RecursionError):
+            pass
+        else:
+            following = whitespace(end)
+            closed = text[index] in '{["'
+            delimited = following < length and text[following] in ",]}"
+            valid_end = following == length if not path else following == length or delimited
+            if valid_end and (closed or delimited):
+                recovered.append({"path": path, "value": parsed})
+                return end
+            # A decoder can read the '1' prefix of '1e+'; never retain that scalar.
+            if text[index] not in "{[":
+                return None
+        opening = text[index]
+        if opening not in "{[":
+            return None
+        cursor, item, seen = index + 1, 0, set()
+        while True:
+            cursor = whitespace(cursor)
+            if cursor >= length:
+                return None
+            if opening == "{":
+                try:
+                    key, end = decoder.raw_decode(text, cursor)
+                except (ValueError, RecursionError):
+                    return None
+                if not isinstance(key, str) or key in seen:
+                    return None
+                seen.add(key)
+                cursor = whitespace(end)
+                if cursor >= length or text[cursor] != ":":
+                    return None
+                cursor += 1
+            else:
+                key = item
+            end = value(cursor, [*path, key])
+            if end is None:
+                return None
+            cursor = whitespace(end)
+            if cursor >= length or text[cursor] != ",":
+                return None
+            cursor += 1
+            item += 1
+
+    try:
+        value(0, [])
+    except RecursionError:
+        # Already closed siblings remain usable; a pathological open nest is not.
+        pass
+    return recovered
+
+
 class SemanticClient:
     def __init__(self, store: Store, client=None):
         self.store = store
@@ -111,7 +222,14 @@ class SemanticClient:
         self.semaphore = asyncio.Semaphore(3)
 
     async def call(
-        self, node: str, prompt: str, schema, evidence: dict, images: list[Path] | None = None
+        self,
+        node: str,
+        prompt: str,
+        schema,
+        evidence: dict,
+        images: list[Path] | None = None,
+        *,
+        reuse_saved_request: bool = False,
     ):
         self.store.check()
         instruction = instructions(prompt)
@@ -149,6 +267,49 @@ class SemanticClient:
         async with self.semaphore:
             self.store.check()
             row = self.store.task(task_id)
+            if row is None and reuse_saved_request:
+                # Chapter recovery may outlive a prompt edit. Adopt only a unique,
+                # intact original dispatch with identical evidence, page bytes and
+                # schema. Never rewrite that paid request or give it a new identity.
+                matches = []
+                with self.store.db() as db:
+                    saved_rows = [
+                        dict(saved)
+                        for saved in db.execute("SELECT * FROM task WHERE node=?", (node,))
+                    ]
+                for saved in saved_rows:
+                    saved_request = json.loads(saved["request"])
+                    saved_input = saved_request.get("input")
+                    if (
+                        not isinstance(saved_input, list)
+                        or not saved_input
+                        or not isinstance(saved_input[0], dict)
+                        or saved_input[0].get("role") != "system"
+                    ):
+                        continue
+                    comparable = {
+                        **saved_request,
+                        "input": [
+                            {**saved_input[0], "content": instruction},
+                            *saved_input[1:],
+                        ],
+                    }
+                    if comparable != request:
+                        continue
+                    if saved["id"] != digest(
+                        {"node": node, "request": saved_request, "schema_version": SCHEMA_VERSION}
+                    ):
+                        raise NeedsAttention(
+                            "Retained provider request integrity check failed: " + node
+                        )
+                    matches.append((saved, saved_request))
+                if len(matches) > 1:
+                    raise NeedsAttention(
+                        "Multiple retained provider requests match the chapter evidence: " + node
+                    )
+                if matches:
+                    row, request = matches[0]
+                    task_id = row["id"]
             if row and row["accepted"]:
                 return schema.model_validate(json.loads(row["accepted"]))
             if row and not row["response"]:
@@ -207,17 +368,24 @@ class SemanticClient:
                 self.store.response(task_id, response)  # Full output before parsing/acceptance.
                 delay = 2
             self.store.check()
+            output_exhausted = (
+                response.get("status") == "incomplete"
+                and (response.get("incomplete_details") or {}).get("reason") == "max_output_tokens"
+            )
+            if response.get("status") == "completed" or output_exhausted:
+                resolved = response.get("model") or ""
+                if resolved != MODEL and not resolved.startswith(MODEL + "-"):
+                    raise NeedsAttention(
+                        "Provider resolved a different model; retained output was not accepted."
+                    )
             if response.get("status") != "completed":
+                if output_exhausted:
+                    raise OutputExhausted(task_id, response)
                 raise NeedsAttention(
                     "Retained provider response is "
                     + str(response.get("status"))
                     + ": "
                     + response.get("id", task_id)
-                )
-            resolved = response.get("model", "")
-            if resolved != MODEL and not resolved.startswith(MODEL + "-"):
-                raise NeedsAttention(
-                    "Provider resolved a different model; retained output was not accepted."
                 )
             try:
                 value = schema.model_validate_json(response_text(response))

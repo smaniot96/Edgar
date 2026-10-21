@@ -1,8 +1,8 @@
 # Active campaign preparation: graph v2
 
 The only campaign creation executor is `apps/api/services/campaign_prep/graph.py`.
-It runs a LangGraph StateGraph with source acquisition, campaign spine, one call per chapter
-bundle, explicit continuity joins, deterministic assembly, independent review, scoped
+It runs a LangGraph StateGraph with source acquisition, campaign spine, chapter
+authoring (one call for small chapters, durable page groups for dense chapters), explicit continuity joins, deterministic assembly, independent review, scoped
 repair and publication. PDF upload and AI creation both enter `runtime.prepare_adventure`.
 No hero is read during preparation. Select a hero when creating play afterward.
 
@@ -28,7 +28,7 @@ original source manifest. Review fingerprints include relevant visual evidence. 
 
 AI acquisition starts directly from the premise, theme and requested scope. It does not
 create a PDF, import old outlines or invoke the deleted generation code. Both inputs share
-stable IDs, future truths, one-call-per-chapter authoring and the remaining graph.
+stable IDs, future truths, incremental chapter authoring and the remaining graph.
 
 Every semantic request uses `gpt-6-luna` at `medium`, including critics, identity joins,
 source reading, image-informed authoring/review and repairs. Prompts are versioned reviewable files
@@ -41,6 +41,12 @@ before parsing. Background Responses jobs recover by known ID; ambiguous submiss
 hold for explicit response-ID reconciliation rather than blind payment. Cancellation is
 persistent, including cancellation retries for known jobs after application restart.
 Embedding submissions/vectors use the same receipt owner and separate truthful accounting.
+Terminal output exhaustion preserves its exact original receipt and accounting. Closed
+records are provisional inputs to distinct missing-work requests; incomplete JSON is never
+accepted by filling missing fields. Complete chapter artifacts are assembled locally,
+with page ownership receipts and independent review, so one chapter has no single-response
+output limit. Existing paid chapter requests remain reusable across prompt-only changes
+only when their original evidence, images, schema and provider settings match exactly.
 
 ## Play and publication
 

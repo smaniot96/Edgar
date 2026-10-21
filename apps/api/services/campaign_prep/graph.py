@@ -25,6 +25,7 @@ from edgar_core.campaign_semantics import (
     Spine,
 )
 
+from .chapter_parts import author_chapter
 from .compile import (
     assemble,
     chapter_source_pages,
@@ -426,44 +427,19 @@ class Workflow:
                 return saved
             images = self.source_images(item["context_pages"])
             original_context = request_context("chapters", Bundles, evidence, images)
-            # Only a complete request exceeding the real model context needs packets.
-            # Full original pages stay in every authoring request whenever they fit.
-            if not original_context["fits"]:
-                readings = []
-                for j, packet in enumerate(self.source_reading_packets(item["source_evidence"])):
-                    value = await self.semantic.call(
-                        f"chapter-evidence-{number}-{j}",
-                        "read-source",
-                        SourceReading,
-                        {"source_pages": packet},
-                        self.source_images([p["physical_page"] for p in packet]),
-                    )
-                    readings.append(value.model_dump())
-                evidence["source_readings"] = readings
-                evidence.pop("source_evidence")
-                if not request_context("chapters", Bundles, evidence, images)["fits"]:
-                    evidence["source_images_in_readings"] = evidence.pop("image_pages")
-                    images = []
-            value = await self.semantic.call(
-                "chapter-" + number,
-                "chapters",
-                Bundles,
-                evidence,
-                images,
-            )
-            if len(value.chapters) != 1 or value.chapters[0].chapter_id != number:
-                raise NeedsAttention("Authoring response must cover its one requested chapter.")
-            bundle = value.chapters[0].model_dump()
+            # Dense authoring is partitioned into original-page work, never a
+            # summary replacing the pages. The assembled chapter has no output cap.
+            bundle, authoring_receipt = await author_chapter(self, evidence, images)
             returned_pages = set(bundle["source_pages"])
             assigned_pages = set(chapter["pages"])
-            if not assigned_pages <= returned_pages or not returned_pages <= set(
-                item["context_pages"]
-            ):
+            if not returned_pages <= set(item["context_pages"]):
                 raise NeedsAttention(
-                    "Chapter must retain its complete assigned source-page inventory."
+                    "Chapter source-page inventory cites pages outside its supplied evidence."
                 )
-            # Supporting pages were genuinely supplied, but are not the base inventory.
-            # Keep the paid response intact; project only this representational field.
+            # Ownership is a local planner fact, not evidence of semantic completeness.
+            # An author may list only narrative pages or include shared appendices.
+            # Preserve its inventory as diagnostics; final review checks actual content
+            # against ALL assigned original pages, including any omitted inventory rows.
             bundle["source_pages"] = chapter["pages"]
             self.store.put(
                 "chapter-context-" + number,
@@ -481,6 +457,8 @@ class Workflow:
                     "shared_context_sha256": digest([spine["entities"], spine["secrets"]]),
                     "dependency_chapters": sorted(dependency_ids),
                     "model_source_pages": sorted(returned_pages),
+                    "model_omitted_inventory_pages": sorted(assigned_pages - returned_pages),
+                    "authoring": authoring_receipt,
                     "evidence_tokens": token_count(evidence),
                     "original_request_context": original_context,
                     "submitted_request_context": request_context(
