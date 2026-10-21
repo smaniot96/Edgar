@@ -258,6 +258,13 @@ of a discovered container, and consulting a preserved usable source map are advi
 the critic identifies a concrete harmful consequence. Hidden enemies and substantial
 unearned truths remain protected.
 
+Critic coverage accepts only exact requested record IDs. A partial response retains its
+valid acknowledgements and records missing/extra IDs in a reconciliation receipt without
+rewriting the paid response. The graph reviews only the remaining records, with related
+records supplied as context. Findings spanning an unreviewed record remain unresolved;
+publication requires current coverage for every record. A response making no coverage
+progress holds for attention rather than repeatedly paying for the same request.
+
 The obsolete-structure audit found no additional PostgreSQL tables to remove: fourteen
 current application model tables and `alembic_version` account for all fifteen public tables.
 Historical campaigns, source files, paid task receipts and checkpoints are protected records,

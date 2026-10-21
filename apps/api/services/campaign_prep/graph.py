@@ -252,7 +252,9 @@ class Workflow:
             "assemble", self.route_assembly, {"repair": "repair", "review": "review"}
         )
         builder.add_conditional_edges(
-            "review", self.route_review, {"repair": "repair", "publish": "publish"}
+            "review",
+            self.route_review,
+            {"repair": "repair", "review": "review", "publish": "publish"},
         )
         builder.add_edge("publish", END)
         self.graph = builder.compile()
@@ -843,11 +845,8 @@ class Workflow:
         current_ids = {
             key for key in registry if coverage.get(key) != self.fingerprint(registry, key)
         }
-        # A recheck owns an issue when any affected record changed. Carry all of its
-        # evidence even if the critic initially reported the issue across packet edges.
-        for finding in findings:
-            if current_ids & set(finding["value"]["record_ids"]):
-                current_ids.update(finding["value"]["record_ids"])
+        # Cross-record findings accompany the pending record as dependency context.
+        # Already current coverage must not expand a partial-response continuation.
         compiled, source = self.store.get("compiled"), self.store.get("source")
         bundles_document = self.store.get("bundles")
         bundles = bundles_document["chapters"]
@@ -1003,30 +1002,59 @@ class Workflow:
                 evidence,
                 self.source_images(relevant_pages),
             )
-            if set(value.covered_ids) != set(ids):
-                raise NeedsAttention("Independent critic did not cover the requested records.")
             for finding in value.findings:
                 if not set(finding.record_ids) <= registry.keys():
                     raise NeedsAttention("Critic finding references nonexistent records.")
-            # Findings are owned by the coverage packet; recheck replaces that packet only.
+            requested, returned = set(ids), set(value.covered_ids)
+            covered = requested & returned
+            fingerprints = {key: self.fingerprint(registry, key) for key in covered}
+            progressed = {key for key in covered if coverage.get(key) != fingerprints[key]}
+            if returned != requested:
+                self.store.put(
+                    "review-coverage-reconciled-" + digest(evidence),
+                    {
+                        "requested_ids": sorted(requested),
+                        "returned_ids": value.covered_ids,
+                        "accepted_ids": sorted(covered),
+                        "missing_ids": sorted(requested - covered),
+                        "extra_ids": sorted(returned - requested),
+                        "newly_covered_ids": sorted(progressed),
+                    },
+                    digest(evidence),
+                )
+            if not progressed:
+                raise NeedsAttention(
+                    "Independent critic made no coverage progress; retained response requires attention."
+                )
+            # A partially covered packet cannot clear findings on its missing
+            # records, even if the original finding has the same packet owner.
+            # A later scoped recheck can finish a cross-record finding once all
+            # its records have current exact coverage, with the others as context.
             owner = digest(ids)
             findings = [
                 f
                 for f in findings
-                if f["owner"] != owner and not set(f["value"]["record_ids"]) & set(ids)
+                if not (
+                    set(f["value"]["record_ids"]) & covered
+                    and all(
+                        key in covered or coverage.get(key) == self.fingerprint(registry, key)
+                        for key in f["value"]["record_ids"]
+                    )
+                )
             ]
             findings += [{"owner": owner, "value": f.model_dump()} for f in value.findings]
-            coverage.update({key: self.fingerprint(registry, key) for key in ids})
+            coverage.update(fingerprints)
             self.store.put("review-coverage", coverage)
             self.store.put("findings", findings)
         return address
 
     def route_review(self, address):
-        return (
-            "repair"
-            if any(f["value"]["severity"] == "material" for f in self.store.get("findings") or [])
-            else "publish"
-        )
+        if any(f["value"]["severity"] == "material" for f in self.store.get("findings") or []):
+            return "repair"
+        registry, coverage = self.registry(), self.store.get("review-coverage") or {}
+        if any(coverage.get(key) != self.fingerprint(registry, key) for key in registry):
+            return "review"
+        return "publish"
 
     def retained_review_page_sources(self, findings, pages):
         """Trace a supplied finding back to its retained critic's original OCR packet."""

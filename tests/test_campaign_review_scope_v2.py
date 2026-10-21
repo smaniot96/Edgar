@@ -1,5 +1,6 @@
 """Review packets distinguish missing campaign material from out-of-packet context."""
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -7,7 +8,7 @@ from test_campaign_graph_v2 import ORIGIN, sample
 
 from apps.api.services import adventures_meta
 from apps.api.services.campaign_prep.graph import Workflow
-from apps.api.services.campaign_prep.store import Store
+from apps.api.services.campaign_prep.store import NeedsAttention, Store, digest
 from edgar_core.campaign_semantics import Bundles, Review, Spine
 
 
@@ -121,3 +122,149 @@ async def test_review_packets_supply_complete_inventory_and_chapter_audit_contex
         assert all(scene["scene_id"] != "event_side" for scene in evidence["compiled_scenes"])
     assert evidence["review_scope"]["campaign_overview"] is (requested == "campaign_spine")
     assert store.get("review-coverage").keys() == registry.keys()
+
+
+def partial_review_fixture(tmp_path, monkeypatch):
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path)
+    store = Store("partial_review")
+    store.initialize({"source_kind": "ai", "rules_edition": "2014"})
+    spine, bundles = sample()
+    for number in range(64):
+        spine["entities"].append(
+            {
+                "id": "review_record_" + str(number),
+                "kind": "npc",
+                "name": "Person " + str(number),
+                "description": "A distinct campaign actor.",
+                "origin": ORIGIN,
+            }
+        )
+    missing = "profile_b4756ca1d0f679377580ee81575f3e828729457e1c06025a"
+    typo = "profile_b4756ca1d0f679377580ee81575f3e828729457a750c030b02ff2712"
+    bundles["mechanical_profiles"] = [
+        {"id": missing, "creature": "Wolf", "source_stat_block": "", "source_pages": []}
+    ]
+    store.put("spine", Spine.model_validate(spine).model_dump())
+    store.put("bundles", Bundles.model_validate(bundles).model_dump())
+    store.put("source", {"kind": "ai", "pages": []})
+    store.put(
+        "compiled",
+        {
+            "manifest": {
+                "scenes": [{"scene_id": "event_square"}],
+                "objects": [],
+                "resolution_policies": [],
+            },
+            "grounded": [],
+        },
+    )
+    prepared = Workflow(store)
+    registry = prepared.registry()
+    requested = {"review_record_" + str(number) for number in range(64)} | {missing}
+    store.put(
+        "review-coverage",
+        {key: prepared.fingerprint(registry, key) for key in registry if key not in requested},
+    )
+    return store, requested, missing, typo
+
+
+@pytest.mark.asyncio
+async def test_partial_exact_coverage_rechecks_only_missing_id_and_preserves_unreviewed_findings(
+    tmp_path, monkeypatch
+):
+    store, requested, missing, typo = partial_review_fixture(tmp_path, monkeypatch)
+    prior = {
+        "owner": digest(sorted(requested)),
+        "value": {
+            "id": "cross_record_advice",
+            "severity": "advice",
+            "record_ids": ["review_record_0", missing],
+            "evidence": "Check the shared reference.",
+            "instruction": "Check both records.",
+        },
+    }
+    store.put("findings", [prior])
+    calls = []
+
+    class Critic:
+        async def call(self, node, prompt, schema, evidence, images=None):
+            calls.append(deepcopy(evidence))
+            if len(calls) == 1:
+                assert set(evidence["review_ids"]) == requested
+                return Review(covered_ids=sorted(requested - {missing}) + [typo])
+            assert evidence["review_ids"] == [missing]
+            assert set(evidence["dependencies"]) == {"review_record_0"}
+            assert evidence["previous_findings"] == [prior["value"]]
+            return Review(covered_ids=[missing])
+
+    prepared = Workflow(store, semantic=Critic())
+    await prepared.review({"slug": store.slug})
+    coverage = store.get("review-coverage")
+    assert requested - coverage.keys() == {missing}
+    assert typo not in coverage
+    assert store.get("findings") == [prior]
+    assert prepared.route_review({"slug": store.slug}) == "review"
+    with store.db() as db:
+        receipt = json.loads(
+            db.execute(
+                "SELECT payload FROM artifact WHERE name LIKE 'review-coverage-reconciled-%'"
+            ).fetchone()[0]
+        )
+    assert len(receipt["accepted_ids"]) == 64
+    assert receipt["missing_ids"] == [missing]
+    assert receipt["extra_ids"] == [typo]
+    await prepared.review({"slug": store.slug})
+    assert len(calls) == 2
+    assert store.get("findings") == []
+    assert prepared.route_review({"slug": store.slug}) == "publish"
+    # The conditional graph must continue review rather than attempt publication.
+    assert any(
+        edge.source == "review" and edge.target == "review"
+        for edge in prepared.graph.get_graph().edges
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_finding", [False, True])
+async def test_review_with_only_unexpected_coverage_holds_without_false_acceptance(
+    tmp_path, monkeypatch, invalid_finding
+):
+    store, requested, missing, typo = partial_review_fixture(tmp_path, monkeypatch)
+    before = store.get("review-coverage")
+    calls = []
+
+    class Critic:
+        async def call(self, *args):
+            calls.append(args)
+            findings = (
+                [
+                    {
+                        "id": "bad_join",
+                        "severity": "material",
+                        "record_ids": [typo],
+                        "evidence": "An invented ID.",
+                        "instruction": "Repair.",
+                    }
+                ]
+                if invalid_finding
+                else []
+            )
+            return Review(covered_ids=[typo], findings=findings)
+
+    prepared = Workflow(store, semantic=Critic())
+    with pytest.raises(
+        NeedsAttention, match="nonexistent records" if invalid_finding else "no coverage progress"
+    ):
+        await prepared.review({"slug": store.slug})
+    assert len(calls) == 1
+    assert store.get("review-coverage") == before
+    assert store.get("findings") is None
+    if not invalid_finding:
+        with store.db() as db:
+            receipt = json.loads(
+                db.execute(
+                    "SELECT payload FROM artifact WHERE name LIKE 'review-coverage-reconciled-%'"
+                ).fetchone()[0]
+            )
+        assert receipt["accepted_ids"] == [] and receipt["newly_covered_ids"] == []
+        assert set(receipt["missing_ids"]) == requested
