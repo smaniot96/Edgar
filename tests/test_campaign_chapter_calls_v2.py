@@ -447,9 +447,7 @@ async def test_chapter_content_patch_retains_omitted_inventory_and_separate_even
     assert repaired["chapters"][0]["events"][1] == original["chapters"][0]["events"][1]
     assert repaired["chapters"][0]["goals"] == original["chapters"][0]["goals"]
     assert repaired["chapters"][1] == original["chapters"][1]
-    assert repaired["chapters"][0]["events"][0]["dm_notes"].endswith(
-        "Independently permitted scene detail."
-    )
+    assert "Independently permitted scene detail." in repaired["chapters"][0]["events"][0]["dm_notes"]
 
 
 @pytest.mark.asyncio
@@ -616,3 +614,188 @@ async def test_incomplete_chapter_correction_retains_reference_guidance_and_proc
                 "pages": [2],
             }
         ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chapter_proposal", [False, True])
+async def test_scoped_repair_retains_omitted_encounters_and_reveals_but_applies_actor_move(
+    pdf_store, chapter_proposal
+):
+    spine, bundles = chapter_fixture()
+    chapter = bundles["chapters"][0]
+    event = chapter["events"][0]
+    origin = deepcopy(event["origin"])
+    for identity in ("guard", "mage", "moved_guard", "added_guard", "clue_request", "clue_secret"):
+        spine["entities"].append(
+            {
+                "id": identity,
+                "kind": "clue" if identity.startswith("clue_") else "npc",
+                "name": identity,
+                "description": "Accepted source identity.",
+                "origin": origin,
+            }
+        )
+
+    def encounter(actor, quantity=1):
+        return {
+            "actor_id": actor,
+            "creature": "Source Guard",
+            "quantity": quantity,
+            "adaptation": "",
+            "source_stat_block": "Exact retained source profile.",
+            "source_pages": [],
+        }
+
+    event.update(
+        participants=["guard", "mage", "moved_guard"],
+        clue_ids=["clue_request", "clue_secret"],
+        encounters=[encounter("guard"), encounter("mage"), encounter("moved_guard")],
+        reveals=[
+            {"entity_id": "clue_request", "public_text": "Old request.", "condition": "Talk."},
+            {
+                "entity_id": "clue_secret",
+                "public_text": "Earned secret.",
+                "condition": "Investigate the desk.",
+            },
+        ],
+        next_event_ids=["event_side"],
+    )
+    side = deepcopy(event)
+    side.update(
+        id="event_side", participants=[], clue_ids=[], encounters=[], reveals=[], next_event_ids=[]
+    )
+    chapter["events"].append(side)
+    spine = Spine.model_validate(spine).model_dump()
+    bundles = Bundles.model_validate(bundles).model_dump()
+    pdf_store.put("spine", spine)
+    pdf_store.put("bundles", bundles)
+    pdf_store.put(
+        "findings",
+        [
+            {
+                "owner": "test",
+                "value": {
+                    "id": "source_corrections",
+                    "severity": "material",
+                    "record_ids": ["event_square", "event_side", "ch_bell_content"],
+                    "evidence": "One guard belongs in the side room; one reveal leaks the answer.",
+                    "instruction": "Move that guard, correct the public request and guard quantity.",
+                },
+            }
+        ],
+    )
+
+    class Repair:
+        async def call(self, node, prompt, schema, evidence, images=None):
+            proposed = deepcopy(bundles["chapters"][0])
+            first, second = proposed["events"]
+            first.update(
+                participants=["guard"],
+                clue_ids=["clue_request"],
+                encounters=[encounter("guard", 2)],
+                reveals=[
+                    {
+                        "entity_id": "clue_request",
+                        "public_text": "Corrected request with no premature answer.",
+                        "condition": "Conversation.",
+                    }
+                ],
+                next_event_ids=[],
+                dm_notes="Exact paid narrative correction.",
+            )
+            second.update(
+                participants=["moved_guard", "added_guard"],
+                encounters=[encounter("moved_guard"), encounter("added_guard")],
+            )
+            return Patch(chapters=[proposed]) if chapter_proposal else Patch(events=[first, second])
+
+    await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
+    first, second = pdf_store.get("bundles")["chapters"][0]["events"]
+    assert first["encounters"] == [encounter("guard", 2), encounter("mage")]
+    assert first["participants"] == ["guard", "mage"]
+    assert second["encounters"] == [encounter("moved_guard"), encounter("added_guard")]
+    assert first["reveals"][0]["public_text"] == "Corrected request with no premature answer."
+    assert first["reveals"][1] == bundles["chapters"][0]["events"][0]["reveals"][1]
+    assert first["clue_ids"] == ["clue_request", "clue_secret"]
+    assert first["dm_notes"].startswith(
+        "Accepted correction supersedes any conflicting earlier guidance.\n\n"
+        "Exact paid narrative correction."
+    )
+    assert bundles["chapters"][0]["events"][0]["dm_notes"] in first["dm_notes"]
+    assert first["next_event_ids"] == []
+    assert pdf_store.get("bundles")["chapters"][1] == bundles["chapters"][1]
+    with pdf_store.db() as db:
+        normalization = json.loads(
+            db.execute("SELECT payload FROM artifact WHERE name LIKE 'repair-normalized-%'").fetchone()[0]
+        )["events"][0]
+    assert normalization["retained_encounter_actor_ids"] == ["mage"]
+    assert normalization["relocated_encounter_actor_ids"] == {"moved_guard": ["event_side"]}
+    assert normalization["retained_reveal_entity_ids"] == ["clue_secret"]
+
+
+def test_repair_rejects_duplicate_encounter_actor():
+    spine, bundles = chapter_fixture()
+    event = bundles["chapters"][0]["events"][0]
+    event["encounters"] = [{"actor_id": "guard"}, {"actor_id": "guard"}]
+    registry = {event["id"]: {"value": deepcopy(event)}}
+    registry.update(
+        {row["id"]: {"value": deepcopy(row)} for row in bundles["chapters"][1]["events"]}
+    )
+    with pytest.raises(NeedsAttention, match="repeated an encounter actor"):
+        graph.retain_repair_event_inventory(registry, bundles)
+
+
+def test_chapter_reference_correction_adds_opportunity_without_removing_original_route():
+    spine, bundles = chapter_fixture()
+    registry = deepcopy(graph.records(spine, bundles))
+    original = deepcopy(bundles["chapters"][0]["events"][0])
+    event = bundles["chapters"][0]["events"][0]
+    event.update(
+        trigger="A captive volunteers another route.",
+        timing="After the captive wakes.",
+        public_description="The captive watches warily.",
+        dm_notes="A captive can give directions when threatened.",
+    )
+    normalization = graph.retain_repair_event_inventory(
+        registry, bundles, [{"record_ids": ["ch_bell_content"]}]
+    )[0]
+    assert original["trigger"] in event["trigger"]
+    assert "A captive volunteers another route." in event["trigger"]
+    assert original["timing"] in event["timing"]
+    assert "After the captive wakes." in event["timing"]
+    assert original["dm_notes"] in event["dm_notes"]
+    assert event["public_description"] == original["public_description"]
+    assert normalization["retained_entry_opportunities"] == ["trigger", "timing"]
+    assert normalization["retained_public_description"] is True
+
+
+@pytest.mark.parametrize("explicit_event", [False, True])
+def test_direct_event_correction_retains_authority_over_public_description(explicit_event):
+    spine, bundles = chapter_fixture()
+    registry = deepcopy(graph.records(spine, bundles))
+    event = bundles["chapters"][0]["events"][0]
+    event["public_description"] = "Exact explicit correction."
+    graph.retain_repair_event_inventory(
+        registry,
+        bundles,
+        [{"record_ids": ["ch_bell_content" if explicit_event else "event_square"]}],
+        explicit_event_ids=["event_square"] if explicit_event else [],
+    )
+    assert event["public_description"] == "Exact explicit correction."
+
+
+def test_partial_reveal_correction_preserves_existing_discovery_positions():
+    spine, bundles = chapter_fixture()
+    event = bundles["chapters"][0]["events"][0]
+    event["clue_ids"] = ["clue_first", "clue_second"]
+    event["reveals"] = [
+        {"entity_id": identity, "public_text": identity, "condition": "Earned discovery."}
+        for identity in event["clue_ids"]
+    ]
+    registry = deepcopy(graph.records(spine, bundles))
+    original_first = deepcopy(event["reveals"][0])
+    corrected_second = deepcopy(event["reveals"][1])
+    corrected_second["public_text"] = "Corrected second discovery."
+    event["reveals"] = [corrected_second]
+    graph.retain_repair_event_inventory(registry, bundles)
+    assert event["reveals"] == [original_first, corrected_second]

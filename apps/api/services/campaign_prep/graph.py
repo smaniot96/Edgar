@@ -56,6 +56,150 @@ class Address(TypedDict):
     slug: str
 
 
+def retain_repair_event_inventory(registry, bundles, findings=(), explicit_event_ids=()):
+    """Scoped corrections retain omitted bindings; explicit actor moves remain moves."""
+    events = {event["id"]: event for bundle in bundles["chapters"] for event in bundle["events"]}
+    directly_affected = {
+        key for finding in findings for key in finding["record_ids"]
+    } | set(explicit_event_ids)
+    additions = {}
+    for key, event in events.items():
+        original = registry[key]["value"]
+        old_actors = {row["actor_id"] for row in original["encounters"]}
+        actors = [row["actor_id"] for row in event["encounters"]]
+        if len(actors) != len(set(actors)):
+            raise NeedsAttention("Event repair repeated an encounter actor.")
+        for actor in set(actors) - old_actors:
+            if actor in event["participants"]:
+                additions.setdefault(actor, []).append(key)
+    normalizations = []
+    for key, event in events.items():
+        original = registry[key]["value"]
+        guidance_mode = None
+        retained_opportunities = []
+        retained_public_description = (
+            key not in directly_affected
+            and event["public_description"] != original["public_description"]
+        )
+        if retained_public_description:
+            event["public_description"] = original["public_description"]
+        old_notes, new_notes = original["dm_notes"], event["dm_notes"]
+        if old_notes and old_notes not in new_notes:
+            correction = new_notes or "No replacement DM guidance supplied."
+            event["dm_notes"] = (
+                "Accepted correction supersedes any conflicting earlier guidance.\n\n"
+                + correction
+                + "\n\nRetained earlier event reference:\n\n"
+                + old_notes
+                + "\n\nEarlier entry opportunity (reference; correction takes precedence):\n"
+                + original["trigger"]
+                + "\n\nEarlier timing (reference; correction takes precedence):\n"
+                + original["timing"]
+            )
+            guidance_mode = "paid_correction_layer"
+        # A chapter-reference correction can add an opportunity, but its
+        # incidental event restatement cannot silently remove an accepted route.
+        # Direct event findings retain authority to replace trigger/timing.
+        if key not in directly_affected:
+            for field in ("trigger", "timing"):
+                if original[field] and original[field] not in event[field]:
+                    event[field] = (
+                        original[field]
+                        + "\n\nAdditional accepted "
+                        + ("entry opportunity" if field == "trigger" else "timing")
+                        + ":\n"
+                        + event[field]
+                    )
+                    retained_opportunities.append(field)
+        proposed = {row["actor_id"]: row for row in event["encounters"]}
+        old_actors = {row["actor_id"] for row in original["encounters"]}
+        retained, relocated, rebound, encounters = [], {}, [], []
+        for row in original["encounters"]:
+            actor = row["actor_id"]
+            mechanics = {field: value for field, value in row.items() if field != "actor_id"}
+            candidates = [
+                candidate
+                for identity, candidate in proposed.items()
+                if identity not in old_actors
+                and {
+                    field: value for field, value in candidate.items() if field != "actor_id"
+                } == mechanics
+            ]
+            # An unchanged same-actor binding plus another identical group is an
+            # addition. Otherwise an exact mechanical match under a new identity
+            # repairs the actor reference, including formerly shared actor IDs.
+            if actor in proposed and proposed[actor] == row:
+                encounters.append(proposed.pop(actor))
+            elif len(candidates) == 1:
+                replacement = proposed.pop(candidates[0]["actor_id"])
+                encounters.append(replacement)
+                rebound.append(
+                    {
+                        "from_actor_id": actor,
+                        "to_actor_id": replacement["actor_id"],
+                        "creature": row["creature"],
+                        "quantity": row["quantity"],
+                    }
+                )
+            elif actor in proposed:
+                encounters.append(proposed.pop(actor))
+            elif actor not in event["participants"] and additions.get(actor):
+                # Removing both the binding and participation while explicitly
+                # adding that actor elsewhere expresses a move, not an omission.
+                relocated[actor] = additions[actor]
+            else:
+                encounters.append(copy.deepcopy(row))
+                retained.append(actor)
+                if actor not in event["participants"]:
+                    event["participants"].append(actor)
+        encounters.extend(proposed.values())
+        event["encounters"] = encounters
+        supplied_reveals = {row["entity_id"] for row in event["reveals"]}
+        omitted_reveals = [
+            row for row in original.get("reveals", []) if row["entity_id"] not in supplied_reveals
+        ]
+        supplied_groups = {}
+        for row in event["reveals"]:
+            supplied_groups.setdefault(row["entity_id"], []).append(row)
+        ordered_reveals, replaced_groups = [], set()
+        for row in original.get("reveals", []):
+            entity = row["entity_id"]
+            if entity not in supplied_groups:
+                ordered_reveals.append(copy.deepcopy(row))
+            elif entity not in replaced_groups:
+                ordered_reveals.extend(supplied_groups[entity])
+                replaced_groups.add(entity)
+        for entity, rows in supplied_groups.items():
+            if entity not in replaced_groups:
+                ordered_reveals.extend(rows)
+        event["reveals"] = ordered_reveals
+        if omitted_reveals:
+            # Existing public text/conditions supplied for an identity replace its
+            # earlier reveal verbatim. Absent identities keep their earned reveal.
+            for row in omitted_reveals:
+                entity = row["entity_id"]
+                if entity not in event["participants"] + event["clue_ids"]:
+                    field = "clue_ids" if entity in original["clue_ids"] else "participants"
+                    event[field].append(entity)
+        if (
+            retained or relocated or rebound or omitted_reveals or guidance_mode
+            or retained_opportunities or retained_public_description
+        ):
+            normalizations.append(
+                {
+                    "event_id": key,
+                    "retained_encounter_actor_ids": retained,
+                    "relocated_encounter_actor_ids": relocated,
+                    "rebound_encounter_actors": rebound,
+                    "retained_reveal_entity_ids": [row["entity_id"] for row in omitted_reveals],
+                    "dm_notes_mode": guidance_mode,
+                    "retained_entry_opportunities": retained_opportunities,
+                    "retained_public_description": retained_public_description,
+                }
+            )
+    return normalizations
+
+
 class Workflow:
     def __init__(self, store: Store, semantic=None):
         self.store = store
@@ -990,13 +1134,19 @@ class Workflow:
                 )
             )
             owner["new_entities"].append(row.model_dump())
+        event_normalizations = retain_repair_event_inventory(
+            registry, bundles, findings, explicit_event_ids=patched_events
+        )
         validate_semantics(spine, bundles, self.store.get("source"))
         if digest([spine, bundles]) == before:
             raise NeedsAttention(
                 "Repair made no progress; unresolved findings retained without another paid loop."
             )
-        if chapter_normalizations:
-            self.store.put("repair-normalized-" + signature, {"chapters": chapter_normalizations})
+        if chapter_normalizations or event_normalizations:
+            self.store.put(
+                "repair-normalized-" + signature,
+                {"chapters": chapter_normalizations, "events": event_normalizations},
+            )
         self.store.put("repair-history", (self.store.get("repair-history") or []) + [signature])
         self.store.put("spine", spine)
         self.store.put("bundles", bundles)

@@ -125,6 +125,14 @@ still fail validation. Supplemental page citations preserve planner ownership an
 physical pages supplied in this repair or a retained critic packet whose exact finding is supplied.
 A separate normalization receipt records omitted IDs, proposed pages and critic ancestry; the
 full original paid proposal remains unchanged and available for inspection.
+Event corrections likewise retain omitted encounter actors and earned reveals. An explicit
+actor move removes participation at the old event and supplies the binding at the destination;
+the merge preserves that move rather than duplicating the actor. Matching actor corrections
+and explicit reveal replacements retain the paid wording. Original private running notes
+remain beneath an explicit correction layer. A chapter-level correction can add an entry
+opportunity without silently removing an existing route; directly targeted event findings
+can replace their trigger and timing. Normalization receipts record each retained or moved
+binding and private guidance layer before independent recheck.
 
 During play, verified current-scene guidance reaches the existing input parser before it
 classifies the action. Existing evidence is annotated inline with stable source-span IDs,
