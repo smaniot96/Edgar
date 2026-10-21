@@ -777,6 +777,39 @@ class Workflow:
             if current_ids & set(finding["value"]["record_ids"]):
                 current_ids.update(finding["value"]["record_ids"])
         compiled, source = self.store.get("compiled"), self.store.get("source")
+        bundles = self.store.get("bundles")["chapters"]
+        compiled_scene_ids = {scene["scene_id"] for scene in compiled["manifest"]["scenes"]}
+        compiled_bindings = {(row["event_id"], row["actor_id"]) for row in compiled["grounded"]}
+        chapter_inventory = [
+            {
+                "chapter_id": bundle["chapter_id"],
+                "content_record_id": derived(bundle["chapter_id"], "content"),
+                "goal_ids": [goal["id"] for goal in bundle["goals"]],
+                "item_ids": [item["entity_id"] for item in bundle.get("items", [])],
+                "check_ids": [check["id"] for check in bundle.get("checks", [])],
+                "events": [
+                    {
+                        "id": event["id"],
+                        "title": event["title"],
+                        "compiled_scene_present": event["id"] in compiled_scene_ids,
+                        "encounters": [
+                            {
+                                "actor_id": row["actor_id"],
+                                "creature": row["creature"],
+                                "quantity": row["quantity"],
+                                "source_stat_block_present": bool(row.get("source_stat_block")),
+                                "compiled_binding_present": (
+                                    event["id"], row["actor_id"]
+                                ) in compiled_bindings,
+                            }
+                            for row in event["encounters"]
+                        ],
+                    }
+                    for event in bundle["events"]
+                ],
+            }
+            for bundle in bundles
+        ]
         for packet in packets(
             [{"id": key, **registry[key]} for key in sorted(current_ids)], target=60000
         ):
@@ -785,9 +818,25 @@ class Workflow:
             context_ids = set().union(*(deps[key] for key in ids)) - set(ids)
             prior = [f["value"] for f in findings if set(ids) & set(f["value"]["record_ids"])]
             context_ids.update(key for f in prior for key in f["record_ids"] if key not in ids)
+            complete_chapters = {
+                bundle["chapter_id"]
+                for bundle in bundles
+                if derived(bundle["chapter_id"], "content") in ids
+            }
+            chapter_records = {
+                row["id"]
+                for bundle in bundles
+                if bundle["chapter_id"] in complete_chapters
+                for field in ("events", "goals")
+                for row in bundle[field]
+            }
+            context_ids.update(chapter_records)
+            context_ids.update(ref for key in chapter_records for ref in deps[key])
+            context_ids.difference_update(ids)
+            scene_detail_ids = set(ids) | chapter_records
             relevant_chapters = {
                 b["chapter_id"]
-                for b in self.store.get("bundles")["chapters"]
+                for b in bundles
                 if any(e["id"] in ids for e in b["events"])
                 or any(g["id"] in ids for g in b["goals"])
                 or derived(b["chapter_id"], "content") in ids
@@ -813,11 +862,18 @@ class Workflow:
                 "previous_findings": prior,
                 "records": packet,
                 "dependencies": {key: registry[key] for key in sorted(context_ids)},
+                "campaign_record_index": {key: row["kind"] for key, row in registry.items()},
+                "chapter_inventory": chapter_inventory,
+                "review_scope": {
+                    "campaign_overview": "campaign_spine" in ids,
+                    "complete_chapter_ids": sorted(complete_chapters),
+                    "scene_detail_ids": sorted(scene_detail_ids & compiled_scene_ids),
+                },
                 "chapter_boundaries": self.store.get("spine")["chapters"],
                 "compiled_scenes": [
-                    s for s in compiled["manifest"]["scenes"] if s["scene_id"] in ids
+                    s for s in compiled["manifest"]["scenes"] if s["scene_id"] in scene_detail_ids
                 ],
-                "mechanics": [g for g in compiled["grounded"] if g["event_id"] in ids],
+                "mechanics": [g for g in compiled["grounded"] if g["event_id"] in scene_detail_ids],
                 "source_evidence": evidence_pages(source, relevant_pages),
                 "image_pages": sorted(
                     relevant_pages & set(self.store.get("visual-candidates") or [])
@@ -826,7 +882,7 @@ class Workflow:
                 "compiled_checks": compiled["manifest"]["resolution_policies"],
                 "source_references": compiled.get("source_references", []),
                 "capability_findings": compiled.get("capability_findings", []),
-                "review_direction": "Compare original source to output and identify omitted material, not only defects in existing records. Private original source references are available but authored running material must remain useful and concrete.",
+                "review_direction": "Compare original source to output and identify omitted material within the supplied review scope. The complete chapter_inventory and campaign_record_index establish which records exist across all packets. Full chapter scene and encounter details accompany complete_chapter_ids; campaign_overview audits shared continuity. A record outside this packet is not missing. Private original source references do not replace useful authored running material.",
                 "visual_evidence": [
                     self.store.get("visual-" + str(n))
                     for n in sorted(relevant_pages)
@@ -842,7 +898,7 @@ class Workflow:
                         ),
                     }
                     for s in compiled["manifest"]["scenes"]
-                    if s["scene_id"] in ids
+                    if s["scene_id"] in scene_detail_ids
                 ],
             }
             value = await self.semantic.call(

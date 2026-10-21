@@ -190,6 +190,16 @@ count as authored retention. Material contradictions and secret disclosure error
 scoped correction; small harmless omissions above the threshold do not justify endless
 paid refinement. Engine execution support is assessed separately.
 
+Every final-review packet includes the complete campaign record and chapter encounter
+inventory. A chapter-content audit also receives that chapter's complete events, goals,
+compiled scenes and encounter bindings. An event outside a packet is not missing from the
+campaign. Overview review checks global continuity; it cannot infer local omissions from
+partial scene context. Publication-blocking findings require a consequential story,
+encounter, procedure or secrecy error. Ordinary low-stakes lead sharing, implicit inspection
+of a discovered container, and consulting a preserved usable source map are advice unless
+the critic identifies a concrete harmful consequence. Hidden enemies and substantial
+unearned truths remain protected.
+
 The obsolete-structure audit found no additional PostgreSQL tables to remove: fourteen
 current application model tables and `alembic_version` account for all fifteen public tables.
 Historical campaigns, source files, paid task receipts and checkpoints are protected records,
