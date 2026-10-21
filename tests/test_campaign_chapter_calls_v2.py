@@ -14,6 +14,7 @@ from test_campaign_graph_v2 import sample
 from apps.api.services import adventures_meta
 from apps.api.services.campaign_prep import graph, publication
 from apps.api.services.campaign_prep.graph import Workflow
+from apps.api.services.campaign_prep.profiles import canonical_profiles
 from apps.api.services.campaign_prep.provider import SemanticClient
 from apps.api.services.campaign_prep.store import NeedsAttention, Store
 from edgar_core.campaign_semantics import Bundles, Patch, Spine
@@ -447,7 +448,9 @@ async def test_chapter_content_patch_retains_omitted_inventory_and_separate_even
     assert repaired["chapters"][0]["events"][1] == original["chapters"][0]["events"][1]
     assert repaired["chapters"][0]["goals"] == original["chapters"][0]["goals"]
     assert repaired["chapters"][1] == original["chapters"][1]
-    assert "Independently permitted scene detail." in repaired["chapters"][0]["events"][0]["dm_notes"]
+    assert (
+        "Independently permitted scene detail." in repaired["chapters"][0]["events"][0]["dm_notes"]
+    )
 
 
 @pytest.mark.asyncio
@@ -618,8 +621,9 @@ async def test_incomplete_chapter_correction_retains_reference_guidance_and_proc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("chapter_proposal", [False, True])
+@pytest.mark.parametrize("omitted_destination_participants", [False, True])
 async def test_scoped_repair_retains_omitted_encounters_and_reveals_but_applies_actor_move(
-    pdf_store, chapter_proposal
+    pdf_store, chapter_proposal, omitted_destination_participants
 ):
     spine, bundles = chapter_fixture()
     chapter = bundles["chapters"][0]
@@ -704,16 +708,43 @@ async def test_scoped_repair_retains_omitted_encounters_and_reveals_but_applies_
                 dm_notes="Exact paid narrative correction.",
             )
             second.update(
-                participants=["moved_guard", "added_guard"],
+                participants=[]
+                if omitted_destination_participants
+                else ["moved_guard", "added_guard"],
                 encounters=[encounter("moved_guard"), encounter("added_guard")],
             )
-            return Patch(chapters=[proposed]) if chapter_proposal else Patch(events=[first, second])
+            return (
+                Patch(
+                    chapters=[proposed], events=[second] if omitted_destination_participants else []
+                )
+                if chapter_proposal
+                else Patch(events=[first, second])
+            )
 
     await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
     first, second = pdf_store.get("bundles")["chapters"][0]["events"]
-    assert first["encounters"] == [encounter("guard", 2), encounter("mage")]
+    expected = canonical_profiles(
+        {
+            "chapters": [
+                {
+                    "events": [
+                        {
+                            "encounters": [
+                                encounter("guard", 2),
+                                encounter("mage"),
+                                encounter("moved_guard"),
+                                encounter("added_guard"),
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    )["chapters"][0]["events"][0]["encounters"]
+    assert first["encounters"] == expected[:2]
     assert first["participants"] == ["guard", "mage"]
-    assert second["encounters"] == [encounter("moved_guard"), encounter("added_guard")]
+    assert second["encounters"] == expected[2:]
+    assert second["participants"] == ["moved_guard", "added_guard"]
     assert first["reveals"][0]["public_text"] == "Corrected request with no premature answer."
     assert first["reveals"][1] == bundles["chapters"][0]["events"][0]["reveals"][1]
     assert first["clue_ids"] == ["clue_request", "clue_secret"]
@@ -725,12 +756,18 @@ async def test_scoped_repair_retains_omitted_encounters_and_reveals_but_applies_
     assert first["next_event_ids"] == []
     assert pdf_store.get("bundles")["chapters"][1] == bundles["chapters"][1]
     with pdf_store.db() as db:
-        normalization = json.loads(
-            db.execute("SELECT payload FROM artifact WHERE name LIKE 'repair-normalized-%'").fetchone()[0]
-        )["events"][0]
+        event_normalizations = json.loads(
+            db.execute(
+                "SELECT payload FROM artifact WHERE name LIKE 'repair-normalized-%'"
+            ).fetchone()[0]
+        )["events"]
+    normalization = event_normalizations[0]
     assert normalization["retained_encounter_actor_ids"] == ["mage"]
     assert normalization["relocated_encounter_actor_ids"] == {"moved_guard": ["event_side"]}
     assert normalization["retained_reveal_entity_ids"] == ["clue_secret"]
+    if omitted_destination_participants:
+        destination = next(row for row in event_normalizations if row["event_id"] == "event_side")
+        assert destination["registered_encounter_participants"] == ["moved_guard", "added_guard"]
 
 
 def test_repair_rejects_duplicate_encounter_actor():

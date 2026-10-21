@@ -14,7 +14,12 @@ from edgar_core.campaign_semantics import Bundles, Review, Spine
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("requested", "side_compiled"),
-    [("campaign_spine", True), ("event_square", True), ("ch_bell_content", True), ("ch_bell_content", False)],
+    [
+        ("campaign_spine", True),
+        ("event_square", True),
+        ("ch_bell_content", True),
+        ("ch_bell_content", False),
+    ],
 )
 async def test_review_packets_supply_complete_inventory_and_chapter_audit_context(
     tmp_path, monkeypatch, requested, side_compiled
@@ -54,13 +59,16 @@ async def test_review_packets_supply_complete_inventory_and_chapter_audit_contex
         {
             "manifest": {
                 "scenes": [
-                    {"scene_id": key} for key in ("event_square", "event_side")
+                    {"scene_id": key}
+                    for key in ("event_square", "event_side")
                     if key != "event_side" or side_compiled
                 ],
                 "objects": [],
                 "resolution_policies": [],
             },
-            "grounded": [{"event_id": "event_side", **side["encounters"][0]}] if side_compiled else [],
+            "grounded": [{"event_id": "event_side", **side["encounters"][0]}]
+            if side_compiled
+            else [],
         },
     )
     captured = []
@@ -87,6 +95,7 @@ async def test_review_packets_supply_complete_inventory_and_chapter_audit_contex
     assert chapter["events"][1]["encounters"] == [
         {
             "actor_id": "npc_guard",
+            "profile_id": None,
             "creature": "Source Guard",
             "quantity": 3,
             "source_stat_block_present": True,
@@ -95,9 +104,10 @@ async def test_review_packets_supply_complete_inventory_and_chapter_audit_contex
     ]
     if requested == "ch_bell_content":
         assert evidence["review_scope"]["complete_chapter_ids"] == ["ch_bell"]
-        assert evidence["dependencies"]["event_side"]["value"]["encounters"][0][
-            "source_stat_block"
-        ] == "Complete retained source-specific profile."
+        assert (
+            evidence["dependencies"]["event_side"]["value"]["encounters"][0]["source_stat_block"]
+            == "Complete retained source-specific profile."
+        )
         expected_scenes = {"event_square", "event_side"} if side_compiled else {"event_square"}
         assert {scene["scene_id"] for scene in evidence["compiled_scenes"]} == expected_scenes
         if side_compiled:

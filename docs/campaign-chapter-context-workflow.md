@@ -1,5 +1,16 @@
 # Source-preserving chapter preparation
 
+The current acceptance rule is a coherent, enjoyable adventure based on the PDF or AI
+request. Source differences in rooms, treasure, dialogue, optional events, encounter choices
+and timing are allowed. The retained original pages are evidence, not a requirement to clone
+every detail or meet an exact-fidelity percentage. Review blocks consequential internal
+contradictions, broken plot/clue logic, substantial premature secrets and invalid mechanical
+bindings. Ordinary DM interpretation and harmless differences are advice. Material changes
+to continuity/geography need a concise note so prepared facts form one playable version.
+During play the prepared adaptation governs its narrative; source pages fill compatible
+gaps, and committed play state takes precedence over both. Earlier source-retention scores
+remain useful descriptive measurements and are not publication gates.
+
 The sole campaign preparation graph lives in `apps/api/services/campaign_prep/graph.py`.
 The ordinary path is local full-page OCR, one planning call, chapter authoring,
 local continuity/assembly, and one independent final review. Small chapters use one call;
@@ -25,7 +36,8 @@ The chapter's base page inventory remains distinct from this supporting evidence
 Local assembly projects the author's inventory back to assigned base pages and records
 the model's original inventory and omitted inventory rows in the context receipt. Page
 ownership is a local planner fact; repeating its list is not proof that content was authored.
-Final review checks actual coverage against all original assigned pages. Citations outside
+Final review uses all original assigned pages to assess the prepared adventure's coherence
+and meaningful source relationships, while allowing adaptation. Citations outside
 supplied evidence still hold preparation. The paid output and authored detail stay unchanged.
 Local visual diagnostics and saved earlier interpretation receipts remain readable evidence.
 AI campaigns create their spine directly from the request and use the same chapter path.
@@ -78,12 +90,13 @@ They are not raw PDF extraction pages: a private note may legitimately quote sev
 profiles or an incomplete original OCR line. Original page quality diagnostics stay attached
 to the source artifacts; independent rulebook/PDF extraction keeps its own layout checks.
 
-The evidence hierarchy is explicit in author/reviewer and live DM instructions. Original
-adventure facts take precedence over accidental prepared contradictions. A deliberate
-adaptation identifies its original fact, replacement and reason. Committed gameplay and
-engine state take precedence over both: a source passage cannot undo a player choice or
-reset an outcome. The final reviewer compares source to output, including omissions, rather
-than checking only records that already exist.
+The evidence hierarchy is explicit in author/reviewer and live DM instructions. A coherent
+prepared adaptation governs its narrative; original pages fill compatible gaps. Material
+continuity or geography changes need a concise clarification, while harmless inventions
+need no exhaustive change log. Committed gameplay and engine state take precedence over
+both: a source passage cannot undo a player choice or reset an outcome. Final review uses
+source evidence to understand the adventure and identify consequential contradictions or
+missing causal links, rather than enforcing exhaustive reproduction.
 
 Final review findings reference stable records. Chapter content records allow targeted
 repairs to omitted running notes/items/checks. Repairs preserve unaffected contained records,
@@ -154,15 +167,28 @@ Repeated appearances of the same individual retain one actor identity and the sa
 authoritative creature profile. A disguise with unchanged statistics does not create a
 second creature or a different profile. Authoring and repair prompts distinguish this
 reference-consistency problem from genuinely different creatures or mechanical forms.
+`profiles.py` folds mechanical declarations into one canonical registry. Each new encounter
+contains `actor_id`, `profile_id`, quantity and per-appearance adaptation; the provider's
+strict output schema excludes inline creature names and statistics. Chapter declarations
+precede their events so output recovery cannot accept references whose only definition
+was truncated after the chapter. Known definitions are reused by ID across chapters and
+parts. Identical complete profiles deduplicate, and source/catalogue aliases merge only
+when the complete verified text agrees. The compiler parses each shared source profile
+once and publishes one statistics passage for its actual actors and scenes. Profile
+records participate in dependency fingerprints, scoped repair and independent review.
+Legacy inline fields remain inert compatibility inputs for retained paid output; the
+derived projection never rewrites original task bytes. Existing Ready publications keep
+their accepted representation and hashes on read/restart.
 
 Selected original visual pages from the relevant chapter remain available as `map_context`
 through whole-chapter authoring, every multipart continuation, scoped repair and final
 review. References identify physical pages and immutable source/image hashes; requests
 include the actual page images. A later page group therefore does not lose an earlier
 chapter map. Additional map evidence does not expand a repair's allowed record IDs.
-Spatial directions and connections must be checked against the actual map and keyed prose,
-not inferred from OCR order or room numbers. Unclear relationships remain explicitly
-uncertain. This uses the existing author/review calls and does not require a separate
+When using source geography, spatial directions and connections are checked against the
+actual map and keyed prose, not inferred from OCR order or room numbers. Coherent map
+adaptations are allowed when all prepared guidance agrees. Unclear source relationships
+remain explicitly uncertain. This uses existing author/review calls without a separate
 universal map agent or an exhaustive generated room-adjacency guide.
 
 During play, verified current-scene guidance reaches the existing input parser before it
@@ -214,12 +240,13 @@ prompt and `VisualEvidence` dispatch schema were removed. The earlier replacemen
 `2b7fb4d` contains the removal of the superseded blueprint executor and its callers; this
 change does not reintroduce it.
 
-Acceptance for the two fresh PDF demonstrations uses independent fixed source-feature
-inventories spanning the original adventures. At least 80% must be accurately retained,
-with logical motives, continuity and playable choices. Private OCR storage alone does not
-count as authored retention. Material contradictions and secret disclosure errors require
-scoped correction; small harmless omissions above the threshold do not justify endless
-paid refinement. Engine execution support is assessed separately.
+Independent fixed source-feature inventories describe retention in the two fresh PDF
+demonstrations. The user's later acceptance supersedes the earlier 80% threshold: a
+coherent, logical adventure based on the source is acceptable even when details differ.
+Private OCR storage alone is not authored retention. Consequential internal contradictions,
+broken clue paths and substantial premature secrets require scoped correction; harmless
+differences and optional omissions do not block publication. Engine execution support is
+assessed separately.
 
 Every final-review packet includes the complete campaign record and chapter encounter
 inventory. A chapter-content audit also receives that chapter's complete events, goals,

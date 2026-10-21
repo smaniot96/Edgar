@@ -39,6 +39,7 @@ from .compile import (
 from .field_edits import apply_field_edits
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
+from .profiles import canonical_profiles
 from .provider import SemanticClient, request_context
 from .source import (
     VISUAL_CANDIDATE_VERSION,
@@ -60,16 +61,31 @@ class Address(TypedDict):
 def retain_repair_event_inventory(registry, bundles, findings=(), explicit_event_ids=()):
     """Scoped corrections retain omitted bindings; explicit actor moves remain moves."""
     events = {event["id"]: event for bundle in bundles["chapters"] for event in bundle["events"]}
-    directly_affected = {
-        key for finding in findings for key in finding["record_ids"]
-    } | set(explicit_event_ids)
+    directly_affected = {key for finding in findings for key in finding["record_ids"]} | set(
+        explicit_event_ids
+    )
     additions = {}
+    registered_participants = {}
     for key, event in events.items():
         original = registry[key]["value"]
         old_actors = {row["actor_id"] for row in original["encounters"]}
         actors = [row["actor_id"] for row in event["encounters"]]
         if len(actors) != len(set(actors)):
             raise NeedsAttention("Event repair repeated an encounter actor.")
+        if key in explicit_event_ids:
+            for actor in actors:
+                identity = registry.get(actor)
+                if (
+                    actor not in event["participants"]
+                    and identity
+                    and identity["kind"] == "entity"
+                    and identity["value"]["kind"] == "npc"
+                ):
+                    # An explicit encounter binding already places this known NPC
+                    # in the scene. Repair only the redundant participation join;
+                    # no new actor, mechanics or narrative population is inferred.
+                    event["participants"].append(actor)
+                    registered_participants.setdefault(key, []).append(actor)
         for actor in set(actors) - old_actors:
             if actor in event["participants"]:
                 additions.setdefault(actor, []).append(key)
@@ -122,9 +138,8 @@ def retain_repair_event_inventory(registry, bundles, findings=(), explicit_event
                 candidate
                 for identity, candidate in proposed.items()
                 if identity not in old_actors
-                and {
-                    field: value for field, value in candidate.items() if field != "actor_id"
-                } == mechanics
+                and {field: value for field, value in candidate.items() if field != "actor_id"}
+                == mechanics
             ]
             # An unchanged same-actor binding plus another identical group is an
             # addition. Otherwise an exact mechanical match under a new identity
@@ -138,7 +153,7 @@ def retain_repair_event_inventory(registry, bundles, findings=(), explicit_event
                     {
                         "from_actor_id": actor,
                         "to_actor_id": replacement["actor_id"],
-                        "creature": row["creature"],
+                        "creature": row.get("creature", row.get("profile_id")),
                         "quantity": row["quantity"],
                     }
                 )
@@ -183,8 +198,14 @@ def retain_repair_event_inventory(registry, bundles, findings=(), explicit_event
                     field = "clue_ids" if entity in original["clue_ids"] else "participants"
                     event[field].append(entity)
         if (
-            retained or relocated or rebound or omitted_reveals or guidance_mode
-            or retained_opportunities or retained_public_description
+            retained
+            or relocated
+            or rebound
+            or omitted_reveals
+            or guidance_mode
+            or retained_opportunities
+            or retained_public_description
+            or registered_participants.get(key)
         ):
             normalizations.append(
                 {
@@ -196,6 +217,7 @@ def retain_repair_event_inventory(registry, bundles, findings=(), explicit_event
                     "dm_notes_mode": guidance_mode,
                     "retained_entry_opportunities": retained_opportunities,
                     "retained_public_description": retained_public_description,
+                    "registered_encounter_participants": registered_participants.get(key, []),
                 }
             )
     return normalizations
@@ -238,8 +260,9 @@ class Workflow:
     def request(self):
         return self.store.state()["request"]
 
-    def registry(self):
-        value = records(self.store.get("spine"), self.store.get("bundles"))
+    def registry(self, bundles=None):
+        bundles = self.store.get("bundles") if bundles is None else bundles
+        value = records(self.store.get("spine"), bundles)
         value["campaign_spine"] = {
             "kind": "spine",
             "value": {
@@ -247,7 +270,7 @@ class Workflow:
             },
             "chapter_guidance": [
                 {"chapter_id": b["chapter_id"], "dm_guidance": b["dm_guidance"]}
-                for b in self.store.get("bundles")["chapters"]
+                for b in bundles["chapters"]
             ],
         }
         return value
@@ -523,6 +546,11 @@ class Workflow:
     async def bundles(self, address):
         self.store.enter("bundles")
         if self.store.get("bundles"):
+            # Derived projection only: immutable paid task/response rows remain
+            # untouched, while unfinished retained work gains shared references.
+            value = canonical_profiles(self.store.get("bundles"), self.store.get("mechanics") or [])
+            if value != self.store.get("bundles"):
+                self.store.put("bundles", value)
             return address
         spine, source = self.store.get("spine"), self.store.get("source")
         chapters = sorted(spine["chapters"], key=lambda c: c["play_order"])
@@ -589,6 +617,14 @@ class Workflow:
                     set(item["context_pages"]) & set(self.store.get("visual-candidates") or [])
                 ),
                 "map_context": self.map_context(chapter["pages"]),
+                "known_mechanical_profiles": [
+                    profile
+                    for previous in chapters
+                    if previous["id"] in dependency_ids
+                    for profile in (self.store.get("chapter-" + previous["id"]) or {}).get(
+                        "mechanical_profiles", []
+                    )
+                ],
             }
             dependency = digest(evidence)
             saved = self.store.get("chapter-" + number, dependency)
@@ -661,7 +697,10 @@ class Workflow:
                 key = item["chapter"]["id"]
                 accepted[key] = result
                 del remaining[key]
-        value = Bundles(chapters=[accepted[c["id"]] for c in chapters]).model_dump()
+        value = canonical_profiles(
+            Bundles(chapters=[accepted[c["id"]] for c in chapters]).model_dump(),
+            self.store.get("mechanics") or [],
+        )
         self.store.put("bundles", value, digest(spine))
         return address
 
@@ -714,6 +753,7 @@ class Workflow:
             or result.events
             or result.chapters
             or result.field_edits
+            or result.mechanical_profiles
             or not set(replacement) <= {first, second}
         ):
             raise NeedsAttention("Identity resolution changed unrelated narrative records.")
@@ -760,6 +800,13 @@ class Workflow:
             self.store.get("bundles"),
             self.store.get("mechanics"),
         )
+        canonical = canonical_profiles(bundles, mechanics)
+        if canonical != bundles:
+            self.store.put("bundles", canonical)
+            bundles = canonical
+        self.store.put(
+            "mechanical-registry", bundles.get("mechanical_profiles", []), digest(bundles)
+        )
         validate_semantics(spine, bundles, self.store.get("source"))
         local_findings = mechanical_findings(bundles, mechanics)
         self.store.put("assembly-findings", local_findings)
@@ -802,7 +849,8 @@ class Workflow:
             if current_ids & set(finding["value"]["record_ids"]):
                 current_ids.update(finding["value"]["record_ids"])
         compiled, source = self.store.get("compiled"), self.store.get("source")
-        bundles = self.store.get("bundles")["chapters"]
+        bundles_document = self.store.get("bundles")
+        bundles = bundles_document["chapters"]
         compiled_scene_ids = {scene["scene_id"] for scene in compiled["manifest"]["scenes"]}
         compiled_bindings = {(row["event_id"], row["actor_id"]) for row in compiled["grounded"]}
         chapter_inventory = [
@@ -820,12 +868,28 @@ class Workflow:
                         "encounters": [
                             {
                                 "actor_id": row["actor_id"],
-                                "creature": row["creature"],
+                                "profile_id": row.get("profile_id"),
+                                "creature": next(
+                                    (
+                                        p["creature"]
+                                        for p in bundles_document.get("mechanical_profiles", [])
+                                        if p["id"] == row.get("profile_id")
+                                    ),
+                                    row.get("creature", ""),
+                                ),
                                 "quantity": row["quantity"],
-                                "source_stat_block_present": bool(row.get("source_stat_block")),
-                                "compiled_binding_present": (
-                                    event["id"], row["actor_id"]
-                                ) in compiled_bindings,
+                                "source_stat_block_present": bool(
+                                    next(
+                                        (
+                                            p.get("source_stat_block")
+                                            for p in bundles_document.get("mechanical_profiles", [])
+                                            if p["id"] == row.get("profile_id")
+                                        ),
+                                        row.get("source_stat_block"),
+                                    )
+                                ),
+                                "compiled_binding_present": (event["id"], row["actor_id"])
+                                in compiled_bindings,
                             }
                             for row in event["encounters"]
                         ],
@@ -899,6 +963,11 @@ class Workflow:
                     s for s in compiled["manifest"]["scenes"] if s["scene_id"] in scene_detail_ids
                 ],
                 "mechanics": [g for g in compiled["grounded"] if g["event_id"] in scene_detail_ids],
+                "mechanical_profiles": {
+                    key: value
+                    for key, value in compiled.get("mechanical_profiles", {}).items()
+                    if key in set(ids) | context_ids
+                },
                 "source_evidence": evidence_pages(source, relevant_pages),
                 "image_pages": sorted(
                     relevant_pages & set(self.store.get("visual-candidates") or [])
@@ -1001,7 +1070,10 @@ class Workflow:
 
     async def repair(self, address):
         self.store.enter("repair")
-        registry = self.registry()
+        normalized = canonical_profiles(
+            self.store.get("bundles"), self.store.get("mechanics") or []
+        )
+        registry = self.registry(normalized)
         findings = [
             f["value"] for f in self.store.get("findings") if f["value"]["severity"] == "material"
         ]
@@ -1018,6 +1090,7 @@ class Workflow:
                 },
             },
             "verified_creatures": self.templates(),
+            "mechanical_profiles": normalized.get("mechanical_profiles", []),
         }
         source_pages = {
             p
@@ -1106,7 +1179,7 @@ class Workflow:
         ]
         spine, bundles = (
             copy.deepcopy(self.store.get("spine")),
-            copy.deepcopy(self.store.get("bundles")),
+            copy.deepcopy(normalized),
         )
         before = digest([spine, bundles])
         chapter_replacements = {}
@@ -1124,10 +1197,17 @@ class Workflow:
             replacement = bundle.model_dump()
             contained = ("events", "goals", "new_entities", "new_secrets")
             wrong_kinds = [
-                {"id": row["id"], "accepted_kind": registry[row["id"]]["kind"],
-                 "proposed_kind": kind}
-                for field, kind in (("events", "event"), ("goals", "goal"),
-                                    ("new_entities", "entity"), ("new_secrets", "secret"))
+                {
+                    "id": row["id"],
+                    "accepted_kind": registry[row["id"]]["kind"],
+                    "proposed_kind": kind,
+                }
+                for field, kind in (
+                    ("events", "event"),
+                    ("goals", "goal"),
+                    ("new_entities", "entity"),
+                    ("new_secrets", "secret"),
+                )
                 for row in replacement[field]
                 if row["id"] in registry and registry[row["id"]]["kind"] != kind
             ]
@@ -1136,16 +1216,30 @@ class Workflow:
                 # running reference as an Event with the chapter-content ID. Do
                 # not reinterpret that prose as gameplay or accept its rewrite.
                 # Independent valid patches can still recover from the paid task.
-                chapter_reconciliations.append({
-                    "chapter_id": bundle.chapter_id,
-                    "reason": "Existing record encoded under a different record kind.",
-                    "wrong_kind_records": wrong_kinds,
-                    "proposal": replacement,
-                    "proposal_sha256": digest(replacement),
-                    "retained_chapter_sha256": digest(original),
-                    "action": "Ignore entire chapter proposal; retain accepted chapter. Independent record patches remain subject to normal validation.",
-                })
+                chapter_reconciliations.append(
+                    {
+                        "chapter_id": bundle.chapter_id,
+                        "reason": "Existing record encoded under a different record kind.",
+                        "wrong_kind_records": wrong_kinds,
+                        "proposal": replacement,
+                        "proposal_sha256": digest(replacement),
+                        "retained_chapter_sha256": digest(original),
+                        "action": "Ignore entire chapter proposal; retain accepted chapter. Independent record patches remain subject to normal validation.",
+                    }
+                )
                 continue
+            replacement = canonical_profiles(
+                {
+                    "chapters": [replacement],
+                    "mechanical_profiles": list(
+                        (
+                            {p["id"]: p for p in bundles.get("mechanical_profiles", [])}
+                            | {p.id: p.model_dump() for p in value.mechanical_profiles}
+                        ).values()
+                    ),
+                },
+                self.store.get("mechanics") or [],
+            )["chapters"][0]
             incomplete = any(
                 {row["id"] for row in replacement[field]} < {row["id"] for row in original[field]}
                 for field in contained
@@ -1253,6 +1347,36 @@ class Workflow:
         for bundle in bundles["chapters"]:
             for field in ("goals", "events", "new_entities", "new_secrets"):
                 bundle[field] = [replacements.get(row["id"], row) for row in bundle[field]]
+        definitions = {p["id"]: p for p in bundles.get("mechanical_profiles", [])}
+        proposed_definitions = list(value.mechanical_profiles) + [
+            p
+            for chapter in value.chapters
+            for p in chapter.mechanical_profiles
+            if chapter.chapter_id in chapter_replacements
+        ]
+        requested_profiles = {
+            encounter.profile_id
+            for event in patched_events.values()
+            for encounter in event.encounters
+        }
+        requested_profiles.update(
+            encounter.get("profile_id")
+            for chapter in chapter_replacements.values()
+            for event in chapter["events"]
+            if event["id"] in allowed
+            for encounter in event["encounters"]
+        )
+        for profile in proposed_definitions:
+            if profile.id in definitions:
+                if profile.model_dump() != definitions[profile.id] and profile.id not in allowed:
+                    raise NeedsAttention(
+                        "Repair changed a shared profile outside its consumer closure."
+                    )
+            elif profile.id not in requested_profiles:
+                raise NeedsAttention("New shared profile is not referenced by an affected event.")
+            definitions[profile.id] = profile.model_dump()
+        if definitions:
+            bundles["mechanical_profiles"] = list(definitions.values())
         for key, row in new_entities.items():
             owner = next(
                 b
@@ -1267,6 +1391,7 @@ class Workflow:
                 )
             )
             owner["new_entities"].append(row.model_dump())
+        bundles = canonical_profiles(bundles, self.store.get("mechanics") or [])
         event_normalizations = retain_repair_event_inventory(
             registry, bundles, findings, explicit_event_ids=patched_events
         )

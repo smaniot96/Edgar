@@ -48,7 +48,11 @@ async def test_saved_authoring_is_reused_and_new_actor_stays_in_affected_bundle(
     )
     spine, bundles = fixture()
     existing = Entity(
-        id="npc_wolves", kind="npc", name="Guard wolves", description="Original wolves", origin=ORIGIN
+        id="npc_wolves",
+        kind="npc",
+        name="Guard wolves",
+        description="Original wolves",
+        origin=ORIGIN,
     ).model_dump()
     if reuse_existing:
         spine["entities"].append(existing)
@@ -73,7 +77,11 @@ async def test_saved_authoring_is_reused_and_new_actor_stays_in_affected_bundle(
         async def call(self, node, prompt, schema, evidence, *args):
             calls.append(prompt)
             if schema is Patch:
-                assert set(evidence["allowed_ids"]) == {"npc_guard", "event_square", "goal_keeper"}
+                profiles = {row["id"] for row in evidence["mechanical_profiles"]}
+                assert (
+                    set(evidence["allowed_ids"])
+                    == {"npc_guard", "event_square", "goal_keeper"} | profiles
+                )
                 event = deepcopy(bundles["chapters"][0]["events"][0])
                 event["participants"].append("npc_wolves")
                 event["encounters"][1]["actor_id"] = "npc_wolves"
@@ -96,7 +104,9 @@ async def test_saved_authoring_is_reused_and_new_actor_stays_in_affected_bundle(
     repaired = store.get("bundles")["chapters"][0]
     if reuse_existing:
         assert repaired["new_entities"] == []
-        assert next(e for e in store.get("spine")["entities"] if e["id"] == "npc_wolves") == existing
+        assert (
+            next(e for e in store.get("spine")["entities"] if e["id"] == "npc_wolves") == existing
+        )
     else:
         assert repaired["new_entities"][0]["id"] == "npc_wolves"
     assert repaired["events"][0]["encounters"][1]["quantity"] == 3

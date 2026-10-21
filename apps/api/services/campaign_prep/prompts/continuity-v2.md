@@ -1,3 +1,4 @@
-# Explicit shared identity joins — v2.1
+# Explicit shared identity joins — v2.2
 Input: one name/alias collision, conflicting IDs, affected records and chapter commitments. Output: ContinuityPatch.
+Judge identities within the prepared adventure, which may coherently adapt the PDF. A source difference alone is not an identity error. This task repairs the supplied shared references while preserving the accepted version's plot and logic.
 For one identity return joins naming canonical_id and duplicate_ids, explicit reason and complete canonical entity replacement. Code retargets references and removes only explicit duplicates. For distinct entities disambiguate names/aliases without changing identity/facts. Only the two conflicting entities may be replaced. Leave spine null, secrets/goals/events/chapters empty. Do not rewrite unrelated chapters, silently overwrite truths or invent verification.

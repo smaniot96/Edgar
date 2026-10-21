@@ -1,3 +1,6 @@
+The prepared adventure may coherently adapt the PDF. Source differences alone
+do not require correction; preserve the accepted plot and facts while fixing joins.
+
 Repair the complete supplied residual reference audit in one sparse response.
 Return StructuralLinks containing only permitted typed row joins, item identity
 joins and specifically permitted new canonical entities. Never output chapters,

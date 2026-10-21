@@ -106,15 +106,15 @@ def test_omitted_heading_compiles_into_runtime_resolvable_passage_without_changi
     compiled = assemble("heading_repair", "2014", spine, bundles, [], source=source_fixture())
 
     assert (spine, bundles) == before
-    assert (
-        compiled["registry"]["event_square"]["value"]["encounters"][0]["source_stat_block"] == raw
-    )
-    assert compiled["source_profiles"]["drake"]["source_text"] == raw
+    identity = compiled["registry"]["event_square"]["value"]["encounters"][0]["profile_id"]
+    assert compiled["registry"][identity]["value"]["source_stat_block"] == raw
+    assert compiled["source_profiles"][identity]["source_text"] == raw
     manifest = AdventureManifest.model_validate(compiled["manifest"])
     manifest.reviewed_by = "representation-test"
     manifest.reviewed_sha256 = manifest_digest(manifest)
     chunks = manifest_chunks(make_extraction(compiled), manifest)
-    passage = next(chunk for chunk in chunks if chunk["passage_id"] == "drake_statistics")
+    reference = next(e.stat_reference for e in manifest.entities if e.entity_id == "drake")
+    passage = next(chunk for chunk in chunks if chunk["passage_id"] == reference.passage_id)
     assert passage["text"] == PROFILE
     record = identified_creature({**passage, "section": "Timber Drake", "stat_block": True})
     assert record["creature_name"] == "Timber Drake"

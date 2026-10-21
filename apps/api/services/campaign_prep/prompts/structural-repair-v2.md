@@ -1,3 +1,7 @@
+The prepared adventure may coherently adapt the PDF. Source differences alone
+do not require correction. This task preserves that accepted version and repairs
+only invalid references; narrative adaptations belong to authoring/scoped repair.
+
 Repair only the supplied typed structural defects. This is join recovery, not
 campaign reauthoring. Return Bundles containing exactly the supplied affected
 chapters in their original order. Preserve all row positions and every field
@@ -25,6 +29,6 @@ existing dm_notes must remain an exact prefix. Do not lose the reveal's
 public_text or condition; retain both in the appended guidance. Do not put a
 remote NPC into participants or disguise an NPC/place as a clue.
 
-Use the complete relevant original OCR and page images to disambiguate identity
-and physical presence. These are authoritative evidence. Do not summarize or
+Use accepted chapter facts and relevant original OCR/images to disambiguate identity
+and physical presence, respecting coherent adaptations. Do not summarize or
 rewrite accepted chapter source_notes during structural recovery.

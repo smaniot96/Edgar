@@ -84,10 +84,27 @@ class Goal(Record):
     origin: Origin
 
 
+class MechanicalProfile(Record):
+    id: Identifier
+    creature: str = Field(
+        description="Exact verified catalogue name or original bespoke profile name."
+    )
+    source_stat_block: str = Field(
+        default="",
+        description="One complete original bespoke/modified profile; empty for a verified catalogue template. Define once and reuse its ID.",
+    )
+    source_pages: list[int] = Field(default_factory=list)
+
+
 class Encounter(Record):
     actor_id: Identifier
+    profile_id: Identifier | None = Field(
+        default=None,
+        description="Reference to one shared mechanical profile. Repeated appearances and disguises of the same individual reuse its profile.",
+    )
     creature: str = Field(
-        description="Original source creature name when source_stat_block is supplied; otherwise an exact verified template name."
+        default="",
+        description="Original source creature name when source_stat_block is supplied; otherwise an exact verified template name.",
     )
     quantity: int = Field(ge=1)
     adaptation: str = Field(
@@ -155,6 +172,7 @@ class SourceCheck(Record):
 
 class Bundle(Record):
     chapter_id: Identifier
+    mechanical_profiles: list[MechanicalProfile] = Field(default_factory=list)
     goals: list[Goal] = Field(min_length=1)
     events: list[Event] = Field(min_length=1)
     new_entities: list[Entity] = Field(default_factory=list)
@@ -171,6 +189,7 @@ class Bundle(Record):
 
 class Bundles(Record):
     chapters: list[Bundle] = Field(min_length=1)
+    mechanical_profiles: list[MechanicalProfile] = Field(default_factory=list)
 
 
 class Finding(Record):
@@ -201,6 +220,7 @@ class Patch(Record):
     secrets: list[Secret] = Field(default_factory=list)
     goals: list[Goal] = Field(default_factory=list)
     events: list[Event] = Field(default_factory=list)
+    mechanical_profiles: list[MechanicalProfile] = Field(default_factory=list)
     field_edits: list[FieldEdit] = Field(
         default_factory=list,
         description="Sparse exact-text corrections to an allowed chapter source_notes or event dm_notes field. Preserve all surrounding text; do not restate that field in a record replacement.",

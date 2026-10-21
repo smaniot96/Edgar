@@ -1,3 +1,6 @@
+The prepared adventure may coherently adapt the PDF. Source differences alone
+do not require correction; preserve the accepted plot and facts while fixing joins.
+
 Repair only the supplied typed joins. Return StructuralJoins: sparse row changes
 and specifically permitted missing NPC records. Do not output chapter bundles,
 source notes, encounter profiles, item procedures or unchanged narrative prose.
@@ -27,6 +30,6 @@ subject. Set entity_id to null for a remote discovery: its exact original text
 and condition will be retained locally as private DM guidance. Never retype or
 paraphrase that text. Already-valid reveals cannot be changed.
 
-The supplied original OCR, images and accepted chapter content are authoritative
-evidence. Some joins may already have been recovered from a retained paid
+Use accepted chapter content and compatible original OCR/images as evidence;
+respect coherent adaptations. Some joins may already have been recovered from a retained paid
 response; repair only the residual defects shown here. Return no other edits.

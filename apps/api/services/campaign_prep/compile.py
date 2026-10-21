@@ -98,6 +98,20 @@ def records(spine: dict, bundles: dict):
         add("entity", entity)
     for secret in spine["secrets"]:
         add("secret", secret)
+    for profile in bundles.get("mechanical_profiles", []):
+        add(
+            "mechanical_profile",
+            {
+                **profile,
+                "origin": {
+                    "kind": "pdf" if profile.get("source_pages") else "authored",
+                    "pages": profile.get("source_pages", []),
+                    "regions": [],
+                    "note": "Shared mechanical definition",
+                    "uncertain": False,
+                },
+            },
+        )
     for bundle in bundles["chapters"]:
         if any(key in bundle for key in ("source_pages", "source_notes", "items", "checks")):
             key = derived(bundle["chapter_id"], "content")
@@ -145,6 +159,7 @@ def dependencies(registry):
                 *value["clue_ids"],
                 *value.get("visible_entity_ids", []),
                 *(r["entity_id"] for r in value.get("reveals", [])),
+                *(r["profile_id"] for r in value["encounters"] if r.get("profile_id")),
             ]
         elif kind == "goal":
             refs = [*value["event_ids"], *value["depends_on"]]
@@ -167,6 +182,10 @@ def dependencies(registry):
             for event_id in rec["value"]["event_ids"]:
                 if event_id in deps:
                     deps[event_id].add(key)
+        elif rec["kind"] == "event":
+            for encounter in rec["value"]["encounters"]:
+                if encounter.get("profile_id") and encounter["actor_id"] in deps:
+                    deps[encounter["actor_id"]].add(encounter["profile_id"])
     return deps
 
 
@@ -251,6 +270,11 @@ def validate_semantics(spine, bundles, source=None):
             ):
                 raise NeedsAttention("Event location is not a place: " + row["id"])
             for e in row["encounters"]:
+                if e.get("profile_id") and (
+                    e["profile_id"] not in registry
+                    or registry[e["profile_id"]]["kind"] != "mechanical_profile"
+                ):
+                    raise NeedsAttention("Unknown mechanical profile reference: " + e["profile_id"])
                 if (
                     e["actor_id"] not in row["participants"]
                     or registry[e["actor_id"]]["value"].get("kind") != "npc"
@@ -280,6 +304,12 @@ def validate_semantics(spine, bundles, source=None):
             regions = set().union(*(pages[p] for p in cited)) if cited else set()
             if not set(origin["regions"]) <= regions:
                 raise NeedsAttention("Origin region is absent from its cited pages: " + key)
+            if (
+                rec["kind"] == "mechanical_profile"
+                and source["kind"] != "pdf"
+                and rec["value"].get("source_stat_block")
+            ):
+                raise NeedsAttention("Authored encounter must use verified catalogue mechanics.")
         for bundle in bundles["chapters"]:
             chapter = next(c for c in spine["chapters"] if c["id"] == bundle["chapter_id"])
             context_pages = set(chapter_source_pages(spine, chapter))
@@ -410,6 +440,9 @@ def retain_chapter_source(
 
 
 def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None):
+    from .profiles import canonical_profiles, resolved_encounter
+
+    bundles = canonical_profiles(bundles, mechanics)
     registry = validate_semantics(spine, bundles, source)
     by_chapter = {b["chapter_id"]: b for b in bundles["chapters"]}
     chapters = sorted(spine["chapters"], key=lambda c: (c["play_order"], c["id"]))
@@ -420,28 +453,35 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
     actor_bindings = {}
     grounded = []
     source_profiles = {}
+    definitions = {row["id"]: row for row in bundles.get("mechanical_profiles", [])}
+    parsed_profiles = {}
     capability_findings = []
     for event in ordered_events:
-        for encounter in event["encounters"]:
+        for appearance in event["encounters"]:
+            encounter = resolved_encounter(appearance, definitions)
+            profile_id = encounter["profile_id"]
             source_stat_block = encounter.get("source_stat_block", "")
             if source_stat_block.strip():
                 from .mechanics import source_profile
 
                 try:
-                    profile = source_profile(
-                        source_stat_block,
-                        name=encounter["creature"],
-                        source_evidence={
-                            "pages": encounter.get("source_pages", []),
-                            "source_sha256": source.get("sha256") if source else None,
-                        },
-                    )
+                    profile = parsed_profiles.get(profile_id)
+                    if profile is None:
+                        profile = source_profile(
+                            source_stat_block,
+                            name=encounter["creature"],
+                            source_evidence={
+                                "pages": encounter.get("source_pages", []),
+                                "source_sha256": source.get("sha256") if source else None,
+                            },
+                        )
+                        parsed_profiles[profile_id] = profile
                 except ValueError as exc:
                     raise NeedsAttention(
                         "Invalid source profile for " + encounter["actor_id"] + ": " + str(exc)
                     ) from exc
                 creature = profile
-                passage_id = derived(encounter["actor_id"], "statistics")
+                passage_id = derived(profile_id, "statistics")
                 reference = {
                     "kind": "module",
                     "creature_name": encounter["creature"],
@@ -478,7 +518,9 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                     "Actor has conflicting mechanical bindings: " + encounter["actor_id"]
                 )
             actor_bindings[encounter["actor_id"]] = reference
-            grounded.append({"event_id": event["id"], **encounter, "verified": creature})
+            grounded.append(
+                {"event_id": event["id"], **appearance, "creature": encounter["creature"]}
+            )
     for key, rec in registry.items():
         if rec["kind"] == "entity" and rec["value"]["kind"] in ("npc", "clue"):
             entities.append(
@@ -622,14 +664,15 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                     "completion_condition": goal["completion"],
                 }
             )
-    for actor_id, profile in source_profiles.items():
+    for profile_id, profile in parsed_profiles.items():
         text = profile["text"]
         page = len(pages) + 1
-        passage_id = actor_bindings[actor_id]["passage_id"]
+        passage_id = derived(profile_id, "statistics")
+        related_actors = sorted({g["actor_id"] for g in grounded if g["profile_id"] == profile_id})
         related_scenes = [
             e["id"]
             for e in ordered_events
-            if any(encounter["actor_id"] == actor_id for encounter in e["encounters"])
+            if any(encounter["profile_id"] == profile_id for encounter in e["encounters"])
         ]
         pages.append(ExtractedPage(page, text, "verified-source-statistics-v2", check_text(text)))
         passages.append(
@@ -640,7 +683,7 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                 "end": len(text),
                 "text_sha256": text_digest(text),
                 "scene_ids": related_scenes,
-                "entity_ids": [actor_id],
+                "entity_ids": related_actors,
                 "audience": "planner",
             }
         )
@@ -901,7 +944,12 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
         "registry": registry,
         "grounded": grounded,
         "source_references": source_receipts,
-        "source_profiles": source_profiles,
+        "source_profiles": parsed_profiles,
+        "mechanical_profiles": {
+            profile_id: parsed_profiles.get(profile_id)
+            or catalogue.get(profile["creature"].casefold())
+            for profile_id, profile in definitions.items()
+        },
         "capability_findings": capability_findings,
         "semantic_sha256": digest({"spine": spine, "bundles": bundles}),
         "manifest_sha256": manifest_digest(manifest),

@@ -37,10 +37,29 @@ def instructions(prompt):
 
 
 def response_format(schema):
+    transport = to_strict_json_schema(schema)
+    if schema.__name__ == "Bundles":
+        # Declarations precede their events within each chapter. Avoid trailing
+        # root declarations that could be lost after a fully closed chapter when
+        # the provider exhausts its output window. The local fold owns the root.
+        transport["properties"].pop("mechanical_profiles", None)
+        transport["required"] = list(transport["properties"])
+    encounter = transport.get("$defs", {}).get("Encounter")
+    if encounter:
+        # Inline statistics remain readable only for retained paid responses.
+        # New responses must reference the shared profile registry structurally.
+        for field in ("creature", "source_stat_block", "source_pages"):
+            encounter["properties"].pop(field, None)
+        encounter["properties"]["profile_id"] = {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "description": "ID of a shared mechanical_profiles declaration; never repeat statistics here.",
+        }
+        encounter["required"] = list(encounter["properties"])
     return {
         "type": "json_schema",
         "name": schema.__name__,
-        "schema": to_strict_json_schema(schema),
+        "schema": transport,
         "strict": True,
     }
 
@@ -279,6 +298,11 @@ class SemanticClient:
                     ]
                 for saved in saved_rows:
                     saved_request = json.loads(saved["request"])
+                    if (
+                        saved_request.get("text", {}).get("format", {}).get("name")
+                        != schema.__name__
+                    ):
+                        continue
                     saved_input = saved_request.get("input")
                     if (
                         not isinstance(saved_input, list)
@@ -294,7 +318,25 @@ class SemanticClient:
                             *saved_input[1:],
                         ],
                     }
-                    if comparable != request:
+                    # Typed readers retain old Encounter fields; only the NEW
+                    # output transport changed. Reuse the saved schema verbatim
+                    # when all original evidence and image bytes still match.
+                    comparable["text"] = request["text"]
+                    if isinstance(comparable.get("input"), list):
+                        candidate = json.loads(json.dumps(request))
+                        saved_data = json.loads(comparable["input"][1]["content"][0]["text"])
+                        for payload in (candidate, comparable):
+                            content = payload["input"][1]["content"]
+                            if content and content[0].get("type") == "input_text":
+                                data = json.loads(content[0]["text"])
+                                if "known_mechanical_profiles" not in saved_data:
+                                    data.pop("known_mechanical_profiles", None)
+                                content[0]["text"] = json.dumps(
+                                    data, ensure_ascii=False, sort_keys=True
+                                )
+                    else:
+                        candidate = request
+                    if comparable != candidate:
                         continue
                     if saved["id"] != digest(
                         {"node": node, "request": saved_request, "schema_version": SCHEMA_VERSION}

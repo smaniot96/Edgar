@@ -350,7 +350,7 @@ def _project_joins(original, replacement, permissions, missing):
         replacement["chapters"]
     ):
         raise NeedsAttention("Structural repair changed affected chapter inventory.")
-    result = {"chapters": []}
+    result = {**deepcopy(original), "chapters": []}
     for cid, proposal in changed.items():
         chapter = deepcopy(old[cid])
         for field in (*FIELDS, "items", "checks"):
@@ -558,7 +558,10 @@ def _legacy_request(store, evidence):
 
 def _merge_chapters(bundles, replacement):
     changed = {chapter["chapter_id"]: chapter for chapter in replacement["chapters"]}
-    return {"chapters": [changed.get(b["chapter_id"], b) for b in bundles["chapters"]]}
+    return {
+        **deepcopy(bundles),
+        "chapters": [changed.get(b["chapter_id"], b) for b in bundles["chapters"]],
+    }
 
 
 def _normalize_origins(spine, bundles, source):

@@ -166,7 +166,8 @@ Sword. Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (1d8 + 2)
     text = "\n".join(page["text"] for page in compiled["pages"])
     assert bundle["items"][0]["procedure"] in text
     assert "forty feet" in compiled["guide"]
-    assert compiled["source_profiles"]["guard"]["monster_stats"]["hp_max"] == 21
+    identity = compiled["registry"]["event_square"]["value"]["encounters"][0]["profile_id"]
+    assert compiled["source_profiles"][identity]["monster_stats"]["hp_max"] == 21
     assert any(
         "no executable use" in finding["detail"] for finding in compiled["capability_findings"]
     )

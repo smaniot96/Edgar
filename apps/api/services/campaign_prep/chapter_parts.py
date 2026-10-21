@@ -17,6 +17,7 @@ from edgar_core.campaign_semantics import (
     Entity,
     Event,
     Goal,
+    MechanicalProfile,
     Record,
     Secret,
     SourceCheck,
@@ -33,6 +34,7 @@ from .store import NeedsAttention, digest
 # authoring expansion, a few thousand source tokens produce a useful group of events.
 SOURCE_TOKENS_PER_PART = 6_000
 RECORD_TYPES = {
+    "mechanical_profiles": MechanicalProfile,
     "goals": Goal,
     "events": Event,
     "new_entities": Entity,
@@ -44,6 +46,7 @@ RECORD_TYPES = {
 
 class ChapterPart(Record):
     chapter_id: Identifier
+    mechanical_profiles: list[MechanicalProfile] = Field(default_factory=list)
     goals: list[Goal] = Field(default_factory=list)
     events: list[Event] = Field(default_factory=list)
     new_entities: list[Entity] = Field(default_factory=list)
@@ -131,9 +134,26 @@ def closed_content(exhausted, chapter_id, *, wrapped):
     prefix = ["chapters", 0] if wrapped else []
     for entry in values:
         path, value = entry["path"], entry["value"]
+        if wrapped and path and path[0] == "mechanical_profiles":
+            if len(path) == 1:
+                result = merge(result, {"mechanical_profiles": value})
+            elif len(path) == 2 and isinstance(path[1], int):
+                parsed = MechanicalProfile.model_validate(value)
+                if parsed.model_dump(exclude_unset=True) != value:
+                    raise NeedsAttention(
+                        "Recovered mechanical profile is not completely serialized."
+                    )
+                result = merge(result, {"mechanical_profiles": [value]})
+            else:
+                pending.append(entry)
+            continue
         if not path:
             if wrapped and len(value.get("chapters", [])) != 1:
                 raise NeedsAttention("Exhausted output does not contain exactly one chapter.")
+            if wrapped:
+                result = merge(
+                    result, {"mechanical_profiles": value.get("mechanical_profiles", [])}
+                )
             value = value["chapters"][0] if wrapped else value
             path = prefix
         elif wrapped and path == ["chapters"]:
@@ -156,10 +176,12 @@ def closed_content(exhausted, chapter_id, *, wrapped):
         for field, content in candidates.items():
             if field in RECORD_TYPES:
                 for row in content:
-                    parsed = RECORD_TYPES[field].model_validate(row).model_dump()
                     # A closed record with missing optional fields is not silently
                     # repaired with defaults during recovery.
-                    if parsed != row:
+                    if (
+                        RECORD_TYPES[field].model_validate(row).model_dump(exclude_unset=True)
+                        != row
+                    ):
                         raise NeedsAttention("Recovered record is not completely serialized.")
                     result = merge(result, {field: [row]})
             elif field == "chapter_id" and content != chapter_id:
@@ -256,11 +278,29 @@ async def author_parts(workflow, evidence, *, exhausted=None, groups=None):
             elif entry["path"] == ["chapters"]:
                 value = value[0]
             bundle = Bundle.model_validate(value).model_dump()
-            if bundle != value or bundle["chapter_id"] != chapter_id:
+            if (
+                Bundle.model_validate(value).model_dump(exclude_unset=True) != value
+                or bundle["chapter_id"] != chapter_id
+            ):
                 raise NeedsAttention("Closed exhausted chapter failed exact recovery.")
             supplied = set(evidence["source_context_pages"])
             if not set(chapter["pages"]) <= set(bundle["source_pages"]) <= supplied:
                 raise NeedsAttention("Closed exhausted chapter lacks its source inventory.")
+            bundle["mechanical_profiles"] = retained["mechanical_profiles"]
+            known_profiles = {
+                p["id"]
+                for p in bundle["mechanical_profiles"]
+                + evidence.get("known_mechanical_profiles", [])
+            }
+            if any(
+                encounter.get("profile_id") not in known_profiles
+                for event in bundle["events"]
+                for encounter in event["encounters"]
+                if encounter.get("profile_id")
+            ):
+                # A closed chapter can precede an unfinished root declaration in
+                # old transports. Retain its records and finish the missing profile.
+                break
             return bundle, {"mode": "closed-output-recovery", "parent_task_ids": parents}
     groups = groups or [chapter["pages"]]
     map_context = workflow.map_context(chapter["pages"])
@@ -346,7 +386,7 @@ async def author_parts(workflow, evidence, *, exhausted=None, groups=None):
                 )
                 if root is not None and root.get("complete") is True:
                     part = ChapterPart.model_validate(root).model_dump()
-                    if part != root:
+                    if ChapterPart.model_validate(root).model_dump(exclude_unset=True) != root:
                         raise NeedsAttention(
                             "Closed exhausted part is not completely serialized."
                         ) from exc
@@ -420,4 +460,6 @@ async def author_chapter(workflow, evidence, images):
         return await author_parts(workflow, evidence, exhausted=exc)
     if len(value.chapters) != 1 or value.chapters[0].chapter_id != chapter["id"]:
         raise NeedsAttention("Authoring response must cover its one requested chapter.")
-    return value.chapters[0].model_dump(), {"mode": "whole-chapter"}
+    bundle = value.chapters[0].model_dump()
+    bundle["mechanical_profiles"].extend(p.model_dump() for p in value.mechanical_profiles)
+    return bundle, {"mode": "whole-chapter"}
