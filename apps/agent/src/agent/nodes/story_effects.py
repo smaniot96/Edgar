@@ -351,6 +351,9 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     The object hook is supplied by the object consequence module; absent it fails closed.
     """
     adj.accepted_story_effects = []
+    from agent.scene_guidance import validate_source_observations
+
+    validate_source_observations(adj, state)
     if state.get("manifest_status") == "homebrew":
         return _accept_homebrew(adj, state)
     if state.get("manifest_status") != "reviewed" or not state.get("turn_id"):
@@ -410,6 +413,15 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             continue
         if proposal.kind == "move" and not candidate.get("can_move"):
             continue
+        if (
+            proposal.kind == "move"
+            and any(
+                row.get("scene_id") == proposal.target.canonical_id
+                for row in (state.get("parser_scene_context") or {}).get("event_transitions", [])
+            )
+            and not (proposal.achievement_basis or "").strip()
+        ):
+            continue  # Same-location event progress needs actual trigger evidence, not an available link.
         if proposal.kind not in _OBJECT_KINDS and proposal.status not in _STATUSES.get(
             proposal.kind, set()
         ):
@@ -535,9 +547,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             # Private achievement evidence earns progress, not disclosure permission.
             # The journal names a goal only when its reviewed public support names it.
             public_text = (
-                candidate["title"]
-                if any(candidate["title"] in c["text"] for c in public)
-                else None
+                candidate["title"] if any(candidate["title"] in c["text"] for c in public) else None
             )
         effect = proposal.model_copy(update={"player_text": public_text})
         if effect.kind in _OBJECT_KINDS:

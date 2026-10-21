@@ -114,8 +114,38 @@ Fill out:
   Its quotation comes from this player event, not from a source book. Later fulfilled/broken
   updates must reference that committed promise; preserve the original quotation and never
   treat speech as evidence of a discovery or object ownership. Engine outcomes/numbers are not story proposals.
+- source_observations: in reviewed module play, answer the actual action using exact short
+  contiguous quotations from eligible CURRENT-SCENE source references. These are nonmechanical
+  ordinary answers, sensory observations and source-backed dialogue information earned now.
+  Supply the exact source_reference_id, action_quote from the actual player action, and private
+  achievement_basis explaining why this information is available now and any reveal condition
+  that has actually been met. When a willing NPC answers an ordinary question, or a successful
+  search/inspection exposes an applicable source fact, provide the concrete answer; do not
+  merely repeat the player's intention. A source fact being private DM evidence does not make
+  it permanently unknowable. Equally, an available source secret is not automatically earned:
+  do not reveal unobserved motives, culprits, future chapter truths or whole private paragraphs
+  when the player only looks around. Select only the earned answer, excluding private reasons
+  and future consequences. Do not invent wording, use global campaign registry references,
+  propose observations on a failed check, or claim item/state/mechanical changes through this
+  channel. Existing canonical discoveries/goals still use story_effects.
+  Review each selected quote before returning it: does this actual action earn every fact
+  in that quote? Same-scene relevance and an exact source match alone do not make a fact
+  observable. For NPC dialogue, the present speaker must know the information and have a
+  source-supported reason to share it now; the DM knowing a culprit's motive does not mean
+  another NPC knows it. A question about a delay can earn the public reason for waiting,
+  but not an unobserved culprit, concealed object location or private motive. Narrow the
+  quotation to the earned clause, or omit it when public and private facts cannot be
+  separated. Never use a made-up achievement_basis to turn unrelated private knowledge
+  into an earned answer. The narrator will phrase approved information naturally; raw DM
+  wording is internal evidence and must not be copied as dialogue or conditional directions.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
+  Prepared event scenes may share one location. If the actual action meets a supplied linked
+  event's trigger (for example following a lead by asking the waiting ferryman), propose a
+  move story_effect to that exact eligible scene with achievement_basis explaining the actual
+  matched trigger. Physical relocation is unnecessary. An available link, a greeting unrelated
+  to its trigger, or a player's statement of future intent does not itself advance an event.
+  Do not advance merely to make progress, and never complete a goal because a scene changed.
 
 Campaign completion: if the action resolves the adventure's climax — the final antagonist is
 defeated and the story reaches its definitive conclusion — set a flag "campaign_complete" =
@@ -137,10 +167,16 @@ NARRATOR = f"""You are the Dungeon Master of a solo D&D 5e game. Narrate what ha
 - If a current scene is given, stay in that scene unless the outcome clearly moves the party.
 - Use the story-so-far summary (if given) for continuity. Prepared module text is background,
   not evidence that a discovery or objective has been earned. Describe new discoveries, promises,
-  object changes and accomplishments only from validated story consequences this turn; do not
+  object changes and accomplishments only from validated story consequences this turn. Convey
+  validated source observations as earned ordinary answers and descriptions; do not
   invent additional persistent facts. Committed player-known facts, their exact source quotations,
   and recorded combat outcomes are authoritative over conflicting older prose. Never disclose
   private branches or future milestones.
+- Validated source observations are also approved answers earned this turn. Convey their
+  concrete information in responsive dialogue or description instead of only echoing what
+  the player tries. Do not invent an obstacle, prerequisite, missing NPC or safety rule to
+  fill a gap in public scene text. Without an approved answer, stay with observable existing
+  details rather than contradicting private source facts you have not been given.
 - Write immersive second-person prose, 1-3 short paragraphs. End by inviting the player's next
   action.
 - Do NOT print HP, stat blocks, inventories, dice math, bullet lists of status, or markdown

@@ -344,3 +344,17 @@ async def test_shared_origins_restore_appendix_and_uncertain_image_without_extra
     compiled = pdf_store.get("compiled")
     scene = next(s for s in compiled["manifest"]["scenes"] if s["scene_id"] == "event_square")
     assert "source_page_0003" in scene["references"]
+
+
+def test_verified_profile_context_uses_complete_names_and_source_plurals(pdf_store):
+    names = ["Bat", "Cat", "Imp", "Mage", "Ape", "Pony", "Wolf", "Brown Bear"]
+    pdf_store.put("mechanics", [{"name": name, "rules_edition": "2014"} for name in names])
+    evidence = [{"text": "A complicated battle: three wolves, brown bears, apes and ponies."}]
+    result = Workflow(pdf_store, semantic=object()).templates(evidence)
+    assert [r["name"] for r in result["relevant_source_profiles"]] == [
+        "Ape",
+        "Pony",
+        "Wolf",
+        "Brown Bear",
+    ]
+    assert len(result["index"]) == len(names)

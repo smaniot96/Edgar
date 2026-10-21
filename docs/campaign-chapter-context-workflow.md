@@ -50,6 +50,20 @@ Before assembly, a local join check detects concrete ID collisions, dangling eve
 missing encounter/reveal references. Valid bundles add no call. A defective bundle receives
 one repair restricted to the named fields and actual reference consumers; unrelated rows,
 source prose and mechanics remain identical. The original and paid repair receipts are kept.
+The compiler projects only permitted join fields onto the original bundles locally. It
+does not depend on a model copying unchanged prose exactly. Previously retained proposals
+can be reprocessed after a representation fix without another provider request; original
+discovery wording and conditions stay intact even when an invalid reveal becomes guidance.
+
+During play, verified current-scene guidance reaches the existing input parser before it
+classifies the action. The existing consequence call can select a short, exact source
+answer earned by the actual action, alongside its private justification. Local validation
+checks the reviewed source hash, active scene, exact quotation/action and successful result.
+The narrator receives only the selected answer; the public adjudication DTO excludes raw
+source quotations and private reasoning. Whether a natural-language action earns a secret
+remains the live DM's semantic judgment, as for creative goal completion. Source provenance
+alone does not prove that judgment correct. Linked event triggers permit meaningful progress
+between events at the same location without requiring artificial physical travel.
 
 Preserving exact source instructions does not implement all their mechanics. Canonical item
 custody and ordinary fixed-DC checks compile to existing engine definitions. Attunement,

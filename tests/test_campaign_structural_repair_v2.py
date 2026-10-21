@@ -158,10 +158,7 @@ async def test_missing_actor_can_add_only_requested_identity(recovery):
 @pytest.mark.parametrize(
     "bad",
     [
-        "unrelated_row",
         "unrelated_chapter",
-        "mechanics",
-        "lost_reveal",
         "no_progress",
         "invalid_reference",
     ],
@@ -169,14 +166,8 @@ async def test_missing_actor_can_add_only_requested_identity(recovery):
 async def test_invalid_repair_preserves_bundles_and_holds_on_repeat(recovery, bad):
     original = broken(recovery)
     first = recovery.result["chapters"][0]
-    if bad == "unrelated_row":
-        first["new_entities"][0]["motive"] = "Changed motive"
-    elif bad == "unrelated_chapter":
+    if bad == "unrelated_chapter":
         recovery.result["chapters"].append(original["chapters"][1])
-    elif bad == "mechanics":
-        first["events"][0]["encounters"][0]["quantity"] = 99
-    elif bad == "lost_reveal":
-        first["events"][0]["dm_notes"] = original["chapters"][0]["events"][0]["dm_notes"]
     elif bad == "no_progress":
         recovery.result = {"chapters": [deepcopy(original["chapters"][0])]}
     elif bad == "invalid_reference":
@@ -187,6 +178,48 @@ async def test_invalid_repair_preserves_bundles_and_holds_on_repeat(recovery, ba
     with pytest.raises(NeedsAttention, match="not resubmitted"):
         await repair_structure(recovery)
     assert len(recovery.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_repair_projects_joins_without_copying_unrelated_prose_or_mechanics(recovery):
+    original = broken(recovery)
+    first = recovery.result["chapters"][0]
+    first["dm_guidance"] = "Unrequested rewrite"
+    first["new_entities"][0]["motive"] = "Unrequested motive"
+    first["events"][0]["encounters"][0]["quantity"] = 99
+    assert await repair_structure(recovery)
+    accepted = recovery.store.get("bundles")["chapters"][0]
+    assert accepted["dm_guidance"] == original["chapters"][0]["dm_guidance"]
+    assert accepted["new_entities"] == original["chapters"][0]["new_entities"]
+    assert accepted["events"][0]["encounters"] == original["chapters"][0]["events"][0]["encounters"]
+
+
+@pytest.mark.asyncio
+async def test_reprocess_old_paid_repair_retains_discovery_wording_locally(recovery):
+    original = broken(recovery)
+    first = recovery.result["chapters"][0]
+    first["events"][0]["dm_notes"] = original["chapters"][0]["events"][0]["dm_notes"]
+    issues, _, _ = structural_defects(recovery.store.get("spine"), original)
+    from apps.api.services.campaign_prep.store import digest
+
+    signature = digest(
+        {"spine": recovery.store.get("spine"), "bundles": original, "issues": issues}
+    )
+    recovery.store.put(
+        "structural-repair-" + signature,
+        {
+            "state": "rejected",
+            "candidate": recovery.result,
+            "original_bundles": original,
+            "error": "Old copier lost literal discovery text.",
+        },
+    )
+    assert await repair_structure(recovery)
+    assert not recovery.calls
+    accepted = recovery.store.get("bundles")["chapters"][0]["events"][0]
+    reveal = original["chapters"][0]["events"][0]["reveals"][0]
+    assert reveal["public_text"] in accepted["dm_notes"]
+    assert reveal["condition"] in accepted["dm_notes"]
 
 
 def test_preflight_preserves_all_defects_before_registry_collision(recovery):

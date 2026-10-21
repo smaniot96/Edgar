@@ -198,6 +198,23 @@ def build_adjudicator_prompt(
             "Eligible canonical story candidates (definitions, not earned facts): "
             + json.dumps(story_candidates(state))
         )
+        from agent.scene_guidance import active_observation_chunks
+
+        observation_refs = [
+            {"reference_id": r["reference_id"], "passage_id": c.get("passage_id")}
+            for c in active_observation_chunks(state)
+            for r in citations_for([c], state.get("rules_edition", "2014"))
+        ]
+        parts.append(
+            "Eligible current-scene answer references for source_observations: "
+            + json.dumps(observation_refs)
+        )
+        transitions = (state.get("parser_scene_context") or {}).get("event_transitions", [])
+        if transitions:
+            parts.append(
+                "Linked prepared event opportunities (available is not triggered; judge the actual action): "
+                + json.dumps(transitions)
+            )
 
     if state.get("source_mode") == "homebrew" and state.get("manifest_status") == "homebrew":
         parts.append(_homebrew_block(state))

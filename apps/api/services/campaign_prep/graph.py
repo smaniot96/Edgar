@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import re
 import sys
 import time
 from pathlib import Path
@@ -217,10 +218,30 @@ class Workflow:
         if pages is None:
             return result
         text = " ".join(p["text"] for p in pages).casefold()
+
+        def mentioned(name):
+            words = name.casefold().split()
+            last = words[-1]
+            endings = {last, last + "s", last + "es"}
+            if last.endswith("f"):
+                endings.add(last[:-1] + "ves")
+            if last.endswith("fe"):
+                endings.add(last[:-2] + "ves")
+            if len(last) > 1 and last.endswith("y") and last[-2] not in "aeiou":
+                endings.add(last[:-1] + "ies")
+            prefix = r"\s+".join(re.escape(word) for word in words[:-1])
+            pattern = (
+                (prefix + r"\s+" if prefix else "")
+                + "(?:"
+                + "|".join(re.escape(word) for word in sorted(endings))
+                + ")"
+            )
+            return re.search(r"(?<!\w)" + pattern + r"(?!\w)", text) is not None
+
         return {
             "index": result,
             "relevant_source_profiles": [
-                r for r in self.store.get("mechanics") if r["name"].casefold() in text
+                r for r in self.store.get("mechanics") if mentioned(r["name"])
             ],
         }
 

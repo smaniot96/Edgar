@@ -16,6 +16,7 @@ from .source import evidence_pages
 from .store import NeedsAttention, digest
 
 FIELDS = {"goals": "goal", "events": "event", "new_entities": "entity", "new_secrets": "secret"}
+RECOVERY_POLICY = "project-joins-retain-content-3"
 
 
 def _rows(spine, bundles):
@@ -127,6 +128,101 @@ def structural_defects(spine, bundles):
     return issues, permissions, missing
 
 
+def _project_joins(original, replacement, permissions, missing):
+    """Apply permitted joins to original content; never ask a model to copy prose.
+
+    Chapter and row inventories remain strict. Within an existing row only the
+    diagnosed fields are proposals; all other output is discarded, including
+    accidental paraphrases and encounter changes other than actor identity.
+    """
+    old = {b["chapter_id"]: b for b in original["chapters"]}
+    changed = {b["chapter_id"]: b for b in replacement["chapters"]}
+    if set(changed) != {key[0] for key in permissions} or len(changed) != len(
+        replacement["chapters"]
+    ):
+        raise NeedsAttention("Structural repair changed affected chapter inventory.")
+    result = {"chapters": []}
+    for cid, proposal in changed.items():
+        chapter = deepcopy(old[cid])
+        for field in (*FIELDS, "items", "checks"):
+            before, after = chapter[field], proposal[field]
+            additions = after[len(before) :]
+            if len(after) < len(before) or (additions and field != "new_entities"):
+                raise NeedsAttention("Structural repair changed contained row inventory.")
+            allowed_new = {identity for owner, identity in missing if owner == cid}
+            if (
+                len({row["id"] for row in additions}) != len(additions)
+                or any(row["id"] not in allowed_new or row["kind"] != "npc" for row in additions)
+            ):
+                raise NeedsAttention("Structural repair added an unrelated entity.")
+            for i, (previous, proposed) in enumerate(zip(before, after, strict=False)):
+                allowed = permissions.get((cid, field, i), set())
+                # Preserve positional identity, except for an explicitly diagnosed collision.
+                identity_key = "entity_id" if field == "items" else "id"
+                if identity_key not in allowed and previous[identity_key] != proposed[identity_key]:
+                    raise NeedsAttention("Structural repair reordered contained rows.")
+                for key in allowed:
+                    if key == "encounters":
+                        if len(previous[key]) != len(proposed[key]):
+                            raise NeedsAttention("Structural repair changed encounter inventory.")
+                        for accepted, candidate in zip(previous[key], proposed[key], strict=True):
+                            accepted["actor_id"] = candidate["actor_id"]
+                    else:
+                        previous[key] = deepcopy(proposed[key])
+            before.extend(deepcopy(additions))
+        result["chapters"].append(chapter)
+    return result
+
+
+def _retain_discoveries(original, replacement, permissions):
+    """Copy accepted discovery wording locally instead of paying a model to copy it.
+
+    A typed join may move a remote discovery to private guidance. Its exact text and
+    condition are already accepted content, so paraphrasing them adds no useful work.
+    The raw paid proposal remains in its immutable provider receipt.
+    """
+    value = deepcopy(replacement)
+    old = {b["chapter_id"]: b for b in original["chapters"]}
+    for chapter in value["chapters"]:
+        if chapter["chapter_id"] not in old:
+            continue
+        cid = chapter["chapter_id"]
+        for i, (previous, current) in enumerate(
+            zip(old[cid]["events"], chapter["events"], strict=False)
+        ):
+            allowed = permissions.get((cid, "events", i), set())
+            if "reveals" not in allowed:
+                current["reveals"] = deepcopy(previous.get("reveals", []))
+                continue
+            invalid = [
+                r
+                for r in previous.get("reveals", [])
+                if r["entity_id"] not in previous["participants"] + previous["clue_ids"]
+            ]
+            valid = [r for r in previous.get("reveals", []) if r not in invalid]
+            # Preserve already valid reveals verbatim. Only retarget an invalid one
+            # when the proposal retains its exact text and condition.
+            retargeted = [
+                row
+                for row in current["reveals"]
+                if any(all(row[k] == r[k] for k in ("public_text", "condition")) for r in invalid)
+            ]
+            current["reveals"] = deepcopy(valid) + retargeted
+            current["dm_notes"] = previous["dm_notes"]
+            for reveal in invalid:
+                if not any(
+                    all(row[k] == reveal[k] for k in ("public_text", "condition"))
+                    for row in retargeted
+                ):
+                    current["dm_notes"] += (
+                        "\n\nDiscovery guidance (retained original):\nCondition: "
+                        + reveal["condition"]
+                        + "\nObservation: "
+                        + reveal["public_text"]
+                    )
+    return value
+
+
 def _check_scope(original, replacement, permissions, missing):
     """Preserve all unrelated contained rows, source prose, origins and mechanics."""
     old = {b["chapter_id"]: b for b in original["chapters"]}
@@ -218,7 +314,7 @@ async def repair_structure(workflow):
     signature = digest({"spine": spine, "bundles": bundles, "issues": issues})
     history_key = "structural-repair-" + signature
     prior = store.get(history_key)
-    if prior and prior.get("state") == "rejected":
+    if prior and prior.get("state") == "rejected" and prior.get("policy") == RECOVERY_POLICY:
         raise NeedsAttention(
             "Retained structural repair needs attention; unchanged defects were not resubmitted: "
             + prior["error"]
@@ -251,15 +347,23 @@ async def repair_structure(workflow):
         store.put(
             history_key, {"state": "requested", "original_bundles": bundles, "defects": issues}
         )
-    result = await workflow.semantic.call(
-        "structural-repair",
-        "structural-repair",
-        Bundles,
-        evidence,
-        workflow.source_images(page_numbers),
-    )
-    replacement = result.model_dump()
+    if prior and prior.get("candidate"):
+        # A code-level representation repair can reprocess its retained response.
+        # It must never create another provider request just to copy accepted text.
+        replacement = prior["candidate"]
+    else:
+        result = await workflow.semantic.call(
+            "structural-repair",
+            "structural-repair",
+            Bundles,
+            evidence,
+            workflow.source_images(page_numbers),
+        )
+        replacement = result.model_dump()
+    raw_replacement = deepcopy(replacement)
     try:
+        replacement = _project_joins(bundles, replacement, permissions, missing)
+        replacement = _retain_discoveries(bundles, replacement, permissions)
         _check_scope(bundles, replacement, permissions, missing)
         by_chapter = {b["chapter_id"]: b for b in replacement["chapters"]}
         candidate = deepcopy(bundles)
@@ -272,8 +376,9 @@ async def repair_structure(workflow):
             history_key,
             {
                 "state": "rejected",
+                "policy": RECOVERY_POLICY,
                 "original_bundles": bundles,
-                "candidate": replacement,
+                "candidate": raw_replacement,
                 "defects": issues,
                 "error": str(exc),
             },
@@ -284,8 +389,10 @@ async def repair_structure(workflow):
         history_key,
         {
             "state": "accepted",
+            "policy": RECOVERY_POLICY,
             "original_bundles": bundles,
             "candidate": replacement,
+            "raw_candidate": raw_replacement,
             "result_sha256": digest(candidate),
             "defects": issues,
         },

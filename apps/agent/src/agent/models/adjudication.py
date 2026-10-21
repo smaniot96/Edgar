@@ -87,6 +87,25 @@ class FlagUpdate(BaseModel):
     value: str  # stringified; world_flags.value is varchar
 
 
+class SourceObservation(BaseModel):
+    """The live DM selects a short source-backed answer earned by this action."""
+
+    text: str = Field(
+        min_length=1,
+        max_length=600,
+        description="Exact contiguous source quotation containing only the earned answer or observation, no future/private explanation.",
+    )
+    source_reference_id: str
+    action_quote: str = Field(
+        min_length=1,
+        description="Exact words from the current player action that earn this answer.",
+    )
+    achievement_basis: str = Field(
+        min_length=1,
+        description="Private DM reasoning: explain how the actual action and known engine result earn this specific information now, including any disclosure condition.",
+    )
+
+
 class AdjudicationResult(BaseModel):
     success: bool
     damage: int | None = None
@@ -102,6 +121,12 @@ class AdjudicationResult(BaseModel):
 
     story_effects: list[StoryEffect] = Field(default_factory=list)
     accepted_story_effects: SkipJsonSchema[list[AcceptedStoryEffect]] = Field(default_factory=list)
+    source_observations: list[SourceObservation] = Field(
+        default_factory=list,
+        exclude=True,
+        description="Reviewed module play only: short exact current-scene source answers/observations actually earned by the action. No future secrets or mechanical/state changes.",
+    )
+    accepted_observations: SkipJsonSchema[list[str]] = Field(default_factory=list)
     # Homebrew only (EDG-169): model-proposed improvised places, people, clues and threats. The
     # validator turns accepted ones into homebrew story effects and clears this list.
     # exclude=True keeps it out of every serialized ruling, frame and golden snapshot.
@@ -140,6 +165,8 @@ class AdjudicationResult(BaseModel):
     @field_validator(
         "story_effects",
         "accepted_story_effects",
+        "source_observations",
+        "accepted_observations",
         "homebrew_proposals",
         "flags_set",
         "flags_cleared",

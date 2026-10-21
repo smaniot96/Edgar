@@ -166,6 +166,7 @@ def public_adjudication(adjudication) -> dict | None:
         exclude={
             "story_effects",
             "accepted_story_effects",
+            "accepted_observations",
             "proposed_prepared_amendment",
             "accepted_prepared_amendment",
         }
