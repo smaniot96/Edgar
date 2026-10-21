@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 from pathlib import Path
 
 import httpx
@@ -14,10 +15,81 @@ from openai.lib._pydantic import to_strict_json_schema
 from edgar_core.campaign_semantics import SCHEMA_VERSION
 from edgar_core.config import OPENAI_API_KEY
 
+from .source import token_count
 from .store import Cancelled, NeedsAttention, Store, digest
 
 PROMPTS = Path(__file__).parent / "prompts"
 MODEL, EFFORT = "gpt-6-luna", "medium"
+# Published model limits, not operational spending/time/output caps. Reserve the full
+# supported output window without imposing max_output_tokens on a semantic request.
+# https://developers.openai.com/api/docs/models/gpt-6-luna
+MODEL_CONTEXT_TOKENS = 1_050_000
+MODEL_OUTPUT_TOKENS = 128_000
+MODEL_INPUT_TOKENS = MODEL_CONTEXT_TOKENS - MODEL_OUTPUT_TOKENS
+
+
+def instructions(prompt):
+    return (
+        (PROMPTS / "principles-v2.md").read_text()
+        + "\n\n"
+        + (PROMPTS / (prompt + "-v2.md")).read_text()
+    )
+
+
+def response_format(schema):
+    return {
+        "type": "json_schema",
+        "name": schema.__name__,
+        "schema": to_strict_json_schema(schema),
+        "strict": True,
+    }
+
+
+def image_token_estimate(path):
+    """Conservative unscaled 32px patches; no assumed provider resize discount.
+
+    Three tokens per patch deliberately exceeds the image multipliers in the public
+    image guide. This is a local context estimate, never a billed-token measurement.
+    Small synthetic/unknown image fixtures receive a conservative page allowance.
+    """
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+    except UnidentifiedImageError:
+        return 12_000
+    return math.ceil(width / 32) * math.ceil(height / 32) * 3 + 256
+
+
+def request_context(prompt, schema, evidence, images=None):
+    """Measure the complete semantic input, including schema and image estimates."""
+    parts = {
+        "instructions": instructions(prompt),
+        "input": json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+        "text": {"format": response_format(schema)},
+        "model": MODEL,
+        "reasoning": {"effort": EFFORT},
+        "background": True,
+        "store": True,
+        "service_tier": "default",
+    }
+    text_tokens = token_count(parts)
+    image_tokens = sum(image_token_estimate(path) for path in images or [])
+    # o200k is a local approximation; include five percent for tokenizer/envelope
+    # uncertainty and message delimiters. This margin never truncates source text.
+    estimated = math.ceil((text_tokens + image_tokens) * 1.05) + 256
+    return {
+        "model": MODEL,
+        "text_tokens": text_tokens,
+        "image_tokens_estimate": image_tokens,
+        "image_count": len(images or []),
+        "estimated_input_tokens": estimated,
+        "max_input_tokens": MODEL_INPUT_TOKENS,
+        "context_window": MODEL_CONTEXT_TOKENS,
+        "output_reserve": MODEL_OUTPUT_TOKENS,
+        "fits": estimated <= MODEL_INPUT_TOKENS,
+    }
 
 
 def response_text(response):
@@ -42,11 +114,13 @@ class SemanticClient:
         self, node: str, prompt: str, schema, evidence: dict, images: list[Path] | None = None
     ):
         self.store.check()
-        instruction = (
-            (PROMPTS / "principles-v2.md").read_text()
-            + "\n\n"
-            + (PROMPTS / (prompt + "-v2.md")).read_text()
-        )
+        instruction = instructions(prompt)
+        context = request_context(prompt, schema, evidence, images)
+        if not context["fits"]:
+            raise NeedsAttention(
+                "Semantic request exceeds the model's input context; retain and split its "
+                "source evidence before submission: " + str(context["estimated_input_tokens"])
+            )
         parts = [
             {"type": "input_text", "text": json.dumps(evidence, ensure_ascii=False, sort_keys=True)}
         ]
@@ -66,14 +140,7 @@ class SemanticClient:
                 {"role": "system", "content": instruction},
                 {"role": "user", "content": parts},
             ],
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": schema.__name__,
-                    "schema": to_strict_json_schema(schema),
-                    "strict": True,
-                }
-            },
+            "text": {"format": response_format(schema)},
             "background": True,
             "store": True,
             "service_tier": "default",

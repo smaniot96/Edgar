@@ -36,7 +36,7 @@ from .compile import (
 )
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
-from .provider import SemanticClient
+from .provider import SemanticClient, request_context
 from .source import (
     VISUAL_CANDIDATE_VERSION,
     acquire_pdf,
@@ -245,6 +245,33 @@ class Workflow:
             ],
         }
 
+    def source_reading_packets(self, pages):
+        """Pack original pages/images against the complete reading request's context."""
+        batch = []
+        for page in pages:
+            proposed = batch + [page]
+            images = self.source_images([p["physical_page"] for p in proposed])
+            if not request_context(
+                "read-source", SourceReading, {"source_pages": proposed}, images
+            )["fits"]:
+                if not batch:
+                    raise NeedsAttention(
+                        "One original page exceeds the model context and needs smaller exact source spans."
+                    )
+                yield batch
+                batch = [page]
+                images = self.source_images([page["physical_page"]])
+                if not request_context(
+                    "read-source", SourceReading, {"source_pages": batch}, images
+                )["fits"]:
+                    raise NeedsAttention(
+                        "One original page exceeds the model context and needs smaller exact source spans."
+                    )
+            else:
+                batch = proposed
+        if batch:
+            yield batch
+
     async def spine(self, address):
         self.store.enter("spine")
         if self.store.get("spine"):
@@ -257,27 +284,41 @@ class Workflow:
             "request": self.request().get("generation"),
             "preferences": self.request()["preferences"],
             "verified_creatures": self.templates(),
+            "source_pages": pages,
+            "image_pages": sorted(set(self.store.get("visual-candidates") or [])),
         }
+        images = self.source_images([p["page"] for p in source["pages"]])
+        original_context = request_context("spine", Spine, evidence, images)
         readings = []
-        if token_count(pages) > 60000:
-            for index, packet in enumerate(packets(pages, target=30000)):
+        if not original_context["fits"]:
+            for index, packet in enumerate(self.source_reading_packets(pages)):
                 value = await self.semantic.call(
                     "source-reading-" + str(index),
                     "read-source",
                     SourceReading,
                     {"source_pages": packet},
+                    self.source_images([p["physical_page"] for p in packet]),
                 )
                 readings.append(value.model_dump())
             evidence["source_readings"] = readings
-        else:
-            evidence["source_pages"] = pages
-        evidence["image_pages"] = sorted(set(self.store.get("visual-candidates") or []))
+            evidence.pop("source_pages")
+            if not request_context("spine", Spine, evidence, images)["fits"]:
+                evidence["source_images_in_readings"] = evidence.pop("image_pages")
+                images = []
+        self.store.put(
+            "spine-context",
+            {
+                "original_request": original_context,
+                "submitted_request": request_context("spine", Spine, evidence, images),
+                "source_mode": "reading-packets" if readings else "original-pages",
+            },
+        )
         value = await self.semantic.call(
             "spine",
             "spine",
             Spine,
             evidence,
-            self.source_images([p["page"] for p in source["pages"]]),
+            images,
         )
         if source["kind"] == "pdf":
             known_pages = {p["page"] for p in source["pages"]}
@@ -383,26 +424,32 @@ class Workflow:
             saved = self.store.get("chapter-" + number, dependency)
             if saved is not None:
                 return saved
-            # Actual context needs may require source packet reading for a very large chapter.
-            # Small/ordinary chapters receive every original OCR page directly in this one call.
-            if token_count(evidence) > 180000:
+            images = self.source_images(item["context_pages"])
+            original_context = request_context("chapters", Bundles, evidence, images)
+            # Only a complete request exceeding the real model context needs packets.
+            # Full original pages stay in every authoring request whenever they fit.
+            if not original_context["fits"]:
                 readings = []
-                for j, packet in enumerate(packets(item["source_evidence"], 60000)):
+                for j, packet in enumerate(self.source_reading_packets(item["source_evidence"])):
                     value = await self.semantic.call(
                         f"chapter-evidence-{number}-{j}",
                         "read-source",
                         SourceReading,
                         {"source_pages": packet},
+                        self.source_images([p["physical_page"] for p in packet]),
                     )
                     readings.append(value.model_dump())
                 evidence["source_readings"] = readings
                 evidence.pop("source_evidence")
+                if not request_context("chapters", Bundles, evidence, images)["fits"]:
+                    evidence["source_images_in_readings"] = evidence.pop("image_pages")
+                    images = []
             value = await self.semantic.call(
                 "chapter-" + number,
                 "chapters",
                 Bundles,
                 evidence,
-                self.source_images(item["context_pages"]),
+                images,
             )
             if len(value.chapters) != 1 or value.chapters[0].chapter_id != number:
                 raise NeedsAttention("Authoring response must cover its one requested chapter.")
@@ -427,6 +474,10 @@ class Workflow:
                     "shared_context_sha256": digest([spine["entities"], spine["secrets"]]),
                     "dependency_chapters": sorted(dependency_ids),
                     "evidence_tokens": token_count(evidence),
+                    "original_request_context": original_context,
+                    "submitted_request_context": request_context(
+                        "chapters", Bundles, evidence, images
+                    ),
                 },
                 dependency,
             )
@@ -767,9 +818,7 @@ class Workflow:
             if row.id in new_entities and kind == "entity":
                 continue
             if row.id in registry and registry[row.id]["kind"] != kind:
-                raise NeedsAttention(
-                    "Repair tried to change a record's kind."
-                )
+                raise NeedsAttention("Repair tried to change a record's kind.")
         # A referenced identity may already exist outside the affected closure.
         # Preserve it locally instead of accepting its incidental re-description or
         # rejecting useful paid repairs. The complete proposal stays in its receipt.
@@ -807,17 +856,13 @@ class Workflow:
                 if after_rows.keys() - before_rows.keys():
                     raise NeedsAttention("Chapter repair changed contained record inventory.")
                 if any(
-                    before_rows[key] != row
-                    for key, row in after_rows.items()
-                    if key not in allowed
+                    before_rows[key] != row for key, row in after_rows.items() if key not in allowed
                 ):
                     raise NeedsAttention("Chapter repair changed unrelated contained records.")
                 # Chapter content repairs often omit unchanged actors/secrets. An
                 # omission is not deletion authority: retain every accepted record,
                 # applying only explicitly supplied changes within the closure.
-                replacement[field] = [
-                    after_rows.get(row["id"], row) for row in original[field]
-                ]
+                replacement[field] = [after_rows.get(row["id"], row) for row in original[field]]
             chapter_replacements[bundle.chapter_id] = replacement
         bundles["chapters"] = [
             chapter_replacements.get(b["chapter_id"], b) for b in bundles["chapters"]

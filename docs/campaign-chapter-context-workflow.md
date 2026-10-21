@@ -5,7 +5,11 @@ The ordinary path is local full-page OCR, one planning call, one authoring call 
 local continuity/assembly, and one independent final review. For N chapters this is N+2
 semantic calls if no concrete repair or identity collision is found. Every semantic call
 uses `gpt-6-luna` with medium reasoning. Large evidence can require measured context packets;
-there is no overall money, duration, token or repair-round stopping cap.
+there is no overall money, duration, token or repair-round stopping cap. Planning and
+authoring compare the full prompt, strict schema, evidence and conservative image estimate
+with Luna’s published context window; a 60k/180k text threshold no longer forces summaries.
+Original pages stay in the request whenever they fit. Context estimates are stored separately
+from actual provider token usage and never presented as billed usage.
 
 The planner assigns every physical source page to at least one chapter. Appendix/map/item
 pages may be assigned to several chapters. Each chapter receives its complete original OCR,
@@ -97,6 +101,13 @@ Versioned prompts are in `apps/api/services/campaign_prep/prompts/`: `principles
 prompt and `VisualEvidence` dispatch schema were removed. The earlier replacement commit
 `2b7fb4d` contains the removal of the superseded blueprint executor and its callers; this
 change does not reintroduce it.
+
+Acceptance for the two fresh PDF demonstrations uses independent fixed source-feature
+inventories spanning the original adventures. At least 80% must be accurately retained,
+with logical motives, continuity and playable choices. Private OCR storage alone does not
+count as authored retention. Material contradictions and secret disclosure errors require
+scoped correction; small harmless omissions above the threshold do not justify endless
+paid refinement. Engine execution support is assessed separately.
 
 The obsolete-structure audit found no additional PostgreSQL tables to remove: fourteen
 current application model tables and `alembic_version` account for all fifteen public tables.
