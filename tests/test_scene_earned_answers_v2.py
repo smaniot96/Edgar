@@ -33,10 +33,12 @@ UNRELATED = "PRIVATE_CULPRIT: Tamsin hid the clapper to delay Mara."
 
 
 @pytest.fixture
-def scene_state(monkeypatch):
+def scene_state(monkeypatch, request):
     spine, bundles = sample()
     first = bundles["chapters"][0]["events"][0]
-    first["dm_notes"] = ANSWER + " The ferryman explains this freely when asked.\n\n" + UNRELATED
+    first["dm_notes"] = getattr(
+        request, "param", ANSWER + " The ferryman explains this freely when asked.\n\n" + UNRELATED
+    )
     second = deepcopy(first)
     second.update(
         id="event_leads",
@@ -116,6 +118,54 @@ async def test_current_private_answer_reaches_narrator_without_private_dossier(s
     assert "source_observations" not in serialized
     assert serialized["accepted_observations"] == [ANSWER]
     assert result.flags_set == [] and result.character_update is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scene_state",
+    [
+        "Mara wants to cross to care for her aunt through winter. Oren urgently needs to "
+        "deliver medicine to a sick sibling. Both are willing to board when Hobb confirms "
+        "everyone is accounted for and the crossing is safe.\n\n" + UNRELATED
+    ],
+    indirect=True,
+)
+async def test_source_backed_npc_replies_reach_narrator_without_executing_offered_plan(scene_state):
+    state = await prepared(scene_state)
+    state["player_input"] = (
+        "I propose a spoken boarding call and ask Mara and Oren whether they agree."
+    )
+    span = next(
+        value
+        for value in observation_span_catalog(state).values()
+        if "Mara wants to cross" in value["text"]
+    )
+    reply = (
+        "Mara agrees to board if Hobb confirms it is safe; she needs to reach her aunt. "
+        "Oren agrees too, explaining that the medicine cannot wait."
+    )
+    result = AdjudicationResult(
+        success=True,
+        source_observations=[
+            {
+                "source_span_id": span["source_span_id"],
+                "text": reply,
+                "action_quote": "ask Mara and Oren whether they agree",
+                "achievement_basis": "Both present travelers answer this proposal according to their stated needs and willingness; the boat has not departed.",
+            }
+        ],
+    )
+    validate_story_effects(result, state)
+    assert result.accepted_observations == [reply]
+    assert result.accepted_story_effects == [] and result.story_effects == []
+    assert result.flags_set == [] and result.completion_status is None
+    state["adjudication_result"] = result
+    planner = build_adjudicator_prompt(state, None)[0]["content"]
+    narrator = "\n".join(str(m.content) for m in build_narrator_prompt(state))
+    assert "resolve their\n  immediate replies now" in planner
+    assert "do not merely say the protagonist asks" in planner
+    assert "Do not ask the player what an NPC says" in narrator
+    assert reply in narrator and UNRELATED not in narrator
 
 
 @pytest.mark.asyncio

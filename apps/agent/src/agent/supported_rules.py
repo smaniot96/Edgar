@@ -783,7 +783,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
         id="declared_actions",
         title="Declared combat actions, confirmed when multi-part",
-                scope=(
+        scope=(
             "A combat turn is a list of declared actions the engine validates against the player's words and state. Multi-part, conditional and standing turns are repeated back and run only on yes; always confirm is a per-hero option."
         ),
         implementation="agent.combat_confirmation:needs_confirmation",
@@ -792,7 +792,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
         id="movement_feet",
         title="Movement in feet within the speed budget",
-                scope=(
+        scope=(
             "A move may name its feet (PHB PDF p.192-193): speed 30 feet, doubled by Dash, refused over budget. A foe's distance is recorded in feet from 30 at range and 5 in melee (rulings: encounters record bands). Leaving melee by feet provokes."
         ),
         implementation="agent.positioning:feet_refusal",
@@ -801,7 +801,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
         id="contingencies",
         title="One if-clause: target down or hit points below a number",
-                scope=(
+        scope=(
             "One if-clause after the action: the foe the attack names goes down, or hit points fall below a number. The branch is a move (PHB PDF p.192); a second attack is refused (PHB PDF p.189). A condition that does not hold is logged, not run."
         ),
         implementation="agent.contingency:split_contingency",
@@ -810,7 +810,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
         id="standing_orders",
         title="Standing reaction orders",
-                scope=(
+        scope=(
             "A standing order is a Ready kept until cancelled (an engine ruling; PHB Ready is single-use). It fires with the hero's reaction when the foe closes in (PHB PDF p.191, p.194), is listed in the combat view, and a reply naming the foe cancels it."
         ),
         implementation="agent.combat_player_phase:cancel_standing_orders",
@@ -819,7 +819,7 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
         id="nearest_mechanic",
         title="Grab and push as the nearest maneuver, confirmed",
-                scope=(
+        scope=(
             "'Grab', 'seize' or 'wrestle' a foe reads as the grapple, and 'push' or 'shove' as a knock prone (PHB PDF p.196). The turn is repeated back and runs only on yes; a push away keeps its unsupported ruling."
         ),
         implementation="agent.declarations:nearest_maneuver",
@@ -1345,6 +1345,50 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
+# A mechanic mentioned while inspecting or discussing it is not a declared use. Keep
+# this scope local: an inspection earlier in a turn must not hide a later actual cast.
+_DECLARATION_BREAK = re.compile(
+    r"[.!?;,\n]|\b(?:but|then)\b|\band\s+(?=(?:I|we|cast|invoke|use|unleash|"
+    + "|".join(_TEXT_CONDITION_WORDS.values())
+    + r")\b)",
+    re.IGNORECASE,
+)
+_NEGATED_DECLARATION = re.compile(
+    r"\b(?:not|never|without|avoid(?:ing)?|rather\s+than|instead\s+of)\b|"
+    r"\b(?:don|doesn|didn|won|wouldn|shouldn|couldn|can|mustn)['’]t\b",
+    re.IGNORECASE,
+)
+_INFORMATIONAL_ACTION = re.compile(
+    r"\b(?:inspect\w*|examin\w*|identif\w*|recogn[izs]\w*|study|studying|"
+    r"discuss\w*|explain\w*|describ\w*|learn\w*|understand\w*)\b|"
+    r"\b(?:ask\w*|read\w*|look\w*|talk\w*)\b[^.!?;,]*?"
+    r"\b(?:about|what|which|whether|how|why|to\s+(?:identify|explain|describe))\b",
+    re.IGNORECASE,
+)
+_SPELL_DECLARATION = re.compile(
+    r"\b(?:cast(?:s|ing)?|invoke\w*|unleash\w*|use|using|perform\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_declared_match(kind: str, match: re.Match[str], text: str) -> bool:
+    if kind not in {SPELL, CONDITION}:
+        return True
+    prefix = text[: match.start()]
+    boundary = [m for m in _DECLARATION_BREAK.finditer(text) if m.end() <= match.start()]
+    prefix = prefix[boundary[-1].end() :] if boundary else prefix
+    if _NEGATED_DECLARATION.search(prefix):
+        return False
+    informational = list(_INFORMATIONAL_ACTION.finditer(prefix))
+    if informational:
+        # Reading/identifying followed by an explicit use in this same clause is
+        # still a declaration; merely naming the inspected effect is not.
+        return bool(_SPELL_DECLARATION.search(prefix, informational[-1].end())) or bool(
+            _SPELL_DECLARATION.fullmatch(match.group(0))
+        )
+    return True
+
+
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -1473,7 +1517,11 @@ def classify_unsupported_actions(
     scan = _IDIOM.sub(" ", text)
     effects = applied.effects
     found: dict[str, UnsupportedAction] = {}
-    request = cast_request(text, parsed, character)
+    spell_mentions = list(_TEXT_PATTERNS[0][1].finditer(scan))
+    mentioned_only = bool(spell_mentions) and not any(
+        _is_declared_match(SPELL, match, scan) for match in spell_mentions
+    )
+    request = None if mentioned_only else cast_request(text, parsed, character)
     if request is not None:
         spell, _plan, refusal = request
         if refusal:
@@ -1489,7 +1537,7 @@ def classify_unsupported_actions(
                 f"{spell.name} recorded no {spell.condition} condition this turn: the target's save "
                 "succeeded or no foe was in the fight, so none is applied.",
             )
-    elif _parsed_spell(parsed):
+    elif not mentioned_only and _parsed_spell(parsed):
         found[SPELL] = UnsupportedAction(SPELL, "spell (parsed)", _unresolved_spell_note(parsed))
     # Implemented class features (EDG-145) the engine executed this turn are not declared. Any
     # other declared one (refused, or not applied this turn) gets its own ruling.
@@ -1526,6 +1574,7 @@ def classify_unsupported_actions(
             (
                 m
                 for m in pattern.finditer(scan)
+                if _is_declared_match(kind, m, scan)
                 if not _executed_economy_phrase(kind, m.group(0), applied, text)
             ),
             None,
@@ -1794,7 +1843,9 @@ def apply_narration_boundary(
         if pattern is None:
             return narration
         body = _strip_claim_sentences(narration, pattern)
-        return body or "*The engine's record governs this turn: only the effects it applied happened.*"
+        return (
+            body or "*The engine's record governs this turn: only the effects it applied happened.*"
+        )
     body = _strip_claim_sentences(narration, _claim_pattern(actions, applied))
     rulings = " ".join(ruling_lines(actions))
     if not body:

@@ -506,6 +506,7 @@ async def persist_turn(
                     "turn_id": turn_id,
                     "roll_status": roll_status,
                     "roll": turn_roll,
+                    "public_adjudication": public_adjudication(adjudication),
                     **journal_tracking_marker(),
                 },
             )

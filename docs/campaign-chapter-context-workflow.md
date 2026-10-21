@@ -79,11 +79,18 @@ Local validation resolves that binding without asking the model to retype source
 join a quotation to a separate reference. Unknown, stale, future and foreign spans fail.
 No additional semantic call is needed. Archived responses retain exact quotation matching
 and unambiguous relocation within already eligible same-campaign current-scene evidence.
+The consequence call also resolves present NPCs' immediate replies to offered plans from
+their evidenced motives and knowledge. Narration performs those replies and leaves the
+hero's next decision to the player. Dialogue alone does not execute the plan or complete
+a goal. Inspecting or discussing a spell and negated conditions do not trigger unsupported
+mechanics warnings; an actual declaration later in the same turn still does.
 The narrator receives only the selected answer; the public adjudication DTO excludes raw
 source evidence, span IDs and private reasoning. Rejections retain private operator replay
 receipts with restricted permissions, without failing play if receipt capture is unavailable.
 Whether a natural-language action earns a secret remains the live DM's semantic judgment,
 as for creative goal completion. Source provenance alone does not prove that judgment correct.
+New atomic turn receipts retain that public adjudication alongside the saved response, so
+replay preserves it without a model call. Historical receipts remain untouched.
 Linked event triggers permit meaningful progress between events at the same location
 without requiring artificial physical travel.
 

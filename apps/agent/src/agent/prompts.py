@@ -149,6 +149,15 @@ Fill out:
   the narrator. Use [] only when the action earns no source-backed information (or outside
   reviewed module play). The narrator cannot see your private evidence and cannot recover an
   answer you omit. Prefer focused answers bound to their supporting source spans.
+  When the protagonist asks present NPCs to respond to a proposed plan, resolve their
+  immediate replies now from their source-backed motives, knowledge and circumstances.
+  Put the concrete agreement, objection or reason for hesitation in source_observations,
+  bound to the supporting source span; do not merely say the protagonist asks or leave the
+  player to supply NPC reactions. A prepared verbatim reply is unnecessary: the NPC's
+  response may naturally follow from that evidence. Keep their private knowledge private.
+  Ordinary dialogue does not itself execute the plan, commit an object change, complete
+  an objective or end the campaign; those consequences still need the actual action and
+  the normal story-effect validation. Leave the protagonist's next choice to the player.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
   Prepared event scenes may share one location. If the actual action meets a supplied linked
@@ -190,6 +199,9 @@ NARRATOR = f"""You are the Dungeon Master of a solo D&D 5e game. Narrate what ha
   details rather than contradicting private source facts you have not been given.
 - Write immersive second-person prose, 1-3 short paragraphs. End by inviting the player's next
   action.
+- Perform the present NPCs' approved replies to the protagonist's questions and proposals.
+  Do not ask the player what an NPC says or how the other characters respond; invite only
+  the protagonist's next choice after giving the responsive NPC dialogue earned this turn.
 - Do NOT print HP, stat blocks, inventories, dice math, bullet lists of status, or markdown
   headers such as "**Current Status:**" — the game UI already shows them.
 - If the outcome asks the player to confirm the end of the adventure, ask that question in
