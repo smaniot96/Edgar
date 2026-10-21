@@ -11,10 +11,16 @@ export function ErrorNotice({
   error,
   onRetry,
   className,
+  bare = false,
+  announce = true,
 }: {
   error: unknown;
   onRetry?: () => void;
   className?: string;
+  /** Drop the box, for a notice that already sits inside another one. */
+  bare?: boolean;
+  /** Turn off the alert role when an enclosing region already announces the failure. */
+  announce?: boolean;
 }) {
   if (error == null) return null;
   const safe = safeFailureFromUnknown(error);
@@ -42,17 +48,18 @@ export function ErrorNotice({
         : null;
   return (
     <div
-      role="alert"
-      aria-atomic="true"
+      role={announce ? "alert" : undefined}
+      aria-atomic={announce ? "true" : undefined}
       className={cn(
-        "rounded-control border border-danger-strong/60 bg-danger-soft/60 px-3 py-2 text-sm text-danger",
+        "text-sm text-danger",
+        !bare && "rounded-control border border-danger-strong/60 bg-danger-soft/60 px-3 py-2",
         className,
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p>{safe.message}</p>
         {onRetry ? (
-          <Button variant="secondary" size="sm" onClick={onRetry}>
+          <Button variant="secondary" size="sm" className="min-h-11" onClick={onRetry}>
             Check again
           </Button>
         ) : null}

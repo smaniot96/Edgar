@@ -20,7 +20,7 @@ import { cardClasses } from "../ui/styles";
 import { ExtractionPreview } from "./ExtractionPreview";
 import { PreparationRecovery } from "./PreparationRecovery";
 
-function StatusBadge({ state, readiness, homebrewWithoutSource }: { state: CardModel["state"]; readiness: ReadinessRead | null; homebrewWithoutSource: boolean }) {
+function StatusBadge({ state, readiness, homebrewWithoutSource, jobState }: { state: CardModel["state"]; readiness: ReadinessRead | null; homebrewWithoutSource: boolean; jobState?: string }) {
   if (state === "ready" && readiness?.play_allowed !== true) {
     return <Pill tone="warning">{readiness ? "Needs attention" : "Readiness unknown"}</Pill>;
   }
@@ -34,6 +34,9 @@ function StatusBadge({ state, readiness, homebrewWithoutSource }: { state: CardM
     case "recovery":
       return <Pill tone="danger">Source unavailable</Pill>;
     case "failed":
+      // An interrupted or cancelled run keeps its saved work and can resume; only a real failure is red.
+      if (jobState === "interrupted") return <Pill tone="warning">Interrupted</Pill>;
+      if (jobState === "cancelled") return <Pill tone="neutral">Cancelled</Pill>;
       return <Pill tone="danger">Failed</Pill>;
     default:
       return (
@@ -197,31 +200,36 @@ export function CampaignCard({
         <div className={cn("mb-1 flex min-w-0 gap-2", longName ? "flex-col items-start" : "items-start justify-between")}>
           <h3 className={cn("min-w-0 max-w-full break-words [overflow-wrap:anywhere] font-display leading-tight", longName ? "text-lg" : "text-xl")}>{name}</h3>
           <div className={cn("shrink-0", longName && "order-first")}>
-            <StatusBadge state={state} readiness={card.readiness} homebrewWithoutSource={homebrewWithoutSource} />
+            <StatusBadge state={state} readiness={card.readiness} homebrewWithoutSource={homebrewWithoutSource} jobState={job?.state} />
           </div>
         </div>
         {showAdventureTitle ? (
           <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventureSubtitle}</p>
         ) : null}
-        <p className="mb-2 text-xs text-ink-subtle">
-          {lastPlayed ? `Last played ${relativeTime(lastPlayed)}` : "Not played yet"}
-        </p>
+        {/* The save is one block: who is playing and when, then where the story stands. The time is
+            stated once; without a save, one line says why there is nothing to continue. */}
         {primarySession ? (
-          <p className="mb-2 break-words text-sm text-ink-muted [overflow-wrap:anywhere]">
-            {primarySession.character_name || "No hero"}
-            {primarySession.has_history && primarySession.last_played_at
-              ? ` · saved ${relativeTime(primarySession.last_played_at)}`
-              : " · no story history yet"}
+          <div className="mb-3 mt-1 space-y-1.5 border-l-2 border-ember-700/60 pl-3">
+            <p className="break-words text-sm [overflow-wrap:anywhere]">
+              <span className="font-medium text-ink">{primarySession.character_name || "No hero"}</span>
+              <span className="text-ink-muted">
+                {primarySession.has_history && primarySession.last_played_at
+                  ? ` · last played ${relativeTime(primarySession.last_played_at)}`
+                  : " · no story history yet"}
+              </span>
+            </p>
+            <SavedPlaythroughContext session={primarySession} className="" />
+          </div>
+        ) : (
+          <p className="mb-2 text-xs text-ink-subtle">
+            {lastPlayed ? `Last played ${relativeTime(lastPlayed)}` : card.campaign ? "No saved playthrough yet" : "Not played yet"}
           </p>
-        ) : card.campaign ? (
-          <p className="mb-2 text-sm text-ink-muted">No saved playthrough yet</p>
-        ) : null}
-        <SavedPlaythroughContext session={primarySession} />
+        )}
         {adventure.description ? (
           <p className="mb-2 line-clamp-2 text-sm text-ink-muted">{adventure.description}</p>
         ) : null}
         {showReadiness ? (
-          <ReadinessNotice readiness={card.readiness} onRetry={onRetried} className="mb-3 text-xs" />
+          <ReadinessNotice readiness={card.readiness} onRetry={onRetried} announce={false} className="mb-3 text-xs" />
         ) : null}
         <div className="mb-3 flex flex-wrap gap-1.5">
           {adventure.level_range ? <Pill>Levels {adventure.level_range}</Pill> : null}
@@ -248,14 +256,15 @@ export function CampaignCard({
             ) : isPublicationCommitting(job) ? (
               <p className="mt-2 text-xs text-ink-muted">Finishing publication of the validated source. Cancellation is no longer available at this stage.</p>
             ) : (
-              <Button variant="secondary" size="sm" loading={cancelling} onClick={() => void cancel()} className="mt-2">Cancel preparation</Button>
+              <Button variant="secondary" size="sm" loading={cancelling} onClick={() => void cancel()} className="mt-2 min-h-11">Cancel preparation</Button>
             )}
           </div>
         ) : null}
         {jobFailureShown ? (
           <div role="status" className="mb-3 rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-ink">
             <p className="font-medium">{jobFailureHeading(job)}</p>
-            {job.failure ? <ErrorNotice error={job.failure} className="mt-2" /> : null}
+            {/* Inside this status region already: no second box and no second announcement. */}
+            {job.failure ? <ErrorNotice error={job.failure} bare announce={false} className="mt-2" /> : null}
             {job.explanation ? <p className="mt-1 text-xs text-ink-muted">{job.explanation}</p> : null}
           </div>
         ) : null}
