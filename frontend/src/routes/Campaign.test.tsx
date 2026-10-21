@@ -8,7 +8,7 @@ import type { CampaignRead, ReadinessRead, SessionRead } from "../api/types";
 import CampaignView from "./Campaign";
 
 const api = vi.hoisted(() => ({
-  deleteCampaignAndUnusedSources: vi.fn(),
+  deleteCampaign: vi.fn(),
   endCampaign: vi.fn(),
   getAdventure: vi.fn(),
   getCampaign: vi.fn(),
@@ -54,7 +54,7 @@ beforeEach(() => {
   api.getAdventure.mockResolvedValue(null);
   api.listSessions.mockResolvedValue([savedStory]);
   api.endCampaign.mockResolvedValue(campaign);
-  api.deleteCampaignAndUnusedSources.mockResolvedValue({ campaign_id: 12, sources: [] });
+  api.deleteCampaign.mockResolvedValue({ campaign_id: 12, sources: [] });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -146,6 +146,6 @@ it("deletes the campaign through the same dialog and hands the result to the cam
   expect(dialog()?.textContent).toContain("This permanently deletes the campaign “The Old Road” and its 1 saved session.");
   await act(async () => button(dialog()!, "Delete campaign").click());
 
-  expect(api.deleteCampaignAndUnusedSources).toHaveBeenCalledWith(12);
+  expect(api.deleteCampaign).toHaveBeenCalledWith(12);
   expect(notice).toBe("Deleted “The Old Road” and its saved sessions.");
 });

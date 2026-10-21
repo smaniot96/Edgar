@@ -2,36 +2,77 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { CampaignRead } from "../api/types";
+import type { AdventureRead } from "../api/types";
 import Home from "./Home";
-const data = vi.hoisted(() => ({ campaigns: [] as unknown[], sessions: [] as unknown[], campaignError: null as unknown }));
-beforeEach(() => { data.campaigns = []; data.sessions = []; data.campaignError = null; });
-vi.mock("../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
-vi.mock("../lib/useQuery", () => ({ useQuery: (key: string) => ({ data: key === "me" ? { id: 1, email: "player@example.test", display_name: "Player" } : key === "campaigns" ? (data.campaignError ? undefined : data.campaigns) : key === "sessions" ? data.sessions : [], error: key === "campaigns" ? data.campaignError : null, loading: false, refetch: vi.fn(), setData: vi.fn() }) }));
-it("shows orphan campaigns when the adventure library is completely empty", () => {
-  const campaign: CampaignRead = { id: 2, title: "Lost module", system: "5e", created_by: 1, created_at: "2026-10-14", adventure_collections: ["lost_module"], status: "active", ended_at: null, source_mode: "module", retrieval_degraded: true, play_allowed: false, sources: [{ slug: "lost_module", title: "Lost module", status: "missing", usable_chunks: 0, expected_chunks: null, collection_exists: false, source_pdf_available: false, message: "Missing source" }] };
-  data.campaigns = [campaign]; data.campaignError = null;
-  const html = renderToStaticMarkup(<MemoryRouter><Home /></MemoryRouter>);
-  expect(html).toContain("Lost module"); expect(html).toContain("Recover source"); expect(html).not.toContain("No campaigns yet");
+const data = vi.hoisted(() => ({
+  adventures: [] as AdventureRead[],
+  error: null as unknown,
+}));
+vi.mock("../lib/useQuery", () => ({
+  useQuery: (key: string) => ({
+    data:
+      key === "me"
+        ? { id: 1, email: "player@example.test" }
+        : data.error
+          ? undefined
+          : data.adventures,
+    error: key === "adventures" ? data.error : null,
+    loading: false,
+    refetch: vi.fn(),
+    setData: vi.fn(),
+  }),
+}));
+beforeEach(() => {
+  data.adventures = [];
+  data.error = null;
 });
-it("surfaces campaign loading failures instead of claiming library is empty", () => {
-  data.campaigns = []; data.campaignError = new Error("Campaign sources unavailable");
-  const html = renderToStaticMarkup(<MemoryRouter><Home /></MemoryRouter>);
-  expect(html).toContain("Something went wrong while processing this action.");
-  expect(html).not.toContain("Campaign sources unavailable");
-  expect(html).not.toContain("No campaigns yet");
-});
-
-it("identifies the selected playable save and hero beside Resume even when a newer save is blocked", () => {
-  data.campaigns = [1, 2].map((id) => ({ id, title: id === 1 ? "Blocked crossing" : "Saved trail", created_by: 1, created_at: "2026-10-14", adventure_collections: [], source_mode: "homebrew", status: "active" }));
-  data.sessions = [
-    { id: 9, campaign_id: 1, has_history: true, last_played_at: "2026-10-16", character_name: "Other hero", readiness: { play_allowed: false, history_allowed: true } },
-    { id: 7, campaign_id: 2, has_history: true, last_played_at: "2026-10-15", character_name: "Mara Venn", readiness: { play_allowed: true, history_allowed: true } },
+it("shows reusable adventures as detail links, with no campaigns or resume actions", () => {
+  data.adventures = [
+    {
+      slug: "sheep",
+      title: "The Wild Sheep Chase",
+      description: "A talking sheep needs help.",
+      level_range: "4–5",
+      cover_image: null,
+      status: "ready",
+    },
   ];
-  const html = renderToStaticMarkup(<MemoryRouter><Home /></MemoryRouter>);
-  const rendered = document.createElement("div"); rendered.innerHTML = html;
-  const resume = rendered.querySelector('button[aria-describedby="resume-save-identity"]')!;
-  expect(resume.textContent).toContain("Resume: Saved trail");
-  expect(rendered.querySelector("#resume-save-identity")?.textContent).toBe("Mara Venn · Save #7");
-  expect(resume.textContent).not.toContain("Blocked crossing");
+  const html = renderToStaticMarkup(
+    <MemoryRouter>
+      <Home />
+    </MemoryRouter>,
+  );
+  expect(html).toContain('href="/adventures/sheep"');
+  expect(html).toContain("A talking sheep needs help.");
+  expect(html).not.toContain("Campaign #");
+  expect(html).not.toContain("Resume");
+});
+it("keeps archived duplicates out of the default adventure catalogue", () => {
+  data.adventures = [
+    {
+      slug: "old",
+      title: "Old duplicate",
+      description: null,
+      level_range: null,
+      cover_image: null,
+      library_archived: true,
+    },
+  ];
+  const html = renderToStaticMarkup(
+    <MemoryRouter>
+      <Home />
+    </MemoryRouter>,
+  );
+  expect(html).not.toContain("Old duplicate");
+  expect(html).toContain("Show archived (1)");
+});
+it("shows a loading failure without claiming the library is empty", () => {
+  data.error = new Error("Store down");
+  const html = renderToStaticMarkup(
+    <MemoryRouter>
+      <Home />
+    </MemoryRouter>,
+  );
+  expect(html).not.toContain("No adventures yet");
+  expect(html).not.toContain("Store down");
 });

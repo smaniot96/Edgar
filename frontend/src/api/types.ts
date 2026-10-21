@@ -418,6 +418,7 @@ export interface SourceCitation {
 }
 
 export interface CampaignRead {
+  characters?: CampaignCharacterRead[];
   rules_edition?: RulesEdition;
   progression_mode?: ProgressionMode;
   death_mode?: DeathMode;

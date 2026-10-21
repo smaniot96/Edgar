@@ -6,7 +6,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from agent.death import life_state_of
 from agent.progression import ProgressionError
 from agent.resolution import ENGINE_STATS_KEYS
 from db.postgres.models import Campaign, Character, CharacterAssignment
@@ -21,6 +20,7 @@ from ..schemas.character import (
 from ..schemas.progression import LevelUpRead, LevelUpRequest
 from ..services.advancement import LevelUpConflict, apply_level_up
 from ..services.campaign_completion import lock_campaign
+from ..services.campaign_roster import roster_row as _roster_row
 from ..services.character_assignments import (
     load_active_assignment,
     load_active_assignment_any_campaign,
@@ -31,20 +31,6 @@ from ._common import HTTPErrorWithContext, Page
 router = APIRouter(tags=["campaigns"])
 
 _ALREADY_ACTIVE = "Character already has an active assignment in another campaign"
-
-
-def _roster_row(assignment: CharacterAssignment, ch: Character) -> CampaignCharacterRead:
-    return CampaignCharacterRead(
-        assignment_id=assignment.id,
-        character_id=ch.id,
-        name=ch.name,
-        character_class=ch.character_class,
-        level=assignment.level,
-        hp_current=assignment.hp_current,
-        hp_max=assignment.hp_max,
-        milestones_pending=assignment.milestones_pending,
-        life_state=life_state_of(assignment.stats or {}),
-    )
 
 
 @router.get("/campaigns/{campaign_id}/characters", response_model=list[CampaignCharacterRead])

@@ -1,4 +1,4 @@
-import { deleteAdventure, deleteCampaignAndUnusedSources } from "../api/client";
+import { deleteAdventure, deleteCampaign, deleteCampaignAndUnusedSources } from "../api/client";
 import type { CampaignRead, SessionRead, SourceReleaseOutcome } from "../api/types";
 
 export interface DeleteSource {
@@ -66,6 +66,10 @@ export async function deleteTarget(target: DeleteTarget): Promise<Map<string, So
     return outcomes;
   }
   for (const campaign of target.campaigns) {
+    if (target.sources.length === 0) {
+      await deleteCampaign(campaign.id);
+      continue;
+    }
     const result = await deleteCampaignAndUnusedSources(campaign.id);
     for (const source of result.sources) outcomes.set(source.slug, source.outcome);
   }

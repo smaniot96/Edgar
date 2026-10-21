@@ -31,8 +31,9 @@ const router = createBrowserRouter(
               // Page-level boundary: errors render inside the shell, nav stays usable.
               errorElement: <RouteError />,
               children: [
-                { path: "campaigns", element: <Home /> },
+                { path: "campaigns", lazy: lazyPage(() => import("./routes/Campaigns.tsx")) },
                 { path: "adventures", element: <Home /> },
+                { path: "adventures/:slug", lazy: lazyPage(() => import("./routes/Adventure.tsx")) },
                 { path: "campaigns/:id/setup", lazy: lazyPage(() => import("./routes/CampaignSetup.tsx")) },
                 { path: "campaigns/:id", lazy: lazyPage(() => import("./routes/Campaign.tsx")) },
                 { path: "characters", lazy: lazyPage(() => import("./routes/Characters.tsx")) },

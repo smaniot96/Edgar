@@ -125,7 +125,7 @@ export function SourceRecovery({ campaign, onUpdated }: {
             </p>
           ) : null}
           {["missing", "empty", "partial", "failed"].includes(source.status) && !source.job?.retryable ? (
-            <a className="font-medium text-ink underline" href="/ui/campaigns">Prepare a fresh adventure in the campaign library</a>
+            <a className="font-medium text-ink underline" href="/ui/adventures">Prepare a fresh adventure in the adventure library</a>
           ) : null}
         </div>
       ))}

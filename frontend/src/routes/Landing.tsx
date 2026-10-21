@@ -22,11 +22,11 @@ const CTAS: Cta[] = [
   {
     to: "/adventures",
     label: "Explore adventures",
-    blurb: "Generate or upload an adventure, then play.",
+    blurb: "Browse stories and find your next adventure.",
     primary: true,
   },
   { to: "/characters", label: "Your Characters", blurb: "Forge and manage your heroes." },
-  { to: "/settings", label: "Settings", blurb: "Your profile and display name." },
+  { to: "/campaigns", label: "Your Campaigns", blurb: "Gather your party and continue your story." },
 ];
 
 function CtaCard({ cta }: { cta: Cta }) {

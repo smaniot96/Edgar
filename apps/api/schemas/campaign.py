@@ -2,13 +2,14 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent.progression import DEFAULT_DEATH_MODE, DEFAULT_PROGRESSION_MODE
 from edgar_core.sources import DEFAULT_RULES_EDITION, RulesEdition
 
 from ._validators import forbid_null
 from .adventure import AdventureJobRead
+from .character import CampaignCharacterRead
 from .readiness import ReadinessRead
 
 ProgressionMode = Literal["fixed", "milestone"]
@@ -65,6 +66,23 @@ class AdventureCampaignOpen(BaseModel):
 
     new_campaign: bool = False
     request_id: UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    character_ids: list[int] | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_party(self):
+        if self.title is not None:
+            self.title = self.title.strip()
+            if not self.title:
+                raise ValueError("A campaign name cannot be blank.")
+        if self.character_ids is not None:
+            if not self.new_campaign:
+                raise ValueError("Choose characters when creating a new campaign.")
+            if any(identifier <= 0 for identifier in self.character_ids):
+                raise ValueError("Character IDs must be positive.")
+            if len(set(self.character_ids)) != len(self.character_ids):
+                raise ValueError("Choose each character once.")
+        return self
 
 
 class CampaignCreate(BaseModel):
@@ -73,7 +91,7 @@ class CampaignCreate(BaseModel):
 
     title: str = Field(..., min_length=1, max_length=255)
     system: str = Field(..., min_length=1, max_length=255)
-    adventure_collections: list[str] | None = None
+    adventure_collections: list[str] | None = Field(default=None, max_length=1)
     source_mode: Literal["module", "homebrew"] = "module"
     rules_edition: RulesEdition = DEFAULT_RULES_EDITION
     # EDG-045: explicit modes. The defaults keep the behaviour every campaign had before the modes.
@@ -99,6 +117,7 @@ class CampaignRead(BaseModel):
     death_mode: DeathMode = DEFAULT_DEATH_MODE
     combat_always_confirm: bool = False
     sources: list[SourceRead] = Field(default_factory=list)
+    characters: list[CampaignCharacterRead] = Field(default_factory=list)
     retrieval_degraded: bool = False
     play_allowed: bool = True
     readiness: ReadinessRead | None = None
@@ -111,7 +130,7 @@ class CampaignUpdate(BaseModel):
 
     title: str | None = Field(None, min_length=1, max_length=255)
     system: str | None = Field(None, min_length=1, max_length=255)
-    adventure_collections: list[str] | None = None
+    adventure_collections: list[str] | None = Field(default=None, max_length=1)
     source_mode: Literal["module", "homebrew"] = "module"
     rules_edition: RulesEdition = DEFAULT_RULES_EDITION
     progression_mode: ProgressionMode = DEFAULT_PROGRESSION_MODE
