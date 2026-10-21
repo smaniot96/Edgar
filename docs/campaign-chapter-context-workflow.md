@@ -298,6 +298,15 @@ cards, while Show archived adventures makes restoration available. Active prepar
 cannot be archived. This supports keeping one current visible copy of each adventure
 without deleting historical or failed work.
 
+Publication readiness verifies all current review fingerprints from one local snapshot of
+the spine, chapter bundles, source, dependency graph and relevant visual evidence. Each
+artifact and visual page is loaded once per calculation rather than once per record. The
+hash payload and transitive dependencies are unchanged, so already paid review receipts
+remain valid. No fingerprint cache survives a calculation: repairs and changed visual
+evidence are observed by the next check. Review routing and publication use the same bulk
+calculation. This avoids repeating full campaign deserialization hundreds of times while
+loading the adventure library.
+
 Focused regression evidence is in `tests/test_campaign_chapter_calls_v2.py`,
 `tests/test_chapter_source_retention.py`, `tests/test_campaign_source_mechanics_v2.py` and the
 adapted graph/workflow/mechanics repair tests. `tools/dev_rollout.py` builds all four owned

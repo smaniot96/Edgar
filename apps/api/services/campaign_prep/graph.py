@@ -278,60 +278,76 @@ class Workflow:
         return value
 
     def dependency_map(self, registry):
+        return self._dependencies(registry, self.store.get("spine"))
+
+    @staticmethod
+    def _dependencies(registry, spine):
         deps = dependencies(registry)
-        deps["campaign_spine"].update(
-            e["id"]
-            for e in self.store.get("spine")["entities"] + self.store.get("spine")["secrets"]
-        )
+        deps["campaign_spine"].update(e["id"] for e in spine["entities"] + spine["secrets"])
         return deps
 
     def fingerprint(self, registry, key):
-        deps = self.dependency_map(registry)
-        needed, pending = set(), list(deps[key])
-        while pending:
-            ref = pending.pop()
-            if ref == key or ref in needed:
-                continue
-            needed.add(ref)
-            pending.extend(deps[ref] - needed)
+        return self._fingerprints(registry, (key,))[key]
+
+    def fingerprints(self, registry):
+        """Calculate current coverage hashes from one local, read-only snapshot.
+
+        Store reads deserialize independent values. Nothing is cached on Workflow:
+        the next calculation observes repairs and newly accepted visual evidence.
+        """
+        return self._fingerprints(registry, registry)
+
+    def _fingerprints(self, registry, keys):
         spine = self.store.get("spine")
-        related = {
-            b["chapter_id"]
-            for b in self.store.get("bundles")["chapters"]
-            if any(
-                row["id"] == key
-                for field in ("goals", "events", "new_entities", "new_secrets")
-                for row in b[field]
-            )
-        }
+        bundles = self.store.get("bundles")
         source = self.store.get("source") or {"pages": []}
-        pages = {p for c in spine["chapters"] if c["id"] in related for p in c["pages"]}
-        if key == "campaign_spine":
-            pages.update(p["page"] for p in source["pages"])
-        elif "origin" in registry[key]["value"]:
-            pages.update(registry[key]["value"]["origin"]["pages"])
-        return digest(
-            {
-                "visual_evidence": {
-                    str(p): self.store.get("visual-" + str(p)) for p in sorted(pages)
-                },
-                "record": registry[key],
-                "dependencies": {r: registry[r] for r in sorted(needed)},
-                "campaign_context": {k: spine[k] for k in ("premise", "setting", "hook", "ending")},
-                "chapter_context": [
-                    {
-                        "chapter": c,
-                        "dm_guidance": next(
-                            b["dm_guidance"]
-                            for b in self.store.get("bundles")["chapters"]
-                            if b["chapter_id"] == c["id"]
-                        ),
-                    }
-                    for c in spine["chapters"]
-                    if c["id"] in related
-                ],
+        deps = self._dependencies(registry, spine)
+        related, guidance = {}, {}
+        for bundle in bundles["chapters"]:
+            chapter_id = bundle["chapter_id"]
+            # Preserve the original first matching bundle's guidance.
+            guidance.setdefault(chapter_id, bundle["dm_guidance"])
+            for field in ("goals", "events", "new_entities", "new_secrets"):
+                for row in bundle[field]:
+                    related.setdefault(row["id"], set()).add(chapter_id)
+        chapter_context, pages = {}, {}
+        for key in keys:
+            chapter_context[key] = [
+                {"chapter": chapter, "dm_guidance": guidance[chapter["id"]]}
+                for chapter in spine["chapters"]
+                if chapter["id"] in related.get(key, ())
+            ]
+            pages[key] = {
+                page for context in chapter_context[key] for page in context["chapter"]["pages"]
             }
-        )
+            if key == "campaign_spine":
+                pages[key].update(page["page"] for page in source["pages"])
+            elif "origin" in registry[key]["value"]:
+                pages[key].update(registry[key]["value"]["origin"]["pages"])
+        visuals = {
+            page: self.store.get("visual-" + str(page))
+            for page in sorted({page for values in pages.values() for page in values})
+        }
+        campaign_context = {k: spine[k] for k in ("premise", "setting", "hook", "ending")}
+        result = {}
+        for key in chapter_context:
+            needed, pending = set(), list(deps[key])
+            while pending:
+                ref = pending.pop()
+                if ref == key or ref in needed:
+                    continue
+                needed.add(ref)
+                pending.extend(deps[ref] - needed)
+            result[key] = digest(
+                {
+                    "visual_evidence": {str(page): visuals[page] for page in sorted(pages[key])},
+                    "record": registry[key],
+                    "dependencies": {ref: registry[ref] for ref in sorted(needed)},
+                    "campaign_context": campaign_context,
+                    "chapter_context": chapter_context[key],
+                }
+            )
+        return result
 
     async def run(self):
         await self.graph.ainvoke({"slug": self.store.slug}, config={"recursion_limit": sys.maxsize})
@@ -842,9 +858,8 @@ class Workflow:
         registry = self.registry()
         coverage = self.store.get("review-coverage") or {}
         findings = self.store.get("findings") or []
-        current_ids = {
-            key for key in registry if coverage.get(key) != self.fingerprint(registry, key)
-        }
+        current_fingerprints = self.fingerprints(registry)
+        current_ids = {key for key in registry if coverage.get(key) != current_fingerprints[key]}
         # Cross-record findings accompany the pending record as dependency context.
         # Already current coverage must not expand a partial-response continuation.
         compiled, source = self.store.get("compiled"), self.store.get("source")
@@ -898,11 +913,11 @@ class Workflow:
             }
             for bundle in bundles
         ]
+        deps = self.dependency_map(registry)
         for packet in packets(
             [{"id": key, **registry[key]} for key in sorted(current_ids)], target=60000
         ):
             ids = [r["id"] for r in packet]
-            deps = self.dependency_map(registry)
             context_ids = set().union(*(deps[key] for key in ids)) - set(ids)
             prior = [f["value"] for f in findings if set(ids) & set(f["value"]["record_ids"])]
             context_ids.update(key for f in prior for key in f["record_ids"] if key not in ids)
@@ -1007,7 +1022,7 @@ class Workflow:
                     raise NeedsAttention("Critic finding references nonexistent records.")
             requested, returned = set(ids), set(value.covered_ids)
             covered = requested & returned
-            fingerprints = {key: self.fingerprint(registry, key) for key in covered}
+            fingerprints = {key: current_fingerprints[key] for key in covered}
             progressed = {key for key in covered if coverage.get(key) != fingerprints[key]}
             if returned != requested:
                 self.store.put(
@@ -1037,7 +1052,7 @@ class Workflow:
                 if not (
                     set(f["value"]["record_ids"]) & covered
                     and all(
-                        key in covered or coverage.get(key) == self.fingerprint(registry, key)
+                        key in covered or coverage.get(key) == current_fingerprints[key]
                         for key in f["value"]["record_ids"]
                     )
                 )
@@ -1050,7 +1065,7 @@ class Workflow:
 
     def route_review(self, address):
         registry, coverage = self.registry(), self.store.get("review-coverage") or {}
-        if any(coverage.get(key) != self.fingerprint(registry, key) for key in registry):
+        if any(coverage.get(key) != value for key, value in self.fingerprints(registry).items()):
             return "review"
         if any(f["value"]["severity"] == "material" for f in self.store.get("findings") or []):
             return "repair"
@@ -1450,10 +1465,9 @@ class Workflow:
 
         registry = self.registry()
         coverage = self.store.get("review-coverage") or {}
-        if (
-            any(coverage.get(key) != self.fingerprint(registry, key) for key in registry)
-            or self.route_review(address) == "repair"
-        ):
+        if any(
+            coverage.get(key) != value for key, value in self.fingerprints(registry).items()
+        ) or any(f["value"]["severity"] == "material" for f in self.store.get("findings") or []):
             raise NeedsAttention("Current independent review coverage is incomplete.")
         await asyncio.to_thread(publish, self.store)
         self.store.check()

@@ -211,7 +211,7 @@ def private_preparation_ready(slug, meta=None):
 
         workflow = Workflow(store, semantic=object())
         registry, coverage = workflow.registry(), store.get("review-coverage")
-        if any(coverage.get(key) != workflow.fingerprint(registry, key) for key in registry):
+        if any(coverage.get(key) != value for key, value in workflow.fingerprints(registry).items()):
             return False
         manifest = load_published_manifest(meta)
         if manifest_digest(manifest) != publication["manifest_sha256"]:
