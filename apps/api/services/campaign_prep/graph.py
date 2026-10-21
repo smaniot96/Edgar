@@ -1049,11 +1049,11 @@ class Workflow:
         return address
 
     def route_review(self, address):
-        if any(f["value"]["severity"] == "material" for f in self.store.get("findings") or []):
-            return "repair"
         registry, coverage = self.registry(), self.store.get("review-coverage") or {}
         if any(coverage.get(key) != self.fingerprint(registry, key) for key in registry):
             return "review"
+        if any(f["value"]["severity"] == "material" for f in self.store.get("findings") or []):
+            return "repair"
         return "publish"
 
     def retained_review_page_sources(self, findings, pages):

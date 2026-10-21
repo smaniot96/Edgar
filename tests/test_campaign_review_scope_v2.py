@@ -169,15 +169,16 @@ def partial_review_fixture(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("severity", ["advice", "material"])
 async def test_partial_exact_coverage_rechecks_only_missing_id_and_preserves_unreviewed_findings(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, severity
 ):
     store, requested, missing, typo = partial_review_fixture(tmp_path, monkeypatch)
     prior = {
         "owner": digest(sorted(requested)),
         "value": {
             "id": "cross_record_advice",
-            "severity": "advice",
+            "severity": severity,
             "record_ids": ["review_record_0", missing],
             "evidence": "Check the shared reference.",
             "instruction": "Check both records.",
@@ -217,6 +218,19 @@ async def test_partial_exact_coverage_rechecks_only_missing_id_and_preserves_unr
     assert len(calls) == 2
     assert store.get("findings") == []
     assert prepared.route_review({"slug": store.slug}) == "publish"
+    store.put(
+        "findings",
+        [
+            {
+                "owner": "new_critic",
+                "value": {
+                    **prior["value"],
+                    "severity": "material",
+                },
+            }
+        ],
+    )
+    assert prepared.route_review({"slug": store.slug}) == "repair"
     # The conditional graph must continue review rather than attempt publication.
     assert any(
         edge.source == "review" and edge.target == "review"
