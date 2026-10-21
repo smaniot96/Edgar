@@ -103,6 +103,13 @@ repair responses remain recoverable: uniquely identified permitted rows are proj
 original records, omitted rows remain unchanged, and only the recomputed residual defects
 can trigger a distinct sparse request. Ambiguous identities are never matched by position.
 The full assembled candidate still passes scope and semantic checks before acceptance.
+The residual audit then checks every typed entity/event/goal/procedure reference together,
+including item identities. `structural-links-v2.md` returns only those remaining joins and
+explicitly permitted missing entities. An item gets its own canonical clue/object identity;
+its carrier or corpse remains an NPC. Original procedures and encounter mechanics stay
+unchanged. Human-readable area/section labels mistakenly supplied as OCR region IDs move
+losslessly into `origin.note`; only actual region IDs remain in `origin.regions`. The exact
+original provider responses and prior sparse repair contract remain available for replay.
 The compiler does not depend on a model copying unchanged prose exactly. Previously retained proposals
 can be reprocessed after a representation fix without another provider request; original
 discovery wording and conditions stay intact even when an invalid reveal becomes guidance.
@@ -147,7 +154,7 @@ failure text does not itself commit discoveries or other persistent outcomes.
 
 Versioned prompts are in `apps/api/services/campaign_prep/prompts/`: `principles-v2.md`,
 `spine-v2.md`, `chapters-v2.md`, `chapter-part-v2.md`, `review-v2.md`, `repair-v2.md`, `continuity-v2.md` and
-`structural-joins-v2.md`, plus `read-source-v2.md` (oversized planning evidence only).
+`structural-joins-v2.md`, `structural-links-v2.md`, plus `read-source-v2.md` (oversized planning evidence only).
 `structural-repair-v2.md` is used only to read already dispatched graph-v2 repair receipts;
 new structural work uses the sparse joins contract. The obsolete standalone `visual-v2.md`
 prompt and `VisualEvidence` dispatch schema were removed. The earlier replacement commit
@@ -166,6 +173,11 @@ current application model tables and `alembic_version` account for all fifteen p
 Historical campaigns, source files, paid task receipts and checkpoints are protected records,
 not unused preparation infrastructure. The remaining archive reader is inert and cannot
 dispatch a model task. PDF creation remains part of the shared graph.
+Source removal checks retained work before any vector or filesystem deletion. Held,
+cancelled, failed and unpublished preparations retain their receipts even without a prepared
+bundle or complete metadata. Deleting a campaign can release only its own unused plain
+source; unrelated sources and nonempty artifact directories are preserved. Explicit source
+deletion also refuses to recursively erase retained work.
 
 Focused regression evidence is in `tests/test_campaign_chapter_calls_v2.py`,
 `tests/test_chapter_source_retention.py`, `tests/test_campaign_source_mechanics_v2.py` and the

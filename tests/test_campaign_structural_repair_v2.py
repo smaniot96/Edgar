@@ -18,6 +18,7 @@ from apps.api.services.campaign_prep.provider import (
 from apps.api.services.campaign_prep.store import NeedsAttention, Store, digest
 from apps.api.services.campaign_prep.structural_repair import (
     StructuralJoins,
+    StructuralLinks,
     _repair_evidence,
     repair_structure,
     structural_defects,
@@ -278,6 +279,7 @@ async def test_reprocess_old_paid_repair_retains_discovery_wording_locally(recov
     recovery.store.put("bundles", original)
     first = recovery.result["chapters"][0]
     first["events"][0]["id"] = original["chapters"][0]["events"][0]["id"]
+    first["events"][0]["participants"] = original["chapters"][0]["events"][0]["participants"]
     first["goals"][0]["event_ids"] = [first["events"][0]["id"]]
     first["events"][0]["dm_notes"] = original["chapters"][0]["events"][0]["dm_notes"]
     issues, _, _ = structural_defects(recovery.store.get("spine"), original)
@@ -555,3 +557,114 @@ async def test_sparse_output_does_not_copy_large_accepted_source_or_profiles(rec
     patch = sparse_patch(recovery.calls[0], recovery.result)
     assert len(json.dumps(patch)) < 1_500
     assert "source_notes" not in StructuralJoins.model_json_schema()["properties"]
+
+
+@pytest.mark.asyncio
+async def test_all_reference_repairs_preserve_npcs_procedures_origins_and_paid_replay(recovery):
+    recovery.store.put("source", {"kind": "pdf", "pages": []})
+    original = recovery.store.get("bundles")
+    first = original["chapters"][0]
+    carrier = npc("carrier")
+    carrier["origin"].update(regions=["Area 1"], note="Accepted carrier origin.")
+    first["new_entities"].append(carrier)
+    first["events"][0]["participants"].extend(["carrier", "source_cache"])
+    first["events"][0]["clue_ids"].append("source_cache")
+    origin = {
+        "kind": "authored",
+        "pages": [],
+        "regions": ["Treasure section"],
+        "note": "Accepted item origin.",
+        "uncertain": False,
+    }
+    first["items"] = [
+        {
+            "entity_id": identity,
+            "procedure": procedure,
+            "event_ids": [first["events"][0]["id"]],
+            "portable": True,
+            "consumable": False,
+            "origin": deepcopy(origin),
+        }
+        for identity, procedure in (
+            ("carrier", "Boots of springing. Preserve every accepted number and condition."),
+            ("missing_potion", "A healing potion. Preserve its complete accepted procedure."),
+        )
+    ]
+    recovery.store.put("bundles", original)
+    requests = []
+
+    class Responses:
+        async def create(self, **request):
+            requests.append(request)
+            assert request["text"]["format"]["name"] == StructuralLinks.__name__
+            evidence = json.loads(request["input"][1]["content"][0]["text"])
+            patch = {"rows": [], "items": [], "new_entities": []}
+            for issue in evidence["defects"]:
+                if issue["issue"] == "invalid_item_entity":
+                    patch["items"].append(
+                        {
+                            "chapter_id": issue["chapter_id"],
+                            "index": issue["index"],
+                            "expected_id": issue["identity"],
+                            "entity_id": issue["permitted_object_id"],
+                        }
+                    )
+            for allowed in evidence["allowed_new_entities"]:
+                entity = npc(allowed["id"])
+                entity.update(kind="clue", name="Source object " + allowed["id"])
+                entity["origin"]["regions"] = ["Original source object label"]
+                patch["new_entities"].append(
+                    {"chapter_id": allowed["chapter_id"], "entity": entity}
+                )
+            response = {
+                "id": "resp_all_reference_probe",
+                "status": "completed",
+                "model": "gpt-6-luna",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": json.dumps(patch)}],
+                    }
+                ],
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            }
+            return SimpleNamespace(model_dump=lambda **_: response)
+
+    recovery.semantic = SemanticClient(recovery.store, SimpleNamespace(responses=Responses()))
+    assert await repair_structure(recovery)
+    accepted = recovery.store.get("bundles")
+    validate_semantics(recovery.store.get("spine"), accepted, recovery.store.get("source"))
+    changed = accepted["chapters"][0]
+    retained_carrier = next(row for row in changed["new_entities"] if row["id"] == "carrier")
+    assert retained_carrier["kind"] == "npc"
+    assert retained_carrier["description"] == carrier["description"]
+    assert retained_carrier["origin"]["note"].startswith(carrier["origin"]["note"])
+    assert "Area 1" in retained_carrier["origin"]["note"]
+    assert retained_carrier["origin"]["regions"] == []
+    for before, after in zip(first["items"], changed["items"], strict=True):
+        assert {k: v for k, v in before.items() if k not in ("entity_id", "origin")} == {
+            k: v for k, v in after.items() if k not in ("entity_id", "origin")
+        }
+        assert after["origin"]["note"].startswith(before["origin"]["note"])
+        assert "Treasure section" in after["origin"]["note"]
+    assert accepted["chapters"][1] == original["chapters"][1]
+    assert not await repair_structure(recovery)
+    # Rebuild derived acceptance from the exact saved provider response after a crash.
+    recovery.store.put("bundles", original)
+    with recovery.store.db() as db:
+        db.execute("DELETE FROM artifact WHERE name LIKE 'structural-repair-%'")
+    assert await repair_structure(recovery)
+    assert len(requests) == 1
+    assert recovery.store.usage()["call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ai_fictitious_region_references_remain_invalid(recovery):
+    original = recovery.store.get("bundles")
+    original["chapters"][0]["events"][0]["origin"]["regions"] = ["Fictitious PDF area"]
+    recovery.store.put("bundles", original)
+    assert not await repair_structure(recovery)
+    with pytest.raises(NeedsAttention, match="fictitious PDF evidence"):
+        validate_semantics(recovery.store.get("spine"), original, recovery.store.get("source"))
+    assert recovery.store.get("bundles") == original
+    assert recovery.calls == []

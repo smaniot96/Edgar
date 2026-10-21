@@ -100,6 +100,10 @@ async def test_shared_source_stays_until_its_last_campaign_is_deleted(
     ("meta", "outcome"),
     [
         ({"private_preparation": True, "prepared_bundle": {"digest": "a" * 64}}, "retained"),
+        ({"private_preparation": True, "status": "failed"}, "retained"),
+        ({"preparation_workflow": "campaign-graph-2.0", "status": "failed"}, "retained"),
+        ({"preparation_run_id": "prep-" + "b" * 32, "status": "failed"}, "retained"),
+        ({"job": {"kind": "generation", "state": "cancelled"}}, "retained"),
         ({"status": "processing"}, "processing"),
         ({"job": {"state": "running"}}, "processing"),
     ],
@@ -114,6 +118,57 @@ async def test_immutable_or_busy_sources_are_kept(api_client, qdrant, db_session
     assert resp.json()["sources"] == [{"slug": "velmoor", "outcome": outcome}]
     assert (await api_client.get(f"/api/campaigns/{cid}")).status_code == 404
     assert qdrant.collection_exists("velmoor")
+
+
+async def test_campaign_cleanup_never_sweeps_unrelated_sources(api_client, qdrant, db_session):
+    """An unbound source is not owned by whichever campaign is deleted next."""
+    add_source(qdrant, "deleted_campaign_source")
+    unrelated = {
+        "archived_unbound": {"preparation_run_id": "prep-" + "c" * 32, "status": "failed"},
+        "active_preparation": {"status": "processing", "job": {"state": "running"}},
+        "paid_unbound": {"status": "failed"},
+        "other_campaign_source": {},
+    }
+    sentinels = {}
+    for slug, meta in unrelated.items():
+        add_source(qdrant, slug, **meta)
+        path = adventures_meta.adventure_path(slug, "preparation-v2", "paid-response.json")
+        path.parent.mkdir(parents=True)
+        path.write_text(f'{{"source":"{slug}","paid":true}}')
+        sentinels[path] = path.read_bytes()
+        metadata = adventures_meta.meta_path(slug)
+        sentinels[metadata] = metadata.read_bytes()
+    uid = await owner(api_client)
+    cid = await add_campaign(db_session, ["deleted_campaign_source"], owner_id=uid)
+    other = await add_campaign(db_session, ["other_campaign_source"], owner_id=uid)
+
+    response = await api_client.delete(f"/api/campaigns/{cid}{RELEASE}", headers=CONFIRM)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["sources"] == [{"slug": "deleted_campaign_source", "outcome": "removed"}]
+    assert not has_source(qdrant, "deleted_campaign_source")
+    assert (await api_client.get(f"/api/campaigns/{other}")).status_code == 200
+    for slug in unrelated:
+        assert qdrant.collection_exists(slug)
+    assert all(path.read_bytes() == content for path, content in sentinels.items())
+
+
+async def test_campaign_cleanup_retains_unpublished_paid_artifacts(api_client, qdrant, db_session):
+    """A failed preparation without publication flags must retain its durable outputs."""
+    add_source(qdrant, "velmoor", status="failed")
+    artifact = adventures_meta.adventure_path("velmoor", "preparation-v2", "graph.sqlite3")
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"retained paid provider output")
+    cid = await add_campaign(db_session, ["velmoor"], owner_id=await owner(api_client))
+
+    response = await api_client.delete(f"/api/campaigns/{cid}{RELEASE}", headers=CONFIRM)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["sources"] == [{"slug": "velmoor", "outcome": "retained"}]
+    assert (await api_client.get(f"/api/campaigns/{cid}")).status_code == 404
+    assert qdrant.collection_exists("velmoor")
+    assert artifact.read_bytes() == b"retained paid provider output"
+    assert adventures_meta.load_meta("velmoor")["status"] == "failed"
 
 
 async def test_campaigns_without_a_source_record_can_be_deleted(api_client, qdrant, db_session):

@@ -23,7 +23,7 @@ from .source import evidence_pages
 from .store import NeedsAttention, digest
 
 FIELDS = {"goals": "goal", "events": "event", "new_entities": "entity", "new_secrets": "secret"}
-RECOVERY_POLICY = "sparse-joins-retain-content-4"
+RECOVERY_POLICY = "sparse-reference-joins-retain-content-5"
 
 
 class ScalarJoin(Record):
@@ -75,6 +75,23 @@ class NewActor(Record):
 class StructuralJoins(Record):
     rows: list[RowJoins] = Field(default_factory=list)
     new_actors: list[NewActor] = Field(default_factory=list)
+
+
+class ItemJoin(Record):
+    chapter_id: Identifier
+    index: int = Field(ge=0)
+    expected_id: Identifier
+    entity_id: Identifier
+
+
+class StructuralLinks(Record):
+    rows: list[RowJoins] = Field(default_factory=list)
+    items: list[ItemJoin] = Field(default_factory=list)
+    new_entities: list[NewActor] = Field(default_factory=list)
+
+
+def _allowed_kinds(missing, key):
+    return missing[key] if isinstance(missing, dict) else {"npc"}
 
 
 def _sparse_replacement(original, patch, permissions, missing):
@@ -340,9 +357,10 @@ def _project_joins(original, replacement, permissions, missing):
             additions = after[len(before) :]
             if len(after) < len(before) or (additions and field != "new_entities"):
                 raise NeedsAttention("Structural repair changed contained row inventory.")
-            allowed_new = {identity for owner, identity in missing if owner == cid}
             if len({row["id"] for row in additions}) != len(additions) or any(
-                row["id"] not in allowed_new or row["kind"] != "npc" for row in additions
+                (cid, row["id"]) not in missing
+                or row["kind"] not in _allowed_kinds(missing, (cid, row["id"]))
+                for row in additions
             ):
                 raise NeedsAttention("Structural repair added an unrelated entity.")
             for i, (previous, proposed) in enumerate(zip(before, after, strict=False)):
@@ -433,8 +451,11 @@ def _check_scope(original, replacement, permissions, missing):
             additions = after[len(before) :]
             if len(after) < len(before) or (additions and field != "new_entities"):
                 raise NeedsAttention("Structural repair changed contained row inventory.")
-            allowed_additions = {identity for owner, identity in missing if owner == cid}
-            if any(row["id"] not in allowed_additions or row["kind"] != "npc" for row in additions):
+            if any(
+                (cid, row["id"]) not in missing
+                or row["kind"] not in _allowed_kinds(missing, (cid, row["id"]))
+                for row in additions
+            ):
                 raise NeedsAttention("Structural repair added an unrelated entity.")
             for i, (previous, current) in enumerate(zip(before, after, strict=False)):
                 allowed = permissions.get((cid, field, i), set())
@@ -539,6 +560,204 @@ def _merge_chapters(bundles, replacement):
     return {"chapters": [changed.get(b["chapter_id"], b) for b in bundles["chapters"]]}
 
 
+def _normalize_origins(spine, bundles, source):
+    """Keep source section labels as prose; never fabricate an OCR-region join."""
+    spine, bundles = deepcopy(spine), deepcopy(bundles)
+    if source.get("kind") != "pdf":
+        return spine, bundles, []
+    pages = {p["page"]: {r["id"] for r in p["regions"]} for p in source.get("pages", [])}
+    changes = []
+    rows = [(kind, row) for _, _, _, kind, row in _rows(spine, bundles)]
+    rows.extend(
+        (field, row)
+        for chapter in bundles["chapters"]
+        for field in ("items", "checks")
+        for row in chapter[field]
+    )
+    for kind, row in rows:
+        origin = row["origin"]
+        valid = set().union(*(pages.get(p, set()) for p in origin["pages"]))
+        labels = [value for value in origin["regions"] if value not in valid]
+        if labels:
+            origin["regions"] = [value for value in origin["regions"] if value in valid]
+            origin["note"] += (
+                ("\n\n" if origin["note"] else "")
+                + "Original source locator labels (not OCR region IDs): "
+                + json.dumps(labels, ensure_ascii=False)
+            )
+            changes.append(
+                {"kind": kind, "id": row.get("id", row.get("entity_id")), "retained_labels": labels}
+            )
+    return spine, bundles, changes
+
+
+def reference_defects(spine, bundles):
+    """Audit all executable reference collections before requesting residual work."""
+    rows = _rows(spine, bundles)
+    entities = {row["id"]: row for _, _, _, kind, row in rows if kind == "entity"}
+    typed = {
+        kind: {row["id"] for _, _, _, k, row in rows if k == kind}
+        for kind in ("event", "goal", "secret")
+    }
+    issues, permissions, needed = [], defaultdict(set), {}
+
+    def defect(cid, field, index, key, invalid, kinds=None):
+        if not invalid:
+            return
+        issues.append(
+            {
+                "issue": "invalid_reference",
+                "chapter_id": cid,
+                "field": field,
+                "index": index,
+                "key": key,
+                "identities": sorted(invalid),
+            }
+        )
+        permissions[(cid, field, index)].add(key)
+        if kinds:
+            for identity in invalid:
+                if identity in entities or any(identity in values for values in typed.values()):
+                    continue
+                owner, allowed = needed.get(identity, (cid, set(kinds)))
+                needed[identity] = owner, allowed & set(kinds)
+
+    all_kinds = {"npc", "place", "faction", "clue"}
+    for chapter in bundles["chapters"]:
+        cid = chapter["chapter_id"]
+        local_events = {row["id"] for row in chapter["events"]}
+        for index, goal in enumerate(chapter["goals"]):
+            for key, kind in (("event_ids", "event"), ("depends_on", "goal")):
+                defect(cid, "goals", index, key, set(goal[key]) - typed[kind])
+        for index, event in enumerate(chapter["events"]):
+            for key, kinds in (
+                ("location_id", {"place"}),
+                ("participants", all_kinds),
+                ("clue_ids", {"clue"}),
+                ("visible_entity_ids", all_kinds),
+            ):
+                values = [event[key]] if key == "location_id" else event[key]
+                invalid = {
+                    value
+                    for value in values
+                    if value not in entities or entities[value]["kind"] not in kinds
+                }
+                defect(cid, "events", index, key, invalid, kinds)
+            for key, kind in (
+                ("goal_ids", "goal"),
+                ("secret_ids", "secret"),
+                ("next_event_ids", "event"),
+            ):
+                defect(cid, "events", index, key, set(event[key]) - typed[kind])
+        for field in ("items", "checks"):
+            for index, row in enumerate(chapter[field]):
+                defect(cid, field, index, "event_ids", set(row["event_ids"]) - local_events)
+                if field != "items":
+                    continue
+                identity = row["entity_id"]
+                if identity in entities and entities[identity]["kind"] == "clue":
+                    continue
+                proposed = (
+                    identity
+                    if identity not in entities
+                    and not any(identity in values for values in typed.values())
+                    else cid[:38] + "_item_" + digest(row["procedure"])[:16]
+                )
+                issues.append(
+                    {
+                        "issue": "invalid_item_entity",
+                        "chapter_id": cid,
+                        "field": field,
+                        "index": index,
+                        "identity": identity,
+                        "permitted_object_id": proposed,
+                    }
+                )
+                permissions[(cid, field, index)].add("entity_id")
+                needed[proposed] = cid, {"clue"}
+    missing = {(cid, identity): kinds for identity, (cid, kinds) in needed.items()}
+    return issues, permissions, missing
+
+
+def _reference_replacement(bundles, patch, permissions, missing):
+    patch = StructuralLinks.model_validate(patch)
+    replacement = _sparse_replacement(
+        bundles, {"rows": [row.model_dump() for row in patch.rows]}, permissions, set()
+    )
+    chapters = {chapter["chapter_id"]: chapter for chapter in replacement["chapters"]}
+    seen = set()
+    for item in patch.items:
+        key = item.chapter_id, "items", item.index
+        if key in seen or "entity_id" not in permissions.get(key, set()):
+            raise NeedsAttention("Item join patch targeted an unpermitted or repeated row.")
+        seen.add(key)
+        row = chapters[item.chapter_id]["items"][item.index]
+        if row["entity_id"] != item.expected_id:
+            raise NeedsAttention("Item join patch does not match the original identity.")
+        row["entity_id"] = item.entity_id
+    added = set()
+    for addition in patch.new_entities:
+        key = addition.chapter_id, addition.entity.id
+        if key in added or key not in missing or addition.entity.kind not in missing[key]:
+            raise NeedsAttention("Reference repair added an unrelated or wrongly typed entity.")
+        added.add(key)
+        chapters[addition.chapter_id]["new_entities"].append(addition.entity.model_dump())
+    return replacement
+
+
+async def _repair_references(workflow, spine, bundles, source, history, prior, history_key):
+    issues, permissions, missing = reference_defects(spine, bundles)
+    if not issues:
+        return bundles
+    # Reuse exact canonical entities from a retained full paid candidate. An omitted
+    # identity or disagreement stays explicit semantic work, never a guessed entity.
+    retained = defaultdict(list)
+    for chapter in (history.get("legacy_candidate") or {}).get("chapters", []):
+        for row in chapter["new_entities"]:
+            if row not in retained[row["id"]]:
+                retained[row["id"]].append(row)
+    recovered = []
+    basis = deepcopy(bundles)
+    chapters = {b["chapter_id"]: b for b in basis["chapters"]}
+    for (cid, identity), kinds in missing.items():
+        values = retained[identity]
+        if len(values) == 1 and values[0]["kind"] in kinds:
+            chapters[cid]["new_entities"].append(Entity.model_validate(values[0]).model_dump())
+            recovered.append(identity)
+    if recovered:
+        spine, basis, labels = _normalize_origins(spine, basis, source)
+        history["recovered_reference_entities"] = recovered
+        history.setdefault("origin_normalizations", []).extend(labels)
+        issues, permissions, missing = reference_defects(spine, basis)
+    if not issues:
+        return basis
+    evidence, page_numbers = _repair_evidence(
+        workflow, spine, basis, source, issues, permissions, set()
+    )
+    evidence["allowed_new_entities"] = [
+        {"chapter_id": cid, "id": identity, "kinds": sorted(kinds)}
+        for (cid, identity), kinds in sorted(missing.items())
+    ]
+    history.update(reference_defects=issues, reference_basis=basis)
+    workflow.store.put(history_key, history)
+    raw = prior.get("reference_candidate")
+    if raw is None:
+        result = await workflow.semantic.call(
+            "structural-links",
+            "structural-links",
+            StructuralLinks,
+            evidence,
+            workflow.source_images(page_numbers),
+        )
+        raw = result.model_dump()
+    history["reference_candidate"] = raw
+    workflow.store.put(history_key, history)
+    replacement = _reference_replacement(basis, raw, permissions, missing)
+    replacement = _project_joins(basis, replacement, permissions, missing)
+    _check_scope(basis, replacement, permissions, missing)
+    return _merge_chapters(basis, replacement)
+
+
 async def repair_structure(workflow):
     """Repair joins with sparse output, retaining every already-paid full response.
 
@@ -549,7 +768,9 @@ async def repair_structure(workflow):
     store = workflow.store
     spine, bundles, source = store.get("spine"), store.get("bundles"), store.get("source")
     issues, permissions, missing = structural_defects(spine, bundles)
-    if not issues:
+    refs, _, _ = reference_defects(spine, bundles)
+    _, _, labels = _normalize_origins(spine, bundles, source)
+    if not issues and not refs and not labels:
         return False
     signature = digest({"spine": spine, "bundles": bundles, "issues": issues})
     history_key = "structural-repair-" + signature
@@ -569,6 +790,7 @@ async def repair_structure(workflow):
         "state": "requested",
         "policy": RECOVERY_POLICY,
         "original_bundles": bundles,
+        "original_spine": spine,
         "defects": issues,
     }
     store.put(history_key, history)
@@ -673,8 +895,21 @@ async def repair_structure(workflow):
             candidate = _merge_chapters(basis, replacement)
         else:
             candidate = basis
-        validate_semantics(spine, candidate, source)
-        if digest(candidate) == digest(bundles):
+        if structural_defects(spine, candidate)[0]:
+            raise NeedsAttention("Structural repair left its diagnosed joins unresolved.")
+        normalized_spine, candidate, labels = _normalize_origins(spine, candidate, source)
+        history["origin_normalizations"] = labels
+        awaiting_response = True
+        candidate = await _repair_references(
+            workflow, normalized_spine, candidate, source, history, prior, history_key
+        )
+        awaiting_response = False
+        normalized_spine, candidate, new_labels = _normalize_origins(
+            normalized_spine, candidate, source
+        )
+        history["origin_normalizations"].extend(new_labels)
+        validate_semantics(normalized_spine, candidate, source)
+        if digest(candidate) == digest(bundles) and digest(normalized_spine) == digest(spine):
             raise NeedsAttention("Structural repair made no progress.")
     except (ValueError, KeyError) as exc:
         if awaiting_response:
@@ -686,5 +921,7 @@ async def repair_structure(workflow):
         raise NeedsAttention("Retained structural repair was rejected: " + str(exc)) from exc
     history.update(state="accepted", candidate=candidate, result_sha256=digest(candidate))
     store.put(history_key, history)
-    store.put("bundles", candidate, digest(spine))
+    if normalized_spine != spine:
+        store.put("spine", normalized_spine)
+    store.put("bundles", candidate, digest(normalized_spine))
     return True

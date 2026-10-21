@@ -892,7 +892,22 @@ def delete_adventure(slug: str, x_confirm_delete: str | None = Header(default=No
 
 
 def remove_adventure_source(slug: str, *, has_collection: bool) -> None:
-    """Remove a source's collection, metadata, uploaded PDF and cover dir; callers check policy."""
+    """Remove only an unprepared source; retained work is never recursive cleanup."""
+    from ..services.campaign_sources import validate_binding
+
+    validate_binding(slug)
+    meta = load_adventure_metadata(slug)
+    job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
+    if meta.get("status") == "processing" or job.get("state") in _ACTIVE_JOB_STATES:
+        raise HTTPException(
+            status_code=409, detail="Wait for source processing before deleting its source."
+        )
+    if _has_retained_source_work(slug, meta):
+        raise HTTPException(
+            status_code=409,
+            detail="Saved source artifacts and preparation receipts are retained. "
+            "Deleting a campaign does not discard this work.",
+        )
     if has_collection:
         client = get_qdrant_client()
         try:
@@ -917,6 +932,41 @@ def remove_adventure_source(slug: str, *, has_collection: bool) -> None:
         shutil.rmtree(cover_dir, ignore_errors=True)
 
 
+def _has_retained_source_work(slug: str, meta: dict) -> bool:
+    """Keep paid/archived work even when publication failed or metadata is incomplete.
+
+    Prepared-bundle presence is not an ownership or retention boundary: held, cancelled,
+    exhausted and interrupted preparations can already contain paid provider receipts.
+    Unknown files are retained as well; automatic campaign cleanup cannot establish that
+    an arbitrary artifact directory is disposable.
+    """
+    if meta.get("private_preparation") is True or any(
+        key in meta
+        for key in (
+            "preparation_workflow",
+            "preparation_run_id",
+            "preparation_publication_receipt",
+            "prepared_bundle",
+            "generation",
+            "index_receipts",
+            "ready_receipt",
+        )
+    ):
+        return True
+    job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
+    if (
+        job.get("kind") in {"generation", "ingestion"}
+        or job.get("checkpoint_available")
+        or job.get("retained_work") not in (None, "none")
+    ):
+        return True
+    # load_meta fails closed to {} on malformed JSON; do not turn that into deletion consent.
+    if _metadata_path(slug).is_file() and not meta:
+        return True
+    directory = _adventure_path(slug)
+    return directory.is_dir() and next(directory.iterdir(), None) is not None
+
+
 def release_unused_source(slug: str) -> SourceReleaseOutcome:
     """Remove a source after its last campaign is deleted, unless it must stay.
 
@@ -932,16 +982,18 @@ def release_unused_source(slug: str) -> SourceReleaseOutcome:
     except HTTPException:
         return "protected"
     with lifecycle_lock(slug):
+        meta = load_adventure_metadata(slug)
+        job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
+        if meta.get("status") == "processing" or job.get("state") in _ACTIVE_JOB_STATES:
+            return "processing"
+        if _has_retained_source_work(slug, meta):
+            return "retained"
         try:
             has_collection = slug in _adventure_collection_names(_all_collection_names())
         except HTTPException:
             return "unavailable"
         if not has_collection and not _metadata_path(slug).is_file():
             return "missing"
-        meta = load_adventure_metadata(slug)
-        job = meta.get("job") if isinstance(meta.get("job"), dict) else {}
-        if meta.get("status") == "processing" or job.get("state") in _ACTIVE_JOB_STATES:
-            return "processing"
         try:
             require_mutable_source(meta)
         except HTTPException:
