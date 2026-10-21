@@ -93,8 +93,15 @@ class LocalResponses:
         if schema_name == Spine.__name__:
             value = self.spine
         elif schema_name == Bundles.__name__:
-            assert len(evidence["requested_chapters"]) == 2  # useful chapter work is batched
-            value = self.bundles
+            requested = evidence["requested_chapter"]["id"]
+            value = {
+                "chapters": [
+                    chapter
+                    for chapter in self.bundles["chapters"]
+                    if chapter["chapter_id"] == requested
+                ]
+            }
+            assert len(value["chapters"]) == 1  # all useful chapter work shares this call
         elif schema_name == Review.__name__:
             self.reviews.append(deepcopy(evidence))
             findings = []
@@ -150,7 +157,7 @@ async def test_full_fresh_graph_repairs_only_affected_records_and_publishes(
     await Workflow(fresh_store, semantic=semantic).run()
     assert fresh_store.state()["status"] == "ready"
     assert len(published) == 1
-    assert responses.calls == ["Spine", "Bundles", "Review", "Patch", "Review"]
+    assert responses.calls == ["Spine", "Bundles", "Bundles", "Review", "Patch", "Review"]
     assert set(responses.reviews[1]["review_ids"]) == {"event_square", "goal_keeper"}
     assert "event_courier" in responses.reviews[0]["review_ids"]
     assert "event_courier" not in responses.reviews[1]["review_ids"]
@@ -160,13 +167,13 @@ async def test_full_fresh_graph_repairs_only_affected_records_and_publishes(
     assert len(fresh_store.get("repair-history")) == 1
     with fresh_store.db() as db:
         retained = [dict(row) for row in db.execute("SELECT * FROM task")]
-    assert len(retained) == 5 and all(row["accepted"] for row in retained)
+    assert len(retained) == 6 and all(row["accepted"] for row in retained)
     assert all(json.loads(row["response"])["status"] == "completed" for row in retained)
     # The initial independent defect report remains in its immutable paid response receipt.
     assert any("missing_ribbon_clue" in row["response"] for row in retained)
     reopened = Store(fresh_store.slug)
     assert reopened.get("publication") == fresh_store.get("publication")
-    assert reopened.usage()["call_count"] == 5
+    assert reopened.usage()["call_count"] == 6
 
 
 @pytest.mark.asyncio
@@ -191,15 +198,15 @@ async def test_unchanged_repair_holds_findings_and_paid_receipts_without_loop(
         },
     )
     await runtime.prepare_adventure(fresh_store.slug)
-    assert responses.calls == ["Spine", "Bundles", "Review", "Patch"]
+    assert responses.calls == ["Spine", "Bundles", "Bundles", "Review", "Patch"]
     assert fresh_store.state()["status"] == "blocked"
     assert fresh_store.state()["error_type"] == "NeedsAttention"
     assert "made no progress" in fresh_store.state()["error"]
     assert fresh_store.get("findings")[0]["value"]["id"] == "missing_ribbon_clue"
     assert fresh_store.get("publication") is None
-    assert fresh_store.usage()["call_count"] == 4
+    assert fresh_store.usage()["call_count"] == 5
     with fresh_store.db() as db:
-        assert db.execute("SELECT count(*) FROM task WHERE accepted IS NOT NULL").fetchone()[0] == 4
+        assert db.execute("SELECT count(*) FROM task WHERE accepted IS NOT NULL").fetchone()[0] == 5
     assert Store(fresh_store.slug).get("findings") == fresh_store.get("findings")
 
 

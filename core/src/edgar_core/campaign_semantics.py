@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from edgar_core.identifiers import Identifier
 
-SCHEMA_VERSION = "campaign-semantic-2.0"
+SCHEMA_VERSION = "campaign-semantic-2.1"
 
 
 class Record(BaseModel):
@@ -86,11 +86,18 @@ class Goal(Record):
 
 class Encounter(Record):
     actor_id: Identifier
-    creature: str = Field(description="Exact verified template name; no invented numbers.")
+    creature: str = Field(
+        description="Original source creature name when source_stat_block is supplied; otherwise an exact verified template name."
+    )
     quantity: int = Field(ge=1)
     adaptation: str = Field(
         default="", description="Explain any deliberate replacement of source mechanics."
     )
+    source_stat_block: str = Field(
+        default="",
+        description="Complete source profile, including source-specific attacks, spells and traits. Correct OCR layout from supplied image evidence; never invent statistics or replace a bespoke profile merely to fit the catalogue.",
+    )
+    source_pages: list[int] = Field(default_factory=list)
 
 
 class Reveal(Record):
@@ -122,6 +129,30 @@ class Event(Record):
     origin: Origin
 
 
+class SourceItem(Record):
+    entity_id: Identifier
+    procedure: str = Field(
+        description="Complete original operating rules, resource limits, eligibility, checks, failure tiers and consequences; retain exact numbers and distinguish engine limitations."
+    )
+    event_ids: list[Identifier] = Field(min_length=1)
+    portable: bool = True
+    consumable: bool = False
+    origin: Origin
+
+
+class SourceCheck(Record):
+    id: Identifier
+    action: str
+    event_ids: list[Identifier] = Field(min_length=1)
+    check: str = Field(
+        description="Engine skill/ability/tool identifier, for example arcana, persuasion, athletics or thieves_tools."
+    )
+    dc: int = Field(ge=1, le=50)
+    success_text: str
+    failure_text: str
+    origin: Origin
+
+
 class Bundle(Record):
     chapter_id: Identifier
     goals: list[Goal] = Field(min_length=1)
@@ -129,6 +160,13 @@ class Bundle(Record):
     new_entities: list[Entity] = Field(default_factory=list)
     new_secrets: list[Secret] = Field(default_factory=list)
     dm_guidance: str
+    source_pages: list[int] = Field(default_factory=list)
+    source_notes: str = Field(
+        default="",
+        description="Detailed chapter running reference: original tactics, conditional timing, spatial facts, alternatives, roleplay and humor, rewards, consequences and applicable appendix procedures. Useful detail, not a synopsis. Source OCR is also retained separately.",
+    )
+    items: list[SourceItem] = Field(default_factory=list)
+    checks: list[SourceCheck] = Field(default_factory=list)
 
 
 class Bundles(Record):
@@ -156,6 +194,10 @@ class Patch(Record):
     secrets: list[Secret] = Field(default_factory=list)
     goals: list[Goal] = Field(default_factory=list)
     events: list[Event] = Field(default_factory=list)
+    chapters: list[Bundle] = Field(
+        default_factory=list,
+        description="Full replacement of an affected chapter bundle only when its supplied chapter content record ID is in allowed_ids; preserve every unaffected contained record. Use individual patches for smaller changes.",
+    )
 
 
 class IdentityJoin(Record):
@@ -172,10 +214,3 @@ class SourceReading(Record):
     summary: str
     chapter_candidates: list[Chapter] = Field(default_factory=list)
     important_visual_pages: list[int] = Field(default_factory=list)
-
-
-class VisualEvidence(Record):
-    page: int
-    interpretation: str
-    uncertainties: list[str]
-    mechanical_text_verified: Literal[False] = False

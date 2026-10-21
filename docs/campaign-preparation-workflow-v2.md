@@ -1,8 +1,8 @@
 # Active campaign preparation: graph v2
 
 The only campaign creation executor is `apps/api/services/campaign_prep/graph.py`.
-It runs a LangGraph StateGraph with source acquisition, campaign spine, batched chapter
-bundles, explicit continuity joins, deterministic assembly, independent review, scoped
+It runs a LangGraph StateGraph with source acquisition, campaign spine, one call per chapter
+bundle, explicit continuity joins, deterministic assembly, independent review, scoped
 repair and publication. PDF upload and AI creation both enter `runtime.prepare_adventure`.
 No hero is read during preparation. Select a hero when creating play afterward.
 
@@ -21,16 +21,17 @@ pages with a native text layer. It retains the original upload, raster, raw OCR,
 text, TSV words/confidence/reading order, hOCR, block regions, quality diagnostics and
 hashes. The author sees OCR; native PDF text is never an authoring fallback. Sparse or
 uncertain pages, locally detected map/table/stat-block layouts, and useful pages requested
-by the spine receive targeted Luna visual interpretation. Supplemental candidate diagnostics
+by the spine accompany the existing planning/chapter/review calls as original images, without
+a separate semantic interpretation stage. Supplemental candidate diagnostics
 can be evaluated against retained OCR/raster data without replacing paid authoring or the
 original source manifest. Review fingerprints include relevant visual evidence. OCR is not represented as verified mechanical authority.
 
 AI acquisition starts directly from the premise, theme and requested scope. It does not
 create a PDF, import old outlines or invoke the deleted generation code. Both inputs share
-stable IDs, future truths, batched chapter authoring and the remaining graph.
+stable IDs, future truths, one-call-per-chapter authoring and the remaining graph.
 
 Every semantic request uses `gpt-6-luna` at `medium`, including critics, identity joins,
-source reading, visual interpretation and repairs. Prompts are versioned reviewable files
+source reading, image-informed authoring/review and repairs. Prompts are versioned reviewable files
 under `apps/api/services/campaign_prep/prompts/`. Operational concurrency is bounded;
 token packets shape context and latency without truncating evidence. The USD 5 target is
 advisory. No dollar, call, repair-round or overall-duration stopping cap is imposed.
@@ -43,7 +44,10 @@ Embedding submissions/vectors use the same receipt owner and separate truthful a
 
 ## Play and publication
 
-`compile.py` uses existing engine manifests, verified creature templates and local assembly.
+`compile.py` uses existing engine manifests, exact source module profiles, verified creature
+templates and local assembly. Original OCR and detailed chapter notes are published as private
+chapter references. Source items retain exact procedures with honest execution limitations;
+ordinary fixed-DC checks and item custody use existing engine definitions.
 Encounter quantities remain reusable source/module quantities. Local incompatible
 actor/template joins become material findings before assembly. Scoped repair can add a
 distinct NPC identity only when an affected event actually references it. Actual combat fitting,
@@ -81,6 +85,7 @@ projection. `campaign_prep/archive.py` is a small inert reader for saved v1 data
 Startup only dispatches explicitly marked `campaign-graph-2.0` work. Archived Phandelver
 is held and cannot be retried, reuploaded or automatically relabelled into the new graph.
 
+See `campaign-chapter-context-workflow.md` for the source allocation and conflict hierarchy.
 See `campaign-preparation-dev-rollout.md` for committed-source Docker builds and the
 original-stack data preservation procedure. Real demonstration receipts and data hashes
 are kept outside Git; the delivery report records their outcomes and measured usage.

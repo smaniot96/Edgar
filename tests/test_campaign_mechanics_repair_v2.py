@@ -94,29 +94,35 @@ async def test_saved_authoring_is_reused_and_new_actor_stays_in_affected_bundle(
 
 
 @pytest.mark.asyncio
-async def test_retained_pdf_rechecks_visual_candidates_without_reauthoring(tmp_path, monkeypatch):
+async def test_retained_pdf_collects_images_for_existing_calls_without_visual_stage(
+    tmp_path, monkeypatch
+):
     from apps.api.services.campaign_prep import graph
 
     monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path)
     store = Store("retained_visual")
     store.initialize({"source_kind": "pdf", "rules_edition": "2014"})
-    source = {"kind": "pdf", "pages": [{"page": 4}], "directory": str(tmp_path)}
+    image = tmp_path / "page-0004.png"
+    image.write_bytes(b"original-source-map")
+    source = {
+        "kind": "pdf",
+        "pages": [{"page": 4, "image": image.name}],
+        "directory": str(tmp_path),
+    }
     store.put("source", source)
     store.put("mechanics", [])
     spine, bundles = sample()
     store.put("spine", spine)
     store.put("bundles", bundles)
-    seen = []
     monkeypatch.setattr(graph, "candidate_visual_pages", lambda value: [4])
+    monkeypatch.setattr(graph, "visual_page_reasons", lambda *_: ["source map"])
     workflow = Workflow(store, semantic=object())
 
-    async def visual(numbers):
-        seen.extend(numbers)
-
-    monkeypatch.setattr(workflow, "visual", visual)
     await workflow.source({"slug": store.slug})
-    assert seen == [4]
+    assert workflow.source_images([4]) == [image]
+    assert workflow.source_images([1]) == []
     assert store.get("source") == source
     assert store.get("spine") == spine and store.get("bundles") == bundles
     assert store.get("visual-candidates") == [4]
+    assert store.get("visual-diagnostics")["pages"] == {"4": ["source map"]}
     assert store.usage()["call_count"] == 0

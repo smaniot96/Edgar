@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 import tiktoken
@@ -85,6 +86,27 @@ def records(spine: dict, bundles: dict):
     for secret in spine["secrets"]:
         add("secret", secret)
     for bundle in bundles["chapters"]:
+        if any(key in bundle for key in ("source_pages", "source_notes", "items", "checks")):
+            key = derived(bundle["chapter_id"], "content")
+            add(
+                "chapter",
+                {
+                    "id": key,
+                    "chapter_id": bundle["chapter_id"],
+                    "source_pages": bundle.get("source_pages", []),
+                    "source_notes": bundle.get("source_notes", ""),
+                    "items": bundle.get("items", []),
+                    "checks": bundle.get("checks", []),
+                    "event_ids": [event["id"] for event in bundle["events"]],
+                    "origin": {
+                        "kind": "pdf" if bundle.get("source_pages") else "authored",
+                        "pages": bundle.get("source_pages", []),
+                        "regions": [],
+                        "note": "Chapter source material and procedures",
+                        "uncertain": False,
+                    },
+                },
+            )
         for kind, field in (
             ("entity", "new_entities"),
             ("secret", "new_secrets"),
@@ -115,6 +137,10 @@ def dependencies(registry):
             refs = [*value["event_ids"], *value["depends_on"]]
         elif kind == "secret":
             refs = value["known_by"]
+        elif kind == "chapter":
+            # Event scopes reference stable IDs; they do not consume event prose.
+            # Making both edges would turn every local edit into a chapter rewrite.
+            refs = [item["entity_id"] for item in value["items"]]
         else:
             refs = []
         deps[key].update(refs)
@@ -124,6 +150,10 @@ def dependencies(registry):
             for holder in rec["value"]["known_by"]:
                 if holder in deps:
                     deps[holder].add(key)
+        elif rec["kind"] == "chapter":
+            for event_id in rec["value"]["event_ids"]:
+                if event_id in deps:
+                    deps[event_id].add(key)
     return deps
 
 
@@ -148,6 +178,26 @@ def validate_semantics(spine, bundles, source=None):
     ):
         raise NeedsAttention("Chapter bundle inventory does not match the spine.")
     registry = records(spine, bundles)
+    for bundle in bundles["chapters"]:
+        if "source_pages" in bundle and set(bundle["source_pages"]) != set(
+            next(c["pages"] for c in spine["chapters"] if c["id"] == bundle["chapter_id"])
+        ):
+            raise NeedsAttention(
+                "Chapter author did not acknowledge all assigned source pages: "
+                + bundle["chapter_id"]
+            )
+        event_ids = {e["id"] for e in bundle["events"]}
+        for item in bundle.get("items", []):
+            entity = registry.get(item["entity_id"])
+            if not entity or entity["kind"] != "entity" or entity["value"]["kind"] != "clue":
+                raise NeedsAttention(
+                    "Source item requires a canonical clue entity: " + item["entity_id"]
+                )
+            if not item["event_ids"] or not set(item["event_ids"]) <= event_ids:
+                raise NeedsAttention("Source item references events outside its chapter.")
+        for check in bundle.get("checks", []):
+            if not check["event_ids"] or not set(check["event_ids"]) <= event_ids:
+                raise NeedsAttention("Source check references events outside its chapter.")
     if {"campaign_spine", "campaign_registry"} & (registry.keys() | chapters):
         raise NeedsAttention("Campaign uses a reserved engine identity.")
     for chapter in spine["chapters"]:
@@ -217,31 +267,190 @@ def validate_semantics(spine, bundles, source=None):
             regions = set().union(*(pages[p] for p in cited)) if cited else set()
             if not set(origin["regions"]) <= regions:
                 raise NeedsAttention("Origin region is absent from its cited pages: " + key)
+        for bundle in bundles["chapters"]:
+            for row in bundle.get("items", []) + bundle.get("checks", []):
+                origin = row["origin"]
+                cited = set(origin["pages"])
+                if not cited <= set(bundle.get("source_pages", [])):
+                    raise NeedsAttention(
+                        "Chapter procedure cites evidence outside its assigned pages."
+                    )
+                if source["kind"] == "ai" and (
+                    cited or origin["regions"] or origin["kind"] == "pdf"
+                ):
+                    raise NeedsAttention("Authored procedure cannot cite fictitious PDF evidence.")
+                regions = set().union(*(pages[p] for p in cited)) if cited else set()
+                if not set(origin["regions"]) <= regions:
+                    raise NeedsAttention("Procedure origin region is absent from its cited pages.")
+            for event in bundle["events"]:
+                for encounter in event["encounters"]:
+                    if encounter.get("source_stat_block") and source["kind"] != "pdf":
+                        raise NeedsAttention(
+                            "Authored encounter must use verified catalogue mechanics."
+                        )
+                    if not set(encounter.get("source_pages", [])) <= set(
+                        bundle.get("source_pages", [])
+                    ):
+                        raise NeedsAttention(
+                            "Source profile cites evidence outside its assigned pages."
+                        )
     return registry
 
 
-def assemble(slug, edition, spine, bundles, mechanics):
-    registry = validate_semantics(spine, bundles)
+def retain_chapter_source(source, chapters, by_chapter, pages, passages, scenes, goals, visuals):
+    """Publish immutable OCR as private chapter evidence, independently of author prose.
+
+    A shared appendix is stored once and linked into every chapter that needs it.
+    It is never made player evidence and it does not unlock any discovery. Retained
+    images/layout remain source references rather than invented narrative text.
+    """
+    if not source or source.get("kind") != "pdf":
+        return []
+    source_pages = {p["page"]: p for p in source.get("pages", [])}
+    chapters_by_page = {}
+    for chapter in chapters:
+        for number in chapter["pages"]:
+            chapters_by_page.setdefault(number, []).append(chapter["id"])
+    if set(source_pages) - chapters_by_page.keys():
+        raise NeedsAttention(
+            "Physical source pages are absent from the chapter plan: "
+            + str(sorted(set(source_pages) - chapters_by_page.keys()))
+        )
+    receipts = []
+    for number, chapter_ids in sorted(chapters_by_page.items()):
+        original = source_pages[number]
+        relevant_scenes = [
+            event["id"] for chapter_id in chapter_ids for event in by_chapter[chapter_id]["events"]
+        ]
+        passage_id = f"source_page_{number:04d}"
+        if any(p["passage_id"] == passage_id for p in passages):
+            raise NeedsAttention("Reserved source passage identity: " + passage_id)
+        metadata = {
+            "physical_page": number,
+            "source_sha256": source.get("sha256"),
+            "image": original.get("image"),
+            "image_sha256": original.get("image_sha256"),
+            "source_directory": source.get("directory"),
+            "width": original.get("width"),
+            "height": original.get("height"),
+            "quality": original.get("quality", {}),
+            "regions": [
+                {k: r[k] for k in ("id", "bbox", "reading_order", "relationships") if k in r}
+                for r in original.get("regions", [])
+            ],
+            "visual_evidence": visuals.get(str(number), visuals.get(number)) if visuals else None,
+        }
+        text = (
+            f"# Private original campaign source — physical page {number}\n\n"
+            "This is retained OCR evidence, including future reveals and unearned facts. "
+            "Use it to recover source detail and adjudication conditions; do not quote it "
+            "to players or treat its contents as discovered. OCR table/column ownership "
+            "can be uncertain; consult retained image evidence when available. Engine "
+            "state and verified executable definitions remain authoritative for execution. "
+            "For adventure facts the original source takes precedence over accidental "
+            "contradictions in prepared notes; an explicitly documented adaptation states "
+            "its original fact, replacement and reason and is the campaign's chosen version. "
+            "Committed play, earned knowledge and resolved outcomes take precedence over "
+            "both versions. Never reset state, undo a player choice or blend conflicting facts.\n\n"
+            + json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+            + "\n\n## Original OCR (unabridged)\n\n"
+            + original["text"]
+        )
+        page = len(pages) + 1
+        pages.append(ExtractedPage(page, text, "retained-source-ocr-v2", check_text(text)))
+        passages.append(
+            {
+                "passage_id": passage_id,
+                "page": page,
+                "start": 0,
+                "end": len(text),
+                "text_sha256": text_digest(text),
+                "scene_ids": relevant_scenes,
+                "audience": "planner",
+            }
+        )
+        for scene in scenes:
+            if scene["scene_id"] in relevant_scenes:
+                scene["references"].append(passage_id)
+        for goal in goals:
+            if set(goal["scene_ids"]) & set(relevant_scenes):
+                goal["passage_ids"].append(passage_id)
+        receipts.append(
+            {
+                "physical_page": number,
+                "passage_id": passage_id,
+                "chapter_ids": chapter_ids,
+                "scene_ids": relevant_scenes,
+                "ocr_text_sha256": text_digest(original["text"]),
+                "image_sha256": original.get("image_sha256"),
+            }
+        )
+    return receipts
+
+
+def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None):
+    registry = validate_semantics(spine, bundles, source)
     by_chapter = {b["chapter_id"]: b for b in bundles["chapters"]}
     chapters = sorted(spine["chapters"], key=lambda c: (c["play_order"], c["id"]))
     ordered_events = [e for c in chapters for e in by_chapter[c["id"]]["events"]]
     scene_ids = {e["id"] for e in ordered_events}
-    pages, passages, scenes, entities, goals = [], [], [], [], []
+    pages, passages, scenes, entities, goals, objects, policies = [], [], [], [], [], [], []
     catalogue = {r["name"].casefold(): r for r in mechanics}
     actor_bindings = {}
     grounded = []
+    source_profiles = {}
+    capability_findings = []
     for event in ordered_events:
         for encounter in event["encounters"]:
-            creature = catalogue.get(encounter["creature"].casefold())
-            if not creature:
-                raise NeedsAttention("Unverified encounter template: " + encounter["creature"])
-            reference = {
-                "kind": "template",
-                "creature_name": creature["name"],
-                "collection": creature["collection"],
-                "source_sha256": creature["source_sha256"],
-                "rules_edition": edition,
-            }
+            source_stat_block = encounter.get("source_stat_block", "").strip()
+            if source_stat_block:
+                from .mechanics import source_profile
+
+                try:
+                    profile = source_profile(
+                        source_stat_block,
+                        name=encounter["creature"],
+                        source_evidence={
+                            "pages": encounter.get("source_pages", []),
+                            "source_sha256": source.get("sha256") if source else None,
+                        },
+                    )
+                except ValueError as exc:
+                    raise NeedsAttention(
+                        "Invalid source profile for " + encounter["actor_id"] + ": " + str(exc)
+                    ) from exc
+                creature = profile
+                passage_id = derived(encounter["actor_id"], "statistics")
+                reference = {
+                    "kind": "module",
+                    "creature_name": encounter["creature"],
+                    "passage_id": passage_id,
+                }
+                old_profile = source_profiles.get(encounter["actor_id"])
+                if (
+                    old_profile
+                    and re.sub(r"\s+", " ", old_profile["text"]).strip().casefold()
+                    != re.sub(r"\s+", " ", profile["text"]).strip().casefold()
+                ):
+                    raise NeedsAttention(
+                        "Actor has conflicting source profiles: " + encounter["actor_id"]
+                    )
+                source_profiles.setdefault(encounter["actor_id"], profile)
+                capability_findings.extend(
+                    {"actor_id": encounter["actor_id"], "event_id": event["id"], "detail": detail}
+                    for detail in profile.get("capability_findings", [])
+                )
+            else:
+                creature = catalogue.get(encounter["creature"].casefold())
+                if not creature:
+                    raise NeedsAttention("Unverified encounter template: " + encounter["creature"])
+                reference = {
+                    "kind": "template",
+                    "creature_name": creature["name"],
+                    "collection": creature["collection"],
+                    "source_sha256": creature["source_sha256"],
+                    "rules_edition": edition,
+                }
             old = actor_bindings.get(encounter["actor_id"])
             if old and old != reference:
                 raise NeedsAttention(
@@ -394,8 +603,157 @@ def assemble(slug, edition, spine, bundles, mechanics):
                     "completion_condition": goal["completion"],
                 }
             )
+    for actor_id, profile in source_profiles.items():
+        text = profile["text"]
+        page = len(pages) + 1
+        passage_id = actor_bindings[actor_id]["passage_id"]
+        related_scenes = [
+            e["id"]
+            for e in ordered_events
+            if any(encounter["actor_id"] == actor_id for encounter in e["encounters"])
+        ]
+        pages.append(ExtractedPage(page, text, "verified-source-statistics-v2", check_text(text)))
+        passages.append(
+            {
+                "passage_id": passage_id,
+                "page": page,
+                "start": 0,
+                "end": len(text),
+                "text_sha256": text_digest(text),
+                "scene_ids": related_scenes,
+                "entity_ids": [actor_id],
+                "audience": "planner",
+            }
+        )
+        for scene in scenes:
+            if scene["scene_id"] in related_scenes:
+                scene["references"].append(passage_id)
+
+    def private_procedure(passage_id, title, body, event_ids, entity_ids=None):
+        if any(p["passage_id"] == passage_id for p in passages):
+            raise NeedsAttention("Conflicting private procedure identity: " + passage_id)
+        text = "# " + title + "\n\n" + body
+        page = len(pages) + 1
+        pages.append(ExtractedPage(page, text, "source-procedure-v2", check_text(text)))
+        passages.append(
+            {
+                "passage_id": passage_id,
+                "page": page,
+                "start": 0,
+                "end": len(text),
+                "text_sha256": text_digest(text),
+                "scene_ids": event_ids,
+                "entity_ids": entity_ids or [],
+                "audience": "planner",
+            }
+        )
+        for scene in scenes:
+            if scene["scene_id"] in event_ids:
+                scene["references"].append(passage_id)
+
+    item_objects = {}
+    for chapter in chapters:
+        bundle = by_chapter[chapter["id"]]
+        if any(key in bundle for key in ("source_pages", "source_notes", "items", "checks")):
+            private_procedure(
+                derived(chapter["id"], "content"),
+                chapter["title"] + " — detailed DM reference",
+                bundle["dm_guidance"]
+                + "\n\n"
+                + bundle.get("source_notes", "")
+                + "\n\nAssigned physical source pages: "
+                + str(chapter["pages"]),
+                [event["id"] for event in bundle["events"]],
+            )
+        for item in bundle.get("items", []):
+            entity_id = item["entity_id"]
+            object_id = derived(entity_id, "object")
+            passage_id = derived(chapter["id"], "item_" + digest(entity_id)[:12])
+            private_procedure(
+                passage_id,
+                registry[entity_id]["value"]["name"] + " — original item procedure",
+                item["procedure"]
+                + "\n\nProvenance: "
+                + json.dumps(item["origin"], ensure_ascii=False)
+                + "\n\nEngine support: canonical item custody (acquire, transfer, consume). "
+                "This procedure does not define an executable use operation. Charges, timed "
+                "recharge, attunement, transformation and damage require separately supported "
+                "engine operations; retained prose must not be presented as committed execution.",
+                item["event_ids"],
+                [entity_id],
+            )
+            obj = item_objects.setdefault(
+                entity_id,
+                {
+                    "canonical_id": object_id,
+                    "title": registry[entity_id]["value"]["name"],
+                    "scene_ids": [],
+                    "passage_ids": [],
+                    "statuses": ["acquired", "consumed", "moved"],
+                    "operations": [],
+                    "portable": item["portable"],
+                    "consumable": item["consumable"],
+                },
+            )
+            if (obj["portable"], obj["consumable"]) != (item["portable"], item["consumable"]):
+                raise NeedsAttention("Conflicting source item properties: " + entity_id)
+            obj["scene_ids"] = list(dict.fromkeys(obj["scene_ids"] + item["event_ids"]))
+            obj["passage_ids"].append(passage_id)
+            for entity in entities:
+                if entity["entity_id"] == entity_id:
+                    entity["object_id"] = object_id
+            capability_findings.append(
+                {
+                    "entity_id": entity_id,
+                    "chapter_id": chapter["id"],
+                    "detail": "Source item procedure retained; engine supports canonical custody "
+                    "but has no executable use operation for this authored item.",
+                    "source_pages": item["origin"]["pages"],
+                }
+            )
+        for check in bundle.get("checks", []):
+            passage_id = derived(check["id"], "procedure")
+            private_procedure(
+                passage_id,
+                check["action"],
+                f"Engine check: {check['check']}; DC {check['dc']}.\n\n"
+                + "Source success guidance: "
+                + check["success_text"]
+                + "\n\nSource failure guidance: "
+                + check["failure_text"]
+                + "\n\nProvenance: "
+                + json.dumps(check["origin"], ensure_ascii=False)
+                + "\n\nThe engine resolves this check. Guidance supplies source meaning; "
+                "it does not itself authorize inventory, damage, transformation or other persistent effects. "
+                "This is an available approach, not a compulsory solution or route.",
+                check["event_ids"],
+            )
+            policies.append(
+                {
+                    "policy_id": check["id"],
+                    "action": check["action"],
+                    "scene_ids": check["event_ids"],
+                    "passage_ids": [passage_id],
+                    "mode": "check",
+                    "check": check["check"],
+                    "dc": check["dc"],
+                    "on_success": [],
+                    "on_failure": [],
+                }
+            )
+    objects.extend(item_objects.values())
+
+    source_receipts = retain_chapter_source(
+        source,
+        chapters,
+        by_chapter,
+        pages,
+        passages,
+        scenes,
+        goals,
+        visuals,
+    )
     # Private registry is stored once; every scene can retrieve it as planner context.
-    import json
 
     guide = "\n\n".join(
         [
@@ -408,19 +766,77 @@ def assemble(slug, edition, spine, bundles, mechanics):
             "# Shared identities, knowledge, goals and future reveals\n"
             + json.dumps(registry, ensure_ascii=False, indent=2),
             "# Chapter guidance\n"
-            + "\n\n".join(c["title"] + "\n" + by_chapter[c["id"]]["dm_guidance"] for c in chapters),
+            + "\n\n".join(
+                c["title"]
+                + "\n"
+                + by_chapter[c["id"]]["dm_guidance"]
+                + "\n"
+                + by_chapter[c["id"]].get("source_notes", "")
+                for c in chapters
+            ),
+            "# Declared engine capability limits\n"
+            + json.dumps(capability_findings, ensure_ascii=False)
+            + "\nRetained source text is not proof that every trait is engine-executable. "
+            "Do not invent rolls, state changes or substitute creature statistics to conceal a limitation.",
+            "# Original source reference index\n"
+            + json.dumps(source_receipts, ensure_ascii=False)
+            + "\nChapter source passages retain the original OCR, page image references, layout and "
+            "quality diagnostics. They are private DM evidence, not discovered player knowledge. "
+            "Consult them for omitted detail; source procedures do not authorize unsupported engine effects.",
             "The live DM recognizes credible creative solutions. Events are opportunities, not committed outcomes. Preserve hidden truths until earned. The later selected hero is always the protagonist. Combat and state are engine-owned.",
         ]
     )
+    # The downloadable guide can contain the complete campaign. Ordinary play only
+    # receives a compact global dossier plus its own chapter evidence; copying all
+    # event notes and stat blocks into every scene wastes context and conceals detail.
+    shared_guide = "\n\n".join(
+        [
+            "# " + spine["title"],
+            spine["premise"],
+            "Setting: " + spine["setting"],
+            "Opening hook: " + spine["hook"],
+            "Possible ending: " + spine["ending"],
+            spine["dm_guidance"],
+            "# Shared identities, knowledge, goals and future reveals\n"
+            + json.dumps(
+                {
+                    key: row
+                    for key, row in registry.items()
+                    if row["kind"] not in {"event", "chapter"}
+                },
+                ensure_ascii=False,
+            ),
+            "# Chapter index\n"
+            + json.dumps(
+                [
+                    {
+                        "id": chapter["id"],
+                        "title": chapter["title"],
+                        "brief": chapter["brief"],
+                        "play_order": chapter["play_order"],
+                        "source_pages": chapter["pages"],
+                    }
+                    for chapter in chapters
+                ],
+                ensure_ascii=False,
+            ),
+            "Current chapter details, exact source profiles, item procedures and unabridged OCR "
+            "are retrieved privately with the current scene. They contain hidden and future facts. "
+            "Allow credible creative solutions; the later selected hero is always the protagonist. "
+            "Only supported engine operations may commit numerical mechanics and state.",
+        ]
+    )
     page = len(pages) + 1
-    pages.append(ExtractedPage(page, guide, "semantic-assembly-v2", check_text(guide)))
+    pages.append(
+        ExtractedPage(page, shared_guide, "semantic-assembly-v2", check_text(shared_guide))
+    )
     passages.append(
         {
             "passage_id": "campaign_registry",
             "page": page,
             "start": 0,
-            "end": len(guide),
-            "text_sha256": text_digest(guide),
+            "end": len(shared_guide),
+            "text_sha256": text_digest(shared_guide),
             "scene_ids": sorted(scene_ids),
             "audience": "planner",
         }
@@ -438,6 +854,8 @@ def assemble(slug, edition, spine, bundles, mechanics):
         entities=entities,
         passages=passages,
         objectives=goals,
+        objects=objects,
+        resolution_policies=policies,
     )
     # One goal representation (objectives) at the engine boundary; no duplicate milestones.
     return {
@@ -446,6 +864,9 @@ def assemble(slug, edition, spine, bundles, mechanics):
         "pages": [{"page": p.page, "text": p.text} for p in pages],
         "registry": registry,
         "grounded": grounded,
+        "source_references": source_receipts,
+        "source_profiles": source_profiles,
+        "capability_findings": capability_findings,
         "semantic_sha256": digest({"spine": spine, "bundles": bundles}),
         "manifest_sha256": manifest_digest(manifest),
     }

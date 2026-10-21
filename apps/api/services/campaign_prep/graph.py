@@ -22,10 +22,9 @@ from edgar_core.campaign_semantics import (
     Review,
     SourceReading,
     Spine,
-    VisualEvidence,
 )
 
-from .compile import assemble, closure, dependencies, records, validate_semantics
+from .compile import assemble, closure, dependencies, derived, records, validate_semantics
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
 from .provider import SemanticClient
@@ -186,44 +185,40 @@ class Workflow:
                 },
                 digest(source),
             )
-            await self.visual(candidates)
         if self.store.get("mechanics") is None:
             value = await asyncio.to_thread(catalogue, request["rules_edition"])
             self.store.put("mechanics", value, request["rules_edition"])
         return address
 
-    async def visual(self, pages):
+    def source_images(self, pages):
+        """Use original relevant images in the existing semantic call, never a visual stage."""
         source = self.store.get("source")
-        for number in sorted(set(pages)):
-            page = next((p for p in source["pages"] if p["page"] == number), None)
-            if page is None or self.store.get("visual-" + str(number)):
-                continue
-            evidence = {
-                "page": number,
-                "ocr": page["text"],
-                "regions": page["regions"],
-                "quality": page["quality"],
-            }
-            result = await self.semantic.call(
-                "visual-" + str(number),
-                "visual",
-                VisualEvidence,
-                evidence,
-                [Path(source["directory"]) / page["image"]],
-            )
-            if result.page != number:
-                raise NeedsAttention("Visual response names the wrong physical page.")
-            self.store.put("visual-" + str(number), result.model_dump(), digest(evidence))
-
-    def templates(self):
+        wanted = set(pages) & set(self.store.get("visual-candidates") or [])
         return [
+            Path(source["directory"]) / page["image"]
+            for page in source.get("pages", [])
+            if page["page"] in wanted
+        ]
+
+    def templates(self, pages=None):
+        result = [
             {"name": r["name"], "verified_edition": r["rules_edition"]}
             for r in self.store.get("mechanics")
         ]
+        if pages is None:
+            return result
+        text = " ".join(p["text"] for p in pages).casefold()
+        return {
+            "index": result,
+            "relevant_source_profiles": [
+                r for r in self.store.get("mechanics") if r["name"].casefold() in text
+            ],
+        }
 
     async def spine(self, address):
         self.store.enter("spine")
         if self.store.get("spine"):
+            self.retain_visual_selection(self.store.get("spine")["important_visual_pages"])
             return address
         source = self.store.get("source")
         pages = evidence_pages(source)
@@ -233,9 +228,6 @@ class Workflow:
             "preferences": self.request()["preferences"],
             "verified_creatures": self.templates(),
         }
-        visual_pages = [
-            p["page"] for p in source["pages"] if p["quality"]["visual_interpretation_needed"]
-        ]
         readings = []
         if token_count(pages) > 60000:
             for index, packet in enumerate(packets(pages, target=30000)):
@@ -246,24 +238,40 @@ class Workflow:
                     {"source_pages": packet},
                 )
                 readings.append(value.model_dump())
-                visual_pages.extend(value.important_visual_pages)
             evidence["source_readings"] = readings
         else:
             evidence["source_pages"] = pages
-        await self.visual(visual_pages)
-        evidence["visual_evidence"] = [
-            self.store.get("visual-" + str(n)) for n in sorted(set(visual_pages))
-        ]
-        value = await self.semantic.call("spine", "spine", Spine, evidence)
+        evidence["image_pages"] = sorted(set(self.store.get("visual-candidates") or []))
+        value = await self.semantic.call(
+            "spine",
+            "spine",
+            Spine,
+            evidence,
+            self.source_images([p["page"] for p in source["pages"]]),
+        )
         if source["kind"] == "pdf":
             known_pages = {p["page"] for p in source["pages"]}
             if any(not set(c.pages) <= known_pages for c in value.chapters):
                 raise NeedsAttention("Spine cites nonexistent physical pages.")
             if not set(value.important_visual_pages) <= known_pages:
                 raise NeedsAttention("Visual evidence request cites nonexistent physical pages.")
-            await self.visual(value.important_visual_pages)
+            assigned = {p for chapter in value.chapters for p in chapter.pages}
+            if assigned != known_pages:
+                raise NeedsAttention(
+                    "Chapter plan must account for every physical page, including shared appendices: "
+                    + str(sorted(known_pages - assigned))
+                )
         self.store.put("spine", value.model_dump(), digest(evidence))
+        self.retain_visual_selection(value.important_visual_pages)
         return address
+
+    def retain_visual_selection(self, selected):
+        source = self.store.get("source")
+        known = {p["page"] for p in source.get("pages", [])}
+        if not set(selected) <= known:
+            raise NeedsAttention("Visual evidence request cites nonexistent physical pages.")
+        candidates = sorted(set(self.store.get("visual-candidates") or []) | set(selected))
+        self.store.put("visual-candidates", candidates, digest(source))
 
     async def bundles(self, address):
         self.store.enter("bundles")
@@ -271,80 +279,145 @@ class Workflow:
             return address
         spine, source = self.store.get("spine"), self.store.get("source")
         chapters = sorted(spine["chapters"], key=lambda c: c["play_order"])
-        # Pack complete chapter evidence; small chapters share a call. Dense chapters keep
-        # measured source packets, carrying the same global commitments and registry slice.
+        # One chapter per call, with complete original pages and a compact shared dossier.
         items = []
         for chapter in chapters:
             numbers = chapter["pages"] if source["kind"] == "pdf" else []
             pages = evidence_pages(source, numbers)
             items.append({"chapter": chapter, "source_evidence": pages})
-        groups = list(packets(items, target=14000))
 
-        async def author(index, group):
-            relevant_entities = set(e for item in group for e in item["chapter"]["entity_ids"])
-            relevant_secrets = set(s for item in group for s in item["chapter"]["secret_ids"])
-            chapter_ids = {item["chapter"]["id"] for item in group}
-            secrets = [
-                s
-                for s in spine["secrets"]
-                if s["id"] in relevant_secrets
-                or chapter_ids & set(s["setup_chapters"] + s["reveal_chapters"])
-            ]
-            relevant_entities.update(e for s in secrets for e in s["known_by"])
+        async def author(item):
+            chapter = item["chapter"]
+            number = chapter["id"]
+            dependency_ids = set(chapter.get("depends_on", []))
+            accepted = []
+            for previous in chapters:
+                if previous["id"] not in dependency_ids:
+                    continue
+                bundle = self.store.get("chapter-" + previous["id"])
+                if bundle is not None:
+                    accepted.append(
+                        {
+                            "chapter_id": bundle["chapter_id"],
+                            "new_entities": bundle["new_entities"],
+                            "new_secrets": bundle["new_secrets"],
+                            "goals": [
+                                {k: goal[k] for k in ("id", "objective", "completion")}
+                                for goal in bundle["goals"]
+                            ],
+                            "event_connections": [
+                                {
+                                    k: event[k]
+                                    for k in (
+                                        "id",
+                                        "location_id",
+                                        "participants",
+                                        "trigger",
+                                        "timing",
+                                        "next_event_ids",
+                                    )
+                                }
+                                for event in bundle["events"]
+                            ],
+                            "dm_guidance": bundle["dm_guidance"],
+                        }
+                    )
             evidence = {
                 "campaign": {
                     key: spine[key]
                     for key in ("title", "premise", "setting", "hook", "ending", "dm_guidance")
                 },
                 "all_chapter_briefs": spine["chapters"],
-                "shared_identity_index": [
-                    {"id": e["id"], "name": e["name"], "kind": e["kind"], "aliases": e["aliases"]}
-                    for e in spine["entities"]
-                ],
-                "relevant_entities": [e for e in spine["entities"] if e["id"] in relevant_entities],
-                "future_truths": secrets,
-                "requested_chapters": group,
-                "verified_creatures": self.templates(),
+                "shared_entities": spine["entities"],
+                "shared_truths": spine["secrets"],
+                "requested_chapter": chapter,
+                "source_evidence": item["source_evidence"],
+                "source_kind": source["kind"],
+                "original_request": source.get("request"),
+                "accepted_dependencies": accepted,
+                "verified_creatures": self.templates(item["source_evidence"]),
                 "preferences": self.request()["preferences"],
+                "image_pages": sorted(
+                    set(chapter["pages"]) & set(self.store.get("visual-candidates") or [])
+                ),
             }
-            numbers = set(n for item in group for n in item["chapter"]["pages"])
-            visual = [self.store.get("visual-" + str(n)) for n in sorted(numbers)]
-            evidence["visual_evidence"] = [v for v in visual if v]
-            # Real context needs determine evidence packets. A dense chapter can be read
-            # in packets once, then authored together using those retained readings.
-            if token_count(evidence) > 90000:
-                reading = []
-                for j, packet in enumerate(
-                    packets([p for item in group for p in item["source_evidence"]], 30000)
-                ):
-                    v = await self.semantic.call(
-                        f"chapter-evidence-{index}-{j}",
+            dependency = digest(evidence)
+            saved = self.store.get("chapter-" + number, dependency)
+            if saved is not None:
+                return saved
+            # Actual context needs may require source packet reading for a very large chapter.
+            # Small/ordinary chapters receive every original OCR page directly in this one call.
+            if token_count(evidence) > 180000:
+                readings = []
+                for j, packet in enumerate(packets(item["source_evidence"], 60000)):
+                    value = await self.semantic.call(
+                        f"chapter-evidence-{number}-{j}",
                         "read-source",
                         SourceReading,
                         {"source_pages": packet},
                     )
-                    reading.append(v.model_dump())
-                evidence["requested_chapters"] = [{"chapter": item["chapter"]} for item in group]
-                evidence["source_readings"] = reading
+                    readings.append(value.model_dump())
+                evidence["source_readings"] = readings
+                evidence.pop("source_evidence")
             value = await self.semantic.call(
-                "chapters-" + str(index), "chapters", Bundles, evidence
+                "chapter-" + number,
+                "chapters",
+                Bundles,
+                evidence,
+                self.source_images(chapter["pages"]),
             )
-            if {b.chapter_id for b in value.chapters} != chapter_ids or len(value.chapters) != len(
-                chapter_ids
-            ):
+            if len(value.chapters) != 1 or value.chapters[0].chapter_id != number:
+                raise NeedsAttention("Authoring response must cover its one requested chapter.")
+            bundle = value.chapters[0].model_dump()
+            if set(bundle["source_pages"]) != set(chapter["pages"]):
                 raise NeedsAttention(
-                    "Authoring response did not cover requested chapter inventory."
+                    "Chapter must retain its complete assigned source-page inventory."
                 )
-            self.store.put("chapter-batch-" + str(index), value.model_dump(), digest(evidence))
-            return value.chapters
+            self.store.put(
+                "chapter-context-" + number,
+                {
+                    "chapter_id": number,
+                    "source_pages": [
+                        {
+                            "page": p["page"],
+                            "raw_sha256": p["raw_sha256"],
+                            "image_sha256": p["image_sha256"],
+                        }
+                        for p in source.get("pages", [])
+                        if p["page"] in chapter["pages"]
+                    ],
+                    "shared_context_sha256": digest([spine["entities"], spine["secrets"]]),
+                    "dependency_chapters": sorted(dependency_ids),
+                    "evidence_tokens": token_count(evidence),
+                },
+                dependency,
+            )
+            self.store.put("chapter-" + number, bundle, dependency)
+            return bundle
 
-        authored = await asyncio.gather(
-            *(author(i, group) for i, group in enumerate(groups)), return_exceptions=True
-        )
-        for result in authored:
-            if isinstance(result, BaseException):
-                raise result
-        value = Bundles(chapters=[b for batch in authored for b in batch]).model_dump()
+        # One call per chapter; only real dependencies impose a wave boundary.
+        remaining = {item["chapter"]["id"]: item for item in items}
+        accepted = {}
+        while remaining:
+            ready = [
+                item
+                for item in remaining.values()
+                if set(item["chapter"].get("depends_on", [])) <= accepted.keys()
+            ]
+            if not ready:
+                raise NeedsAttention(
+                    "Chapter dependency cycle; no additional model work submitted."
+                )
+            authored = await asyncio.gather(
+                *(author(item) for item in ready), return_exceptions=True
+            )
+            for item, result in zip(ready, authored, strict=True):
+                if isinstance(result, BaseException):
+                    raise result
+                key = item["chapter"]["id"]
+                accepted[key] = result
+                del remaining[key]
+        value = Bundles(chapters=[accepted[c["id"]] for c in chapters]).model_dump()
         self.store.put("bundles", value, digest(spine))
         return address
 
@@ -394,6 +467,7 @@ class Workflow:
             or result.secrets
             or result.goals
             or result.events
+            or result.chapters
             or not set(replacement) <= {first, second}
         ):
             raise NeedsAttention("Identity resolution changed unrelated narrative records.")
@@ -450,10 +524,15 @@ class Workflow:
         )
         if local_findings:
             return address
-        dep = digest([spine, bundles, mechanics])
+        dep = digest([spine, bundles, mechanics, self.store.get("source")])
         if self.store.get("compiled", dep) is None:
             value = assemble(
-                self.store.slug, self.request()["rules_edition"], spine, bundles, mechanics
+                self.store.slug,
+                self.request()["rules_edition"],
+                spine,
+                bundles,
+                mechanics,
+                source=self.store.get("source"),
             )
             self.store.put("compiled", value, dep)
             atomic_json(self.store.directory / "playable.json", value)
@@ -478,7 +557,7 @@ class Workflow:
                 current_ids.update(finding["value"]["record_ids"])
         compiled, source = self.store.get("compiled"), self.store.get("source")
         for packet in packets(
-            [{"id": key, **registry[key]} for key in sorted(current_ids)], target=15000
+            [{"id": key, **registry[key]} for key in sorted(current_ids)], target=60000
         ):
             ids = [r["id"] for r in packet]
             deps = self.dependency_map(registry)
@@ -490,6 +569,7 @@ class Workflow:
                 for b in self.store.get("bundles")["chapters"]
                 if any(e["id"] in ids for e in b["events"])
                 or any(g["id"] in ids for g in b["goals"])
+                or derived(b["chapter_id"], "content") in ids
             }
             relevant_pages = set(
                 p
@@ -518,7 +598,14 @@ class Workflow:
                 ],
                 "mechanics": [g for g in compiled["grounded"] if g["event_id"] in ids],
                 "source_evidence": evidence_pages(source, relevant_pages),
-                "dm_guide": compiled["guide"] if "campaign_spine" in ids else None,
+                "image_pages": sorted(
+                    relevant_pages & set(self.store.get("visual-candidates") or [])
+                ),
+                "compiled_objects": compiled["manifest"]["objects"],
+                "compiled_checks": compiled["manifest"]["resolution_policies"],
+                "source_references": compiled.get("source_references", []),
+                "capability_findings": compiled.get("capability_findings", []),
+                "review_direction": "Compare original source to output and identify omitted material, not only defects in existing records. Private original source references are available but authored running material must remain useful and concrete.",
                 "visual_evidence": [
                     self.store.get("visual-" + str(n))
                     for n in sorted(relevant_pages)
@@ -538,7 +625,11 @@ class Workflow:
                 ],
             }
             value = await self.semantic.call(
-                "final-review-" + digest(ids)[:12], "review", Review, evidence
+                "final-review-" + digest(ids)[:12],
+                "review",
+                Review,
+                evidence,
+                self.source_images(relevant_pages),
             )
             if set(value.covered_ids) != set(ids):
                 raise NeedsAttention("Independent critic did not cover the requested records.")
@@ -591,7 +682,15 @@ class Workflow:
             if key != "campaign_spine"
             for p in registry[key]["value"]["origin"]["pages"]
         }
+        if "campaign_spine" in allowed:
+            source_pages.update(p["page"] for p in self.store.get("source")["pages"])
+        evidence["verified_creatures"] = self.templates(
+            evidence_pages(self.store.get("source"), source_pages)
+        )
         evidence["source_evidence"] = evidence_pages(self.store.get("source"), source_pages)
+        evidence["image_pages"] = sorted(
+            source_pages & set(self.store.get("visual-candidates") or [])
+        )
         evidence["visual_evidence"] = [
             self.store.get("visual-" + str(n))
             for n in sorted(source_pages)
@@ -602,7 +701,9 @@ class Workflow:
             raise NeedsAttention(
                 "Semantic repair returned to an unchanged problem; paid loop stopped with findings retained."
             )
-        value = await self.semantic.call("scoped-repair", "repair", Patch, evidence)
+        value = await self.semantic.call(
+            "scoped-repair", "repair", Patch, evidence, self.source_images(source_pages)
+        )
         patches = [
             (kind, row)
             for kind, rows in (
@@ -635,6 +736,34 @@ class Workflow:
             copy.deepcopy(self.store.get("bundles")),
         )
         before = digest([spine, bundles])
+        chapter_replacements = {}
+        for bundle in value.chapters:
+            key = derived(bundle.chapter_id, "content")
+            if key not in allowed or registry[key]["kind"] != "chapter":
+                raise NeedsAttention(
+                    "Repair tried to replace a chapter outside its affected closure."
+                )
+            original = next(b for b in bundles["chapters"] if b["chapter_id"] == bundle.chapter_id)
+            if {e["id"] for e in original["events"]} != {e.id for e in bundle.events}:
+                raise NeedsAttention("Chapter repair must preserve event identities.")
+            if {g["id"] for g in original["goals"]} != {g.id for g in bundle.goals}:
+                raise NeedsAttention("Chapter repair must preserve goal identities.")
+            replacement = bundle.model_dump()
+            if set(replacement["source_pages"]) != set(original["source_pages"]):
+                raise NeedsAttention("Chapter repair changed its original source inventory.")
+            for field in ("events", "goals", "new_entities", "new_secrets"):
+                before_rows = {row["id"]: row for row in original[field]}
+                after_rows = {row["id"]: row for row in replacement[field]}
+                if before_rows.keys() != after_rows.keys():
+                    raise NeedsAttention("Chapter repair changed contained record inventory.")
+                if any(
+                    before_rows[key] != after_rows[key] for key in before_rows if key not in allowed
+                ):
+                    raise NeedsAttention("Chapter repair changed unrelated contained records.")
+            chapter_replacements[bundle.chapter_id] = replacement
+        bundles["chapters"] = [
+            chapter_replacements.get(b["chapter_id"], b) for b in bundles["chapters"]
+        ]
         if value.spine is not None:
             spine = value.spine.model_dump()
             # Chapter membership/identities cannot be silently rewritten by a repair.

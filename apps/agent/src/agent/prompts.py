@@ -55,6 +55,14 @@ Committed session facts and recorded combat outcomes are authoritative over conf
 older prose. Preserve exact earned quotations and their source; do not erase earned knowledge
 or reopen a resolved combat because a summary or prior narration disagrees.
 
+Private campaign source pages are supporting DM evidence, not a second script. For adventure
+facts, original source evidence takes precedence over an accidental contradiction in prepared
+notes. Follow a documented deliberate adaptation when it states the original fact, chosen
+replacement and reason. Committed play and earned knowledge take precedence over both: never
+undo the hero's choices, reset HP or revive a resolved foe from source text. Do not blend
+incompatible facts or expose private source pages to the player. This evidence hierarchy does
+not authorize unsupported mechanics or override the engine's executable definitions.
+
 The engine has ALREADY rolled any check and decided success or failure (shown as "Engine
 outcome"). You must not change it: describe the consequences of that known outcome. {SCOPE_NOTICE}
 Declared actions outside that scope (spells outside the supported catalog, maneuvers, positioning,

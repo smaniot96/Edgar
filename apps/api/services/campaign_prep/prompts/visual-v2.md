@@ -1,3 +1,0 @@
-# Targeted page interpretation — v2.0
-Input: one preserved raster physical page, local OCR and quality diagnostics. Output: VisualEvidence for that physical page.
-Interpret useful layout, table row/column relationships, captions or map connections that OCR alone cannot establish. Preserve uncertainties explicitly. Identify what is visible and useful without inventing obscured text, exact statistics or hidden connectivity. This is targeted interpretation, not whole-PDF paid transcription. mechanical_text_verified must be false: an image interpretation cannot certify numeric engine mechanics. On title/art/blank pages say so briefly.

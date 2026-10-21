@@ -20,6 +20,7 @@ RUNTIME = Path("/Users/psmaniotto/.claude-worktrees/edgar-b/edgar-main-run")
 TARGETS = ("api", "ingestion", "migrate", "rules_engine")
 INFRASTRUCTURE = ("edgar-main-db", "edgar-main-redis", "edgar-main-qdrant")
 USER_CHANGES = {" D .claude/launch.json", " D .cursor/rules/Python-developer.mdc"}
+USER_WORKTREES = {"?? .claude/worktrees/ux-campaign-cards/"}
 
 
 def run(*args: str, capture: bool = True, cwd: Path = ROOT) -> str:
@@ -41,7 +42,8 @@ def source_revision() -> str:
     if branch != "dev":
         raise RuntimeError(f"Build/deploy requires the exact dev branch; found {branch!r}")
     changes = set(run("git", "status", "--porcelain", "--untracked-files=all").splitlines())
-    unexpected = changes - USER_CHANGES
+    # This independent user worktree is excluded from git archive and is never modified.
+    unexpected = changes - USER_CHANGES - USER_WORKTREES
     if unexpected:
         raise RuntimeError(
             "Commit task changes first; uncommitted paths: " + repr(sorted(unexpected))
