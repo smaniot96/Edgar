@@ -134,6 +134,37 @@ opportunity without silently removing an existing route; directly targeted event
 can replace their trigger and timing. Normalization receipts record each retained or moved
 binding and private guidance layer before independent recheck.
 
+Small prose contradictions can instead use exact `field_edits` on a chapter's
+`source_notes` or event's `dm_notes`. Each replacement must identify one unique accepted
+substring within the affected dependency closure. The graph validates the complete batch
+before applying it after inventory retention, so a removed false instruction does not
+return beneath a correction preface. Unrelated text stays byte-for-byte unchanged; original
+text and the exact edit remain in durable task and normalization receipts. Ambiguous,
+overlapping, missing and mixed replacement/edit authority require attention rather than
+guessing. This avoids returning a large complete chapter to correct one directional clause.
+
+When a paid repair incorrectly encodes an existing chapter-content identity as an event
+inside a chapter proposal, the entire malformed chapter proposal is quarantined. Its full
+contents, identity conflict and hashes remain in a reconciliation receipt; the accepted
+chapter is retained. Independently supplied valid record patches still pass the ordinary
+scope and semantic checks. Quarantine alone is not progress and cannot mark the run Ready.
+The independent review must resolve any findings that the ignored proposal did not repair.
+
+Repeated appearances of the same individual retain one actor identity and the same exact
+authoritative creature profile. A disguise with unchanged statistics does not create a
+second creature or a different profile. Authoring and repair prompts distinguish this
+reference-consistency problem from genuinely different creatures or mechanical forms.
+
+Selected original visual pages from the relevant chapter remain available as `map_context`
+through whole-chapter authoring, every multipart continuation, scoped repair and final
+review. References identify physical pages and immutable source/image hashes; requests
+include the actual page images. A later page group therefore does not lose an earlier
+chapter map. Additional map evidence does not expand a repair's allowed record IDs.
+Spatial directions and connections must be checked against the actual map and keyed prose,
+not inferred from OCR order or room numbers. Unclear relationships remain explicitly
+uncertain. This uses the existing author/review calls and does not require a separate
+universal map agent or an exhaustive generated room-adjacency guide.
+
 During play, verified current-scene guidance reaches the existing input parser before it
 classifies the action. Existing evidence is annotated inline with stable source-span IDs,
 bound to the reviewed source reference, current scene and exact original offsets. The

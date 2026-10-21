@@ -36,6 +36,7 @@ from .compile import (
     records,
     validate_semantics,
 )
+from .field_edits import apply_field_edits
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
 from .provider import SemanticClient, request_context
@@ -356,6 +357,28 @@ class Workflow:
             if page["page"] in wanted
         ]
 
+    def map_context(self, chapter_pages):
+        """Keep possible maps from the whole chapter, including sparse/uncertain ones.
+
+        Existing visual selection is deliberately conservative: a selected image may
+        instead be a stat block. Do not silently discard it because OCR lacks map
+        vocabulary. The author/reviewer must inspect the original image itself.
+        """
+        source = self.store.get("source")
+        wanted = set(chapter_pages) & set(self.store.get("visual-candidates") or [])
+        return [
+            {
+                "reference_id": f"source_page_{page['page']:04d}",
+                "physical_page": page["page"],
+                "source_sha256": source["sha256"],
+                "image_sha256": page["image_sha256"],
+                "image": page["image"],
+                "role": "Original chapter visual; inspect for relevant map geometry.",
+            }
+            for page in source.get("pages", [])
+            if page["page"] in wanted
+        ]
+
     def templates(self, pages=None):
         result = [
             {"name": r["name"], "verified_edition": r["rules_edition"]}
@@ -565,6 +588,7 @@ class Workflow:
                 "image_pages": sorted(
                     set(item["context_pages"]) & set(self.store.get("visual-candidates") or [])
                 ),
+                "map_context": self.map_context(chapter["pages"]),
             }
             dependency = digest(evidence)
             saved = self.store.get("chapter-" + number, dependency)
@@ -689,6 +713,7 @@ class Workflow:
             or result.goals
             or result.events
             or result.chapters
+            or result.field_edits
             or not set(replacement) <= {first, second}
         ):
             raise NeedsAttention("Identity resolution changed unrelated narrative records.")
@@ -878,6 +903,7 @@ class Workflow:
                 "image_pages": sorted(
                     relevant_pages & set(self.store.get("visual-candidates") or [])
                 ),
+                "map_context": self.map_context(relevant_pages),
                 "compiled_objects": compiled["manifest"]["objects"],
                 "compiled_checks": compiled["manifest"]["resolution_policies"],
                 "source_references": compiled.get("source_references", []),
@@ -1001,6 +1027,27 @@ class Workflow:
         }
         if "campaign_spine" in allowed:
             source_pages.update(p["page"] for p in self.store.get("source")["pages"])
+        # A local event's provenance may omit the chapter's map page. Supply those
+        # original images as read-only evidence without enlarging the repair closure.
+        spine = self.store.get("spine")
+        related_chapters = {
+            bundle["chapter_id"]
+            for bundle in self.store.get("bundles")["chapters"]
+            if derived(bundle["chapter_id"], "content") in allowed
+            or any(
+                row["id"] in allowed
+                for field in ("events", "goals", "new_entities", "new_secrets")
+                for row in bundle[field]
+            )
+        }
+        chapter_pages = {
+            page
+            for chapter in spine["chapters"]
+            if chapter["id"] in related_chapters or source_pages & set(chapter["pages"])
+            for page in chapter["pages"]
+        }
+        evidence["map_context"] = self.map_context(chapter_pages)
+        source_pages.update(row["physical_page"] for row in evidence["map_context"])
         evidence["verified_creatures"] = self.templates(
             evidence_pages(self.store.get("source"), source_pages)
         )
@@ -1064,6 +1111,7 @@ class Workflow:
         before = digest([spine, bundles])
         chapter_replacements = {}
         chapter_normalizations = []
+        chapter_reconciliations = []
         for bundle in value.chapters:
             key = derived(bundle.chapter_id, "content")
             if key not in allowed or registry[key]["kind"] != "chapter":
@@ -1075,6 +1123,29 @@ class Workflow:
             original = next(b for b in bundles["chapters"] if b["chapter_id"] == bundle.chapter_id)
             replacement = bundle.model_dump()
             contained = ("events", "goals", "new_entities", "new_secrets")
+            wrong_kinds = [
+                {"id": row["id"], "accepted_kind": registry[row["id"]]["kind"],
+                 "proposed_kind": kind}
+                for field, kind in (("events", "event"), ("goals", "goal"),
+                                    ("new_entities", "entity"), ("new_secrets", "secret"))
+                for row in replacement[field]
+                if row["id"] in registry and registry[row["id"]]["kind"] != kind
+            ]
+            if wrong_kinds:
+                # Older prompts sometimes serialized the supplied kind=chapter
+                # running reference as an Event with the chapter-content ID. Do
+                # not reinterpret that prose as gameplay or accept its rewrite.
+                # Independent valid patches can still recover from the paid task.
+                chapter_reconciliations.append({
+                    "chapter_id": bundle.chapter_id,
+                    "reason": "Existing record encoded under a different record kind.",
+                    "wrong_kind_records": wrong_kinds,
+                    "proposal": replacement,
+                    "proposal_sha256": digest(replacement),
+                    "retained_chapter_sha256": digest(original),
+                    "action": "Ignore entire chapter proposal; retain accepted chapter. Independent record patches remain subject to normal validation.",
+                })
+                continue
             incomplete = any(
                 {row["id"] for row in replacement[field]} < {row["id"] for row in original[field]}
                 for field in contained
@@ -1160,6 +1231,12 @@ class Workflow:
             if incomplete:
                 chapter_normalizations.append(normalization)
             chapter_replacements[bundle.chapter_id] = replacement
+        if chapter_reconciliations:
+            self.store.put(
+                "repair-reconciled-" + signature,
+                {"ignored_chapter_proposals": chapter_reconciliations},
+                signature,
+            )
         bundles["chapters"] = [
             chapter_replacements.get(b["chapter_id"], b) for b in bundles["chapters"]
         ]
@@ -1193,15 +1270,20 @@ class Workflow:
         event_normalizations = retain_repair_event_inventory(
             registry, bundles, findings, explicit_event_ids=patched_events
         )
+        field_normalizations = apply_field_edits(registry, bundles, value.field_edits, allowed)
         validate_semantics(spine, bundles, self.store.get("source"))
         if digest([spine, bundles]) == before:
             raise NeedsAttention(
                 "Repair made no progress; unresolved findings retained without another paid loop."
             )
-        if chapter_normalizations or event_normalizations:
+        if chapter_normalizations or event_normalizations or field_normalizations:
             self.store.put(
                 "repair-normalized-" + signature,
-                {"chapters": chapter_normalizations, "events": event_normalizations},
+                {
+                    "chapters": chapter_normalizations,
+                    "events": event_normalizations,
+                    "field_edits": field_normalizations,
+                },
             )
         self.store.put("repair-history", (self.store.get("repair-history") or []) + [signature])
         self.store.put("spine", spine)

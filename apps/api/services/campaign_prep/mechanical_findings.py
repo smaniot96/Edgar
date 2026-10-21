@@ -80,7 +80,7 @@ def mechanical_findings(bundles, mechanics):
                     "record_ids": sorted({actor, *(event for event, _ in rows)}),
                     "evidence": "One actor identity is bound to incompatible creature profiles: "
                     + repr(rows),
-                    "instruction": "Give distinct creatures and mechanically different forms their own explicit engine actor identities while preserving their narrative relationship and transformation conditions. Preserve source encounter quantities. New NPC entities may be added only when referenced by repaired events. One engine actor has one exact stat profile.",
+                    "instruction": "First distinguish an inconsistent profile reference from genuinely different creatures or mechanics. When these appearances are the same individual with unchanged statistics, retain its stable actor ID and use one authoritative exact profile consistently in every encounter, preserving source provenance and conditional movement. A disguise with unchanged statistics is not another creature or profile. Only genuinely distinct creatures or mechanically different forms need separate engine actor identities, preserving their narrative relationship and transformation conditions. Preserve source encounter quantities. New NPC entities may be added only when referenced by repaired events. One engine actor has one exact stat profile.",
                 }
             )
     return findings

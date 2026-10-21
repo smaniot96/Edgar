@@ -186,6 +186,13 @@ class Review(Record):
     findings: list[Finding] = Field(default_factory=list)
 
 
+class FieldEdit(Record):
+    record_id: Identifier
+    field: Literal["source_notes", "dm_notes"]
+    old_text: str = Field(min_length=1, description="Exact unique substring of the accepted field.")
+    new_text: str = Field(description="Replacement for only that substring; empty removes it.")
+
+
 class Patch(Record):
     """Typed record patches; only IDs in the dependency closure may change."""
 
@@ -194,6 +201,10 @@ class Patch(Record):
     secrets: list[Secret] = Field(default_factory=list)
     goals: list[Goal] = Field(default_factory=list)
     events: list[Event] = Field(default_factory=list)
+    field_edits: list[FieldEdit] = Field(
+        default_factory=list,
+        description="Sparse exact-text corrections to an allowed chapter source_notes or event dm_notes field. Preserve all surrounding text; do not restate that field in a record replacement.",
+    )
     chapters: list[Bundle] = Field(
         default_factory=list,
         description="Full replacement of an affected chapter bundle only when its supplied chapter content record ID is in allowed_ids; preserve every unaffected contained record. Use individual patches for smaller changes.",

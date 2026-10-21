@@ -263,6 +263,8 @@ async def author_parts(workflow, evidence, *, exhausted=None, groups=None):
                 raise NeedsAttention("Closed exhausted chapter lacks its source inventory.")
             return bundle, {"mode": "closed-output-recovery", "parent_task_ids": parents}
     groups = groups or [chapter["pages"]]
+    map_context = workflow.map_context(chapter["pages"])
+    map_pages = {row["physical_page"] for row in map_context}
     receipts = []
     for index, owned in enumerate(groups):
         remaining_work = ""
@@ -290,6 +292,9 @@ async def author_parts(workflow, evidence, *, exhausted=None, groups=None):
                     if 0 <= j < len(ordered)
                 }
                 context_pages = sorted(set(owned) | shared | border)
+            # Spatial claims can depend on a map far from this part's owned pages.
+            # Keep its original pixels, not an earlier author's map summary.
+            context_pages = sorted(set(context_pages) | map_pages)
             part_evidence = {
                 **evidence,
                 "source_evidence": evidence_pages(source, context_pages),
@@ -297,6 +302,7 @@ async def author_parts(workflow, evidence, *, exhausted=None, groups=None):
                 "image_pages": sorted(
                     set(context_pages) & set(store.get("visual-candidates") or [])
                 ),
+                "map_context": map_context,
                 "owned_pages": owned,
                 "part_index": index,
                 "part_count": len(groups),
