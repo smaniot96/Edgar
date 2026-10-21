@@ -321,3 +321,49 @@ it("moves the private preparation setup into a dialog instead of growing the car
   expect(dialog.textContent).toContain("Your adventure setup");
   expect(dialog.textContent).toContain("Start private preparation");
 });
+
+it("closes the More menu on Escape and on an outside press, returning focus to its button", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "processing" };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const more = [...container.querySelectorAll("button")].find((button) => button.textContent === "More")!;
+  const panel = document.getElementById(more.getAttribute("aria-controls")!)!;
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  expect(panel.hidden).toBe(true);
+  await act(async () => more.click());
+  expect(more.getAttribute("aria-expanded")).toBe("true");
+  expect(panel.hidden).toBe(false);
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(panel.hidden).toBe(true);
+  expect(document.activeElement).toBe(more);
+  await act(async () => more.click());
+  await act(async () => { document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+  expect(panel.hidden).toBe(true);
+});
+
+it("choosing Delete from the More menu closes it and asks the page to confirm", async () => {
+  const adventure: AdventureRead = { slug: "bridge", title: "Bridge", description: null, level_range: null, cover_image: null, status: "processing" };
+  const onDelete = vi.fn();
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={onDelete} opening={false} />));
+  const more = [...container.querySelectorAll("button")].find((button) => button.textContent === "More")!;
+  await act(async () => more.click());
+  await act(async () => [...container.querySelectorAll("button")].find((button) => button.textContent === "Delete adventure")!.click());
+  expect(onDelete).toHaveBeenCalledOnce();
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(more);
+});
+
+it("shows a long campaign title in full, with its status above it and no separate disclosure", async () => {
+  const title = "The Sunken Citadel of the Seven Whispering Moons and the Forgotten Kings of Ashenvale Who Bargained With the Tide";
+  const adventure: AdventureRead = { slug: "citadel", title, description: null, level_range: null, cover_image: null, status: "processing" };
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
+  const heading = container.querySelector("h3")!;
+  expect(heading.textContent).toBe(title);
+  expect(heading.className).not.toContain("line-clamp");
+  // In the stacked header an unbroken word must wrap inside the card rather than widen it.
+  expect(heading.className).toContain("max-w-full");
+  expect(container.textContent).not.toContain("Full campaign title");
+  // Visually first, but after the title in reading order.
+  const badge = heading.nextElementSibling!;
+  expect(badge.textContent).toContain("Processing");
+  expect(badge.className).toContain("order-first");
+});

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { ReadinessRead } from "../../api/types";
@@ -43,6 +43,65 @@ function StatusBadge({ state, readiness, homebrewWithoutSource }: { state: CardM
         </Pill>
       );
   }
+}
+
+/**
+ * The card's secondary actions. It opens upward from the footer so it stays inside the card, closes
+ * on an outside press or Escape, and hands focus back to its button. The items stay mounted
+ * (hidden) so they are never missing from the document.
+ */
+function CardMenu({ className, children }: { className?: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
+
+  function close() {
+    setOpen(false);
+    trigger.current?.focus();
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={root} className={cn("relative", className)}>
+      <button
+        ref={trigger}
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex min-h-11 items-center rounded-control border border-line px-3 text-sm text-ink-muted hover:bg-surface-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400"
+      >
+        More
+      </button>
+      {/* Choosing an item closes the menu and parks focus on its button, which is what a dialog opened by the item returns to. */}
+      <div
+        id={panelId}
+        hidden={!open}
+        onClick={(event) => { if ((event.target as HTMLElement).closest("button")) close(); }}
+        className="absolute bottom-full right-0 z-10 mb-1 w-max rounded-control border border-line bg-surface-raised p-2 shadow-lg"
+      >
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export function CampaignCard({
@@ -119,6 +178,7 @@ export function CampaignCard({
     : state === "ready" ? <><PlayIcon className="h-3.5 w-3.5" /> Start adventure</>
     : state === "recovery" ? "Recover source"
     : null;
+  const longName = name.length > 48;
   const retryLabel = job?.action_label ?? "Retry retained source";
   const retryAsPrimary = playLabel == null && !needsSetup && canRetryJob;
 
@@ -132,16 +192,14 @@ export function CampaignCard({
         <AdventureCover coverImage={adventure.cover_image} name={name} />
       </div>
       <div className="flex flex-1 flex-col p-4">
-        <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
-          <h3 className="min-w-0 line-clamp-3 break-words [overflow-wrap:anywhere] font-display text-xl leading-tight">{name}</h3>
-          <StatusBadge state={state} readiness={card.readiness} homebrewWithoutSource={homebrewWithoutSource} />
+        {/* Cards size to their content, so a long title is shown whole. Its badge moves above it so the
+            title keeps the card's full width instead of a narrow column beside the badge. */}
+        <div className={cn("mb-1 flex min-w-0 gap-2", longName ? "flex-col items-start" : "items-start justify-between")}>
+          <h3 className={cn("min-w-0 max-w-full break-words [overflow-wrap:anywhere] font-display leading-tight", longName ? "text-lg" : "text-xl")}>{name}</h3>
+          <div className={cn("shrink-0", longName && "order-first")}>
+            <StatusBadge state={state} readiness={card.readiness} homebrewWithoutSource={homebrewWithoutSource} />
+          </div>
         </div>
-        {name.length > 80 ? (
-          <details className="mb-1 text-sm">
-            <summary className="inline-flex min-h-11 cursor-pointer items-center text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">Full campaign title</summary>
-            <p className="break-words [overflow-wrap:anywhere] text-ink">{name}</p>
-          </details>
-        ) : null}
         {showAdventureTitle ? (
           <p className="mb-1 text-xs text-ink-muted [overflow-wrap:anywhere]">{adventureSubtitle}</p>
         ) : null}
@@ -235,20 +293,17 @@ export function CampaignCard({
               {playLabel}
             </Button>
           ) : null}
-          <details className={cn("relative", needsSetup || retryAsPrimary || playLabel != null ? "" : "ml-auto")}>
-            <summary className="inline-flex min-h-11 cursor-pointer list-none items-center rounded-control border border-line px-3 text-sm text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">More</summary>
-            <div className="absolute right-0 z-10 mt-1 rounded-control border border-line bg-surface-raised p-2 shadow-lg">
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => onDelete(card)}
-                aria-label={`Delete ${name}`}
-                aria-haspopup="dialog"
-              >
-                {card.campaign ? "Delete campaign" : "Delete adventure"}
-              </Button>
-            </div>
-          </details>
+          <CardMenu className={needsSetup || retryAsPrimary || playLabel != null ? "" : "ml-auto"}>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => onDelete(card)}
+              aria-label={`Delete ${name}`}
+              aria-haspopup="dialog"
+            >
+              {card.campaign ? "Delete campaign" : "Delete adventure"}
+            </Button>
+          </CardMenu>
         </div>
         {needsSetup ? <PreparationRecovery open={setupOpen} slug={adventure.slug} edition={adventure.rules_edition}
           onClose={() => setSetupOpen(false)} onStarted={onRetried} /> : null}
