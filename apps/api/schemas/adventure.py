@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from edgar_core.preparation_status import SafePreparationFailure
 from edgar_core.sources import RulesEdition, SourceEdition
@@ -44,6 +44,7 @@ class AdventureJobRead(BaseModel):
 class AdventureRead(BaseModel):
     slug: str
     title: str
+    library_archived: bool = False
     rules_edition: SourceEdition = "unspecified"
     description: str | None = None
     level_range: str | None = None
@@ -65,6 +66,24 @@ class AdventureRead(BaseModel):
     job: AdventureJobRead | None = None
     preparation_setup_required: bool = False
     readiness: ReadinessRead | None = None
+
+
+class AdventureLibraryUpdate(BaseModel):
+    archived: bool | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def clean_title(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("An adventure title cannot be blank.")
+        return value.strip() if value is not None else value
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if self.archived is None and self.title is None:
+            raise ValueError("Provide a title or archived preference.")
+        return self
 
 
 class AdventureUpdate(BaseModel):

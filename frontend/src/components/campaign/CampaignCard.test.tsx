@@ -61,7 +61,7 @@ it("shows real chapter progress and lets the owner cancel while the published so
   const onRetried = vi.fn();
   await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
   expect(container.textContent).toContain("Generating campaign chapters — 2 of 6 saved.");
-  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Start adventure") && !button.disabled)).toBe(true);
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Start campaign") && !button.disabled)).toBe(true);
   await act(async () => {
     [...container.querySelectorAll("button")].find((button) => button.textContent === "Cancel preparation")!.click();
   });
@@ -113,7 +113,7 @@ it.each([false, true])("never advertises index-only standalone modules as playab
   const onPlay = vi.fn();
   const onRetried = vi.fn();
   await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
-  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Start adventure")).toBe(false);
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Start campaign")).toBe(false);
   // The status pill and notice carry the state; no dead button competes with them.
   const labels = [...container.querySelectorAll("button")].map((button) => button.textContent?.trim());
   expect(labels).not.toContain("Needs attention");
@@ -141,7 +141,7 @@ it("renders the public cover from a nested UI route and preserves the action aft
   await act(() => image.dispatchEvent(new Event("error")));
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector('[aria-hidden]')?.textContent).toBe("B");
-  const play = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Start adventure")!;
+  const play = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Start campaign")!;
   await act(() => play.click());
   expect(onPlay).toHaveBeenCalledOnce();
   window.history.replaceState({}, "", "/");

@@ -211,6 +211,28 @@ bundle or complete metadata. Deleting a campaign can release only its own unused
 source; unrelated sources and nonempty artifact directories are preserved. Explicit source
 deletion also refuses to recursively erase retained work.
 
+The library presents prepared stories as **Adventures**. Each adventure is reusable and
+independent of characters. A **Campaign** is one player's playthrough of an adventure;
+sessions, hero assignments, discoveries and outcomes belong to that campaign. Starting
+another campaign creates fresh play state without repeating preparation or copying the
+previous campaign's outcomes. Continue opens an existing save, and the adventure card lists
+the player's campaigns separately. Existing `/campaigns` library links remain supported;
+the library's navigation address is `/adventures`.
+
+`POST /api/adventures/{slug}/campaign` accepts `{new_campaign: true, request_id: UUID}`
+for explicit creation. The owner-scoped request identity binds the adventure and request
+body: a retry returns the same campaign; reuse for a different request is rejected. The
+additive migration `23_campaign_creation_requests` retains existing rows. Omitting the
+body retains the older continue/get-or-create API behavior for existing clients.
+
+Library title and archive preferences are a separately locked, atomically written
+`/data/campaign-library.json` index, changed through the administrator library endpoint.
+Renaming or archiving a template never rewrites accepted source material, checkpoints or
+saved play. The default library hides archived templates after reconstructing any fallback
+cards, while Show archived adventures makes restoration available. Active preparation
+cannot be archived. This supports keeping one current visible copy of each adventure
+without deleting historical or failed work.
+
 Focused regression evidence is in `tests/test_campaign_chapter_calls_v2.py`,
 `tests/test_chapter_source_retention.py`, `tests/test_campaign_source_mechanics_v2.py` and the
 adapted graph/workflow/mechanics repair tests. `tools/dev_rollout.py` builds all four owned

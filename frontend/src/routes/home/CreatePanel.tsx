@@ -30,7 +30,7 @@ export function CreatePanel({ onCreated }: { onCreated: (a: AdventureRead) => vo
     <div className={cardClasses}>
       <Tabs
         idBase="create"
-        label="How to create a campaign"
+        label="How to create an adventure"
         items={CREATE_TABS}
         value={mode}
         onChange={setMode}
@@ -100,8 +100,9 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
   return (
     <form onSubmit={(e) => void submit(e)} className="space-y-4">
       <p className="text-sm text-ink-muted">
-        Describe what you want and Edgar will author a brand-new campaign. It works in the
-        background — the card shows progress and flips to <strong>Ready</strong> when done.
+        Describe what you want and Edgar will prepare a reusable adventure. It works in the
+        background — the card becomes <strong>Ready</strong> when done. Start a campaign afterward
+        and choose its hero; you can play the same adventure again in another campaign.
       </p>
       <div className="flex flex-col gap-3 sm:flex-row">
         <TextField
@@ -149,7 +150,7 @@ function GenerateForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) 
       {preparation.fields}
       <ErrorNotice error={error} />
       <Button type="submit" className="min-h-11" disabled={!preparation.setup} loading={busy} loadingText="Starting…">
-        Generate campaign
+        Generate adventure
       </Button>
     </form>
   );

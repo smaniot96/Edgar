@@ -32,6 +32,7 @@ const router = createBrowserRouter(
               errorElement: <RouteError />,
               children: [
                 { path: "campaigns", element: <Home /> },
+                { path: "adventures", element: <Home /> },
                 { path: "campaigns/:id/setup", lazy: lazyPage(() => import("./routes/CampaignSetup.tsx")) },
                 { path: "campaigns/:id", lazy: lazyPage(() => import("./routes/Campaign.tsx")) },
                 { path: "characters", lazy: lazyPage(() => import("./routes/Characters.tsx")) },
@@ -40,7 +41,7 @@ const router = createBrowserRouter(
                 { path: "play/:sessionId/table", lazy: lazyPage(() => import("./routes/Lobby.tsx")) },
                 { path: "play/:sessionId", lazy: lazyPage(() => import("./routes/Play.tsx")) },
                 // The old /new wizard was removed; campaigns are created from /campaigns.
-                { path: "new", element: <Navigate to="/campaigns" replace /> },
+                { path: "new", element: <Navigate to="/adventures" replace /> },
                 { path: "*", element: <NotFound /> },
               ],
             },

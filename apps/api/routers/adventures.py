@@ -57,6 +57,7 @@ from ..limits import (
 from ..schemas.adventure import (
     AdventureGenerateRequest,
     AdventureJobRead,
+    AdventureLibraryUpdate,
     AdventurePreparationRequest,
     AdventureRead,
     AdventureRetryRequest,
@@ -133,6 +134,7 @@ def _unique_slug(desired: str, taken: set[str]) -> str:
 
 def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     meta = load_adventure_metadata(slug)
+    from ..services.campaign_library import archived_slugs, display_title
     from ..services.campaign_prep.runtime import preparation_setup_needed
     from ..services.cover_images import normalize_cover_image
 
@@ -149,7 +151,8 @@ def _read_for_slug(slug: str, has_collection: bool) -> AdventureRead:
     job_read = source.job
     return AdventureRead(
         slug=slug,
-        title=meta.get("title") or slug.replace("_", " ").title(),
+        library_archived=slug in archived_slugs(),
+        title=display_title(slug, meta.get("title") or slug.replace("_", " ").title()),
         rules_edition=meta.get("rules_edition", "unspecified"),
         description=meta.get("description"),
         level_range=meta.get("level_range"),
@@ -836,6 +839,25 @@ def cancel_adventure(slug: str):
             failure = classify_http_failure(409, code="preparation_busy")
             raise HTTPException(status_code=409, detail=failure.to_payload()) from exc
     return safe_job_read(load_adventure_metadata(slug), slug)
+
+
+@router.patch(
+    "/adventures/{slug}/library",
+    response_model=AdventureRead,
+    dependencies=[Depends(require_admin)],
+)
+def update_adventure_library(slug: str, body: AdventureLibraryUpdate):
+    """Label, archive or restore an adventure without editing its source or saved games."""
+    from ..services.campaign_library import display_title, set_preferences
+
+    adventure = _get_adventure(slug)
+    if body.archived and adventure.status == "processing":
+        raise HTTPException(status_code=409, detail="Wait for campaign preparation to finish.")
+    set_preferences(slug, archived=body.archived, title=body.title)
+    return adventure.model_copy(update={
+        "library_archived": body.archived if body.archived is not None else adventure.library_archived,
+        "title": display_title(slug, adventure.title),
+    })
 
 
 @router.patch(

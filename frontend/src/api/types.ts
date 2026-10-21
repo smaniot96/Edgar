@@ -132,6 +132,7 @@ export interface AdventureGenerateResponse {
 }
 
 export interface AdventureRead {
+  library_archived?: boolean;
   readiness?: ReadinessRead | null;
   preparation_setup_required?: boolean;
   rules_edition?: RulesEdition | "unspecified";

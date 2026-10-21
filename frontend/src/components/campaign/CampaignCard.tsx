@@ -110,12 +110,16 @@ function CardMenu({ className, children }: { className?: string; children: React
 export function CampaignCard({
   card,
   onPlay,
+  onNewCampaign,
+  onOpenCampaign,
   onDelete,
   opening,
   onRetried,
 }: {
   card: CardModel;
   onPlay: (card: CardModel) => void;
+  onNewCampaign?: (card: CardModel) => void;
+  onOpenCampaign?: (campaignId: number) => void;
   onDelete: (card: CardModel) => void;
   opening: boolean;
   onRetried?: () => void;
@@ -180,7 +184,7 @@ export function CampaignCard({
     : card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? "View campaign"
     : !card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? null
     : state === "ready" && card.campaign ? "Set up first session"
-    : state === "ready" ? <><PlayIcon className="h-3.5 w-3.5" /> Start adventure</>
+    : state === "ready" ? <><PlayIcon className="h-3.5 w-3.5" /> Start campaign</>
     : state === "recovery" ? "Recover source"
     : null;
   const longName = name.length > 48;
@@ -208,6 +212,7 @@ export function CampaignCard({
             stated once; without a save, one line says why there is nothing to continue. */}
         {primarySession ? (
           <div className="mb-3 mt-1 space-y-1.5 border-l-2 border-ember-700/60 pl-3">
+            {card.campaign ? <p className="text-xs text-ink-muted">Campaign #{card.campaign.id}</p> : null}
             <p className="break-words text-sm [overflow-wrap:anywhere]">
               <span className="font-medium text-ink">{primarySession.character_name || "No hero"}</span>
               <span className="text-ink-muted">
@@ -244,8 +249,8 @@ export function CampaignCard({
         {state === "failed" && !showReadiness && !jobFailureShown ? (
           <p className="mb-3 rounded-control bg-danger-soft px-2 py-1.5 text-xs text-danger">
             {failureMessage || (job?.kind === "generation"
-              ? "Edgar couldn't finish generating this campaign. Resume the saved chapters or restart generation if retained work is unavailable."
-              : "Edgar couldn't prepare this campaign. Retry the retained source or upload a corrected PDF.")}
+              ? "Edgar couldn't finish generating this adventure. Resume the saved chapters or restart generation if retained work is unavailable."
+              : "Edgar couldn't prepare this adventure. Retry the retained source or upload a corrected PDF.")}
           </p>
         ) : null}
         {adventure.extraction_preview_available ? <ExtractionPreview slug={adventure.slug} onUsePreview={canReviewCurrentPdf ? (sourceHash, extractionHash) => retry({ reviewed_source_sha256: sourceHash, reviewed_extraction_sha256: extractionHash }) : undefined} /> : null}
@@ -280,8 +285,20 @@ export function CampaignCard({
         ) : null}
         {state === "ended" ? (
           <p className="mb-3 text-xs text-ink-muted">
-            This campaign has ended. Open it to review or reopen it.
+            Your last campaign has ended. Open its story or start a new campaign from this adventure.
           </p>
+        ) : null}
+        {onOpenCampaign && card.campaigns.length > 0 ? (
+          <details className="mb-3 text-sm">
+            <summary className="cursor-pointer text-ink-muted">Campaigns ({card.campaigns.length})</summary>
+            <div className="mt-2 flex flex-col gap-1">
+              {card.campaigns.map((campaign) => (
+                <Button key={campaign.id} variant="ghost" size="sm" onClick={() => onOpenCampaign(campaign.id)}>
+                  Campaign #{campaign.id} · {campaign.status === "ended" ? "Ended" : "Active"}
+                </Button>
+              ))}
+            </div>
+          </details>
         ) : null}
         <div className="mt-auto flex flex-wrap gap-2">
           {needsSetup ? (
@@ -304,6 +321,12 @@ export function CampaignCard({
               {playLabel}
             </Button>
           ) : null}
+          {onNewCampaign && card.campaign && adventure.status === "ready" &&
+            (adventure.readiness?.play_allowed ?? card.readiness?.play_allowed) === true && !homebrewWithoutSource ? (
+              <Button variant="secondary" size="sm" loading={opening} onClick={() => onNewCampaign(card)}>
+                New campaign
+              </Button>
+            ) : null}
           <CardMenu className={needsSetup || retryAsPrimary || playLabel != null ? "" : "ml-auto"}>
             <Button
               variant="danger"

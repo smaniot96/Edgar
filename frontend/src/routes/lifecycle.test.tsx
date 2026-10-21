@@ -185,6 +185,65 @@ function buttonWith(text: string, exact = false): HTMLButtonElement | undefined 
   );
 }
 
+it("keeps archived duplicate saves accessible and restores their library card without deletion", async () => {
+  const archived = adventure({ slug: "sheep_old", title: "Old Sheep", library_archived: true, readiness: ready });
+  const current = adventure({ slug: "sheep_new", title: "Current Sheep", readiness: ready });
+  const { calls } = installFakeApi([
+    [/^GET \/api\/users\/me$/, () => json(user)],
+    [/^GET \/api\/adventures$/, () => json([archived, current])],
+    [/^GET \/api\/campaigns$/, () => json([campaign({ id: 7, title: "Old Sheep", adventure_collections: ["sheep_old"] })])],
+    [/^GET \/api\/sessions$/, () => json([session({ id: 12, campaign_id: 7, has_history: true })])],
+    [/^PATCH \/api\/adventures\/sheep_old\/library$/, () => json({ ...archived, library_archived: false })],
+  ]);
+  await renderHome();
+  await flush();
+  expect(container.textContent).toContain("Current Sheep");
+  expect(container.textContent).not.toContain("Old Sheep");
+  await act(() => buttonWith("Show archived adventures (1)")!.click());
+  expect(container.textContent).toContain("Old Sheep");
+  expect(container.textContent).toContain("saved games retained");
+  await act(() => buttonWith("Restore to library")!.click());
+  await flush();
+  expect(container.textContent).toContain("Adventure restored to your library");
+  expect(container.textContent).not.toContain("Show archived adventures");
+  expect(container.textContent).not.toContain("Restore to library");
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+  expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
+});
+
+it("starts an independent campaign and retries an ambiguous response with the same request identity", async () => {
+  const source = adventure({ slug: "sheep", title: "The Wild Sheep Chase", readiness: ready });
+  const oldCampaign = campaign({ id: 7, title: "Old demonstration name", adventure_collections: [source.slug] });
+  const oldSave = session({ id: 12, campaign_id: 7, has_history: true });
+  let attempts = 0;
+  const { calls } = installFakeApi([
+    [/^GET \/api\/users\/me$/, () => json(user)],
+    [/^GET \/api\/adventures$/, () => json([source])],
+    [/^GET \/api\/campaigns$/, () => json([oldCampaign])],
+    [/^GET \/api\/sessions$/, () => json([oldSave])],
+    [/^POST \/api\/adventures\/sheep\/campaign$/, () => ++attempts === 1
+      ? json({ detail: "Temporary transport failure" }, 503)
+      : json(campaign({ id: 13, title: source.title, adventure_collections: [source.slug] }))],
+  ]);
+  await renderHome();
+  await flush();
+  expect(container.querySelector("h3")?.textContent).toBe("The Wild Sheep Chase");
+  expect(buttonWith("Continue", true)).toBeDefined();
+  await act(() => buttonWith("New campaign", true)!.click());
+  await flush();
+  expect(container.textContent).toContain("The Wild Sheep Chase");
+  await act(() => buttonWith("New campaign", true)!.click());
+  await flush();
+  expect(container.textContent).toContain("Setup page");
+  const starts = calls.filter((call) => call.method === "POST");
+  expect(starts).toHaveLength(2);
+  expect(starts[0].body).toEqual(starts[1].body);
+  expect(starts[0].body).toMatchObject({ new_campaign: true, request_id: expect.any(String) });
+  expect(oldCampaign.id).toBe(7);
+  expect(oldSave.campaign_id).toBe(7);
+  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+});
+
 it("polls only while a module is preparing, and stops the poll on unmount", async () => {
   vi.useFakeTimers();
   const processing = adventure({ slug: "lighthouse", title: "Lighthouse", status: "processing" });
@@ -297,13 +356,12 @@ it("keeps the typed generate form after a failed attempt and submits one more re
     Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
     el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
   };
-  const hero = container.querySelector<HTMLSelectElement>("select")!;
   const budget = container.querySelector<HTMLInputElement>('input[type="number"][min="0.01"]')!;
-  await act(async () => { setValue(hero, "3"); });
+  expect(container.querySelector("select")).toBeNull();
   await act(async () => { setValue(budget, "2"); });
   await act(async () => { setValue(title, "The Lighthouse of Whispers"); });
   await flush();
-  const submit = () => buttonWith("Generate campaign", true)!;
+  const submit = () => buttonWith("Generate adventure", true)!;
   expect(submit().disabled).toBe(false);
 
   await act(() => submit().click());
@@ -327,7 +385,7 @@ const setFormValue = (el: HTMLInputElement | HTMLSelectElement, value: string) =
 };
 
 async function fillGenerateForm() {
-  await act(async () => { setFormValue(container.querySelector<HTMLSelectElement>("select")!, "3"); });
+  expect(container.querySelector("select")).toBeNull();
   await act(async () => { setFormValue(container.querySelector<HTMLInputElement>('input[type="number"][min="0.01"]')!, "2"); });
   await flush();
 }
@@ -352,7 +410,7 @@ it("a retried generate request carries the same identity as the failed attempt",
   await renderHome();
   await flush();
   await fillGenerateForm();
-  const submit = () => buttonWith("Generate campaign", true)!;
+  const submit = () => buttonWith("Generate adventure", true)!;
   await act(() => submit().click());
   await flush();
   await act(() => submit().click());
@@ -379,15 +437,15 @@ it("a generate form renews its identity after an accepted request", async () => 
   await renderHome();
   await flush();
   await fillGenerateForm();
-  await act(() => buttonWith("Generate campaign", true)!.click());
+  await act(() => buttonWith("Generate adventure", true)!.click());
   await flush();
   expect(posts).toHaveLength(1);
 
   // The accepted attempt closes the form; reopening it starts from a fresh attempt.
-  await act(() => buttonWith("New campaign")!.click());
+  await act(() => buttonWith("New adventure")!.click());
   await flush();
   await fillGenerateForm();
-  await act(() => buttonWith("Generate campaign", true)!.click());
+  await act(() => buttonWith("Generate adventure", true)!.click());
   await flush();
   expect(posts).toHaveLength(2);
   expect(generateRequestId(posts[1])).toMatch(/^[0-9a-f-]{36}$/);
