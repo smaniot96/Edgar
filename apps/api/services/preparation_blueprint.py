@@ -180,7 +180,7 @@ def blueprint_evidence(binding, design, spans):
         indexed.append(f"[{span.id}] {span.text}")
     return {
         "design": design.model_dump(mode="json"),
-        "actual_party": binding.hero_party_snapshot,
+        "protagonist_contract": "The hero chosen for each playthrough is always the protagonist. Prepare reusable story content without assuming their identity, class, race, level, statistics or inventory.",
         "source": "\n".join(indexed),
         "source_span_contract": "Each bracket names an exact physical source span. Cite integer IDs; never repeat source prose.",
     }
@@ -204,7 +204,7 @@ unselected text private. Source blocks can be shared, but cannot have conflictin
 gates. sources for a fact/action/consequence must actually support its meaning. Known-place
 effect sources must explicitly mention the destination. An observed item uses discover on a
 clue with object=the existing object key; acquisition is a separate deliberate consequence.
-Object location is a scene ID (or character for actual carried gear), never narrative ownership.
+Object location is a scene ID, never a preselected hero or assumed carried gear.
 Actor name is its exact short identity; title retains private motives/description. Actor creature
 is an exact MM template only when the source uses it unchanged. For a source-specific stat block,
 use stat_sources: the contiguous integer spans of ONE complete original block, on one physical
@@ -247,7 +247,10 @@ quantity=1, with its exact verified template or full module stat heading. Generi
 distinct. Keep separate rooms as separate encounters. Do not put rescued allies into enemy rosters
 to manufacture dispositions. Source statistics and combat outcomes remain engine-owned.
 Code compiles definitions, packets, evidence links, optional check tools and canonical IDs;
-do not repeat those records. Write the resource/progression plans once for the actual hero.
+do not repeat those records. Write reusable resource/progression guidance once, preserving the
+source intended level range and progression as source information. The hero chosen at play time
+is always the protagonist. Do not assume an existing hero, class, race, level, sheet or inventory.
+Keep original encounters and quantities; party fitting happens when an encounter is instantiated.
 Keep notes useful and concise. The DM may fill harmless gaps consistently with the theme,
 established facts and future acts. Never fabricate source quotes, numeric statistics or levels.
 Use supported engine checks only: """ + ", ".join(sorted(_POLICY_CHECKS)) + ".\n"
@@ -826,7 +829,8 @@ def compile_blueprint(binding, design, blueprint, *, books):
             "passage_ids": opening_evidence[:1]})
 
     compiled = []
-    level = binding.hero_party_snapshot["heroes"][0]["level"]
+    commission = binding.content_commission
+    level = (commission.get("starting_level") or commission.get("target_level")) if binding.source_mode == "ai" else None
     for act in design.acts:
         fragment = fragments[act.act_id]
         if not fragment["passages"]:

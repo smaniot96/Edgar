@@ -1,7 +1,7 @@
 """Runtime lifecycle glue for private, fully reviewed adventure preparation.
 
-The supervisor owns durable stage execution. This module freezes the source, commission,
-hero and profile identities, connects the supervisor to retained source/index publication,
+The supervisor owns durable stage execution. This module freezes source, commission
+and profile identities, connects the supervisor to retained source/index publication,
 and exposes only safe status and readiness projections to the rest of the API.
 """
 
@@ -130,7 +130,7 @@ def _preparation_failure_message(code: str | None) -> str:
     if isinstance(code, str):
         return _PREPARATION_FAILURE_MESSAGES.get(
             code,
-            "The preparation needs a new commission. Review the party, rules edition, sourcebooks, and assets before starting again."
+            "The preparation needs a new commission. Review the rules edition, sourcebooks, and assets before starting again."
             if _needs_new_commission(code)
             else "Preparation needs attention. Retry the saved work or start a new adventure.",
         )
@@ -183,41 +183,31 @@ def _profiles_snapshot(profiles: Any = None) -> tuple[Any, dict[str, Any]]:
         snapshot = ModelProfileSnapshot.from_dict(snapshot)
     if not isinstance(snapshot, ModelProfileSnapshot):
         raise ValueError("Preparation profile snapshot is invalid.")
-    # Resolve every role up front. This enforces Sol/high/Responses API without a provider call.
+    # Resolve every role up front. This validates the effective campaign profile without a provider call.
     for stage_name in PREPARATION_STAGES:
         effective_profile(stage_name, snapshot)
     return snapshot, snapshot.to_dict()
 
 
 def _setup_snapshot(meta: dict) -> dict | None:
-    """Return only a server-captured setup; user IDs are never treated as hero snapshots."""
-
+    """Validate module preferences, retaining exact legacy identity metadata."""
     from ..schemas.preparation_setup import PreparationSetup
 
     setup = meta.get("preparation_setup")
     if not isinstance(setup, dict) or not isinstance(setup.get("request"), dict):
         return None
     request = PreparationSetup.model_validate(setup["request"])
-    if len(set(request.character_ids)) != len(request.character_ids):
-        raise ValueError("Captured hero selection contains duplicates.")
-    heroes = setup.get("heroes")
-    if not isinstance(heroes, list) or not heroes:
-        return None
-    from edgar_core.grounding import HeroPartySnapshot
-
-    try:
-        party = HeroPartySnapshot.model_validate({"heroes": heroes})
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Captured hero snapshot is invalid.") from exc
-    canonical_party = party.model_dump(mode="json")
-    ids = [hero.character_id for hero in party.heroes]
-    if ids != request.character_ids:
-        raise ValueError("Captured hero selection does not match the setup request.")
     normalized_request = request.model_dump()
-    for name in ("max_image_calls", "max_image_cost_microusd"):
+    for name in ("character_ids", "max_image_calls", "max_image_cost_microusd"):
         if name not in setup["request"]:
             normalized_request.pop(name, None)
-    return {"request": normalized_request, "heroes": canonical_party}
+    heroes = setup.get("heroes", [])
+    # Original metadata stored a list; bindings stored its dictionary wrapper.
+    # Do not consult live sheets or require a populated roster even for old runs.
+    historical = copy.deepcopy(heroes if isinstance(heroes, dict) else {"heroes": heroes})
+    if not isinstance(historical.get("heroes"), list):
+        raise ValueError("Historical preparation metadata is invalid.")
+    return {"request": normalized_request, "heroes": historical}
 
 
 def _generation_commission(meta: dict, setup: dict) -> dict[str, Any]:
@@ -248,7 +238,7 @@ def _binding_for(
     from edgar_core.preparation import canonical_sha256 as digest
 
     request = setup["request"]
-    heroes = setup["heroes"]
+    heroes = {"heroes": []}
     edition = meta.get("rules_edition", "unspecified")
     if edition not in ("2014", "2024", "unspecified"):
         raise ValueError("Rules edition is unsupported for private preparation.")
@@ -416,7 +406,7 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
         if meta.get("rules_edition", "unspecified") != binding.rules_edition:
             return False
         setup = _setup_snapshot(meta)
-        if setup is None or canonical_sha256(setup["heroes"]) != binding.hero_party_sha256:
+        if setup is None:
             return False
         if binding.source_mode == "pdf":
             from edgar_core.artifacts import source_digest

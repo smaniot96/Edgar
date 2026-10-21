@@ -153,19 +153,31 @@ def _index(value, length, *, append):
 
 def _saved_corrections(binding, task, base_digest):
     """Recover already-paid edits even when older patch application code failed."""
+    from edgar_core.model_profiles import ModelProfileSnapshot
+
     from .preparation_provider import request_cost_ceiling
 
+    historical = ModelProfileSnapshot.from_dict(binding.profile_snapshot).profiles[
+        f"preparation.{task.stage.value.lower()}"]
     directory = proposal_directory(binding, task) / "responses"
     for path in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         record = json.loads(path.read_text())
         response = record.get("response", {})
         if (record.get("binding_sha256") != binding.binding_sha256
                 or f":edit:{base_digest}:" not in record.get("logical_call", "")
-                or response.get("status") != "completed" or response.get("model") != "gpt-6.1-sol"):
+                or response.get("status") != "completed"):
+            continue
+        requested_model = record.get("requested_model", historical.model)
+        effort = record.get("reasoning_effort", historical.reasoning_effort)
+        resolved_model = response.get("model")
+        if (not isinstance(resolved_model, str) or not isinstance(requested_model, str)
+                or not (resolved_model == requested_model
+                        or resolved_model.startswith(requested_model + "-"))):
             continue
         usage = response.get("usage") or {}
         tokens_in, tokens_out = usage.get("input_tokens"), usage.get("output_tokens")
-        if type(tokens_in) is not int or type(tokens_out) is not int:
+        if (type(tokens_in) is not int or type(tokens_out) is not int
+                or min(tokens_in, tokens_out) < 0 or not isinstance(response.get("id"), str)):
             continue
         try:
             output = "".join(c.get("text", "") for o in response.get("output", [])
@@ -173,10 +185,12 @@ def _saved_corrections(binding, task, base_digest):
             correction = ProposalCorrection.model_validate_json(output)
         except ValueError:
             continue
-        cost = request_cost_ceiling(tokens_in, tokens_out)
+        cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
+        cost = request_cost_ceiling(tokens_in, tokens_out, model=requested_model,
+                                   cached_input_tokens=cached if type(cached) is int else 0)
         recorded = ProviderUsage(provider_called=True, usage_known=True, call_count=1,
             input_tokens=tokens_in, output_tokens=tokens_out, cost_microusd=cost,
-            requested_model="gpt-6.1-sol", resolved_model=response["model"], reasoning_effort="high",
+            requested_model=requested_model, resolved_model=resolved_model, reasoning_effort=effort,
             task_version="retained-correction-recovery-v1",
             responses=(ResponseUsage(response_id=response["id"], input_tokens=tokens_in,
                                      output_tokens=tokens_out, cost_microusd=cost),))
@@ -196,10 +210,10 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
         assert_artifact_integrity(binding, artifact)
     diagnostics = feedback["diagnostics"]
     original_usage = ProviderUsage.model_validate_json(json.dumps(feedback["usage"]))
-    # Only exact, accounted provider receipts can satisfy a provider-backed task.
+    # Paid historical work stays usable after a policy change. Require accounted
+    # receipts; model selection constrains fresh dispatch, not retained evidence.
     if not (original_usage.provider_called and original_usage.usage_known
-            and original_usage.responses and original_usage.requested_model == "gpt-6.1-sol"
-            and original_usage.reasoning_effort == "high"):
+            and original_usage.responses):
         raise PreparationTaskFailure("retained_usage_invalid", usage=original_usage)
     if reuse_valid:
         try:
@@ -238,7 +252,7 @@ async def correct_retained(provider, binding, task, schema, feedback, *, instruc
     # Supply the saved proposal, schema and relevant task context once. Do not resend
     # the full rulebook dossier or require a second copy of the entire authored act.
     context = {name: evidence[name] for name in (
-        "design", "actual_party", "source", "source_span_contract", "creature_catalog", "local_source_review"
+        "design", "protagonist_contract", "source", "source_span_contract", "creature_catalog", "local_source_review"
     ) if name in evidence}
     if "source" in context:
         context["source"] = _blueprint_source_context(proposal, diagnostics, context["source"])

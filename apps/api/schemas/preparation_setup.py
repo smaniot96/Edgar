@@ -1,4 +1,4 @@
-"""Non-spoiler commissioning inputs. Hero statistics are always loaded by the server."""
+"""Non-spoiler module preferences; choose a hero separately for each playthrough."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class PreparationSetup(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    character_ids: list[Annotated[int, Field(gt=0)]] = Field(min_length=1, max_length=6)
+    # Accepted for older clients; preparation never loads or requires these characters.
+    character_ids: list[Annotated[int, Field(gt=0)]] = Field(default_factory=list, max_length=6)
     target_level: int | None = Field(default=None, ge=1, le=20)
     max_cost_microusd: int = Field(ge=1, le=1_000_000_000)
     max_image_calls: int = Field(default=0, ge=0, le=500)

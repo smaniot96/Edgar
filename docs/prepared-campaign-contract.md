@@ -12,8 +12,12 @@ private additive field on that manifest. Prepared records refer to canonical IDs
 of creating a second story ledger, and source passages continue to carry their original
 page and span. A candidate binds to `source_mode` (`pdf` or `ai`) and the enclosing
 manifest's retained source checksum, extraction checksum and rules edition. The producer
-must also bind its run, hero/profile and upstream artifacts to its own checkpoints; those
+must also bind its run, profile and upstream artifacts to its own checkpoints; those
 bindings are outside this serializer and are validated by their owning workflow.
+The adventure is independent of the protagonist's identity, class, race and sheet.
+Historical hero snapshots/digests remain readable for artifact integrity; they do not
+bind the published adventure to that character or require character selection during
+new preparation.
 
 The bundle contains ordered acts; quests attached one-to-one to reviewed objectives and
 milestones; one runnable scene packet per reviewed scene; route classifications for every
@@ -35,7 +39,8 @@ route-graph reachability, and provenance. It rejects cross-wired outcomes and mu
 contradictory quest, branch, outcome and selected-policy predicates. This is deterministic
 structural validation; it does not establish narrative quality, source truth, hero fit,
 encounter balance, or semantic consistency across prose. A separate whole-campaign critic
-and the source, hero, profile and artifact checks remain required.
+and the source, profile and artifact checks remain required. Party-specific encounter
+decisions belong to play, after a character has been selected.
 
 `require_published` applies this validation when a prepared bundle is present. The
 manifest digest includes the full prepared value, so a private edit invalidates its

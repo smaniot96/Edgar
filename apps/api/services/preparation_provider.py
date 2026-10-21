@@ -19,7 +19,13 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
 from agent.llm import make_chat_model
-from edgar_core.model_profiles import ModelProfileSnapshot, effective_profile
+from edgar_core.model_profiles import (
+    LOCKED_API,
+    LOCKED_EFFORT,
+    LOCKED_MODEL,
+    ModelProfileSnapshot,
+    effective_profile,
+)
 from edgar_core.preparation import (
     PreparationRunBinding,
     PreparationTask,
@@ -32,9 +38,10 @@ from edgar_core.safe_errors import provider_error_code, provider_response_error_
 
 log = structlog.get_logger(__name__)
 
-# Accounting estimates in USD micro-units per token; never spending limits.
-INPUT_MICROUSD_PER_TOKEN = 4
-OUTPUT_MICROUSD_PER_TOKEN = 20
+# Standard text estimates in USD micro-units per token. Luna's fractional rates
+# use integer hundredths below and round only after summing the entire request.
+INPUT_MICROUSD_PER_TOKEN = 0.1
+OUTPUT_MICROUSD_PER_TOKEN = 0.5
 TASK_VERSION = "preparation-responses-v1"
 
 
@@ -70,8 +77,18 @@ def _dynamic_objects(value):
     return isinstance(value, list) and any(_dynamic_objects(item) for item in value)
 
 
-def request_cost_ceiling(input_tokens: int, output_tokens: int) -> int:
-    return input_tokens * INPUT_MICROUSD_PER_TOKEN + output_tokens * OUTPUT_MICROUSD_PER_TOKEN
+def request_cost_ceiling(input_tokens: int, output_tokens: int, *,
+                         model: str = LOCKED_MODEL, cached_input_tokens: int = 0) -> int:
+    """Round standard text cost upwards; retain Sol rates for historical receipts."""
+    if model == "gpt-6-luna" or model.startswith("gpt-6-luna-"):
+        cached = min(max(cached_input_tokens, 0), input_tokens)
+        input_rate, cached_rate, output_rate = (20, 2, 75) if input_tokens > 272_000 else (10, 1, 50)
+        hundredths = ((input_tokens - cached) * input_rate
+                      + cached * cached_rate + output_tokens * output_rate)
+        return (hundredths + 99) // 100
+    # Original preparation receipts used these Sol rates. Never reinterpret paid
+    # historical work using today's cheaper model policy.
+    return input_tokens * 4 + output_tokens * 20
 
 
 async def invoke_preparation[T: BaseModel](
@@ -84,7 +101,7 @@ async def invoke_preparation[T: BaseModel](
     idempotency_key: str,
     images: tuple[tuple[bytes, str], ...] = (),
 ) -> tuple[T, ProviderUsage]:
-    """Enforce the frozen Sol/high policy at the actual provider boundary.
+    """Enforce Luna/medium for every fresh campaign semantic request.
 
     Token and cost estimates are advisory. The provider enforces its context window.
     """
@@ -95,9 +112,9 @@ async def invoke_preparation[T: BaseModel](
     snapshot = ModelProfileSnapshot.from_dict(binding.profile_snapshot)
     profile = effective_profile(f"preparation.{task.stage.value.lower()}", snapshot)
     if (profile.model, profile.reasoning_effort, profile.api) != (
-        "gpt-6.1-sol",
-        "high",
-        "responses",
+        LOCKED_MODEL,
+        LOCKED_EFFORT,
+        LOCKED_API,
     ):
         raise PreparationTaskFailure("model_policy", usage=predispatch)
     native_schema = schema.model_json_schema()
@@ -186,11 +203,12 @@ async def invoke_preparation[T: BaseModel](
             estimated_cost_microusd=request_cost_ceiling(estimated_input, task.max_output_tokens),
         ),),
     )
+    receipt = {}
     try:
         from .preparation_responses import await_response
 
         response = await await_response(llm.root_async_client, binding, task, request,
-                                        idempotency_key=idempotency_key)
+                                        idempotency_key=idempotency_key, receipt=receipt)
     except asyncio.CancelledError:
         raise  # Supervisor retains its unresolved estimate before propagating cancellation.
     except Exception as exc:
@@ -215,10 +233,20 @@ async def invoke_preparation[T: BaseModel](
             elapsed_ms=int((time.monotonic() - started) * 1000),
             timeout_seconds=profile.timeout_seconds,
         )
-        failed_usage = unknown.model_copy(update={"failure_code": code})
+        failed_usage = unknown.model_copy(update={
+            "failure_code": code,
+            "requested_model": receipt.get("requested_model", profile.model),
+            "reasoning_effort": receipt.get("reasoning_effort", profile.reasoning_effort),
+            "unresolved_calls": (unknown.unresolved_calls[0].model_copy(update={
+                "response_id": receipt.get("response_id"),
+                "estimated_cost_microusd": request_cost_ceiling(
+                    estimated_input, task.max_output_tokens,
+                    model=receipt.get("requested_model", profile.model)),
+            }),),
+        })
         if _explicit_preinference_rejection(getattr(exc, "body", None)):
             # HTTP status/class alone does not establish zero inference usage.
-            failed_usage = unknown.model_copy(update={"usage_known": True, "unresolved_calls": ()})
+            failed_usage = failed_usage.model_copy(update={"usage_known": True, "unresolved_calls": ()})
         raise PreparationTaskFailure(code, usage=failed_usage) from exc
     usage = response.usage.model_dump() if response.usage else {}
     metadata = response.model_dump()
@@ -230,21 +258,29 @@ async def invoke_preparation[T: BaseModel](
         tokens_in = tokens_out = 0
         known = True
     resolved = response.model
+    # A resumed old job may recover its already-paid exact background response.
+    # Its receipt remains attributed to the model and effort that actually ran.
+    requested_model = receipt.get("requested_model", profile.model)
+    requested_effort = receipt.get("reasoning_effort", profile.reasoning_effort)
+    token_details = usage.get("input_tokens_details") or {}
+    cached_tokens = token_details.get("cached_tokens", 0)
+    cost = request_cost_ceiling(tokens_in, tokens_out, model=requested_model,
+                               cached_input_tokens=cached_tokens if type(cached_tokens) is int else 0) if known else 0
     recorded = ProviderUsage(
         provider_called=True,
         usage_known=known,
         call_count=1,
         input_tokens=tokens_in if known else 0,
         output_tokens=tokens_out if known else 0,
-        cost_microusd=request_cost_ceiling(tokens_in, tokens_out) if known else 0,
-        requested_model=profile.model,
-        reasoning_effort=profile.reasoning_effort,
+        cost_microusd=cost,
+        requested_model=requested_model,
+        reasoning_effort=requested_effort,
         resolved_model=resolved if isinstance(resolved, str) else None,
         task_version=TASK_VERSION,
         latency_ms=int((time.monotonic() - started) * 1000),
         responses=(ResponseUsage(response_id=response.id, input_tokens=tokens_in,
                    output_tokens=tokens_out,
-                   cost_microusd=request_cost_ceiling(tokens_in, tokens_out),
+                   cost_microusd=cost,
                    dispatch_id=dispatch_id),) if known else (),
         unresolved_calls=() if known else (
             unknown.unresolved_calls[0].model_copy(update={"response_id": response.id}),),
@@ -257,7 +293,7 @@ async def invoke_preparation[T: BaseModel](
         raise PreparationTaskFailure(code, usage=recorded.model_copy(update={"failure_code": code}))
     if resolved is not None and (
         not isinstance(resolved, str)
-        or (resolved != profile.model and not resolved.startswith(profile.model + "-"))
+        or (resolved != requested_model and not resolved.startswith(requested_model + "-"))
     ):
         raise PreparationTaskFailure("resolved_model_mismatch", usage=recorded)
     if known and (tokens_in > task.max_input_tokens or tokens_out > task.max_output_tokens):

@@ -1,4 +1,4 @@
-"""Bind prepared play to the edition and actual character commissioned for its bundle."""
+"""Validate prepared source readiness and edition for any chosen playthrough hero."""
 
 from fastapi import HTTPException
 
@@ -14,8 +14,6 @@ class PreparedPlayError(HTTPException):
 
 
 def require_prepared_play(slugs, edition, *, character_id=None, character=None, require_hero=False):
-    from edgar_core.grounding import HeroPartySnapshot, HeroSnapshot
-
     from .preparation_runtime import private_preparation_ready
     from .preparation_store import PreparationStore
 
@@ -29,7 +27,6 @@ def require_prepared_play(slugs, edition, *, character_id=None, character=None, 
             )
         try:
             binding = PreparationStore().load_run(slug, meta["preparation_run_id"]).binding
-            party = HeroPartySnapshot.model_validate(binding.hero_party_snapshot)
         except (ValueError, KeyError) as exc:
             raise PreparedPlayError(
                 409,
@@ -45,29 +42,12 @@ def require_prepared_play(slugs, edition, *, character_id=None, character=None, 
         identifier = character.id if character is not None else character_id
         if identifier is None and not require_hero:
             continue
-        hero = next((h for h in party.heroes if h.character_id == identifier), None)
-        if hero is None:
+        if identifier is None:
             raise PreparedPlayError(
                 422,
                 "choose_character",
-                "Choose the hero selected for this prepared adventure.",
+                "Choose or create a hero for this playthrough.",
             )
-        if character is not None:
-            actual = HeroSnapshot(
-                character_id=character.id,
-                name=character.name,
-                character_class=character.character_class,
-                level=character.level,
-                hp_max=character.hp_max,
-                stats=character.base_stats or {},
-                inventory=character.base_inventory or {},
-            )
-            if actual != hero:
-                raise PreparedPlayError(
-                    409,
-                    "preparation_failed",
-                    "The hero changed after preparation. Prepare a new adventure for the updated sheet.",
-                )
 
 
 def protect_prepared_campaign_binding(campaign, changes):

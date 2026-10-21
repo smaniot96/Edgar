@@ -201,7 +201,7 @@ class EncounterPlan(GroundingRecord):
 
     encounter_id: Identifier
     scene_id: Identifier
-    target_level: int = Field(ge=1, le=20)
+    target_level: int | None = Field(default=None, ge=1, le=20)
     creatures: list[EncounterCreatureRequest] = Field(min_length=1, max_length=100)
     maximum_difficulty: Difficulty
     mechanics: list[MechanicRequirement] = Field(default_factory=list, max_length=200)
@@ -394,6 +394,41 @@ class EncounterThresholds(GroundingRecord):
     medium: int = Field(ge=0)
     hard: int = Field(ge=0)
     deadly: int = Field(ge=0)
+
+
+class SourceEncounterGroundingReceipt(GroundingRecord):
+    """Exact source roster and supported mechanics, before playthrough adaptation."""
+
+    grounding_scope: Literal["source"] = "source"
+    encounter_id: Identifier
+    scene_id: Identifier
+    plan_sha256: Digest
+    book_snapshot_sha256: Digest
+    rules_edition: RulesEdition
+    engine_edition_basis: Literal["2014"] = "2014"
+    creatures: list[GroundedEncounterMember] = Field(min_length=1, max_length=100)
+    raw_xp: int = Field(ge=0)
+    adaptation_notes: list[str] = Field(default_factory=list, max_length=100)
+    supported_mechanics: list[MechanicRequirement] = Field(default_factory=list, max_length=200)
+    unsupported_mechanics: list[MechanicRequirement] = Field(default_factory=list, max_length=200)
+    findings: list[str] = Field(default_factory=list, max_length=500)
+    actor_ids: list[Identifier] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def preserve_source_roster(self) -> SourceEncounterGroundingReceipt:
+        if any(row.effective_quantity != row.requested_quantity for row in self.creatures):
+            raise ValueError("Source preparation must preserve every requested creature.")
+        if self.raw_xp != sum(row.creature.xp * row.requested_quantity for row in self.creatures):
+            raise ValueError("Source encounter XP must match its exact original roster.")
+        return self
+
+    @property
+    def valid(self) -> bool:
+        return not self.findings and not self.unsupported_mechanics
+
+    @property
+    def receipt_sha256(self) -> str:
+        return _canonical_digest(self.model_dump(mode="json"))
 
 
 class EncounterGroundingReceipt(GroundingRecord):
@@ -601,7 +636,7 @@ def validate_mechanic_requirements(
 
 __all__ = [
     "BookBinding", "BookReferenceRequest", "BookRole", "BookStudyReceipt", "BookTextEvidence",
-    "Difficulty", "EncounterCreatureRequest", "EncounterGroundingReceipt", "EncounterPlan",
+    "Difficulty", "EncounterCreatureRequest", "EncounterGroundingReceipt", "SourceEncounterGroundingReceipt", "EncounterPlan",
     "EncounterThresholds", "CreatureSourceRegion", "CreatureSourceEvidence", "CreatureTextCorrection", "ModuleCreatureEvidence",
     "GroundedCreature", "GroundedEncounterMember", "HeroPartySnapshot",
     "HeroSnapshot", "MechanicCategory", "MechanicRequirement", "RulesEdition", "VerifiedBookEvidence",

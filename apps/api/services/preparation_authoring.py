@@ -160,7 +160,7 @@ def source_inventory(binding):
                        "characters": len(p.text)} for p in source.pages if p.text.strip()]}
 
 
-def grounding_payload(binding, act, support, books, party, *, client=None, actor_manifest=None):
+def grounding_payload(binding, act, support, books, *, client=None, actor_manifest=None):
     """Check mechanics while the authoring proposal can still be corrected."""
     from agent.supported_rules import SUPPORTED_MECHANICS
     from edgar_core.grounding import validate_mechanic_requirements
@@ -177,7 +177,7 @@ def grounding_payload(binding, act, support, books, party, *, client=None, actor
 
     pages = (dict(load_source(binding).text_pages())
              if actor_manifest is not None and binding.source_mode == "pdf" else None)
-    receipts = ground_prepared_encounters(plan.encounters, party, books, client=client,
+    receipts = ground_prepared_encounters(plan.encounters, None, books, client=client,
         actor_manifest=actor_manifest, source_pages=pages) if plan.encounters else []
     # A named actor is an explicit participant, never inferred from a nearby scene
     # or a generic template name. Adaptation must retain every claimed participant.
@@ -215,7 +215,7 @@ def grounding_payload(binding, act, support, books, party, *, client=None, actor
             member_key = (member.creature.creature_id, member.actor_id)
             allocated[member_key] += 1
             if allocated[member_key] > member.effective_quantity:
-                raise ValueError(f"Encounter {encounter.encounter_id}: solo adaptation removed a declared actor; preserve named participants and source encounter groups.")
+                raise ValueError(f"Encounter {encounter.encounter_id}: adaptation removed a declared actor; preserve named participants and source encounter groups.")
         stamped.append(receipt.model_copy(update={"actor_ids": list(encounter.actor_ids)}))
     receipts = stamped
     problems = [{"encounter_id": r.encounter_id, "findings": r.findings,
@@ -227,7 +227,7 @@ def grounding_payload(binding, act, support, books, party, *, client=None, actor
             "encounters": [r.model_dump(mode="json") for r in receipts],
             "supported_mechanics": [m.model_dump(mode="json") for m in supported],
             "book_snapshot_sha256": books.snapshot_sha256,
-            "hero_party_sha256": party.party_sha256}
+            "grounding_scope": "source"}
 
 
 def fragment_for(artifacts, act_id):

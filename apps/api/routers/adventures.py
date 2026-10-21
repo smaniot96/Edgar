@@ -597,7 +597,7 @@ async def _accept_upload(
         setup = PreparationSetup.model_validate_json(preparation) if preparation else None
     except ValueError as exc:
         raise HTTPException(
-            status_code=422, detail="Choose a hero and a valid preparation budget."
+            status_code=422, detail="Provide a valid preparation budget."
         ) from exc
     captured = await capture_setup(setup)
     filename = file.filename or "adventure.pdf"
@@ -666,7 +666,7 @@ async def generate_adventure(
     background: BackgroundTasks,
     redis: Redis = Depends(get_redis),
 ):
-    """Prepare an AI-authored campaign in the background for the selected hero party.
+    """Prepare a reusable AI-authored campaign in the background.
 
     `size` (small | medium | large | gigantic) scales the requested adventure scope.
     A shared blueprint is assembled locally into the prepared campaign. Returns 202 with
@@ -689,7 +689,7 @@ async def _accept_generation(
 
     identity = generation_requests.identity_for(body)
     if identity is not None:
-        # Replay before capturing setup, so a retry never depends on current hero state.
+        # Replay before capturing setup, so a retry retains the original module request.
         replay = await run_in_threadpool(generation_requests.find_existing, identity)
         if replay is not None:
             return _generate_response(*replay)

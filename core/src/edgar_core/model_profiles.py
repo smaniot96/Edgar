@@ -14,7 +14,7 @@ import tomllib
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -23,8 +23,8 @@ from edgar_core.artifacts import text_digest
 from edgar_core.config import EDGAR_ROOT
 
 SCHEMA_VERSION = 1
-LOCKED_MODEL = "gpt-6.1-sol"
-LOCKED_EFFORT = "high"
+LOCKED_MODEL = "gpt-6-luna"
+LOCKED_EFFORT = "medium"
 LOCKED_API: Literal["responses"] = "responses"
 DEFAULT_PROFILE_PATH = EDGAR_ROOT / "config" / "model-profiles.toml"
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -157,7 +157,11 @@ class ModelProfileSnapshot:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ModelProfileSnapshot:
-        """Restore a frozen snapshot without reading config files or the environment."""
+        """Restore historical settings exactly, without changing their stored digest.
+
+        Campaign dispatch uses the current code-owned policy through ``effective_profile``;
+        saved settings remain evidence of the original commission and paid work.
+        """
         if not isinstance(value, Mapping) or set(value) != {
             "schema_version",
             "profile_version",
@@ -174,7 +178,7 @@ class ModelProfileSnapshot:
         if not isinstance(profiles_raw, Mapping) or not isinstance(images_raw, Mapping):
             raise ModelProfileError("Model profile snapshot profiles must be objects.")
         profiles = {
-            name: _profile_from_mapping(name, settings, locked=name in AUTHORING_STAGES + PREPARATION_STAGES)
+            name: _profile_from_mapping(name, settings)
             for name, settings in profiles_raw.items()
         }
         image_profiles = {
@@ -275,7 +279,8 @@ def _profile_from_mapping(name: Any, settings: Any, *, locked: bool = False) -> 
         or temperature is not None
     ):
         raise ModelProfileError(
-            f"Profile '{known_name}' is policy-bound to gpt-6.1-sol/high on the Responses API."
+            f"Profile '{known_name}' is policy-bound to {LOCKED_MODEL}/{LOCKED_EFFORT} "
+            "on the Responses API."
         )
     if effort is not None and not is_reasoning_model(model):
         raise ModelProfileError(
@@ -357,9 +362,9 @@ def _validate_snapshot_profiles(
             raise ModelProfileError("Model profile snapshot contains an invalid text profile.")
         if text_profile.name != name:
             raise ModelProfileError("Model profile snapshot stage names do not match their records.")
-        validated = _profile_from_mapping(
-            name, text_profile.to_dict(), locked=name in AUTHORING_STAGES + PREPARATION_STAGES
-        )
+        # A snapshot is an immutable historical record. Only loading a live profile
+        # file enforces its current policy values; effective_profile governs dispatch.
+        validated = _profile_from_mapping(name, text_profile.to_dict())
         if validated != text_profile:
             raise ModelProfileError("Model profile snapshot contains invalid effective settings.")
     for name, image_profile in image_profiles.items():
@@ -499,7 +504,11 @@ def current_model_profiles() -> ModelProfileSnapshot:
 def effective_profile(
     stage: str, profiles: ModelProfileSnapshot | None = None
 ) -> ModelProfile:
-    """Resolve one validated stage from a frozen snapshot."""
+    """Resolve settings, applying current campaign policy over historical snapshots.
+
+    Preserve the original snapshot, budgets, timeout, retries and play/image models.
+    A resumed campaign's new semantic calls always use the current required model.
+    """
     name = _validated_name(stage, TEXT_STAGES, "text")
     snapshot = profiles or current_model_profiles()
     profile = snapshot.profiles[name]
@@ -507,8 +516,10 @@ def effective_profile(
         profile.model != LOCKED_MODEL
         or profile.reasoning_effort != LOCKED_EFFORT
         or profile.api != LOCKED_API
+        or profile.temperature is not None
     ):
-        raise ModelProfileError(f"Profile '{name}' violates the campaign preparation model policy.")
+        return replace(profile, model=LOCKED_MODEL, reasoning_effort=LOCKED_EFFORT,
+                       api=LOCKED_API, temperature=None)
     return profile
 
 
@@ -528,7 +539,8 @@ def profile_diagnostics(snapshot: ModelProfileSnapshot | None = None) -> dict[st
         "profile_digest": frozen.digest,
         "source": frozen.source,
         "availability_checked": False,
-        "profiles": {name: item.to_dict() for name, item in sorted(frozen.profiles.items())},
+        "profiles": {name: effective_profile(name, frozen).to_dict()
+                     for name in sorted(frozen.profiles)},
         "image_profiles": {
             name: item.to_dict() for name, item in sorted(frozen.image_profiles.items())
         },

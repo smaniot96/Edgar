@@ -4,6 +4,14 @@ Edgar has one preparation pipeline for both PDF and generated campaigns. Source 
 changes the input retention, not the authoring workflow. `preparation_runtime.py` owns
 the lifecycle; `preparation_stages.py` owns the shared stage adapters.
 
+The prepared adventure is character independent. A player may create or choose the
+protagonist after preparation, and reuse the adventure in another playthrough. A
+specific character ID, class, race, sheet, inventory or current assignment is not a
+preparation prerequisite. Prompts describe the player character as the protagonist
+without presupposing those traits. Source level recommendations and original
+encounter statistics remain campaign information. Character-specific decisions
+belong to the playthrough and live rules engine.
+
 Preparation retains the source and studies, accepts a whole-campaign design, then asks
 for one compact blueprint. The blueprint contains useful scene notes, source-backed
 goals, important identities, geography, encounter requests and optional exact engine
@@ -11,7 +19,7 @@ checks. Ordinary conversations, rescues, reactions and creative player solutions
 resolved by the live DM. A goal describes the outcome to earn, rather than prescribing
 an exhaustive sequence of actions.
 
-Code compiles canonical records, grounds encounters against the frozen hero and books,
+Code compiles canonical records and grounds encounters against their source and books,
 assembles scene packets and the private guide, prepares relevant assets, and validates
 source/structure. PDF guides retain every original physical source page. Generated
 guides use accepted design seeds and compact scene notes. There is no separate per-act
@@ -37,6 +45,20 @@ compiler/source failures preserve the latest proposal. Review repairs retain the
 accepted source studies, design and blueprint, then rebuild dependent records from
 P04. Archived old checkpoints remain readable; old per-act authoring tasks require a
 one-time conversion rather than silently dispatching the removed workflow.
+
+New commissions have no selected heroes. Historical hero fields and digests remain
+readable to preserve the identity of paid work, but do not restrict character choice
+at play. Existing hero-specific authored notes or encounter adjustments are retained
+historical content; removing the character gate does not silently rewrite them.
+
+Every new semantic campaign request uses `gpt-6-luna` with `medium` reasoning on the
+Responses API, for both PDF and AI campaigns at every complexity. This includes
+studies, design, blueprint corrections, and independent text/visual review. Current
+model policy also applies when resuming a saved run; its historical profile snapshot
+and paid response receipts keep their original identities. Image generation and
+embeddings retain their separate model configuration. The OCR/LangGraph alternative
+is assessed in `campaign-creation-ocr-langgraph-assessment-2026-10-21.md`; it is not
+an additional implemented pipeline.
 
 The earlier AI outline/chapter generator is also removed. Fresh AI requests schedule
 this runtime directly; its old module retains archive schemas and a guarded delegate

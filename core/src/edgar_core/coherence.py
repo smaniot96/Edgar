@@ -671,11 +671,12 @@ def _grounded_actor_events(
     manifest: AdventureManifest,
     artifacts: tuple[PreparationArtifact, ...],
 ) -> dict[str, list[tuple[str, str]]]:
-    """Validate exact grounded source, hero and stat bindings for authored encounter actors."""
+    """Validate source/stat bindings, including untouched historical party receipts."""
     from edgar_core.grounding import (
         EncounterGroundingReceipt,
         EncounterPlan,
         HeroPartySnapshot,
+        SourceEncounterGroundingReceipt,
         VerifiedBookSnapshot,
     )
 
@@ -687,11 +688,13 @@ def _grounded_actor_events(
         payloads = ([artifact.payload] if artifact.artifact_kind == "act_grounding"
                     else artifact.payload.get("acts", ()))
         for payload in payloads:
-            if artifact.artifact_kind == "grounding_report" and any(
-                payload.get(key) != artifact.payload.get(key)
-                for key in ("book_snapshot_sha256", "hero_party_sha256")
+            if artifact.artifact_kind == "grounding_report" and (
+                payload.get("book_snapshot_sha256") != artifact.payload.get("book_snapshot_sha256")
+                or ("hero_party_sha256" in artifact.payload
+                    and payload.get("grounding_scope") != "source"
+                    and payload.get("hero_party_sha256") != artifact.payload["hero_party_sha256"])
             ):
-                raise ValueError("Aggregated encounter evidence changed its exact hero/book binding.")
+                raise ValueError("Aggregated encounter evidence changed its exact input binding.")
             grounded.append((artifact, payload))
     if not grounded:
         return {}
@@ -704,7 +707,11 @@ def _grounded_actor_events(
             latest[act_id] = (revision, payload)
         elif revision == previous[0] and payload != previous[1]:
             raise ValueError("Accepted encounter evidence repeats one act with conflicting plans.")
-    party = HeroPartySnapshot.model_validate(binding.hero_party_snapshot)
+    # Historical party data remains an integrity anchor only for old receipts.
+    # New source receipts never need a character snapshot to be sealed or reused.
+    legacy_party_sha = None
+    if any(payload.get("grounding_scope") != "source" for _, payload in latest.values()):
+        legacy_party_sha = HeroPartySnapshot.model_validate(binding.hero_party_snapshot).party_sha256
     book_digests = {
         VerifiedBookSnapshot.model_validate(row.payload["snapshot"]).snapshot_sha256
         for row in artifacts if row.artifact_kind == "book_dossier"
@@ -712,23 +719,25 @@ def _grounded_actor_events(
     actors = {row.entity_id: row for row in manifest.entities if row.kind == "actor"}
     events: dict[str, list[tuple[str, str]]] = {}
     for _, payload in latest.values():
+        source_only = payload.get("grounding_scope") == "source"
         if (
-            payload.get("hero_party_sha256") != party.party_sha256
+            (not source_only and payload.get("hero_party_sha256") != legacy_party_sha)
             or (book_digests and payload.get("book_snapshot_sha256") not in book_digests)
         ):
-            raise ValueError("Encounter evidence does not match the frozen hero and book inputs.")
+            raise ValueError("Encounter evidence does not match its exact accepted inputs.")
         plans = {
             row["encounter_id"]: EncounterPlan.model_validate(row)
             for row in payload["plan"]["encounters"]
         }
         for raw in payload.get("encounters", ()):
-            receipt = EncounterGroundingReceipt.model_validate(raw)
+            receipt = (SourceEncounterGroundingReceipt.model_validate(raw) if source_only
+                       else EncounterGroundingReceipt.model_validate(raw))
             plan = plans.get(receipt.encounter_id)
             if (
                 plan is None or not receipt.valid
                 or receipt.plan_sha256 != plan.plan_sha256
                 or receipt.scene_id != plan.scene_id
-                or receipt.hero_party_sha256 != party.party_sha256
+                or (not source_only and receipt.hero_party_sha256 != legacy_party_sha)
                 or receipt.book_snapshot_sha256 != payload.get("book_snapshot_sha256")
                 or receipt.rules_edition != manifest.rules_edition
                 or set(receipt.actor_ids) != set(plan.actor_ids)
@@ -736,6 +745,14 @@ def _grounded_actor_events(
                 or len(plan.actor_ids) != len(set(plan.actor_ids))
             ):
                 raise ValueError("Actor event needs a valid exact accepted encounter receipt.")
+            if source_only:
+                requested = sorted((" ".join(row.creature_name.casefold().split()), row.actor_id or "", row.quantity, row.role)
+                                   for row in plan.creatures)
+                grounded_roster = sorted((" ".join(row.creature.creature_name.casefold().split()), row.actor_id or "",
+                                         row.requested_quantity, row.role)
+                                        for row in receipt.creatures)
+                if requested != grounded_roster:
+                    raise ValueError("Source encounter receipt changed its exact requested roster.")
             allocated: dict[tuple[str, str | None], int] = {}
             for actor_id in receipt.actor_ids:
                 actor = actors.get(actor_id)
@@ -940,7 +957,7 @@ def build_source_scaffold_report(
         grounded_events = {}
         findings.append(_coherence_finding(
             "source_scaffold_grounding_invalid",
-            "Authored encounter actors must retain exact accepted source, scene, stat, hero and book bindings.",
+            "Authored encounter actors must retain exact accepted source, scene, stat and book bindings.",
             bindings.grounding_artifact_ids,
             severity="critical",
         ))
@@ -1308,7 +1325,7 @@ def resolve_json_pointer(value: Any, pointer: str) -> Any:
 def make_independent_critic_validator() -> Callable[..., ValidationResult]:
     """Create the required validator for root-owned semantic critic output.
 
-    The executor must pass the entire retained-manuscript artifact to the frozen Sol/high
+    The executor must pass the entire retained-manuscript artifact to the effective campaign
     provider seam. The validator checks full chapter coverage and exact evidence; it does
     not set report findings to resolved or approve publication.
     """

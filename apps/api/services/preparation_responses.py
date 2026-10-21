@@ -10,6 +10,7 @@ import structlog
 from openai import APIConnectionError, BadRequestError, InternalServerError, RateLimitError
 from openai.types.responses import Response
 
+from edgar_core.model_profiles import LOCKED_EFFORT, LOCKED_MODEL, ModelProfileSnapshot
 from edgar_core.preparation import canonical_sha256
 
 from .preparation_proposals import proposal_directory
@@ -19,10 +20,10 @@ log = structlog.get_logger(__name__)
 POLL_SECONDS = 3
 
 
-async def await_response(client, binding, task, request, *, idempotency_key):
+async def await_response(client, binding, task, request, *, idempotency_key, receipt=None):
     try:
         return await _await_response(client, binding, task, request,
-                                     idempotency_key=idempotency_key)
+                                     idempotency_key=idempotency_key, receipt=receipt)
     finally:
         # Fencing the local worker does not stop an OpenAI background response.
         # Cancel only on the user's durable cancellation, never on a restart,
@@ -60,7 +61,27 @@ async def cancel_background_responses(client, binding, task):
                  status=cancelled.status)
 
 
-async def _await_response(client, binding, task, request, *, idempotency_key):
+def _retained_request_variants(binding, task, request):
+    """Reconstruct old request hashes without relaxing source/schema identity.
+
+    The historical model/effort are the only differences allowed; every instruction,
+    source character, image and schema remains exact.
+    """
+    original = ModelProfileSnapshot.from_dict(binding.profile_snapshot).profiles[
+        f"preparation.{task.stage.value.lower()}"
+    ]
+    policies = ((request["model"], request["reasoning"]),
+                (original.model, {"effort": original.reasoning_effort}))
+    seen = {canonical_sha256(request)}
+    for model, reasoning in policies:
+        variant = {**request, "model": model, "reasoning": reasoning}
+        digest = canonical_sha256(variant)
+        if digest not in seen:
+            seen.add(digest)
+            yield variant, digest
+
+
+async def _await_response(client, binding, task, request, *, idempotency_key, receipt=None):
     """Resume the exact stored job after a worker restart, without another generation.
 
     Individual HTTP requests still detect broken connections. A temporary polling
@@ -68,6 +89,10 @@ async def _await_response(client, binding, task, request, *, idempotency_key):
     """
     from .preparation import assert_current_preparation_worker
 
+    if (request.get("model"), request.get("reasoning", {}).get("effort")) != (
+        LOCKED_MODEL, LOCKED_EFFORT
+    ):
+        raise ValueError("Fresh preparation requests must use the current campaign model policy.")
     request_digest = canonical_sha256(request)
     logical_call = idempotency_key.split(":attempt:", 1)[0]
     fingerprint = canonical_sha256({"request": request_digest, "logical_call": logical_call})
@@ -76,6 +101,35 @@ async def _await_response(client, binding, task, request, *, idempotency_key):
     if not path.exists() and legacy.exists():
         # Older checkpoints used request content alone. Preserve their exact job.
         path = legacy
+    current_path = path
+    current_digest = request_digest
+    actual_request = request
+    if not path.exists():
+        # Recover paid background work from an older policy. Matching hashes are
+        # reconstructed from the exact current semantic request, never model name alone.
+        for historical, historical_digest in _retained_request_variants(binding, task, request):
+            historical_fingerprint = canonical_sha256(
+                {"request": historical_digest, "logical_call": logical_call})
+            for candidate in (path.with_name(historical_fingerprint + ".json"),
+                              path.with_name(historical_digest + ".json")):
+                if not candidate.exists():
+                    historical_dispatch = candidate.with_suffix(".dispatch.json")
+                    if (historical_dispatch.exists()
+                            and not json.loads(historical_dispatch.read_text()).get("finished")):
+                        raise ValueError("Historical provider dispatch needs its missing receipt reconciled.")
+                    continue
+                saved = json.loads(candidate.read_text())
+                if (saved.get("request_sha256") != historical_digest
+                        or saved.get("binding_sha256") != binding.binding_sha256
+                        or saved.get("logical_call", "").split(":attempt:", 1)[0] != logical_call
+                        or saved.get("rejected")
+                        or saved.get("response", {}).get("status") not in {
+                            "queued", "in_progress", "completed"}):
+                    continue
+                path, request_digest, actual_request = candidate, historical_digest, historical
+                break
+            if path != current_path:
+                break
     dispatch_path = path.with_suffix(".dispatch.json")
     assert_current_preparation_worker()
     record = None
@@ -113,6 +167,12 @@ async def _await_response(client, binding, task, request, *, idempotency_key):
             _atomic_write(archived, record)
             record = None
     if record is None:
+        # Historical dispatch receipts are immutable. In particular, never resend
+        # an old model's unfinished HTTP submission when there is no response ID.
+        if path != current_path:
+            raise ValueError("Historical provider dispatch needs its missing receipt reconciled.")
+        path, request_digest, actual_request = current_path, current_digest, request
+        dispatch_path = path.with_suffix(".dispatch.json")
         # Save dispatch identity before HTTP submission. Restarting between create
         # and receipt persistence must resend the same idempotency key.
         dispatch = json.loads(dispatch_path.read_text()) if dispatch_path.exists() else None
@@ -130,11 +190,17 @@ async def _await_response(client, binding, task, request, *, idempotency_key):
         # must leave enough information to recover work already submitted.
         record = {"request_sha256": request_digest, "binding_sha256": binding.binding_sha256,
                   "logical_call": idempotency_key,
+                  "requested_model": request["model"],
+                  "reasoning_effort": request["reasoning"]["effort"],
                   "dispatch_key": dispatch["key"],
                   "response": response.model_dump(mode="json", by_alias=True)}
         _atomic_write(path, record)
         dispatch["finished"] = True
         _atomic_write(dispatch_path, dispatch)
+    if receipt is not None:
+        receipt.update(requested_model=actual_request["model"],
+                       reasoning_effort=actual_request["reasoning"]["effort"],
+                       response_id=response.id)
     assert_current_preparation_worker()
     while response.status in {"queued", "in_progress"}:
         await asyncio.sleep(POLL_SECONDS)

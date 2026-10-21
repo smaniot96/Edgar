@@ -1,4 +1,4 @@
-"""Read-only verified book and hero grounding adapters for private preparation (EDG-019).
+"""Read-only verified book and source grounding adapters for private preparation (EDG-019).
 
 Opening and reading a book is a payload-only Qdrant scroll under the active-index snapshot
 lock. It never embeds, searches by vector, invokes a provider, or writes the source index.
@@ -37,6 +37,7 @@ from edgar_core.grounding import (
     HeroPartySnapshot,
     HeroSnapshot,
     RulesEdition,
+    SourceEncounterGroundingReceipt,
     VerifiedBookEvidence,
     VerifiedBookSnapshot,
     challenge_xp_from_stat_block,
@@ -478,14 +479,14 @@ def _difficulty_limit(difficulty: str) -> int:
 
 def ground_encounter_plan(
     plan: EncounterPlan,
-    party: HeroPartySnapshot,
+    party: HeroPartySnapshot | None,
     books: VerifiedBookSnapshot,
     *,
     client: Any = None,
     actor_manifest: AdventureManifest | None = None,
     source_pages: Mapping[int, str] | None = None,
-) -> EncounterGroundingReceipt:
-    """P05 helper: resolve exact source records, adapt solo roster, and calculate XP challenge.
+) -> EncounterGroundingReceipt | SourceEncounterGroundingReceipt:
+    """Resolve exact source records; optionally fit a roster for explicit playthrough tools.
 
     Every record, edition, hero, statistic, and XP number is re-read or computed by code. A
     missing required creature or unsupported claimed mechanic raises a safe error; it never
@@ -509,7 +510,7 @@ def ground_encounter_plan(
     party_unsupported = [
         mechanic
         for mechanic in requirements_supported
-        if not _mechanic_matches_party(mechanic.mechanic_id, party)
+        if party is not None and not _mechanic_matches_party(mechanic.mechanic_id, party)
     ]
     if party_unsupported:
         requirements_supported = [
@@ -531,7 +532,7 @@ def ground_encounter_plan(
     ]
     adaptation_notes: list[str] = []
     solo_summary = None
-    if len(party.heroes) == 1:
+    if party is not None and len(party.heroes) == 1:
         roster: list[dict[str, Any]] = []
         for request, creature in grouped:
             stats = creature.monster_stats
@@ -583,6 +584,20 @@ def ground_encounter_plan(
                                 for note in stats.get("declared", []))
     monster_count = sum(member.effective_quantity for member in active_members)
     raw_xp = sum(member.creature.xp * member.effective_quantity for member in active_members)
+    if party is None:
+        return SourceEncounterGroundingReceipt(
+            encounter_id=plan.encounter_id,
+            scene_id=plan.scene_id,
+            plan_sha256=plan.plan_sha256,
+            book_snapshot_sha256=books.snapshot_sha256,
+            rules_edition=books.rules_edition,
+            creatures=members,
+            raw_xp=raw_xp,
+            adaptation_notes=adaptation_notes,
+            supported_mechanics=requirements_supported,
+            unsupported_mechanics=requirements_unsupported,
+            findings=["unsupported_required_mechanics"] if requirements_unsupported else [],
+        )
     multiplier = encounter_multiplier(monster_count, len(party.heroes))
     adjusted_xp = int(raw_xp * multiplier)
     thresholds = encounter_thresholds(party)
@@ -590,7 +605,7 @@ def ground_encounter_plan(
     findings = []
     if difficulty_exceeds(difficulty, plan.maximum_difficulty):
         findings.append("encounter_exceeds_authored_maximum_difficulty")
-    if any(hero.level != plan.target_level for hero in party.heroes):
+    if plan.target_level is not None and any(hero.level != plan.target_level for hero in party.heroes):
         findings.append("encounter_target_level_mismatch")
     if any(hero.level > 20 or hero.level < 1 for hero in party.heroes):
         findings.append("hero_level_outside_engine_progression")
@@ -619,13 +634,13 @@ def ground_encounter_plan(
 
 def ground_prepared_encounters(
     plans: Sequence[EncounterPlan],
-    party: HeroPartySnapshot,
+    party: HeroPartySnapshot | None,
     books: VerifiedBookSnapshot,
     *,
     client: Any = None,
     actor_manifest: AdventureManifest | None = None,
     source_pages: Mapping[int, str] | None = None,
-) -> list[EncounterGroundingReceipt]:
+) -> list[EncounterGroundingReceipt | SourceEncounterGroundingReceipt]:
     """Ground all encounters for an act; any required failure prevents a complete result."""
     if not plans:
         raise GroundingUnavailable("encounters_missing", "A grounded act must declare its required encounters.")

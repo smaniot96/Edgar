@@ -64,7 +64,7 @@ class PreparationBudget(PreparationRecord):
 
 
 class PreparationRunBinding(PreparationRecord):
-    """Immutable source, hero, commission and runtime-profile snapshot for one run.
+    """Immutable source, commission and runtime-profile snapshot for one run.
 
     For AI requests manuscript_sha256 is absent at commissioning and is filled by a P08
     artifact. A PDF keeps the exact original source/extraction identity throughout.
@@ -80,6 +80,8 @@ class PreparationRunBinding(PreparationRecord):
     rules_edition: Literal["2014", "2024", "unspecified"]
     commission: dict[str, Any]
     commission_sha256: Digest
+    # Historical integrity metadata. New modules use an empty snapshot and never
+    # bind content or playthrough eligibility to a specific character.
     hero_party_snapshot: dict[str, Any]
     hero_party_sha256: Digest
     profile_snapshot: dict[str, Any]
@@ -100,6 +102,23 @@ class PreparationRunBinding(PreparationRecord):
         if canonical_sha256(self.profile_snapshot) != self.profile_snapshot_sha256:
             raise ValueError("Profile digest does not match its frozen snapshot.")
         return self
+
+    @property
+    def content_commission(self) -> dict[str, Any]:
+        """Preferences safe to author from, excluding historical hero selection."""
+        import copy
+
+        commission = copy.deepcopy(self.commission)
+        legacy_hero_setup = bool(self.hero_party_snapshot.get("heroes"))
+        for payload in (commission, commission.get("setup", {})):
+            if isinstance(payload, dict):
+                for key in ("character_ids", "heroes", "party", "actual_party", "hero_party_snapshot"):
+                    payload.pop(key, None)
+                # The old form defaulted this value from the selected hero sheet.
+                # Keep its frozen identity, but never use it as new authoring input.
+                if legacy_hero_setup:
+                    payload.pop("target_level", None)
+        return commission
 
     @property
     def binding_sha256(self) -> str:

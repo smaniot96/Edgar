@@ -161,7 +161,7 @@ async def evaluate_play_readiness(
                 blockers.append(_blocker(code))
 
         # This is the existing prepared-play predicate used by create/session/turn paths.
-        # It validates a private run's immutable edition and selected hero binding.
+        # It validates a private run's immutable edition and the current playthrough's hero selection.
         sources_ready = (
             campaign.source_mode == "homebrew"
             or bool(sources)
@@ -184,7 +184,7 @@ async def evaluate_play_readiness(
                     character_id=character_id,
                     character=character,
                     # Ordinary sessions may be started without a character. Prepared runs
-                    # still require their commissioned hero even when this session has none.
+                    # still require a playthrough hero even when this session has none.
                     require_hero=require_character
                     and (character_id is not None or bool(private_preparation_slugs)),
                 )

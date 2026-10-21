@@ -11,6 +11,14 @@ Entrypoints create a frozen `PreparationRunBinding`, call
 checkpoints live in `.jobs/<run-id>/preparation.json`. Public status comes from
 `supervisor.status` and excludes private content, findings and provider diagnostics.
 
+The commission prepares a reusable adventure without selecting a character. Legacy
+hero snapshots/digests remain part of historical checkpoint integrity only; they do
+not require the old hero when starting or assigning a playthrough. A new commission
+uses an empty hero snapshot and grounds original encounters independently of a party.
+New provider submissions always resolve the current campaign policy (`gpt-6-luna`,
+`medium`, Responses), including saved runs whose retained profile says Sol/high.
+Recovering an existing paid response preserves the actual original model and usage.
+
 Stage executors receive `(binding, task, dependency_artifacts, attempt,
 idempotency_key)` and return `StageExecutionResult`. Provider work uses durable
 response identity and retains usage on both success and failure. Unique completed

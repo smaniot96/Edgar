@@ -17,7 +17,6 @@ from pydantic import Field
 from edgar_core.artifacts import text_digest
 from edgar_core.grounding import (
     BookReferenceRequest,
-    HeroPartySnapshot,
     VerifiedBookSnapshot,
     validate_mechanic_requirements,
 )
@@ -154,15 +153,11 @@ def _usage_sum(usages):
         cost_microusd=sum(u.cost_microusd for u in usages) - sum(r.cost_microusd for r in duplicated),
         responses=tuple(responses.values()),
         unresolved_calls=tuple(pending.values()),
-        requested_model="gpt-6.1-sol" if called else None,
-        reasoning_effort="high" if called else None,
+        requested_model=(next(iter(models)) if len(models := {u.requested_model for u in usages if u.provider_called}) == 1 else None),
+        reasoning_effort=(next(iter(efforts)) if len(efforts := {u.reasoning_effort for u in usages if u.provider_called}) == 1 else None),
         failure_code=usages[-1].failure_code if usages else None,
         task_version="preparation-bounded-tasks-v1",
     )
-
-
-def _party(binding):
-    return HeroPartySnapshot.model_validate(binding.hero_party_snapshot)
 
 
 class CommissionUnavailable(ValueError):
@@ -171,62 +166,19 @@ class CommissionUnavailable(ValueError):
         super().__init__(message)
 
 
+def base_protagonist_contract():
+    return (
+        "The hero selected at play time is the protagonist. Review source fidelity and reusable "
+        "DM guidance without assuming a particular hero sheet, class, race, level or inventory. "
+        "Original encounter rosters and intended source levels remain source data; party "
+        "adaptation happens at encounter instantiation."
+    )
+
+
 def _validate_commission(binding):
     binding.assert_integrity()
-    party = _party(binding)
     if binding.rules_edition != "2014":
         raise CommissionUnavailable("unsupported_edition", "Executable rules edition unsupported.")
-    if len(party.heroes) != 1:
-        raise CommissionUnavailable(
-            "unsupported_party",
-            "The executable runtime currently supports one active hero, not party combat.",
-        )
-    setup = binding.commission.get("setup", binding.commission)
-    if setup.get("target_level") not in (None, *{h.level for h in party.heroes}):
-        raise CommissionUnavailable(
-            "unsupported_progression",
-            "Requested level progression requires unsupported character adaptation.",
-        )
-    # Explicit sheet capabilities must be executable. A generic author claim such as
-    # 'supported_spells' cannot certify an unknown teleportation/resurrection spell.
-    from agent.class_features import IMPLEMENTED_FEATURES, holds_feature
-    from agent.spells import CATALOG, plan_cast
-
-    catalog = {name.casefold(): spell for spell in CATALOG for name in (spell.name, *spell.aliases)}
-    for hero in party.heroes:
-        character = hero.model_dump()
-        character["class"] = hero.character_class
-        for field in ("known_spells", "prepared_spells", "spells"):
-            raw = hero.stats.get(field, [])
-            names = list(raw) if isinstance(raw, dict) else raw
-            if not isinstance(names, list) or any(not isinstance(n, str) for n in names):
-                raise CommissionUnavailable(
-                    "unsupported_hero_capability",
-                    "Actual spell capability inventory needs explicit names.",
-                )
-            for name in names:
-                spell = catalog.get(name.casefold())
-                if spell is None or plan_cast(character, spell)[0] is None:
-                    raise CommissionUnavailable(
-                        "unsupported_hero_capability",
-                        "Actual hero spell is not executable by this runtime.",
-                    )
-        features = hero.stats.get("features", [])
-        if not isinstance(features, list) or any(not isinstance(f, str) for f in features):
-            raise CommissionUnavailable(
-                "unsupported_hero_capability", "Actual feature inventory needs explicit names."
-            )
-        for feature in features:
-            identifier = feature.casefold().replace(" ", "_")
-            supported = (
-                str(character.get("class", "")).casefold() == "fighter"
-                if identifier == "second_wind"
-                else identifier in IMPLEMENTED_FEATURES and holds_feature(character, identifier)
-            )
-            if not supported:
-                raise CommissionUnavailable(
-                    "unsupported_hero_capability", "Actual hero feature is unsupported."
-                )
 
 
 def _books(deps):
@@ -308,9 +260,9 @@ def _large_source_groups(binding):
     return groups
 
 
-# Output caps below are sized for the answer itself. Sol at high effort spends output tokens on
-# reasoning first, so every provider cap gets this headroom; a dense PDF page group otherwise ran
-# out mid-answer (Lost Mine of Phandelver, 20 October 2026). Profiles bound it from above.
+# Output caps below are sized for the answer itself. Reasoning uses output tokens too,
+# so every provider cap gets headroom, bounded by the effective profile. Retain the
+# existing allowance learned from dense source-page groups.
 REASONING_OUTPUT_HEADROOM = 4
 
 
@@ -612,8 +564,13 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
 
     payloads = []
     base = {
-        "commission": binding.commission,
-        "party": binding.hero_party_snapshot,
+        "commission": binding.content_commission,
+        "protagonist_contract": (
+            "The hero chosen separately for each playthrough is always the story protagonist. "
+            "Prepare a reusable module without assuming any hero identity, class, race, "
+            "level, statistics or inventory. Preserve source level guidance and original "
+            "encounters; adapt to the actual party when play instantiates encounters."
+        ),
         "private_repair_feedback": _repair_feedback(deps),
         "attempt": attempt,
     }
@@ -642,7 +599,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
             selection = await propose(
                 BookSelection,
                 "Study exact verified book headings. Select relevant DMG encounter/adventure/resource/treasure guidance, "
-                "PHB actual hero class/combat/rest/capability rules, and MM monster guidance. Include all three roles. "
+                "PHB general combat/rest/capability rules, and MM monster guidance. Include all three roles. "
                 "Return exact provided headings; do not invent references.",
                 {
                     **base,
@@ -805,7 +762,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                 act_task = task.model_copy(update={"scope_keys": (fragment.act_id,)})
                 try:
                     grounding_payload(binding, _act(deps, fragment.act_id), support,
-                        _books(deps), _party(binding), client=book_client, actor_manifest=actor_manifest)
+                        _books(deps), client=book_client, actor_manifest=actor_manifest)
                 except GroundingUnavailable as exc:
                     source_errors.append(f"{fragment.act_id}: {exc.code}: {exc}")
                 except ValueError as exc:
@@ -830,7 +787,7 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
             support = support_for(deps, act.act_id)
             actor_manifest, _ = assemble_manifest(binding, deps)
             payloads.append(("act_grounding", grounding_payload(
-                binding, act, support, _books(deps), _party(binding), client=book_client,
+                binding, act, support, _books(deps), client=book_client,
                 actor_manifest=actor_manifest)))
         elif stage == PreparationStage.P06:
             act = _act(deps, task.scope_keys[0])
@@ -866,7 +823,6 @@ async def _execute_once(stage, binding, task, deps, attempt, key, *, provider, b
                     {
                         "acts": [a.payload for a in deps if a.artifact_kind == "act_grounding"],
                         "book_snapshot_sha256": _books(deps).snapshot_sha256,
-                        "hero_party_sha256": _party(binding).party_sha256,
                     },
                 ),
             ]
@@ -1084,7 +1040,7 @@ async def _review_campaign(binding, task, deps, key, propose, usages):
         {"receipt": coverage.model_dump(mode="json"), "visual_reviews": visual_reviews},
         deps,
     )
-    # Reports bind all subject artifacts, retained source/hero/mechanics, and real asset coverage.
+    # Reports bind all subject artifacts, retained source/mechanics, and real asset coverage.
     inventory = (*deps, *subjects, asset)
     manifest_a, prepared_a, manuscript_a = subjects[:3]
     deterministic = build_adventure_review(
@@ -1117,7 +1073,7 @@ async def _review_campaign(binding, task, deps, key, propose, usages):
         "whole_design": design_from(deps).model_dump(mode="json"),
         "canonical": manifest.model_dump(mode="json"),
         "source_guidance": _guidance(deps),
-        "actual_party": binding.hero_party_snapshot,
+        "protagonist_contract": base_protagonist_contract(),
         "grounding": review_grounding(_one(deps, "grounding_report").payload),
         "assets": asset.payload,
         "evidence_inventory": [
@@ -1186,9 +1142,9 @@ async def _review_campaign(binding, task, deps, key, propose, usages):
             CriticObservations,
             "Act as the INDEPENDENT campaign critic. Read ALL assigned retained chapter text with the whole "
             "campaign design, related chapter excerpts/notes, canonical cross-act facts, locations and connections, exact "
-            "source/hero/mechanical and asset evidence. Check causal continuity, motives/knowledge, distinct progression, "
-            "chronology, exact clues, viable choices, failure/partial consequences, resource assumptions, supported "
-            "abilities, compatible endings, scope and visual agreement. Ordinary sensible DM additions are allowed "
+            "source/rules/mechanical and asset evidence. Check causal continuity, motives/knowledge, source-intended progression, "
+            "chronology, exact clues, viable choices, failure/partial consequences, source resource guidance, supported "
+            "source mechanics, compatible endings, scope and visual agreement. Ordinary sensible DM additions are allowed "
             "when consistent with the theme, accepted facts and future acts; do not demand extra calls for harmless "
             "unspecified details. Return reviewed_chapter_ids exactly in the assigned chapter order. "
             "Findings must follow the supplied CriticFinding schema and cite the ORIGINAL artifact ID, global JSON "
@@ -1346,7 +1302,7 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
                 if saved_support(proposed, fragment.act_id) != support:
                     raise ValueError("Compact act support changed after compilation.")
                 grounding_payload(binding, _act(deps, fragment.act_id), support,
-                                  _books(deps), _party(binding), client=book_client,
+                                  _books(deps), client=book_client,
                                   actor_manifest=actor_manifest)
                 validate_support_assets(binding, design_from(deps), fragment, support, deps)
                 retained_chapter(binding, design_from(deps), fragment, support)
@@ -1380,7 +1336,7 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
             ):
                 raise ValueError("Grounding act or capabilities changed.")
             actor_manifest, _ = assemble_manifest(binding, deps)
-            expected = grounding_payload(binding, act, support, _books(deps), _party(binding),
+            expected = grounding_payload(binding, act, support, _books(deps),
                                          client=book_client, actor_manifest=actor_manifest)
             if payload != expected:
                 raise ValueError("Grounding receipt differs from exact tools.")
@@ -1417,7 +1373,6 @@ def _validator(stage, binding, task, proposed, deps, *, book_client):
             if _one(proposed, "grounding_report").payload != {
                 "acts": [a.payload for a in deps if a.artifact_kind == "act_grounding"],
                 "book_snapshot_sha256": _books(deps).snapshot_sha256,
-                "hero_party_sha256": _party(binding).party_sha256,
             }:
                 raise ValueError("Grounding inventory changed.")
         elif stage == PreparationStage.P08:

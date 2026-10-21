@@ -82,7 +82,7 @@ def _lean_grounding(grounding, relevant):
                 origins.setdefault(creature_id,
                     f"/acts/{index}/encounters/{position}/creatures/{member_index}/creature")
                 members.append(_fields(member, ("creature", "actor_id", "requested_quantity", "effective_quantity", "role")))
-            encounters.append({**_fields(receipt, ("encounter_id", "scene_id", "actor_ids", "raw_xp", "adjusted_xp",
+            encounters.append({**_fields(receipt, ("grounding_scope", "encounter_id", "scene_id", "actor_ids", "raw_xp", "adjusted_xp",
                 "difficulty", "thresholds", "solo_budget", "adaptation_notes", "supported_mechanics",
                 "unsupported_mechanics", "findings")), "creatures": members})
         if encounters:
@@ -142,7 +142,7 @@ def review_batches(manuscript, common, blueprint_artifact, extraction, *, target
     }
     assets = common.get("assets", {})
     receipt = assets.get("receipt", {})
-    shared = {name: common[name] for name in ("narrative_contract", "actual_party", "critic_finding_schema",
+    shared = {name: common[name] for name in ("narrative_contract", "protagonist_contract", "critic_finding_schema",
               "manuscript_artifact_id", "manuscript_artifact_sha256") if name in common}
     shared.update(
         binding=_fields(common.get("binding", {}), ("run_id", "run_binding_sha256", "source_binding_sha256",

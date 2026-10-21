@@ -1,25 +1,14 @@
 import { useState } from "react";
 
-import { listCharacters } from "../../api/client";
 import type { PreparationSetup } from "../../api/types";
-import { ErrorNotice } from "../../components/ui/ErrorNotice";
-import { Field, TextField } from "../../components/ui/Field";
-import { useQuery } from "../../lib/useQuery";
+import { TextField } from "../../components/ui/Field";
 
-/** Only setup/preferences are player decisions. All adventure content stays with the DM. */
+/** Module preparation is independent of the hero selected for a later playthrough. */
 export function usePreparationSetup() {
-  const characters = useQuery("preparation-heroes", listCharacters);
-  const [heroId, setHeroId] = useState("");
-  const [target, setTarget] = useState("");
   const [budget, setBudget] = useState("");
-  const hero = characters.data?.find((character) => String(character.id) === heroId);
   const amount = Number(budget);
-  const targetNumber = target ? Number(target) : hero?.level;
-  const setup: PreparationSetup | undefined = hero && Number.isFinite(amount) && amount >= 0.01 && amount <= 1000
-    && Number.isInteger(targetNumber) && targetNumber! >= hero.level && targetNumber! <= 20
+  const setup: PreparationSetup | undefined = Number.isFinite(amount) && amount >= 0.01 && amount <= 1000
     ? {
-        character_ids: [hero.id],
-        target_level: targetNumber,
         max_cost_microusd: Math.round(amount * 1_000_000),
         required_maps: true,
         required_handouts: true,
@@ -30,38 +19,18 @@ export function usePreparationSetup() {
     <fieldset className="space-y-3 rounded-card border border-line p-3">
       <legend className="px-1 text-sm font-medium">Your adventure setup</legend>
       <p className="text-sm text-ink-muted">
-        Edgar privately prepares and checks every act for your selected hero, using verified
-        books. Duration and character level are separate. Required maps and handouts are
-        included; unavailable rules or books will explain what needs attention.
+        Edgar privately prepares and checks a reusable adventure using verified books.
+        Choose or create your hero when you start a playthrough; that hero is always the
+        story’s protagonist. Source level guidance and original encounters stay with the module.
+        Required maps and handouts are included.
       </p>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="Hero" required hint={hero ? `Starts at level ${hero.level}` : "Choose a saved character"}>
-          {(props) => <select {...props} required value={heroId} onChange={(event) => setHeroId(event.target.value)} className="min-h-11 rounded-control border border-line bg-surface p-2 text-sm">
-            <option value="">{characters.loading ? "Loading heroes…" : "Choose a hero"}</option>
-            {(characters.data ?? []).map((character) => {
-              // A hero already adventuring elsewhere cannot be prepared for a new campaign.
-              const busy = character.current_assignment != null;
-              return <option key={character.id} value={character.id} disabled={busy}>
-                {character.name} — level {character.level} {character.character_class}
-                {busy ? ` (adventuring in ${character.current_assignment?.campaign_title})` : ""}
-              </option>;
-            })}
-          </select>}
-        </Field>
-        <TextField label="Target level (optional)" type="number" min={hero?.level ?? 1} max={20}
-          value={target} onChange={(event) => setTarget(event.target.value)}
-          placeholder={hero ? String(hero.level) : "Same as starting level"} />
-        <TextField label="Preparation cost target (USD)" required type="number" min="0.01" max="1000" step="0.01"
-          value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="Cost target" />
-      </div>
-      {!characters.loading && characters.data?.length === 0 && <p className="text-sm text-ink-muted">
-        Create a hero in Characters, then return to prepare your adventure.
-      </p>}
-      <ErrorNotice error={characters.error} onRetry={characters.refetch} />
+      <TextField label="Preparation cost target (USD)" required type="number" min="0.01" max="1000" step="0.01"
+        value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="Cost target" />
       <p className="text-xs text-ink-muted">This target is used to compare actual cost afterward.
         Preparation continues past it; it does not limit spending or guarantee completion time.</p>
-      <p className="text-xs text-ink-muted">The current rules engine supports one active hero and 2014 rules.
-        A request needing unsupported level progression, spells or other mechanics will stop before readiness.</p>
+      <p className="text-xs text-ink-muted">The current rules engine supports 2014 rules.
+        Encounters adapt to your chosen hero during play; unavailable source rules or books
+        explain what needs attention during preparation.</p>
     </fieldset>
   );
   return { setup, fields };

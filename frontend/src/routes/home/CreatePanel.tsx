@@ -186,7 +186,7 @@ function UploadForm({ onCreated }: { onCreated: (a: AdventureRead) => void }) {
     <form onSubmit={(e) => void submit(e)} className="space-y-4">
       <p className="text-sm text-ink-muted">
         Already have an adventure module? Pick a PDF. Edgar studies it privately, prepares the
-        whole adventure for your hero and checks it before play.
+        whole adventure for reuse and checks it before play. Choose your hero for each playthrough.
       </p>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <Field label="Source rules edition" hint="Use unspecified when the publication does not declare an edition.">
