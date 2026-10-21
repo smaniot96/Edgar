@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -22,11 +23,90 @@ OCR_CONFIG = {
     "layout": "tsv-block-paragraph-line-word",
     "engine": "tesseract-5",
 }
+VISUAL_CANDIDATE_VERSION = "retained-layout-visual-2.1"
 
 
 def file_hash(path: Path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _nontext_ink(page: dict, directory: Path) -> float:
+    """Measure raster content left after masking retained OCR words, not PDF text."""
+    from PIL import Image, ImageDraw
+
+    path = directory / page.get("image", "")
+    if not path.is_file():
+        return 0.0
+    with Image.open(path) as raster:
+        gray = raster.convert("L")
+        mask = ImageDraw.Draw(gray)
+        for word in page.get("words", []):
+            x, y, width, height = word["bbox"]
+            mask.rectangle((x - 2, y - 2, x + width + 2, y + height + 2), fill=255)
+        # Parchment/background shading is not nontext ink. Dark map geometry and
+        # illustrations survive this threshold; image evidence alone is insufficient.
+        histogram = gray.resize((256, 256)).histogram()
+        return sum(histogram[:150]) / (256 * 256)
+
+
+def visual_page_reasons(page: dict, directory: Path) -> list[str]:
+    """Find targeted image questions even when ordinary OCR confidence is high.
+
+    This can run against old retained receipts without altering or re-OCRing them.
+    Decorative illustrations alone do not request a semantic image call.
+    """
+    quality = page.get("quality", {})
+    if quality.get("blank"):
+        return []
+    reasons = []
+    if quality.get("visual_interpretation_needed"):
+        reasons.append("OCR confidence or sparse nontext page needs image interpretation")
+    text = re.sub(r"\s+", " ", page.get("text", "")).lower()
+    # Multiple stat blocks can be interleaved into high-confidence nonsense:
+    # each word is correct while column ownership and table relationships are lost.
+    if (text.count("armor class") >= 2 and text.count("hit points") >= 2) or len(
+        re.findall(r"str\s+dex\s+con\s+int\s+wis\s+cha", text)
+    ) >= 2:
+        reasons.append("Multiple stat blocks require verification of column relationships")
+    lines = {}
+    for word in page.get("words", []):
+        lines.setdefault((word.get("block"), word.get("paragraph"), word.get("line")), []).append(
+            word
+        )
+    separated_rows = 0
+    width = page.get("width", 0)
+    for words in lines.values():
+        boxes = sorted((w["bbox"] for w in words), key=lambda b: b[0])
+        if width and len(boxes) >= 4:
+            span = boxes[-1][0] + boxes[-1][2] - boxes[0][0]
+            gap = max(b[0] - (a[0] + a[2]) for a, b in zip(boxes, boxes[1:], strict=False))
+            if span > width * 0.65 and gap > width * 0.14:
+                separated_rows += 1
+    if separated_rows >= 3:
+        reasons.append("Repeated aligned columns have ambiguous OCR reading order")
+    # Map/plan prose plus significant raster material beyond recognized words is
+    # evidence of an actual spatial question. Neither prose nor art alone suffices.
+    spatial = set(
+        re.findall(
+            r"\b(?:maps?|plans?|platforms?|rooms?|doors?|windows?|stairs?|stairways?|"
+            r"corridors?|passages?|kitchens?|libraries|bedrooms?|bridges?|paths?)\b",
+            text,
+        )
+    )
+    if len(spatial) >= 3 and _nontext_ink(page, directory) > 0.025:
+        reasons.append("Spatial layout prose accompanies substantial nontext map or plan evidence")
+    return reasons
+
+
+def candidate_visual_pages(source: dict) -> list[int]:
+    """Supplement saved spine selections from immutable local source evidence."""
+    if source.get("kind") != "pdf":
+        return []
+    directory = Path(source["directory"])
+    return [
+        page["page"] for page in source.get("pages", []) if visual_page_reasons(page, directory)
+    ]
 
 
 def acquire_pdf(store: Store, path: Path):

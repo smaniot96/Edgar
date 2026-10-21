@@ -29,7 +29,15 @@ from .compile import assemble, closure, dependencies, records, validate_semantic
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
 from .provider import SemanticClient
-from .source import acquire_pdf, evidence_pages, packets, token_count
+from .source import (
+    VISUAL_CANDIDATE_VERSION,
+    acquire_pdf,
+    candidate_visual_pages,
+    evidence_pages,
+    packets,
+    token_count,
+    visual_page_reasons,
+)
 from .store import NeedsAttention, Store, atomic_json, digest
 
 
@@ -115,8 +123,17 @@ class Workflow:
                 for row in b[field]
             )
         }
+        source = self.store.get("source") or {"pages": []}
+        pages = {p for c in spine["chapters"] if c["id"] in related for p in c["pages"]}
+        if key == "campaign_spine":
+            pages.update(p["page"] for p in source["pages"])
+        elif "origin" in registry[key]["value"]:
+            pages.update(registry[key]["value"]["origin"]["pages"])
         return digest(
             {
+                "visual_evidence": {
+                    str(p): self.store.get("visual-" + str(p)) for p in sorted(pages)
+                },
                 "record": registry[key],
                 "dependencies": {r: registry[r] for r in sorted(needed)},
                 "campaign_context": {k: spine[k] for k in ("premise", "setting", "hook", "ending")},
@@ -152,6 +169,24 @@ class Workflow:
                     "pages": [],
                 }
             self.store.put("source", value, digest(request))
+        source = self.store.get("source")
+        if source["kind"] == "pdf":
+            candidates = candidate_visual_pages(source)
+            self.store.put("visual-candidates", candidates, digest(source))
+            self.store.put(
+                "visual-diagnostics",
+                {
+                    "version": VISUAL_CANDIDATE_VERSION,
+                    "source_sha256": source.get("sha256"),
+                    "pages": {
+                        str(p["page"]): visual_page_reasons(p, Path(source["directory"]))
+                        for p in source["pages"]
+                        if p["page"] in candidates
+                    },
+                },
+                digest(source),
+            )
+            await self.visual(candidates)
         if self.store.get("mechanics") is None:
             value = await asyncio.to_thread(catalogue, request["rules_edition"])
             self.store.put("mechanics", value, request["rules_edition"])

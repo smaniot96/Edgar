@@ -20,8 +20,10 @@ PDF acquisition renders every physical page at 200 dpi and runs local Tesseract,
 pages with a native text layer. It retains the original upload, raster, raw OCR, normalized
 text, TSV words/confidence/reading order, hOCR, block regions, quality diagnostics and
 hashes. The author sees OCR; native PDF text is never an authoring fallback. Sparse or
-uncertain pages, plus useful map/table pages requested by the spine, receive targeted
-Luna visual interpretation. OCR is not represented as verified mechanical authority.
+uncertain pages, locally detected map/table/stat-block layouts, and useful pages requested
+by the spine receive targeted Luna visual interpretation. Supplemental candidate diagnostics
+can be evaluated against retained OCR/raster data without replacing paid authoring or the
+original source manifest. Review fingerprints include relevant visual evidence. OCR is not represented as verified mechanical authority.
 
 AI acquisition starts directly from the premise, theme and requested scope. It does not
 create a PDF, import old outlines or invoke the deleted generation code. Both inputs share
@@ -42,11 +44,14 @@ Embedding submissions/vectors use the same receipt owner and separate truthful a
 ## Play and publication
 
 `compile.py` uses existing engine manifests, verified creature templates and local assembly.
-Encounter quantities remain reusable source/module quantities. Actual combat fitting,
+Encounter quantities remain reusable source/module quantities. Local incompatible
+actor/template joins become material findings before assembly. Scoped repair can add a
+distinct NPC identity only when an affected event actually references it. Actual combat fitting,
 checks, HP, inventory and committed state remain engine-owned. The engine receives one
 objective representation for narrative goals and can adjudicate any credible creative
 completion. Private DM evidence, visible player passages and earned clue reveals remain
-separate. Authored record markers do not pretend to be PDF citations.
+separate. Each event revelation has its own knowledge flag, so meeting an NPC or
+finding an early clue does not unlock deeper revelations. Authored record markers do not pretend to be PDF citations.
 
 The final critic is independent of the author. Reviews certify record/dependency
 fingerprints. Typed repairs change only affected records and their real dependency
