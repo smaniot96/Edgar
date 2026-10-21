@@ -183,6 +183,11 @@ def build_adjudicator_prompt(
         parts.append("Current world flags: (none)")
 
     continuity_slot = len(parts)
+    from agent.scene_guidance import observation_excerpt, observation_span_catalog
+
+    answer_spans = (
+        observation_span_catalog(state) if state.get("manifest_status") == "reviewed" else {}
+    )
 
     if state.get("resolved_combat_outcomes"):
         parts.append(
@@ -206,7 +211,7 @@ def build_adjudicator_prompt(
             for r in citations_for([c], state.get("rules_edition", "2014"))
         ]
         parts.append(
-            "Eligible current-scene answer references for source_observations: "
+            "Eligible current-scene evidence references (source_observations select their inline source_span IDs): "
             + json.dumps(observation_refs)
         )
         transitions = (state.get("parser_scene_context") or {}).get("event_transitions", [])
@@ -231,7 +236,9 @@ def build_adjudicator_prompt(
     if state.get("manifest_status") == "reviewed" and state.get("adventure_context"):
         parts.append("Reviewed player-visible current-scene evidence:")
         parts.extend(
-            wrap_retrieved_excerpt(cited_excerpt(c, state.get("rules_edition", "2014")))
+            wrap_retrieved_excerpt(
+                observation_excerpt(c, answer_spans, state.get("rules_edition", "2014"))
+            )
             for c in eligible_context(
                 state["adventure_context"], state.get("rules_edition", "2014")
             )
@@ -241,7 +248,9 @@ def build_adjudicator_prompt(
             "Private current-scene planner evidence (never disclose secrets in summaries):"
         )
         parts.extend(
-            wrap_retrieved_excerpt(cited_excerpt(c, state.get("rules_edition", "2014")))
+            wrap_retrieved_excerpt(
+                observation_excerpt(c, answer_spans, state.get("rules_edition", "2014"))
+            )
             for c in state["planner_context"]
         )
     if state.get("discovery_entities"):

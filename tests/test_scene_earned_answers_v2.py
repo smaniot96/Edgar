@@ -18,6 +18,8 @@ from agent.scene_guidance import (
     active_observation_chunks,
     cached_scene_context,
     match_source_quote,
+    observation_excerpt,
+    observation_span_catalog,
     preload_scene_context,
 )
 from apps.api.services.campaign_prep.compile import assemble, make_extraction
@@ -200,11 +202,18 @@ async def test_unearned_or_unreviewed_observations_are_rejected(scene_state, def
 
 def test_model_must_explicitly_decide_source_answers_without_breaking_archived_rulings():
     from langchain_core.utils.function_calling import convert_to_openai_tool
+    from openai.lib._pydantic import to_strict_json_schema
 
     schema = convert_to_openai_tool(AdjudicationResult)["function"]["parameters"]
     assert "source_observations" in schema["required"]
     assert "source_observations" in schema["properties"]
-    assert "source_quote" in schema["properties"]["source_observations"]["items"]["required"]
+    assert "source_span_id" in schema["properties"]["source_observations"]["items"]["required"]
+    span_schema = schema["properties"]["source_observations"]["items"]
+    strict_span_schema = to_strict_json_schema(AdjudicationResult)["$defs"]["SourceObservation"]
+    for model_schema in (span_schema, strict_span_schema):
+        assert "source_quote" not in model_schema["properties"]
+        assert "source_reference_id" not in model_schema["properties"]
+        assert "source_span_id" in model_schema["required"]
     assert "observation_diagnostics" not in schema["properties"]
     assert "accepted_observations" not in schema["properties"]
     validation = AdjudicationResult.model_json_schema(mode="validation")
@@ -213,6 +222,152 @@ def test_model_must_explicitly_decide_source_answers_without_breaking_archived_r
     assert "source_observations" not in serialization["properties"]
     assert "source_observations" not in serialization["required"]
     assert AdjudicationResult.model_validate({"success": True}).source_observations == []
+    archived = AdjudicationResult.model_validate(
+        {
+            "success": True,
+            "source_observations": [
+                {
+                    "text": "An ordinary answer.",
+                    "source_quote": "The archived literal source.",
+                    "source_reference_id": "archived-reference",
+                    "action_quote": "I ask",
+                    "achievement_basis": "The question earns this ordinary answer.",
+                }
+            ],
+        }
+    )
+    assert archived.source_observations[0].source_quote == "The archived literal source."
+    assert archived.source_observations[0].source_reference_id == "archived-reference"
+
+
+@pytest.mark.asyncio
+async def test_natural_answer_binds_selected_source_span_without_copying_quote(scene_state):
+    state = await prepared(scene_state)
+    spans = observation_span_catalog(state)
+    span_id, span = next((key, value) for key, value in spans.items() if ANSWER in value["text"])
+    answer = "The bell signals boarding; it does not make the crossing safe."
+    result = AdjudicationResult(
+        success=True,
+        source_observations=[
+            {
+                "source_span_id": span_id,
+                "text": answer,
+                "action_quote": "ask the ferryman",
+                "achievement_basis": "The ferryman freely answers the ordinary boarding question.",
+            }
+        ],
+    )
+    validate_story_effects(result, state)
+    assert result.accepted_observations == [answer]
+    assert result.observation_diagnostics["matches"][0]["method"] == "selected_span"
+    assert (
+        result.observation_diagnostics["matches"][0]["source_reference_id"] == span["reference_id"]
+    )
+    state["adjudication_result"] = result
+    prompt = "\n".join(str(m.content) for m in build_narrator_prompt(state))
+    assert answer in prompt and span_id not in prompt and UNRELATED not in prompt
+    from apps.api.services.turn_runner import public_adjudication
+
+    assert span_id not in str(public_adjudication(result))
+    assert "source_observations" not in result.model_dump()
+    # Inline markers replace existing rendering; concatenating exact spans gives
+    # the original text, with no copied duplicate source dossier.
+    chunk = next(
+        c
+        for c in active_observation_chunks(state)
+        if source_citation(c)["reference_id"] == span["reference_id"]
+    )
+    rendered = observation_excerpt(chunk, spans)
+    assert span_id in rendered
+    import re
+
+    assert (
+        re.sub(r"\[source_span span_[a-f0-9]+\]\n", "", rendered).split("\n", 1)[1] == chunk["text"]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["malformed", "stale", "foreign", "future", "invented_action"])
+async def test_selected_span_cannot_escape_exact_current_source_and_action(scene_state, defect):
+    state = await prepared(scene_state)
+    span_id = next(iter(observation_span_catalog(state)))
+    action = "ask the ferryman"
+    if defect == "malformed":
+        span_id = "span_not-a-real-id"
+    elif defect == "stale":
+        state["planner_context"] = []
+        state["adventure_context"] = []
+    elif defect == "foreign":
+        span_id = span_id[:-1] + ("a" if span_id[-1] != "a" else "b")
+    elif defect == "future":
+        state["current_scene_id"] = "event_leads"
+    else:
+        action = "I search the inaccessible room"
+    result = AdjudicationResult(
+        success=True,
+        source_observations=[
+            {
+                "source_span_id": span_id,
+                "text": ANSWER,
+                "action_quote": action,
+                "achievement_basis": "A willing ferryman answers the actual question.",
+            }
+        ],
+    )
+    validate_story_effects(result, state)
+    assert result.accepted_observations == []
+    assert result.observation_diagnostics["rejected"]
+
+
+@pytest.mark.asyncio
+async def test_recorded_wrong_reference_relocates_only_exact_current_source_quote(scene_state):
+    state = await prepared(scene_state)
+    public = state["adventure_context"][0]
+    quoted = public["text"]
+    value = proposal(state, text="An ordinary visible detail.", source_quote=quoted)
+    result = AdjudicationResult(success=True, source_observations=[value])
+    validate_story_effects(result, state)
+    assert result.accepted_observations == [value["text"]]
+    match = result.observation_diagnostics["matches"][0]
+    assert match["source_reference_id"] == source_citation(public)["reference_id"]
+    assert match["proposed_source_reference_id"] == value["source_reference_id"]
+
+
+@pytest.mark.asyncio
+async def test_private_rejection_receipt_is_separate_from_public_state_and_failure_is_nonfatal(
+    scene_state, monkeypatch, tmp_path
+):
+    import json
+    import stat
+
+    from apps.api.services import adventures_meta
+    from apps.api.services.campaign_prep import runtime_evidence
+    from apps.api.services.turn_runner import public_adjudication
+
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path)
+    state = await prepared(scene_state)
+    state["session_id"] = 1
+    state["api_key"] = "NEVER_CAPTURE_CREDENTIALS"
+    value = proposal(state, source_quote="PRIVATE_REJECTED_PARAPHRASE")
+    result = AdjudicationResult(success=True, source_observations=[value])
+    validate_story_effects(result, state)
+    paths = list(tmp_path.glob("fresh/preparation-v2/runtime-evidence/*.json"))
+    assert len(paths) == 1
+    private = json.loads(paths[0].read_text())
+    assert private["source_observations"][0]["source_quote"] == value["source_quote"]
+    assert stat.S_IMODE(paths[0].stat().st_mode) == 0o600
+    assert "NEVER_CAPTURE_CREDENTIALS" not in paths[0].read_text()
+    assert value["source_quote"] not in str(result.model_dump())
+    assert value["source_quote"] not in str(public_adjudication(result))
+
+    def failed(*_args, **_kwargs):
+        raise OSError("private diagnostic disk full")
+
+    monkeypatch.setattr(runtime_evidence, "atomic_json", failed)
+    state["turn_id"] = "another-private-diagnostic"
+    validate_story_effects(result, state)
+    assert result.accepted_observations == []
+    assert result.observation_diagnostics["private_capture"] == "unavailable"
 
 
 @pytest.mark.parametrize(

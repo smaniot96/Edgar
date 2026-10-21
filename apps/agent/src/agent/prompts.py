@@ -116,12 +116,13 @@ Fill out:
   treat speech as evidence of a discovery or object ownership. Engine outcomes/numbers are not story proposals.
 - source_observations: in reviewed module play, answer the actual action with concrete,
   player-safe ordinary answers, sensory observations and dialogue information earned now.
-  For each answer, put its natural player-facing wording in text and copy a short exact
-  contiguous supporting quotation into source_quote from an eligible CURRENT-SCENE reference.
-  The private source quotation and the answer have different purposes: do not paraphrase
-  source_quote, and do not force DM directions into the answer. Every fact in text must be
-  supported by that quote and earned by this action; never add a rule or a hidden explanation.
-  Supply the exact source_reference_id, action_quote from the actual player action, and private
+  Eligible CURRENT-SCENE evidence has inline [source_span span_...] markers. For each answer,
+  copy the supporting marker's ID into source_span_id and put the earned player-facing answer
+  in text. Select the ID; do not copy or paraphrase source prose into a quote field. The local
+  validator binds that ID to the exact original source span. Global/future evidence has no
+  eligible markers and cannot authorize an observation. Every fact in text must follow from
+  the selected evidence and be earned now; never add a rule or hidden explanation.
+  Supply action_quote from the actual player action and private
   achievement_basis explaining why this information is available now and any reveal condition
   that has actually been met. When a willing NPC answers an ordinary question, or a successful
   search/inspection exposes an applicable source fact, provide the concrete answer; do not
@@ -137,8 +138,8 @@ Fill out:
   observable. For NPC dialogue, the present speaker must know the information and have a
   source-supported reason to share it now; the DM knowing a culprit's motive does not mean
   another NPC knows it. A question about a delay can earn the public reason for waiting,
-  but not an unobserved culprit, concealed object location or private motive. Narrow the
-  quotation to evidence supporting the earned answer. The answer must omit any additional
+  but not an unobserved culprit, concealed object location or private motive. Select only
+  evidence supporting the earned answer. The answer must omit any additional
   private facts within that evidence. Never use a made-up achievement_basis to turn unrelated
   private knowledge into an earned answer. The narrator will phrase approved information naturally; raw DM
   wording is internal evidence and must not be copied as dialogue or conditional directions.
@@ -147,7 +148,7 @@ Fill out:
   no canonical discovery can be committed. A move or a citation alone conveys no answer to
   the narrator. Use [] only when the action earns no source-backed information (or outside
   reviewed module play). The narrator cannot see your private evidence and cannot recover an
-  answer you omit. Prefer focused answers with short exact supporting quotes to mixed public/private paragraphs.
+  answer you omit. Prefer focused answers bound to their supporting source spans.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
   Prepared event scenes may share one location. If the actual action meets a supplied linked

@@ -138,6 +138,52 @@ def active_observation_chunks(state):
     return result
 
 
+def observation_span_catalog(state, chunks=None):
+    """Stable local sentence spans, pinned to scene, reviewed source and offsets."""
+    from edgar_core.sources import source_citation
+
+    result = {}
+    for chunk in active_observation_chunks(state) if chunks is None else chunks:
+        reference = source_citation(chunk, state.get("rules_edition", "2014"))["reference_id"]
+        text = chunk["text"]
+        start = 0
+        ends = [m.end() for m in re.finditer(r"(?<=[.!?])\s+|\n{2,}", text)] + [len(text)]
+        for end in ends:
+            if not text[start:end].strip():
+                continue
+            identity = json.dumps(
+                [state.get("current_scene_id"), reference, start, end], separators=(",", ":")
+            )
+            span_id = "span_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+            result[span_id] = {
+                "source_span_id": span_id,
+                "reference_id": reference,
+                "start": start,
+                "end": end,
+                "text": text[start:end],
+                "method": "selected_span",
+            }
+            start = end
+    return result
+
+
+def observation_excerpt(chunk, spans, edition="2014"):
+    """Annotate existing evidence inline; never duplicate it or rehash altered text."""
+    from edgar_core.sources import cited_excerpt, source_citation
+
+    original = cited_excerpt(chunk, edition)
+    reference = source_citation(chunk, edition)["reference_id"]
+    selected = [span for span in spans.values() if span["reference_id"] == reference]
+    if not selected:
+        return original
+    header = original.split("\n", 1)[0]
+    return (
+        header
+        + "\n"
+        + "".join(f"[source_span {span['source_span_id']}]\n{span['text']}" for span in selected)
+    )
+
+
 _QUOTE_PUNCTUATION = {
     **dict.fromkeys("\u2018\u2019\u201a\u201b", "'"),
     **dict.fromkeys("\u201c\u201d\u201e\u201f", '"'),
@@ -231,21 +277,48 @@ def validate_source_observations(adjudication, state):
         for c in active_observation_chunks(state)
     }
     diagnostics["eligible_references"] = len(evidence)
+    spans = observation_span_catalog(state, list(evidence.values()))
     action = state.get("player_input", "")
     for index, proposal in enumerate(adjudication.source_observations):
         chunk = evidence.get(proposal.source_reference_id)
         reason = None
         match = None
-        if not chunk:
+        matched_reference = proposal.source_reference_id
+        selected_span = spans.get(proposal.source_span_id) if proposal.source_span_id else None
+        if proposal.source_span_id and selected_span is None:
+            reason = "ineligible_source_span"
+        elif not proposal.source_span_id and not chunk:
             reason = "ineligible_source_reference"
         elif not proposal.achievement_basis.strip():
             reason = "missing_achievement_basis"
         elif not proposal.action_quote.strip() or proposal.action_quote not in action:
             reason = "action_quote_not_exact"
-        elif not proposal.text.strip() or not (
-            match := match_source_quote(chunk["text"], proposal.source_quote or proposal.text)
-        ):
+        elif not proposal.text.strip():
             reason = "source_quote_not_exact"
+        elif selected_span:
+            matched_reference = selected_span["reference_id"]
+            match = selected_span
+        else:
+            quote = proposal.source_quote or proposal.text
+            match = match_source_quote(chunk["text"], quote)
+            if match is None:
+                # The live model can copy a valid chapter quote while naming the
+                # event's reference. Repair only that join: same eligible scene,
+                # same reviewed identity, exactly one matching original span.
+                relocated = [
+                    (reference, candidate_match)
+                    for reference, candidate in evidence.items()
+                    if all(
+                        candidate.get(key) == chunk.get(key)
+                        for key in ("collection", "source_sha256", "manifest_sha256")
+                    )
+                    and (candidate_match := match_source_quote(candidate["text"], quote))
+                    is not None
+                ]
+                if len(relocated) == 1:
+                    matched_reference, match = relocated[0]
+            if match is None:
+                reason = "source_quote_not_exact"
         if reason:
             diagnostics["rejected"].append({"index": index, "reason": reason})
             continue
@@ -254,8 +327,21 @@ def validate_source_observations(adjudication, state):
             diagnostics["matches"].append(
                 {
                     "index": index,
-                    "source_reference_id": proposal.source_reference_id,
+                    "source_reference_id": matched_reference,
+                    "proposed_source_reference_id": proposal.source_reference_id,
+                    **({"source_span_id": proposal.source_span_id} if selected_span else {}),
                     **{key: match[key] for key in ("start", "end", "method")},
                 }
             )
     diagnostics["accepted"] = len(adjudication.accepted_observations)
+    if diagnostics["rejected"] and state.get("session_id"):
+        # Operator-only replay receipt. Never put rejected prose in telemetry,
+        # logs, metadata, narration or a public response. Recording cannot fail a turn.
+        try:
+            from apps.api.services.campaign_prep.runtime_evidence import (
+                retain_observation_rejection,
+            )
+
+            retain_observation_rejection(state, adjudication, evidence)
+        except Exception:
+            diagnostics["private_capture"] = "unavailable"

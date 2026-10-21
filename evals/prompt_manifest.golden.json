@@ -8,8 +8,8 @@
     "version": "1.0.5"
   },
   "play.consequence_planner": {
-    "sha256": "7eeebbd6fa397f2c38c3d934b880a3749771308dd045a1f35569426d438188e2",
-    "version": "1.0.7"
+    "sha256": "a03fd515c8bd080dcb84aa1552d00bc0b1013fc86ff20a6f57289b56415184ac",
+    "version": "1.0.8"
   },
   "play.memory_summarizer": {
     "sha256": "b16f16fbf1d1a8fe63edf5c3428fc1557259bfca70c96aa67a8c1abff541d435",

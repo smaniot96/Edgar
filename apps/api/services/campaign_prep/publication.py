@@ -7,9 +7,9 @@ from openai import OpenAI
 
 from edgar_core.config import EMBEDDING_MODEL, OPENAI_API_KEY
 from edgar_core.manifests import AdventureManifest, manifest_digest
-from ingestion.embed import _embed_and_upsert, _prepare_extraction
-from ingestion.manifest import manifest_chunks
+from ingestion.embed import _embed_and_upsert
 from ingestion.readiness import report_summary
+from ingestion.semantic import prepare_reviewed_manifest_records
 
 from .. import adventures_meta
 from .compile import make_extraction
@@ -49,17 +49,16 @@ def publish(store: Store):
     compiled = store.get("compiled")
     extraction = make_extraction(compiled)
     manifest = AdventureManifest.model_validate(compiled["manifest"])
+    if manifest_digest(manifest) != compiled["manifest_sha256"]:
+        raise NeedsAttention("Compiled manifest changed after independent review.")
     manifest.reviewed_by = "campaign-graph-v2-independent-review"
     manifest.reviewed_sha256 = manifest_digest(manifest)
     report = {}
-    chunks = _prepare_extraction(
+    chunks = prepare_reviewed_manifest_records(
         extraction,
-        "generated",
-        1000,
-        0,
-        store.directory / "playable",
-        report.update,
-        prepared_chunks=manifest_chunks(extraction, manifest),
+        manifest,
+        preview_dir=store.directory / "playable",
+        on_prepared=report.update,
     )
 
     @contextmanager

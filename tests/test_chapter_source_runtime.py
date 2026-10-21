@@ -1,5 +1,6 @@
 """Exercise exact scene retrieval and the private planner prompt without paid calls."""
 
+import re
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -85,8 +86,10 @@ async def test_all_source_pages_reach_private_planner_after_pagination_and_merge
         assert len(source_chunks) == 24
         state.update(retrieved)
         prompt = "\n".join(message["content"] for message in build_adjudicator_prompt(state, None))
+        # Inline evidence selectors annotate the original source without replacing it.
+        source_prompt = re.sub(r"\[source_span span_[a-f0-9]+\]\n", "", prompt)
         for page in source["pages"]:
-            assert page["text"] in prompt
+            assert page["text"] in source_prompt
         assert all(c["audience"] == "player" for c in retrieved["retrieved_context"])
         _, public_adventure = narrator_context(state)
         assert all(c["audience"] == "player" for c in public_adventure)

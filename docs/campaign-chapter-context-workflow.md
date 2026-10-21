@@ -32,6 +32,11 @@ relevant chapter's scenes/goals. Full notes are chapter-scoped. The shared runti
 stays compact; the administrative DM guide remains comprehensive. Source pages and private
 truths are not player discoveries. Complete custom profiles use existing module-stat bindings;
 verified catalogue bases can be combined only with evidenced source modifications.
+Publication indexes these as reviewed semantic records, whose integrity comes from exact
+manifest spans, source/passage hashes, audience/reference checks and complete chunk coverage.
+They are not raw PDF extraction pages: a private note may legitimately quote several stat
+profiles or an incomplete original OCR line. Original page quality diagnostics stay attached
+to the source artifacts; independent rulebook/PDF extraction keeps its own layout checks.
 
 The evidence hierarchy is explicit in author/reviewer and live DM instructions. Original
 adventure facts take precedence over accidental prepared contradictions. A deliberate
@@ -58,16 +63,25 @@ Ordinary scoped patches likewise preserve existing identities outside the repair
 when a model incidentally re-describes them. Their ignored IDs are recorded, while their
 accepted records remain unchanged. A parenthetical profile heading annotation is checked
 as presentation without rewriting the retained stat text or paying to regenerate it.
+When a chapter-content correction omits unchanged actors or secrets, the local merge retains
+the original records. Omission is never deletion authority; unrelated supplied modifications
+still fail validation, and the full paid proposal remains available for inspection.
 
 During play, verified current-scene guidance reaches the existing input parser before it
-classifies the action. The existing consequence call can select a short, exact source
-answer earned by the actual action, alongside its private justification. Local validation
-checks the reviewed source hash, active scene, exact quotation/action and successful result.
+classifies the action. Existing evidence is annotated inline with stable source-span IDs,
+bound to the reviewed source reference, current scene and exact original offsets. The
+existing consequence call selects a span ID and supplies a natural player-safe answer.
+Local validation resolves that binding without asking the model to retype source words or
+join a quotation to a separate reference. Unknown, stale, future and foreign spans fail.
+No additional semantic call is needed. Archived responses retain exact quotation matching
+and unambiguous relocation within already eligible same-campaign current-scene evidence.
 The narrator receives only the selected answer; the public adjudication DTO excludes raw
-source quotations and private reasoning. Whether a natural-language action earns a secret
-remains the live DM's semantic judgment, as for creative goal completion. Source provenance
-alone does not prove that judgment correct. Linked event triggers permit meaningful progress
-between events at the same location without requiring artificial physical travel.
+source evidence, span IDs and private reasoning. Rejections retain private operator replay
+receipts with restricted permissions, without failing play if receipt capture is unavailable.
+Whether a natural-language action earns a secret remains the live DM's semantic judgment,
+as for creative goal completion. Source provenance alone does not prove that judgment correct.
+Linked event triggers permit meaningful progress between events at the same location
+without requiring artificial physical travel.
 
 Preserving exact source instructions does not implement all their mechanics. Canonical item
 custody and ordinary fixed-DC checks compile to existing engine definitions. Attunement,
@@ -83,6 +97,12 @@ Versioned prompts are in `apps/api/services/campaign_prep/prompts/`: `principles
 prompt and `VisualEvidence` dispatch schema were removed. The earlier replacement commit
 `2b7fb4d` contains the removal of the superseded blueprint executor and its callers; this
 change does not reintroduce it.
+
+The obsolete-structure audit found no additional PostgreSQL tables to remove: fourteen
+current application model tables and `alembic_version` account for all fifteen public tables.
+Historical campaigns, source files, paid task receipts and checkpoints are protected records,
+not unused preparation infrastructure. The remaining archive reader is inert and cannot
+dispatch a model task. PDF creation remains part of the shared graph.
 
 Focused regression evidence is in `tests/test_campaign_chapter_calls_v2.py`,
 `tests/test_chapter_source_retention.py`, `tests/test_campaign_source_mechanics_v2.py` and the

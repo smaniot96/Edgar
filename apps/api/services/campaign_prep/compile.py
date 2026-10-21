@@ -10,8 +10,9 @@ import tiktoken
 from edgar_core.artifacts import text_digest
 from edgar_core.campaign_semantics import Bundles, Spine
 from edgar_core.manifests import AdventureManifest, manifest_digest
-from ingestion.extract import ExtractedPage, Extraction
+from ingestion.extract import ExtractedPage
 from ingestion.quality import check_text
+from ingestion.semantic import SemanticRecordExtraction as SemanticExtraction, SemanticRecordPage
 
 from .store import NeedsAttention, digest
 
@@ -40,14 +41,6 @@ def chapter_source_pages(spine, chapter):
             for page in row["origin"]["pages"]
         }
     )
-
-
-class SemanticExtraction(Extraction):
-    def markdown(self):
-        return "\n\n".join(
-            f"<!-- Authored campaign record {p.page}; not a PDF page -->\n\n{p.text}"
-            for p in self.pages
-        )
 
 
 def split_embedding_spans(pages, passages, scenes, goals):
@@ -919,7 +912,12 @@ def make_extraction(compiled):
         value["source_sha256"],
         len(compiled["pages"]),
         [
-            ExtractedPage(p["page"], p["text"], "semantic-assembly-v2", check_text(p["text"]))
+            SemanticRecordPage(
+                p["page"],
+                p["text"],
+                "semantic-assembly-v2",
+                {"characters": len(p["text"]), "validation": "reviewed-semantic-manifest"},
+            )
             for p in compiled["pages"]
         ],
         rules_edition=value["rules_edition"],

@@ -762,6 +762,11 @@ def load_reviewed_extraction(
     """
     pdf_path, report_path = Path(pdf_path) if pdf_path is not None else None, Path(report_path)
     data = json.loads(report_path.read_text(encoding="utf-8"))
+    if data.get("document_kind") == "reviewed-semantic-records-v1":
+        raise ValueError(
+            "Semantic record bundles require their exact reviewed manifest; "
+            "use load_reviewed_manifest_records."
+        )
     if data["extraction_version"] != EXTRACTION_VERSION:
         raise ValueError("Extraction preview version changed; extract and review again.")
     source = (

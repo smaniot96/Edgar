@@ -87,30 +87,39 @@ class FlagUpdate(BaseModel):
     value: str  # stringified; world_flags.value is varchar
 
 
-def _require_source_quote(schema: dict) -> None:
-    if "source_quote" in schema.get("properties", {}):
+def _require_source_span(schema: dict) -> None:
+    if "source_span_id" in schema.get("properties", {}):
         required = schema.setdefault("required", [])
-        if "source_quote" not in required:
-            required.append("source_quote")
+        if "source_span_id" not in required:
+            required.append("source_span_id")
 
 
 class SourceObservation(BaseModel):
     """The live DM selects a short source-backed answer earned by this action."""
 
-    model_config = ConfigDict(json_schema_extra=_require_source_quote)
+    model_config = ConfigDict(json_schema_extra=_require_source_span)
 
     text: str = Field(
         min_length=1,
         max_length=600,
-        description="Concrete player-safe answer or observation earned now, in natural wording. Every fact must follow from source_quote and the actual action. No hidden reasons, future facts or mechanical/state claims.",
+        description="Concrete player-safe answer or observation earned now, in natural wording. Every fact must follow from the selected source span and actual action. No hidden reasons, future facts or mechanical/state claims.",
     )
-    source_quote: str = Field(
+    source_span_id: str = Field(
+        default="",
+        min_length=1,
+        max_length=80,
+        description="Required: copy the inline source_span ID of the eligible current-scene evidence supporting this earned answer. Select its ID instead of retyping or paraphrasing a source quote. Private evidence binding, never player text.",
+    )
+    source_quote: SkipJsonSchema[str] = Field(
         default="",
         min_length=1,
         max_length=1200,
-        description="Required short exact contiguous quotation from the cited current-scene source supporting the answer. Copy source words, not a paraphrase. Kept private; never the answer itself unless already naturally player-facing.",
+        description="Legacy quotation compatibility only; omit for new responses and select source_span_id instead.",
     )
-    source_reference_id: str
+    source_reference_id: SkipJsonSchema[str] = Field(
+        default="",
+        description="Legacy quote compatibility; selected source_span_id already binds the exact source reference.",
+    )
     action_quote: str = Field(
         min_length=1,
         description="Exact words from the current player action that earn this answer.",
@@ -152,7 +161,7 @@ class AdjudicationResult(BaseModel):
     source_observations: list[SourceObservation] = Field(
         default_factory=list,
         exclude=True,
-        description="Required explicit answer decision: return player-safe answers earned by this action, each backed by a short exact source_quote from an eligible current-scene reference. Empty only when no source-backed information is earned. No future secrets or mechanical/state changes.",
+        description="Required explicit answer decision: return player-safe answers earned by this action, each bound to an inline source_span_id from eligible current-scene evidence. Empty only when no source-backed information is earned. No future secrets or mechanical/state changes.",
     )
     accepted_observations: SkipJsonSchema[list[str]] = Field(default_factory=list)
     observation_diagnostics: SkipJsonSchema[dict] = Field(default_factory=dict)
