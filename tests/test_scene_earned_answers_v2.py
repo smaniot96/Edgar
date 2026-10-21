@@ -17,6 +17,7 @@ from agent.nodes.story_effects import story_candidates, validate_story_effects
 from agent.scene_guidance import (
     active_observation_chunks,
     cached_scene_context,
+    match_source_quote,
     preload_scene_context,
 )
 from apps.api.services.campaign_prep.compile import assemble, make_extraction
@@ -203,6 +204,7 @@ def test_model_must_explicitly_decide_source_answers_without_breaking_archived_r
     schema = convert_to_openai_tool(AdjudicationResult)["function"]["parameters"]
     assert "source_observations" in schema["required"]
     assert "source_observations" in schema["properties"]
+    assert "source_quote" in schema["properties"]["source_observations"]["items"]["required"]
     assert "observation_diagnostics" not in schema["properties"]
     assert "accepted_observations" not in schema["properties"]
     validation = AdjudicationResult.model_json_schema(mode="validation")
@@ -211,6 +213,93 @@ def test_model_must_explicitly_decide_source_answers_without_breaking_archived_r
     assert "source_observations" not in serialization["properties"]
     assert "source_observations" not in serialization["required"]
     assert AdjudicationResult.model_validate({"success": True}).source_observations == []
+
+
+@pytest.mark.parametrize(
+    ("source", "quote", "expected"),
+    [
+        (
+            "Prefix. Hobb can use another clear signal. Tail.",
+            "Hobb can use another clear signal.",
+            "Hobb can use another clear signal.",
+        ),
+        (
+            "Prefix. Hobb can use\n another\tclear\u00a0signal. Tail.",
+            "Hobb can use another clear signal.",
+            "Hobb can use\n another\tclear\u00a0signal.",
+        ),
+        (
+            "Prefix. Hobb’s signal—“all aboard”—works… Tail.",
+            'Hobb\'s signal-"all aboard"-works...',
+            "Hobb’s signal—“all aboard”—works…",
+        ),
+        (
+            "Prefix. Hobb’s signal—“all aboard”—\nworks. Tail.",
+            r"Hobb\u2019s signal\u2014\"all aboard\"\u2014\nworks.",
+            "Hobb’s signal—“all aboard”—\nworks.",
+        ),
+    ],
+)
+def test_source_quote_formatting_recovers_exact_original_span(source, quote, expected):
+    result = match_source_quote(source, quote)
+    assert result is not None
+    assert result["text"] == expected
+    assert source[result["start"] : result["end"]] == expected
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "Hobb cannot use another clear signal.",
+        "Hobb can use a different clear signal.",
+        "Another clear signal can be used by Hobb.",
+        "Hobb can use another signal.",
+        r"Hobb c\u0061n use another clear signal.",
+        " ",
+    ],
+)
+def test_source_quote_formatting_never_accepts_paraphrases_or_word_changes(quote):
+    assert match_source_quote("Hobb can use another clear signal.", quote) is None
+
+
+@pytest.mark.asyncio
+async def test_natural_answer_is_grounded_by_separate_private_exact_quote(scene_state):
+    state = await prepared(scene_state)
+    text = "The bell announces boarding; it does not make the crossing safe."
+    source_quote = ANSWER + " The ferryman explains this freely when asked."
+    result = AdjudicationResult(
+        success=True,
+        source_observations=[proposal(state, text=text, source_quote=source_quote)],
+    )
+    validate_story_effects(result, state)
+    assert result.accepted_observations == [text]
+    assert result.observation_diagnostics["accepted"] == 1
+    assert result.observation_diagnostics["matches"][0]["method"] == "exact"
+    state["adjudication_result"] = result
+    prompt = "\n".join(str(m.content) for m in build_narrator_prompt(state))
+    assert text in prompt
+    assert source_quote not in prompt
+    assert UNRELATED not in prompt
+    assert source_quote not in str(result.model_dump())
+    # Public source text/offset diagnostics and both private proposal fields remain absent.
+    from apps.api.services.turn_runner import public_adjudication
+
+    assert source_quote not in str(public_adjudication(result))
+    assert "observation_diagnostics" not in public_adjudication(result)
+
+
+@pytest.mark.asyncio
+async def test_paraphrased_evidence_quote_cannot_ground_even_a_plausible_answer(scene_state):
+    state = await prepared(scene_state)
+    result = AdjudicationResult(
+        success=True,
+        source_observations=[proposal(state, source_quote="The bell only announces boarding.")],
+    )
+    validate_story_effects(result, state)
+    assert result.accepted_observations == []
+    assert result.observation_diagnostics["rejected"] == [
+        {"index": 0, "reason": "source_quote_not_exact"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -311,9 +400,7 @@ async def test_same_location_event_progress_requires_actual_action_basis_without
         AdjudicationResult(
             success=result.success,
             story_effects=[
-                StoryEffect.model_validate(
-                    effect.model_dump(include=set(StoryEffect.model_fields))
-                )
+                StoryEffect.model_validate(effect.model_dump(include=set(StoryEffect.model_fields)))
                 for effect in result.accepted_story_effects
             ],
         ),

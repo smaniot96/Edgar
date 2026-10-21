@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 
 from edgar_core.manifests import require_published
 
@@ -137,6 +138,69 @@ def active_observation_chunks(state):
     return result
 
 
+_QUOTE_PUNCTUATION = {
+    **dict.fromkeys("\u2018\u2019\u201a\u201b", "'"),
+    **dict.fromkeys("\u201c\u201d\u201e\u201f", '"'),
+    **dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2212", "-"),
+    "\u2026": "...",
+}
+
+
+def _canonical_quote(value):
+    """Typography/whitespace only, with each character mapped to its source span."""
+    characters, spans = [], []
+    for index, char in enumerate(value):
+        replacement = " " if char.isspace() else _QUOTE_PUNCTUATION.get(char, char)
+        if replacement == " " and characters and characters[-1] == " ":
+            spans[-1] = (spans[-1][0], index + 1)
+            continue
+        for normalized in replacement:
+            characters.append(normalized)
+            spans.append((index, index + 1))
+    start = 1 if characters and characters[0] == " " else 0
+    end = len(characters) - (1 if characters and characters[-1] == " " else 0)
+    return "".join(characters[start:end]), spans[start:end]
+
+
+def match_source_quote(text, quote):
+    """Return an original contiguous span; never fuzzy-match or paraphrase source words."""
+    if not quote.strip():
+        return None
+    start = text.find(quote)
+    if start >= 0:
+        return {
+            "text": text[start : start + len(quote)],
+            "start": start,
+            "end": start + len(quote),
+            "method": "exact",
+        }
+
+    # Some model outputs double-escape formatting. Decode only whitespace and
+    # typographic punctuation, never arbitrary character escapes or word content.
+    def unescape(match):
+        token = match.group(0)
+        value = (
+            chr(int(token[2:], 16))
+            if token.startswith("\\u")
+            else {r"\n": "\n", r"\r": "\r", r"\t": "\t", r"\"": '"', r"\'": "'"}[token]
+        )
+        return value if value.isspace() or value in _QUOTE_PUNCTUATION or value in "\"'" else token
+
+    candidate = re.sub(r"\\(?:u[0-9a-fA-F]{4}|[nrt\"'])", unescape, quote)
+    source, spans = _canonical_quote(text)
+    target, _ = _canonical_quote(candidate)
+    start = source.find(target) if target else -1
+    if start < 0:
+        return None
+    original_start, original_end = spans[start][0], spans[start + len(target) - 1][1]
+    return {
+        "text": text[original_start:original_end],
+        "start": original_start,
+        "end": original_end,
+        "method": "formatting",
+    }
+
+
 def validate_source_observations(adjudication, state):
     """Seal exact grounded answers chosen by the existing live DM judgment stage.
 
@@ -152,6 +216,7 @@ def validate_source_observations(adjudication, state):
         "accepted": 0,
         "eligible_references": 0,
         "rejected": [],
+        "matches": [],
     }
     adjudication.observation_diagnostics = diagnostics
     if (
@@ -170,17 +235,27 @@ def validate_source_observations(adjudication, state):
     for index, proposal in enumerate(adjudication.source_observations):
         chunk = evidence.get(proposal.source_reference_id)
         reason = None
+        match = None
         if not chunk:
             reason = "ineligible_source_reference"
         elif not proposal.achievement_basis.strip():
             reason = "missing_achievement_basis"
         elif not proposal.action_quote.strip() or proposal.action_quote not in action:
             reason = "action_quote_not_exact"
-        elif not proposal.text.strip() or proposal.text not in chunk["text"]:
+        elif not proposal.text.strip() or not (
+            match := match_source_quote(chunk["text"], proposal.source_quote or proposal.text)
+        ):
             reason = "source_quote_not_exact"
         if reason:
             diagnostics["rejected"].append({"index": index, "reason": reason})
             continue
         if proposal.text not in adjudication.accepted_observations:
             adjudication.accepted_observations.append(proposal.text)
+            diagnostics["matches"].append(
+                {
+                    "index": index,
+                    "source_reference_id": proposal.source_reference_id,
+                    **{key: match[key] for key in ("start", "end", "method")},
+                }
+            )
     diagnostics["accepted"] = len(adjudication.accepted_observations)

@@ -114,9 +114,13 @@ Fill out:
   Its quotation comes from this player event, not from a source book. Later fulfilled/broken
   updates must reference that committed promise; preserve the original quotation and never
   treat speech as evidence of a discovery or object ownership. Engine outcomes/numbers are not story proposals.
-- source_observations: in reviewed module play, answer the actual action using exact short
-  contiguous quotations from eligible CURRENT-SCENE source references. These are nonmechanical
-  ordinary answers, sensory observations and source-backed dialogue information earned now.
+- source_observations: in reviewed module play, answer the actual action with concrete,
+  player-safe ordinary answers, sensory observations and dialogue information earned now.
+  For each answer, put its natural player-facing wording in text and copy a short exact
+  contiguous supporting quotation into source_quote from an eligible CURRENT-SCENE reference.
+  The private source quotation and the answer have different purposes: do not paraphrase
+  source_quote, and do not force DM directions into the answer. Every fact in text must be
+  supported by that quote and earned by this action; never add a rule or a hidden explanation.
   Supply the exact source_reference_id, action_quote from the actual player action, and private
   achievement_basis explaining why this information is available now and any reveal condition
   that has actually been met. When a willing NPC answers an ordinary question, or a successful
@@ -125,25 +129,25 @@ Fill out:
   it permanently unknowable. Equally, an available source secret is not automatically earned:
   do not reveal unobserved motives, culprits, future chapter truths or whole private paragraphs
   when the player only looks around. Select only the earned answer, excluding private reasons
-  and future consequences. Do not invent wording, use global campaign registry references,
+  and future consequences. Do not invent facts, use global campaign registry references,
   propose observations on a failed check, or claim item/state/mechanical changes through this
   channel. Existing canonical discoveries/goals still use story_effects.
-  Review each selected quote before returning it: does this actual action earn every fact
-  in that quote? Same-scene relevance and an exact source match alone do not make a fact
+  Review each selected answer before returning it: does this actual action earn every fact
+  in text? Same-scene relevance and an exact source match alone do not make a fact
   observable. For NPC dialogue, the present speaker must know the information and have a
   source-supported reason to share it now; the DM knowing a culprit's motive does not mean
   another NPC knows it. A question about a delay can earn the public reason for waiting,
   but not an unobserved culprit, concealed object location or private motive. Narrow the
-  quotation to the earned clause, or omit it when public and private facts cannot be
-  separated. Never use a made-up achievement_basis to turn unrelated private knowledge
-  into an earned answer. The narrator will phrase approved information naturally; raw DM
+  quotation to evidence supporting the earned answer. The answer must omit any additional
+  private facts within that evidence. Never use a made-up achievement_basis to turn unrelated
+  private knowledge into an earned answer. The narrator will phrase approved information naturally; raw DM
   wording is internal evidence and must not be copied as dialogue or conditional directions.
   This field is REQUIRED in every response. For an ordinary answered question or successful
   observation with relevant source evidence, provide the earned answer in this field even if
   no canonical discovery can be committed. A move or a citation alone conveys no answer to
   the narrator. Use [] only when the action earns no source-backed information (or outside
   reviewed module play). The narrator cannot see your private evidence and cannot recover an
-  answer you omit. Prefer several short exact clauses to one mixed public/private paragraph.
+  answer you omit. Prefer focused answers with short exact supporting quotes to mixed public/private paragraphs.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
   Prepared event scenes may share one location. If the actual action meets a supplied linked

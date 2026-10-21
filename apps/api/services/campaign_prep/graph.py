@@ -804,12 +804,20 @@ class Workflow:
             for field in ("events", "goals", "new_entities", "new_secrets"):
                 before_rows = {row["id"]: row for row in original[field]}
                 after_rows = {row["id"]: row for row in replacement[field]}
-                if before_rows.keys() != after_rows.keys():
+                if after_rows.keys() - before_rows.keys():
                     raise NeedsAttention("Chapter repair changed contained record inventory.")
                 if any(
-                    before_rows[key] != after_rows[key] for key in before_rows if key not in allowed
+                    before_rows[key] != row
+                    for key, row in after_rows.items()
+                    if key not in allowed
                 ):
                     raise NeedsAttention("Chapter repair changed unrelated contained records.")
+                # Chapter content repairs often omit unchanged actors/secrets. An
+                # omission is not deletion authority: retain every accepted record,
+                # applying only explicitly supplied changes within the closure.
+                replacement[field] = [
+                    after_rows.get(row["id"], row) for row in original[field]
+                ]
             chapter_replacements[bundle.chapter_id] = replacement
         bundles["chapters"] = [
             chapter_replacements.get(b["chapter_id"], b) for b in bundles["chapters"]

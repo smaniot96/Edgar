@@ -44,7 +44,7 @@ class PromptEntry:
 # (`agent.nodes.narrator`), so editing NARRATOR changes both entries.
 PROMPTS: tuple[PromptEntry, ...] = (
     PromptEntry("play.parser", "input parser", "1.2.0", INPUT_PARSER),
-    PromptEntry("play.consequence_planner", "rules adjudicator / consequence planner", "1.0.6", RULES_ADJUDICATOR),
+    PromptEntry("play.consequence_planner", "rules adjudicator / consequence planner", "1.0.7", RULES_ADJUDICATOR),
     PromptEntry("play.narrator", "narrator", "1.0.5", NARRATOR),
     PromptEntry("play.combat_builder", "combat encounter builder", "1.0.0", ENCOUNTER_BUILDER),
     PromptEntry("play.combat_narrator", "combat narrator", "1.0.5", NARRATOR),

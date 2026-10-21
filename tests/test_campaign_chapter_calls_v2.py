@@ -274,7 +274,8 @@ async def test_chapter_must_acknowledge_exact_assigned_pages_without_paid_resubm
 
 
 @pytest.mark.asyncio
-async def test_chapter_repair_cannot_rewrite_an_unaffected_contained_entity(pdf_store):
+@pytest.mark.parametrize("omit_unchanged", [False, True])
+async def test_chapter_repair_preserves_unaffected_contained_entity(pdf_store, omit_unchanged):
     spine, bundles = chapter_fixture()
     observer = {
         "id": "npc_observer",
@@ -313,13 +314,23 @@ async def test_chapter_repair_cannot_rewrite_an_unaffected_contained_entity(pdf_
             assert "npc_observer" not in evidence["allowed_ids"]
             replacement = deepcopy(bundles["chapters"][0])
             replacement["source_notes"] += " The omitted appendix detail is restored."
-            replacement["new_entities"][0]["motive"] = "A conflicting invented motive."
+            if omit_unchanged:
+                replacement["new_entities"] = []
+            else:
+                replacement["new_entities"][0]["motive"] = "A conflicting invented motive."
             return Patch(chapters=[replacement])
 
-    with pytest.raises(NeedsAttention, match="unrelated contained records"):
+    if omit_unchanged:
         await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
-    assert pdf_store.get("bundles") == original
-    assert pdf_store.get("repair-history") is None
+        repaired = pdf_store.get("bundles")["chapters"][0]
+        assert repaired["new_entities"] == original["chapters"][0]["new_entities"]
+        assert repaired["source_notes"].endswith("The omitted appendix detail is restored.")
+        assert pdf_store.get("repair-history")
+    else:
+        with pytest.raises(NeedsAttention, match="unrelated contained records"):
+            await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
+        assert pdf_store.get("bundles") == original
+        assert pdf_store.get("repair-history") is None
 
 
 @pytest.mark.asyncio
