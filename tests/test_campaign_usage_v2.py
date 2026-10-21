@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from contextlib import contextmanager
+
 import pytest
 
 from apps.api.services import adventures_meta
@@ -301,3 +305,91 @@ def test_supported_embedding_cost_is_included_in_whole_run_bounds(usage_store):
     usage = usage_store.usage()
     assert usage["embedding_cost_microusd"] == 20
     assert usage["cost_estimate_lower_microusd"] == usage["cost_estimate_upper_microusd"] == 170
+
+
+@pytest.mark.parametrize(
+    ("request_fields", "response_fields", "expected_tier", "expected_model", "expected_cost"),
+    [
+        ({}, {}, "default", "gpt-6-luna", 200),
+        ({"service_tier": None}, {}, None, "gpt-6-luna", None),
+        ({"service_tier": "priority"}, {"service_tier": "default"}, "default", "gpt-6-luna", 200),
+        ({"model": "other-model"}, {"model": "gpt-6-luna"}, "default", "gpt-6-luna", 200),
+        ({"reasoning": None}, {}, "default", "gpt-6-luna", 200),
+    ],
+)
+def test_projected_request_metadata_preserves_defaults_nulls_and_provider_overrides(
+    store, request_fields, response_fields, expected_tier, expected_model, expected_cost
+):
+    result = semantic(
+        store,
+        tokens(1000, 200),
+        request={"model": "gpt-6-luna", "reasoning": {"effort": "medium"}, **request_fields},
+        response=response_fields,
+    )
+    call = result["calls"][0]
+    assert call["service_tier"] == expected_tier
+    assert call["model"] == expected_model
+    assert call["cost_microusd"] == expected_cost
+    assert call["reasoning"] == (None if request_fields.get("reasoning", {}) is None else "medium")
+
+
+def test_usage_projects_large_retained_payloads_without_loading_or_modifying_them(
+    store, monkeypatch
+):
+    from apps.api.services.campaign_prep import store as store_module
+
+    monkeypatch.setattr(store_module.time, "time", lambda: 1234567890)
+    baseline = semantic(store, tokens(10000, 1000, cached=4000))
+    # The regression is independent of prompt/image/response shape and size:
+    # account only the retained metadata, even when other fields are enormous.
+    padding = "retained-paid-content-" * 200000
+    with store.db() as db:
+        row = db.execute("SELECT request, response FROM task").fetchone()
+        request, response = json.loads(row["request"]), json.loads(row["response"])
+        request["input"] = [{"type": "input_image", "image_url": padding}]
+        request["unrelated_metadata"] = padding
+        response["output"] = [{"text": padding}]
+        db.execute(
+            "UPDATE task SET request=?, response=?, accepted=?",
+            (json.dumps(request), json.dumps(response), json.dumps({"chapters": padding})),
+        )
+
+    def receipts_hash():
+        with original_db() as db:
+            row = db.execute("SELECT request, response, accepted FROM task").fetchone()
+        return hashlib.sha256(json.dumps(tuple(row)).encode()).hexdigest()
+
+    original_db = store.db
+    before = receipts_hash()
+    projected_bytes = []
+
+    class ProjectedCursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def __iter__(self):
+            for row in self.cursor:
+                size = sum(len(value) for value in row if isinstance(value, str))
+                # Check the actual SQLite-to-Python boundary, not just the
+                # eventual report: SELECT * would transfer megabytes here.
+                assert size < 2048
+                projected_bytes.append(size)
+                yield row
+
+    class Connection:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, query, *args):
+            cursor = self.connection.execute(query, *args)
+            return ProjectedCursor(cursor) if "FROM task" in query else cursor
+
+    @contextmanager
+    def bounded_db():
+        with original_db() as db:
+            yield Connection(db)
+
+    monkeypatch.setattr(store, "db", bounded_db)
+    assert store.usage() == baseline
+    assert projected_bytes and sum(projected_bytes) < 2048
+    assert receipts_hash() == before

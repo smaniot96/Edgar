@@ -180,16 +180,46 @@ class Store:
 
     def usage(self):
         """Provider token measurements and published-rate estimates, never billed amounts."""
+        # Requests retain page images and can exceed a gigabyte across a run.
+        # Project accounting metadata inside SQLite so neither those inputs nor
+        # accepted/output content enter Python's usage-reporting working set.
         with self.db() as db:
-            rows = [dict(r) for r in db.execute("SELECT * FROM task ORDER BY started")]
+            rows = [
+                dict(r)
+                for r in db.execute(
+                    """SELECT id, node, state, started, finished,
+                        json_extract(request, '$.model', '$.reasoning.effort',
+                                     '$.service_tier') AS request_metadata,
+                        json_type(request, '$.service_tier') AS request_tier_type,
+                        CASE WHEN response IS NOT NULL AND response != '' THEN
+                            json_extract(response, '$.id', '$.model', '$.service_tier', '$.usage')
+                        END AS response_metadata
+                       FROM task ORDER BY started"""
+                )
+            ]
 
         def token_count(value):
             return value if type(value) is int and value >= 0 else None
 
         calls, embedding_calls = [], []
         for row in rows:
-            request = json.loads(row["request"])
-            response = json.loads(row["response"]) if row["response"] else {}
+            model, effort, tier = json.loads(row["request_metadata"])
+            request = {"model": model, "reasoning": {"effort": effort}}
+            if row["request_tier_type"] is not None:
+                # A missing tier defaults to standard; an explicit null remains
+                # unknown, matching the retained request's original semantics.
+                request["service_tier"] = tier
+            response = (
+                dict(
+                    zip(
+                        ("id", "model", "service_tier", "usage"),
+                        json.loads(row["response_metadata"]),
+                        strict=True,
+                    )
+                )
+                if row["response_metadata"]
+                else {}
+            )
             usage = response.get("usage") or {}
             model = response.get("model") or request.get("model")
             call = {
