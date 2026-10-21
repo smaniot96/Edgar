@@ -167,12 +167,21 @@ def validate_semantics(spine, bundles, source=None):
                 k for k, r in registry.items() if r["kind"] == "event"
             }:
                 raise NeedsAttention("Unknown next event identity: " + row["id"])
-            if not set(row.get("visible_entity_ids", [])) <= set(
-                row["participants"] + row["clue_ids"]
-            ):
+            visible = set(row.get("visible_entity_ids", []))
+            places = {
+                key
+                for key in visible
+                if registry[key]["kind"] == "entity" and registry[key]["value"]["kind"] == "place"
+            }
+            if not visible <= set(row["participants"] + row["clue_ids"]) | places:
                 raise NeedsAttention("Visible entity must participate in the event: " + row["id"])
-            if any(r["entity_id"] not in row["clue_ids"] for r in row.get("reveals", [])):
-                raise NeedsAttention("Discovery reveal must reference an event clue: " + row["id"])
+            if any(
+                r["entity_id"] not in row["clue_ids"] + row["participants"]
+                for r in row.get("reveals", [])
+            ):
+                raise NeedsAttention(
+                    "Discovery reveal must reference an event clue or participant: " + row["id"]
+                )
             if (
                 registry[row["location_id"]]["kind"] != "entity"
                 or registry[row["location_id"]]["value"]["kind"] != "place"
@@ -253,6 +262,26 @@ def assemble(slug, edition, spine, bundles, mechanics):
     for cindex, chapter in enumerate(chapters):
         bundle = by_chapter[chapter["id"]]
         for index, event in enumerate(bundle["events"]):
+            # Knowledge has its own identity. Encountering an NPC must never disclose
+            # their private history, nor may an early clue unlock a later revelation.
+            discoveries = []
+            for reveal_index, reveal in enumerate(event.get("reveals", [])):
+                target_id = derived(event["id"], "knowledge_" + str(reveal_index))
+                if target_id in registry:
+                    raise NeedsAttention("Reserved discovery identity: " + target_id)
+                entities.append(
+                    {
+                        "entity_id": target_id,
+                        "kind": "clue",
+                        "title": (
+                            registry[reveal["entity_id"]]["value"]["name"][:160]
+                            + " — discovery "
+                            + str(reveal_index + 1)
+                        ),
+                        "discovery_flag": derived(target_id, "discovered"),
+                    }
+                )
+                discoveries.append({**reveal, "target_id": target_id})
             public = event["public_description"].strip()
             private = "\n\n".join(
                 [
@@ -269,7 +298,7 @@ def assemble(slug, edition, spine, bundles, mechanics):
                             if g["event_id"] == event["id"]
                         ]
                     ),
-                    "Discovery opportunities: " + str(event.get("reveals", [])),
+                    "Discovery opportunities: " + str(discoveries),
                 ]
             )
             text = public + "\n\n" + private
@@ -280,6 +309,11 @@ def assemble(slug, edition, spine, bundles, mechanics):
                 for key in event["participants"] + event["clue_ids"]
                 if any(e["entity_id"] == key for e in entities)
             ]
+            public_entities = [
+                key
+                for key in event.get("visible_entity_ids", [])
+                if any(e["entity_id"] == key for e in entities)
+            ]
             passages += [
                 {
                     "passage_id": derived(event["id"], "public"),
@@ -288,7 +322,10 @@ def assemble(slug, edition, spine, bundles, mechanics):
                     "end": len(public),
                     "text_sha256": text_digest(public),
                     "scene_ids": [event["id"]],
-                    "entity_ids": event.get("visible_entity_ids", []),
+                    "entity_ids": public_entities,
+                    "known_scene_ids": [event["id"]]
+                    if event["location_id"] in event.get("visible_entity_ids", [])
+                    else [],
                     "audience": "player",
                 },
                 {
@@ -298,15 +335,13 @@ def assemble(slug, edition, spine, bundles, mechanics):
                     "end": len(text),
                     "text_sha256": text_digest(private),
                     "scene_ids": [event["id"]],
-                    "entity_ids": sorted(set(actor_ids)),
+                    "entity_ids": sorted(set(actor_ids + [d["target_id"] for d in discoveries])),
                     "audience": "planner",
                 },
             ]
             reveal_ids = []
-            for reveal_index, reveal in enumerate(event.get("reveals", [])):
-                entity = next(e for e in entities if e["entity_id"] == reveal["entity_id"])
-                flag = derived(reveal["entity_id"], "discovered")
-                entity["discovery_flag"] = flag
+            for reveal_index, reveal in enumerate(discoveries):
+                flag = derived(reveal["target_id"], "discovered")
                 reveal_page = len(pages) + 1
                 reveal_text = reveal["public_text"].strip()
                 pages.append(
@@ -324,7 +359,7 @@ def assemble(slug, edition, spine, bundles, mechanics):
                         "end": len(reveal_text),
                         "text_sha256": text_digest(reveal_text),
                         "scene_ids": [event["id"]],
-                        "entity_ids": [reveal["entity_id"]],
+                        "entity_ids": [reveal["target_id"]],
                         "audience": "player",
                         "requires": {flag: "discovered"},
                     }

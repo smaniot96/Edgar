@@ -204,13 +204,14 @@ class Store:
                 "seconds": (row["finished"] or time.time()) - row["started"],
                 "status": row["state"],
             }
-            cost = None
+            cost = lower_cost = upper_cost = None
+            bounds_reason = None
             if row["node"] == "embedding":
                 # Embeddings have input tokens only; the provider's total is equivalent
                 # when an older receipt omits its more specific prompt-token field.
                 ti = token_count(usage.get("prompt_tokens", usage.get("total_tokens")))
                 if ti is not None and model == "text-embedding-3-small":
-                    cost = (ti * 20 + 999) // 1000
+                    cost = lower_cost = upper_cost = (ti * 20 + 999) // 1000
                 call.update(input_tokens=ti, total_tokens=token_count(usage.get("total_tokens")))
                 destination = embedding_calls
             else:
@@ -220,26 +221,34 @@ class Store:
                 cached = token_count(details.get("cached_tokens", 0))
                 written = token_count(details.get("cache_write_tokens", 0))
                 split = details.get("cache_write_tokens_details")
-                # A positive write count without its lifetime split cannot be priced
-                # reliably: explicit cache breakpoints can override the request TTL.
-                short = token_count(split.get("ttl_30m_tokens")) if split else 0
-                long = token_count(split.get("ttl_12h_tokens")) if split else 0
-                valid = (
-                    all(v is not None for v in (ti, to, cached, written, short, long))
-                    and short + long == written
-                    and cached + written <= ti
+                # Cache write lifetimes are billed at different published rates. A
+                # missing split leaves the exact estimate unknown, but valid measured
+                # counts support bounds without assuming the request or provider TTL.
+                has_split = isinstance(split, dict)
+                short = token_count(split.get("ttl_30m_tokens")) if has_split else None
+                long = token_count(split.get("ttl_12h_tokens")) if has_split else None
+                if not has_split and written == 0:
+                    short = long = 0
+                counts_valid = (
+                    all(v is not None for v in (ti, to, cached, written)) and cached + written <= ti
                 )
+                split_valid = short is not None and long is not None and short + long == written
                 tier = response.get("service_tier") or request.get("service_tier", "default")
                 long_context = ti is not None and ti > 272000
-                if valid and model == "gpt-6-luna" and tier in ("default", "standard"):
+                if counts_valid and model == "gpt-6-luna" and tier in ("default", "standard"):
                     # Integer thousandths of microUSD per token. Cache writes replace
-                    # ordinary input rates; cached reads and both write TTLs are disjoint.
+                    # ordinary input rates; cached reads and write counts are disjoint.
                     ordinary = ti - cached - written
                     input_factor = 2 if long_context else 1
-                    weighted = input_factor * (
-                        ordinary * 100 + cached * 10 + short * 125 + long * 250
-                    ) + to * (750 if long_context else 500)
-                    cost = (weighted + 999) // 1000
+                    fixed = input_factor * (ordinary * 100 + cached * 10)
+                    fixed += to * (750 if long_context else 500)
+                    if split_valid:
+                        weighted = fixed + input_factor * (short * 125 + long * 250)
+                        cost = lower_cost = upper_cost = (weighted + 999) // 1000
+                    elif not has_split and split is None and written > 0:
+                        lower_cost = (fixed + input_factor * written * 125 + 999) // 1000
+                        upper_cost = (fixed + input_factor * written * 250 + 999) // 1000
+                        bounds_reason = "cache_write_lifetime_unreported"
                 call.update(
                     reasoning=(request.get("reasoning") or {}).get("effort"),
                     service_tier=tier,
@@ -252,7 +261,13 @@ class Store:
                     long_context_rates=long_context,
                 )
                 destination = calls
-            call.update(cost_microusd=cost, cost_estimate_microusd=cost)
+            call.update(
+                cost_microusd=cost,
+                cost_estimate_microusd=cost,
+                cost_estimate_lower_microusd=lower_cost,
+                cost_estimate_upper_microusd=upper_cost,
+                cost_bounds_reason=bounds_reason,
+            )
             destination.append(call)
 
         semantic_cost = sum(c["cost_microusd"] or 0 for c in calls)
@@ -261,6 +276,10 @@ class Store:
         unknown_embedding = sum(c["cost_microusd"] is None for c in embedding_calls)
         unknown = unknown_semantic + unknown_embedding
         known_cost = semantic_cost + embedding_cost
+        all_calls = calls + embedding_calls
+        unbounded = sum(c["cost_estimate_lower_microusd"] is None for c in all_calls)
+        known_lower = sum(c["cost_estimate_lower_microusd"] or 0 for c in all_calls)
+        known_upper = sum(c["cost_estimate_upper_microusd"] or 0 for c in all_calls)
         state = self.state()
         return {
             "calls": calls,
@@ -280,6 +299,14 @@ class Store:
             "billed_cost_microusd": None,
             "cost_basis": "published_standard_rate_estimate_known_usage_only",
             "cost_estimate_complete": unknown == 0,
+            # A whole-run range exists only when every dispatch has valid measured
+            # usage and a supported rate. Unknown paid work is never priced as zero.
+            "cost_estimate_lower_microusd": known_lower if unbounded == 0 else None,
+            "cost_estimate_upper_microusd": known_upper if unbounded == 0 else None,
+            "known_cost_estimate_lower_microusd": known_lower,
+            "known_cost_estimate_upper_microusd": known_upper,
+            "cost_bounds_complete": unbounded == 0,
+            "unbounded_calls": unbounded,
             "unknown_calls": unknown,
             "unknown_semantic_calls": unknown_semantic,
             "unknown_embedding_calls": unknown_embedding,
@@ -313,6 +340,7 @@ class Store:
                     "usd_per_million_tokens": "0.02",
                     "source": "https://developers.openai.com/api/docs/models/text-embedding-3-small",
                 },
+                "cache_write_bounds": "An unreported lifetime split uses the published 30-minute rate as the lower estimate and 12-hour rate as the upper estimate, without assuming a TTL.",
                 "exclusions": "No invoice, account discount, tax or regional premium verification.",
             },
             "elapsed_seconds": (state.get("finished_at") or time.time())

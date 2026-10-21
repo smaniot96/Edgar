@@ -185,3 +185,119 @@ def test_embedding_total_fallback_and_whole_microusd_rounding(store):
     assert result["embedding_input_tokens"] == 51
     assert result["embedding_cost_microusd"] == 2
     assert result["cost_estimate_complete"]
+
+
+@pytest.fixture
+def usage_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    store = Store("usage_probe")
+    store.initialize({"source_kind": "ai"})
+    return store
+
+
+def receipt(store, *, details, input_tokens=1000, output_tokens=100, tier="default"):
+    request = {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}, "service_tier": tier}
+    store.dispatch("probe", "spine", request)
+    store.response(
+        "probe",
+        {
+            "id": "resp_probe",
+            "model": "gpt-6-luna",
+            "status": "completed",
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "input_tokens_details": details,
+            },
+        },
+    )
+    return store.usage()
+
+
+def test_missing_write_lifetime_has_finite_published_bounds_but_no_exact_cost(usage_store):
+    usage = receipt(usage_store, details={"cached_tokens": 100, "cache_write_tokens": 800})
+    call = usage["calls"][0]
+    # 100 ordinary tokens + 100 cached reads + 800 writes, plus 100 output tokens.
+    assert call["cost_estimate_lower_microusd"] == 161
+    assert call["cost_estimate_upper_microusd"] == 261
+    assert call["cost_microusd"] is None
+    assert call["cache_write_30m_tokens"] is None and call["cache_write_12h_tokens"] is None
+    assert call["cost_bounds_reason"] == "cache_write_lifetime_unreported"
+    assert usage["cost_estimate_complete"] is False
+    assert usage["cost_bounds_complete"] is True
+    assert usage["cost_estimate_lower_microusd"] == 161
+    assert usage["cost_estimate_upper_microusd"] == 261
+    assert usage["billed_cost_microusd"] is None
+
+
+def test_reported_lifetime_split_prices_disjoint_reads_writes_and_ordinary_input(usage_store):
+    usage = receipt(
+        usage_store,
+        details={
+            "cached_tokens": 100,
+            "cache_write_tokens": 800,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 600, "ttl_12h_tokens": 200},
+        },
+    )
+    assert usage["calls"][0]["cost_microusd"] == 186
+    assert usage["cost_estimate_complete"] is True
+    assert usage["cost_estimate_lower_microusd"] == usage["cost_estimate_upper_microusd"] == 186
+
+
+def test_long_context_uses_whole_request_input_and_output_multipliers(usage_store):
+    usage = receipt(
+        usage_store,
+        details={"cached_tokens": 0, "cache_write_tokens": 280000},
+        input_tokens=280000,
+        output_tokens=100,
+    )
+    assert usage["cost_estimate_lower_microusd"] == 70075
+    assert usage["cost_estimate_upper_microusd"] == 140075
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"cached_tokens": 100, "cache_write_tokens": 1000},
+        {
+            "cached_tokens": 0,
+            "cache_write_tokens": 800,
+            "cache_write_tokens_details": {"ttl_30m_tokens": 700, "ttl_12h_tokens": 0},
+        },
+        {"cached_tokens": 0, "cache_write_tokens": 800, "cache_write_tokens_details": "unknown"},
+    ],
+)
+def test_invalid_usage_never_gets_a_complete_range(usage_store, details):
+    usage = receipt(usage_store, details=details)
+    assert usage["cost_estimate_lower_microusd"] is None
+    assert usage["cost_estimate_upper_microusd"] is None
+    assert usage["cost_bounds_complete"] is False
+    assert usage["unbounded_calls"] == 1
+
+
+def test_unresolved_dispatch_prevents_whole_run_range_and_retains_known_subtotal(usage_store):
+    receipt(usage_store, details={"cached_tokens": 0, "cache_write_tokens": 0})
+    usage_store.dispatch("ambiguous", "chapters", {"model": "gpt-6-luna"})
+    usage = usage_store.usage()
+    assert usage["cost_estimate_lower_microusd"] is None
+    assert usage["cost_estimate_upper_microusd"] is None
+    assert usage["known_cost_estimate_lower_microusd"] == 150
+    assert usage["known_cost_estimate_upper_microusd"] == 150
+    assert usage["unbounded_calls"] == 1
+
+
+def test_supported_embedding_cost_is_included_in_whole_run_bounds(usage_store):
+    receipt(usage_store, details={"cached_tokens": 0, "cache_write_tokens": 0})
+    usage_store.dispatch("embed", "embedding", {"model": "text-embedding-3-small"})
+    usage_store.response(
+        "embed",
+        {
+            "id": "embed_probe",
+            "model": "text-embedding-3-small",
+            "status": "completed",
+            "usage": {"prompt_tokens": 1000, "total_tokens": 1000},
+        },
+    )
+    usage = usage_store.usage()
+    assert usage["embedding_cost_microusd"] == 20
+    assert usage["cost_estimate_lower_microusd"] == usage["cost_estimate_upper_microusd"] == 170

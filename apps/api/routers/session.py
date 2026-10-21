@@ -569,8 +569,8 @@ async def create_session(
         db,
         campaign,
         character_id=body.active_character_id,
-        # Generic campaigns allow a no-character session; prepared campaigns still enforce
-        # their commissioned hero when this is a session-start preflight.
+        # Prepared modules require a hero selected for play after preparation;
+        # the module itself remains reusable and independent of that selection.
         require_character=True,
         observed_sources=sources,
     )

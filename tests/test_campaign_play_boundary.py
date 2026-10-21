@@ -176,14 +176,17 @@ def test_archived_nonprivate_ingestion_never_advertises_retired_retry(published_
 
 
 @pytest.mark.asyncio
-async def test_compiled_visible_actor_and_earned_clue_use_public_evidence(monkeypatch):
+@pytest.mark.parametrize("reveal_entity", ["ribbon", "mira"])
+async def test_compiled_visible_actor_and_earned_clue_use_public_evidence(
+    monkeypatch, reveal_entity
+):
     from agent.models.adjudication import AdjudicationResult
     from agent.nodes.story_effects import (
         prepare_story_validation_state,
         story_candidates,
         validate_story_effects,
     )
-    from apps.api.services.campaign_prep.compile import assemble, make_extraction
+    from apps.api.services.campaign_prep.compile import assemble, derived, make_extraction
     from edgar_core.campaign_semantics import Bundles, Spine
     from edgar_core.manifests import select_scene_context
     from edgar_core.sources import source_citation
@@ -256,7 +259,7 @@ async def test_compiled_visible_actor_and_earned_clue_use_public_evidence(monkey
                             "location_id": "square",
                             "participants": ["mira"],
                             "clue_ids": ["ribbon"],
-                            "visible_entity_ids": ["mira"],
+                            "visible_entity_ids": ["square", "mira"],
                             "goal_ids": ["keeper_safe"],
                             "trigger": "The hero arrives",
                             "timing": "Before the festival",
@@ -264,7 +267,7 @@ async def test_compiled_visible_actor_and_earned_clue_use_public_evidence(monkey
                             "dm_notes": "PRIVATE: The keeper is hiding at the mill; the mayor is secretly responsible.",
                             "reveals": [
                                 {
-                                    "entity_id": "ribbon",
+                                    "entity_id": reveal_entity,
                                     "public_text": "The ribbon carries the miller's mark.",
                                     "condition": "Inspect the ribbon using any credible approach",
                                 }
@@ -321,10 +324,12 @@ async def test_compiled_visible_actor_and_earned_clue_use_public_evidence(monkey
         AdjudicationResult(success=True, story_effects=[encounter]), state
     )
     assert len(accepted_actor.accepted_story_effects) == 1
-    private = next(c for c in state["planner_context"] if "ribbon" in c.get("entity_ids", []))
+    knowledge_id = derived("square_event", "knowledge_0")
+    assert candidates["mira"]["discovery_flag"] is None
+    private = next(c for c in state["planner_context"] if knowledge_id in c.get("entity_ids", []))
     discovery = StoryEffect(
         kind="discover",
-        target=candidates["ribbon"]["target"],
+        target=candidates[knowledge_id]["target"],
         status="discovered",
         source_reference_ids=[source_citation(private, "2014")["reference_id"]],
     )
@@ -336,3 +341,124 @@ async def test_compiled_visible_actor_and_earned_clue_use_public_evidence(monkey
     assert earned[0].player_text == "The ribbon carries the miller's mark."
     assert "mayor" not in earned[0].player_text
     assert "PRIVATE" not in earned[0].player_text
+
+
+def test_compiled_discoveries_keep_npc_history_and_later_clue_stages_private():
+    from copy import deepcopy
+
+    from test_campaign_graph_v2 import ORIGIN, sample
+
+    from apps.api.services.campaign_prep.compile import assemble, derived
+    from apps.api.services.story_state import session_story_flags
+    from edgar_core.manifests import select_scene_context
+
+    spine, bundles = sample()
+    spine["entities"] += [
+        {
+            "id": "elin",
+            "kind": "npc",
+            "name": "Elin",
+            "description": "A lamplighter",
+            "origin": ORIGIN,
+        },
+        {
+            "id": "ribbon",
+            "kind": "clue",
+            "name": "The ribbon",
+            "description": "An old knot",
+            "origin": ORIGIN,
+        },
+        {
+            "id": "place_bridge",
+            "kind": "place",
+            "name": "Old Bridge",
+            "description": "A distant bridge",
+            "origin": ORIGIN,
+        },
+    ]
+    opening = bundles["chapters"][0]["events"][0]
+    opening.update(
+        participants=["elin"],
+        clue_ids=["ribbon"],
+        visible_entity_ids=["place_square", "place_bridge", "elin", "ribbon"],
+        public_description="Elin waits in the square. The old bridge is visible downstream.",
+        reveals=[
+            {
+                "entity_id": "ribbon",
+                "public_text": "Elin recognizes the ribbon.",
+                "condition": "Ask about the knot.",
+            },
+            {
+                "entity_id": "elin",
+                "public_text": "Elin once made a promise to a river spirit.",
+                "condition": "Earn Elin's trust.",
+            },
+        ],
+    )
+    later = deepcopy(opening)
+    later.update(
+        id="event_amends",
+        title="Making amends",
+        visible_entity_ids=["elin"],
+        reveals=[
+            {
+                "entity_id": "ribbon",
+                "public_text": "The spirit saved Elin's sister; she broke her promise through shame.",
+                "condition": "Earn the full account.",
+            }
+        ],
+    )
+    opening["next_event_ids"] = [later["id"]]
+    bundles["chapters"][0]["events"].append(later)
+    compiled = assemble("fresh", "2014", spine, bundles, [])
+    manifest = AdventureManifest.model_validate(compiled["manifest"])
+    manifest.reviewed_by = "independent-review"
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    public = next(p for p in manifest.passages if p.passage_id == "event_square_public")
+    assert public.entity_ids == ["elin", "ribbon"]
+    assert public.known_scene_ids == ["event_square"]
+    actor = next(e for e in manifest.entities if e.entity_id == "elin")
+    assert actor.discovery_flag is None
+    early_id = derived("event_square", "knowledge_0")
+    history_id = derived("event_square", "knowledge_1")
+    later_id = derived("event_amends", "knowledge_0")
+    flags = {
+        derived(early_id, "discovered"): "discovered",
+        # Even stale historical actor-discovery flags cannot unlock new knowledge.
+        derived("elin", "discovered"): "discovered",
+    }
+    selected = select_scene_context(manifest, "event_square", flags)
+    assert "event_square_reveal_0" in selected["player_passage_ids"]
+    assert "event_square_reveal_1" not in selected["player_passage_ids"]
+    assert (
+        "event_amends_reveal_0"
+        not in select_scene_context(manifest, "event_amends", flags)["player_passage_ids"]
+    )
+    entities = {e.entity_id: e for e in manifest.entities}
+    assert len({entities[k].discovery_flag for k in [early_id, history_id, later_id]}) == 3
+    # The existing engine can derive the independent flag from earned facts;
+    # no live runtime change or campaign-wide disclosure is needed.
+    assert session_story_flags({}, {"fresh": manifest.model_dump()}, flags) == {
+        derived("elin", "discovered"): "discovered"
+    }
+
+
+def test_visible_nonparticipant_npc_remains_invalid():
+    from test_campaign_graph_v2 import ORIGIN, sample
+
+    from apps.api.services.campaign_prep.compile import assemble
+    from apps.api.services.campaign_prep.store import NeedsAttention
+
+    spine, bundles = sample()
+    spine["entities"].append(
+        {
+            "id": "hidden_actor",
+            "kind": "npc",
+            "name": "A hidden witness",
+            "description": "Hidden",
+            "origin": ORIGIN,
+        }
+    )
+    bundles["chapters"][0]["events"][0]["visible_entity_ids"] = ["hidden_actor"]
+    with pytest.raises(NeedsAttention, match="must participate"):
+        assemble("fresh", "2014", spine, bundles, [])

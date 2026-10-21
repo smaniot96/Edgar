@@ -26,6 +26,7 @@ from edgar_core.campaign_semantics import (
 )
 
 from .compile import assemble, closure, dependencies, records, validate_semantics
+from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
 from .provider import SemanticClient
 from .source import acquire_pdf, evidence_pages, packets, token_count
@@ -58,10 +59,12 @@ class Workflow:
             ("spine", "bundles"),
             ("bundles", "continuity"),
             ("continuity", "assemble"),
-            ("assemble", "review"),
             ("repair", "assemble"),
         ):
             builder.add_edge(previous, following)
+        builder.add_conditional_edges(
+            "assemble", self.route_assembly, {"repair": "repair", "review": "review"}
+        )
         builder.add_conditional_edges(
             "review", self.route_review, {"repair": "repair", "publish": "publish"}
         )
@@ -403,6 +406,15 @@ class Workflow:
             self.store.get("mechanics"),
         )
         validate_semantics(spine, bundles, self.store.get("source"))
+        local_findings = mechanical_findings(bundles, mechanics)
+        self.store.put("assembly-findings", local_findings)
+        findings = [f for f in self.store.get("findings") or [] if f["owner"] != "assembly"]
+        self.store.put(
+            "findings",
+            findings + [{"owner": "assembly", "value": finding} for finding in local_findings],
+        )
+        if local_findings:
+            return address
         dep = digest([spine, bundles, mechanics])
         if self.store.get("compiled", dep) is None:
             value = assemble(
@@ -412,6 +424,9 @@ class Workflow:
             atomic_json(self.store.directory / "playable.json", value)
             (self.store.directory / "dm-guide.md").write_text(value["guide"])
         return address
+
+    def route_assembly(self, address):
+        return "repair" if self.store.get("assembly-findings") else "review"
 
     async def review(self, address):
         self.store.enter("review")
@@ -565,7 +580,17 @@ class Workflow:
         ]
         if value.spine is not None and "campaign_spine" not in allowed:
             raise NeedsAttention("Repair tried to change the campaign spine outside its closure.")
+        patched_events = {e.id: e for e in value.events if e.id in allowed}
+        new_entities = {row.id: row for row in value.entities if row.id not in registry}
+        for key in new_entities:
+            if key in {"campaign_spine", "campaign_registry"} or not any(
+                key in e.participants + e.clue_ids + e.visible_entity_ids or key == e.location_id
+                for e in patched_events.values()
+            ):
+                raise NeedsAttention("New repair entity is not used by an affected event.")
         for kind, row in patches:
+            if row.id in new_entities and kind == "entity":
+                continue
             if row.id not in allowed or registry[row.id]["kind"] != kind:
                 raise NeedsAttention(
                     "Repair tried to change records outside its dependency closure."
@@ -588,6 +613,20 @@ class Workflow:
         for bundle in bundles["chapters"]:
             for field in ("goals", "events", "new_entities", "new_secrets"):
                 bundle[field] = [replacements.get(row["id"], row) for row in bundle[field]]
+        for key, row in new_entities.items():
+            owner = next(
+                b
+                for b in bundles["chapters"]
+                if any(
+                    e["id"] in patched_events
+                    and (
+                        key in e["participants"] + e["clue_ids"] + e.get("visible_entity_ids", [])
+                        or key == e["location_id"]
+                    )
+                    for e in b["events"]
+                )
+            )
+            owner["new_entities"].append(row.model_dump())
         validate_semantics(spine, bundles, self.store.get("source"))
         if digest([spine, bundles]) == before:
             raise NeedsAttention(
