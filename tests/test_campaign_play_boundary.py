@@ -436,6 +436,11 @@ def test_compiled_discoveries_keep_npc_history_and_later_clue_stages_private():
     )
     entities = {e.entity_id: e for e in manifest.entities}
     assert len({entities[k].discovery_flag for k in [early_id, history_id, later_id]}) == 3
+    # A partial discovery cannot expose the referenced identity's private name
+    # through a generated display title before the full account is earned.
+    for key in (early_id, history_id, later_id):
+        assert "Elin" not in entities[key].title
+        assert "ribbon" not in entities[key].title
     # The existing engine can derive the independent flag from earned facts;
     # no live runtime change or campaign-wide disclosure is needed.
     assert session_story_flags({}, {"fresh": manifest.model_dump()}, flags) == {

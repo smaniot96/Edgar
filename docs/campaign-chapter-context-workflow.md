@@ -117,9 +117,14 @@ Ordinary scoped patches likewise preserve existing identities outside the repair
 when a model incidentally re-describes them. Their ignored IDs are recorded, while their
 accepted records remain unchanged. A parenthetical profile heading annotation is checked
 as presentation without rewriting the retained stat text or paying to regenerate it.
-When a chapter-content correction omits unchanged actors or secrets, the local merge retains
-the original records. Omission is never deletion authority; unrelated supplied modifications
-still fail validation, and the full paid proposal remains available for inspection.
+When a chapter-content correction omits unchanged events, goals, actors or secrets, the local
+merge retains the original records, procedures and blank unchanged guidance. A partial
+correction note layers over the complete earlier reference with explicit correction precedence.
+Omission is never deletion authority; unrelated supplied modifications and invented identities
+still fail validation. Supplemental page citations preserve planner ownership and must trace to
+physical pages supplied in this repair or a retained critic packet whose exact finding is supplied.
+A separate normalization receipt records omitted IDs, proposed pages and critic ancestry; the
+full original paid proposal remains unchanged and available for inspection.
 
 During play, verified current-scene guidance reaches the existing input parser before it
 classifies the action. Existing evidence is annotated inline with stable source-span IDs,

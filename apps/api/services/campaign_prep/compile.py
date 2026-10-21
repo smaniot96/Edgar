@@ -503,11 +503,9 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                     {
                         "entity_id": target_id,
                         "kind": "clue",
-                        "title": (
-                            registry[reveal["entity_id"]]["value"]["name"][:160]
-                            + " — discovery "
-                            + str(reveal_index + 1)
-                        ),
+                        # The referenced identity may itself name a future answer.
+                        # Only public_text establishes what this discovery discloses.
+                        "title": "Discovery " + str(reveal_index + 1),
                         "discovery_flag": derived(target_id, "discovered"),
                     }
                 )

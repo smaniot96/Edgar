@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import re
 import sys
 import time
@@ -732,6 +733,46 @@ class Workflow:
             else "publish"
         )
 
+    def retained_review_page_sources(self, findings, pages):
+        """Trace a supplied finding back to its retained critic's original OCR packet."""
+        sources = []
+        if not pages:
+            return sources
+        with self.store.db() as db:
+            reviews = list(
+                db.execute(
+                    """SELECT id, json_extract(response, '$.id') AS response_id,
+                          json_extract(accepted, '$.findings') AS findings
+                   FROM task WHERE node LIKE 'final-review-%' AND state='accepted'"""
+                )
+            )
+            for review in reviews:
+                accepted_findings = json.loads(review["findings"] or "[]")
+                owned = [finding["id"] for finding in findings if finding in accepted_findings]
+                if not owned:
+                    continue
+                supplied = {
+                    row[0]
+                    for row in db.execute(
+                        """SELECT json_extract(page.value, '$.physical_page')
+                           FROM task, json_each(
+                               json_extract(task.request, '$.input[1].content[0].text'),
+                               '$.source_evidence') AS page WHERE task.id=?""",
+                        (review["id"],),
+                    )
+                }
+                covered = sorted(pages & supplied)
+                if covered:
+                    sources.append(
+                        {
+                            "task_id": review["id"],
+                            "response_id": review["response_id"],
+                            "finding_ids": owned,
+                            "pages": covered,
+                        }
+                    )
+        return sources
+
     async def repair(self, address):
         self.store.enter("repair")
         registry = self.registry()
@@ -822,33 +863,102 @@ class Workflow:
         )
         before = digest([spine, bundles])
         chapter_replacements = {}
+        chapter_normalizations = []
         for bundle in value.chapters:
             key = derived(bundle.chapter_id, "content")
             if key not in allowed or registry[key]["kind"] != "chapter":
                 raise NeedsAttention(
                     "Repair tried to replace a chapter outside its affected closure."
                 )
+            if bundle.chapter_id in chapter_replacements:
+                raise NeedsAttention("Chapter repair repeated a chapter proposal.")
             original = next(b for b in bundles["chapters"] if b["chapter_id"] == bundle.chapter_id)
-            if {e["id"] for e in original["events"]} != {e.id for e in bundle.events}:
-                raise NeedsAttention("Chapter repair must preserve event identities.")
-            if {g["id"] for g in original["goals"]} != {g.id for g in bundle.goals}:
-                raise NeedsAttention("Chapter repair must preserve goal identities.")
             replacement = bundle.model_dump()
-            if set(replacement["source_pages"]) != set(original["source_pages"]):
+            contained = ("events", "goals", "new_entities", "new_secrets")
+            incomplete = any(
+                {row["id"] for row in replacement[field]} < {row["id"] for row in original[field]}
+                for field in contained
+            )
+            normalization = {"chapter_id": bundle.chapter_id, "omitted_record_ids": {}}
+            if incomplete:
+                proposed_pages = replacement["source_pages"]
+                if len(proposed_pages) != len(set(proposed_pages)):
+                    raise NeedsAttention("Chapter repair repeated source pages.")
+                extra_pages = set(proposed_pages) - set(original["source_pages"])
+                supplied_pages = {row["physical_page"] for row in evidence["source_evidence"]}
+                physical_pages = {row["page"] for row in self.store.get("source")["pages"]}
+                relevant_findings = [
+                    finding
+                    for finding in findings
+                    if key in closure(registry, set(finding["record_ids"]))
+                ]
+                review_sources = self.retained_review_page_sources(
+                    relevant_findings, extra_pages - supplied_pages
+                )
+                reviewed_pages = {page for item in review_sources for page in item["pages"]}
+                if not extra_pages <= (supplied_pages | reviewed_pages) & physical_pages:
+                    raise NeedsAttention(
+                        "Chapter repair cited nonexistent or unsupplied source pages."
+                    )
+                normalization["additional_source_pages"] = sorted(extra_pages)
+                normalization["retained_review_page_sources"] = review_sources
+                normalization["proposed_source_pages"] = proposed_pages
+                replacement["source_pages"] = copy.deepcopy(original["source_pages"])
+                if not replacement["dm_guidance"]:
+                    replacement["dm_guidance"] = original["dm_guidance"]
+                    normalization["retained_empty_dm_guidance"] = True
+                old_notes, new_notes = original["source_notes"], replacement["source_notes"]
+                if not new_notes:
+                    replacement["source_notes"] = old_notes
+                    normalization["source_notes_mode"] = "retained_omitted_reference"
+                elif old_notes and old_notes not in new_notes:
+                    replacement["source_notes"] = (
+                        "Accepted correction supersedes any conflicting earlier guidance.\n\n"
+                        + new_notes
+                        + "\n\nRetained earlier chapter reference:\n\n"
+                        + old_notes
+                    )
+                    normalization["source_notes_mode"] = "paid_correction_layer"
+                for field, identity_key in (("items", "entity_id"), ("checks", "id")):
+                    before_rows = {row[identity_key]: row for row in original[field]}
+                    after_rows = {row[identity_key]: row for row in replacement[field]}
+                    if (
+                        len(after_rows) != len(replacement[field])
+                        or after_rows.keys() - before_rows.keys()
+                    ):
+                        raise NeedsAttention(
+                            "Chapter repair changed contained procedure inventory."
+                        )
+                    normalization["omitted_record_ids"][field] = sorted(
+                        before_rows.keys() - after_rows.keys()
+                    )
+                    replacement[field] = [
+                        after_rows.get(row[identity_key], row) for row in original[field]
+                    ]
+            elif set(replacement["source_pages"]) != set(original["source_pages"]):
                 raise NeedsAttention("Chapter repair changed its original source inventory.")
-            for field in ("events", "goals", "new_entities", "new_secrets"):
+            for field in contained:
                 before_rows = {row["id"]: row for row in original[field]}
                 after_rows = {row["id"]: row for row in replacement[field]}
-                if after_rows.keys() - before_rows.keys():
+                if (
+                    len(after_rows) != len(replacement[field])
+                    or after_rows.keys() - before_rows.keys()
+                ):
                     raise NeedsAttention("Chapter repair changed contained record inventory.")
                 if any(
                     before_rows[key] != row for key, row in after_rows.items() if key not in allowed
                 ):
                     raise NeedsAttention("Chapter repair changed unrelated contained records.")
-                # Chapter content repairs often omit unchanged actors/secrets. An
-                # omission is not deletion authority: retain every accepted record,
+                # Chapter content repairs can omit unchanged events/goals as well
+                # as actors/secrets. Omission is not deletion authority: retain every record,
                 # applying only explicitly supplied changes within the closure.
                 replacement[field] = [after_rows.get(row["id"], row) for row in original[field]]
+                if incomplete:
+                    normalization["omitted_record_ids"][field] = sorted(
+                        before_rows.keys() - after_rows.keys()
+                    )
+            if incomplete:
+                chapter_normalizations.append(normalization)
             chapter_replacements[bundle.chapter_id] = replacement
         bundles["chapters"] = [
             chapter_replacements.get(b["chapter_id"], b) for b in bundles["chapters"]
@@ -885,6 +995,8 @@ class Workflow:
             raise NeedsAttention(
                 "Repair made no progress; unresolved findings retained without another paid loop."
             )
+        if chapter_normalizations:
+            self.store.put("repair-normalized-" + signature, {"chapters": chapter_normalizations})
         self.store.put("repair-history", (self.store.get("repair-history") or []) + [signature])
         self.store.put("spine", spine)
         self.store.put("bundles", bundles)

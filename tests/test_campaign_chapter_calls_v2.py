@@ -395,3 +395,224 @@ def test_verified_profile_context_uses_complete_names_and_source_plurals(pdf_sto
         "Brown Bear",
     ]
     assert len(result["index"]) == len(names)
+
+
+@pytest.mark.asyncio
+async def test_chapter_content_patch_retains_omitted_inventory_and_separate_event_edit(pdf_store):
+    spine, bundles = chapter_fixture()
+    chapter = bundles["chapters"][0]
+    extra = deepcopy(chapter["events"][0])
+    extra.update(
+        id="event_unchanged", title="Unchanged source scene", dm_notes="Exact accepted prose."
+    )
+    chapter["events"].append(extra)
+    extra_goal = deepcopy(chapter["goals"][0])
+    extra_goal.update(id="goal_unchanged", title="Unchanged goal", event_ids=[extra["id"]])
+    chapter["goals"].append(extra_goal)
+    pdf_store.put("spine", spine)
+    pdf_store.put("bundles", bundles)
+    pdf_store.put(
+        "findings",
+        [
+            {
+                "owner": "test",
+                "value": {
+                    "id": "chapter_detail",
+                    "severity": "material",
+                    "record_ids": ["ch_bell_content"],
+                    "evidence": "A chapter running note and its scene need a source detail.",
+                    "instruction": "Restore that detail without changing other records.",
+                },
+            }
+        ],
+    )
+    original = deepcopy(bundles)
+
+    class Repair:
+        async def call(self, node, prompt, schema, evidence, images=None):
+            partial = deepcopy(chapter)
+            partial["events"] = partial["events"][:1]
+            partial["goals"] = partial["goals"][:1]
+            partial["source_notes"] += " Restored source detail."
+            individual = deepcopy(chapter["events"][0])
+            individual["dm_notes"] += " Independently permitted scene detail."
+            return Patch(chapters=[partial], events=[individual])
+
+    await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
+    repaired = pdf_store.get("bundles")
+    for field in ("events", "goals", "new_entities", "new_secrets"):
+        assert [r["id"] for r in repaired["chapters"][0][field]] == [
+            r["id"] for r in original["chapters"][0][field]
+        ]
+    assert repaired["chapters"][0]["events"][1] == original["chapters"][0]["events"][1]
+    assert repaired["chapters"][0]["goals"] == original["chapters"][0]["goals"]
+    assert repaired["chapters"][1] == original["chapters"][1]
+    assert repaired["chapters"][0]["events"][0]["dm_notes"].endswith(
+        "Independently permitted scene detail."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["events", "goals"])
+@pytest.mark.parametrize("change", ["invent", "rename", "duplicate"])
+async def test_partial_chapter_patch_rejects_new_renamed_or_duplicate_identities(
+    pdf_store, field, change
+):
+    spine, bundles = chapter_fixture()
+    pdf_store.put("spine", spine)
+    pdf_store.put("bundles", bundles)
+    pdf_store.put(
+        "findings",
+        [
+            {
+                "owner": "test",
+                "value": {
+                    "id": "chapter_detail",
+                    "severity": "material",
+                    "record_ids": ["ch_bell_content"],
+                    "evidence": "An omitted chapter detail.",
+                    "instruction": "Restore the detail.",
+                },
+            }
+        ],
+    )
+
+    class Repair:
+        async def call(self, node, prompt, schema, evidence, images=None):
+            partial = deepcopy(bundles["chapters"][0])
+            proposed = deepcopy(partial[field][0])
+            if change != "duplicate":
+                proposed["id"] = "invented_identity"
+            if change == "rename":
+                partial[field][0] = proposed
+            else:
+                partial[field].append(proposed)
+            return Patch(chapters=[partial])
+
+    with pytest.raises(NeedsAttention, match="contained record inventory"):
+        await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
+    assert pdf_store.get("bundles") == bundles
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_page", "review_provenance"),
+    [(None, False), (2, False), (99, False), (2, True), (99, True)],
+)
+async def test_incomplete_chapter_correction_retains_reference_guidance_and_procedures(
+    pdf_store, extra_page, review_provenance
+):
+    spine, bundles = chapter_fixture()
+    chapter = bundles["chapters"][0]
+    clue = deepcopy(spine["entities"][0])
+    clue.update(id="clue_relic", kind="clue", name="Relic")
+    chapter["new_entities"] = [clue]
+    origin = deepcopy(clue["origin"])
+    chapter["items"] = [
+        {
+            "entity_id": clue["id"],
+            "procedure": "Exact accepted item operating procedure.",
+            "event_ids": ["event_square"],
+            "portable": True,
+            "consumable": False,
+            "origin": origin,
+        }
+    ]
+    chapter["checks"] = [
+        {
+            "id": "inspect_relic",
+            "action": "Inspect the relic",
+            "event_ids": ["event_square"],
+            "check": "arcana",
+            "dc": 15,
+            "success_text": "Exact discovery.",
+            "failure_text": "Exact consequence.",
+            "origin": origin,
+        }
+    ]
+    pdf_store.put("spine", spine)
+    pdf_store.put("bundles", bundles)
+    pdf_store.put(
+        "findings",
+        [
+            {
+                "owner": "test",
+                "value": {
+                    "id": "chapter_detail",
+                    "severity": "material",
+                    "record_ids": ["ch_bell_content"],
+                    "evidence": "A conditional source reward is missing.",
+                    "instruction": "Restore the conditional reward.",
+                },
+            }
+        ],
+    )
+
+    if review_provenance:
+        evidence = {"source_evidence": [{"physical_page": extra_page}]}
+        pdf_store.dispatch(
+            "retained_critic",
+            "final-review-probe",
+            {"input": [{}, {"content": [{"text": json.dumps(evidence)}]}]},
+        )
+        pdf_store.response("retained_critic", {"id": "resp_critic", "status": "completed"})
+        pdf_store.accept(
+            "retained_critic",
+            {
+                "covered_ids": ["ch_bell_content"],
+                "findings": [pdf_store.get("findings")[0]["value"]],
+            },
+        )
+
+    class Repair:
+        async def call(self, node, prompt, schema, evidence, images=None):
+            partial = deepcopy(chapter)
+            partial["new_entities"] = []
+            partial["items"] = []
+            partial["checks"] = []
+            partial["dm_guidance"] = ""
+            partial["source_notes"] = "Correction: reward is conditional on the escort."
+            if extra_page is not None:
+                partial["source_pages"].append(extra_page)
+            return Patch(chapters=[partial])
+
+    if extra_page is not None and not (review_provenance and extra_page == 2):
+        with pytest.raises(NeedsAttention, match="nonexistent or unsupplied"):
+            await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
+        assert pdf_store.get("bundles") == bundles
+        return
+    await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
+    repaired = pdf_store.get("bundles")["chapters"][0]
+    assert repaired["source_notes"].startswith(
+        "Accepted correction supersedes any conflicting earlier guidance.\n\nCorrection:"
+    )
+    assert chapter["source_notes"] in repaired["source_notes"]
+    for field in (
+        "dm_guidance",
+        "source_pages",
+        "events",
+        "goals",
+        "new_entities",
+        "items",
+        "checks",
+    ):
+        assert repaired[field] == chapter[field]
+    with pdf_store.db() as db:
+        normalization = json.loads(
+            db.execute(
+                "SELECT payload FROM artifact WHERE name LIKE 'repair-normalized-%'"
+            ).fetchone()[0]
+        )
+    assert normalization["chapters"][0]["source_notes_mode"] == "paid_correction_layer"
+
+    normalized = normalization["chapters"][0]
+    if review_provenance:
+        assert normalized["additional_source_pages"] == [2]
+        assert normalized["retained_review_page_sources"] == [
+            {
+                "task_id": "retained_critic",
+                "response_id": "resp_critic",
+                "finding_ids": ["chapter_detail"],
+                "pages": [2],
+            }
+        ]
