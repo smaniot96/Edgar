@@ -454,10 +454,17 @@ class Workflow:
             if len(value.chapters) != 1 or value.chapters[0].chapter_id != number:
                 raise NeedsAttention("Authoring response must cover its one requested chapter.")
             bundle = value.chapters[0].model_dump()
-            if set(bundle["source_pages"]) != set(chapter["pages"]):
+            returned_pages = set(bundle["source_pages"])
+            assigned_pages = set(chapter["pages"])
+            if not assigned_pages <= returned_pages or not returned_pages <= set(
+                item["context_pages"]
+            ):
                 raise NeedsAttention(
                     "Chapter must retain its complete assigned source-page inventory."
                 )
+            # Supporting pages were genuinely supplied, but are not the base inventory.
+            # Keep the paid response intact; project only this representational field.
+            bundle["source_pages"] = chapter["pages"]
             self.store.put(
                 "chapter-context-" + number,
                 {
@@ -473,6 +480,7 @@ class Workflow:
                     ],
                     "shared_context_sha256": digest([spine["entities"], spine["secrets"]]),
                     "dependency_chapters": sorted(dependency_ids),
+                    "model_source_pages": sorted(returned_pages),
                     "evidence_tokens": token_count(evidence),
                     "original_request_context": original_context,
                     "submitted_request_context": request_context(

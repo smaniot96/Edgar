@@ -20,6 +20,10 @@ The local context join also follows the page references of identities and secret
 that chapter. This supplies a shared appendix even when the planner allocated it elsewhere.
 Uncertain shared source references attach their original page images in the same calls.
 The chapter's base page inventory remains distinct from this supporting evidence inventory.
+If an author includes supplied supporting pages in that base inventory, local assembly
+projects it back to the assigned base pages and records the model's original inventory in
+the context receipt. Missing assigned pages or pages outside the supplied evidence still
+hold preparation. The paid output and all authored detail stay unchanged.
 Local visual diagnostics and saved earlier interpretation receipts remain readable evidence.
 AI campaigns create their spine directly from the request and use the same chapter path.
 

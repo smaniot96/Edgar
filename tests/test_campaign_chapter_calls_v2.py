@@ -334,12 +334,14 @@ async def test_chapter_repair_preserves_unaffected_contained_entity(pdf_store, o
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("include_supporting_inventory", [False, True])
 async def test_shared_origins_restore_appendix_and_uncertain_image_without_extra_calls(
-    pdf_store, monkeypatch
+    pdf_store, monkeypatch, include_supporting_inventory
 ):
     responses = ChapterResponses(pdf_store)
     responses.spine["chapters"][0]["pages"] = [1]
-    responses.bundles["chapters"][0]["source_pages"] = [1]
+    model_pages = [1, 3] if include_supporting_inventory else [1]
+    responses.bundles["chapters"][0]["source_pages"] = model_pages
     responses.spine["important_visual_pages"] = []
     responses.spine["entities"][0]["origin"].update(kind="pdf", pages=[3], uncertain=True)
     monkeypatch.setattr(graph, "candidate_visual_pages", lambda _: [])
@@ -352,6 +354,11 @@ async def test_shared_origins_restore_appendix_and_uncertain_image_without_extra
     assert [p["physical_page"] for p in first["evidence"]["source_evidence"]] == [1, 3]
     assert first["images"] == [b"source-image-3"]
     assert [p["page"] for p in pdf_store.get("chapter-context-ch_bell")["source_pages"]] == [1, 3]
+    assert pdf_store.get("chapter-ch_bell")["source_pages"] == [1]
+    assert pdf_store.get("chapter-context-ch_bell")["model_source_pages"] == model_pages
+    with pdf_store.db() as db:
+        paid = db.execute("SELECT accepted FROM task WHERE node='chapter-ch_bell'").fetchone()
+    assert json.loads(paid[0])["chapters"][0]["source_pages"] == model_pages
     compiled = pdf_store.get("compiled")
     scene = next(s for s in compiled["manifest"]["scenes"] if s["scene_id"] == "event_square")
     assert "source_page_0003" in scene["references"]
