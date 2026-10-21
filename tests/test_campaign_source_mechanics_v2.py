@@ -26,6 +26,7 @@ def _bundles(text=PROFILE):
     return {
         "chapters": [
             {
+                "chapter_id": "chapter_roof",
                 "events": [
                     {
                         "id": "event_roof",
@@ -39,7 +40,7 @@ def _bundles(text=PROFILE):
                             }
                         ],
                     }
-                ]
+                ],
             }
         ]
     }
@@ -114,7 +115,9 @@ Rock. Ranged Weapon Attack: +5 to hit, range 25/50 ft., one target. Hit: 6 (1d6 
     original_stats = parse_monster_stats(base, name="Ape Guard")
     stats = parse_monster_stats(profile["text"], name="Ape Guard")
     assert (stats.ac, stats.hp_max, stats.abilities) == (
-        original_stats.ac, original_stats.hp_max, original_stats.abilities
+        original_stats.ac,
+        original_stats.hp_max,
+        original_stats.abilities,
     )
     assert stats.multiattack == (("Slash", 2),)
     assert [(a.name, a.bonus, a.damage_dice, a.damage_type) for a in stats.attacks] == [
@@ -136,8 +139,43 @@ def test_same_actor_cannot_switch_profiles_without_explicit_form_identity():
     assert "incompatible creature profiles" in findings[0]["evidence"]
 
 
+def test_repeated_source_profile_formatting_does_not_trigger_paid_repair():
+    bundles = _bundles()
+    repeated = deepcopy(bundles["chapters"][0]["events"][0])
+    repeated["id"] = "event_again"
+    repeated["encounters"][0]["source_stat_block"] = PROFILE.replace("\n", "\n\n").replace(
+        "reach 5 ft.", "reach  5 ft."
+    )
+    bundles["chapters"][0]["events"].append(repeated)
+    before = deepcopy(bundles)
+    assert mechanical_findings(bundles, []) == []
+    assert bundles == before
+
+
+def test_invalid_source_check_gets_specific_chapter_repair_before_compilation():
+    bundles = _bundles()
+    check = {
+        "id": "inspect_relic",
+        "action": "Inspect the relic's construction",
+        "event_ids": ["event_roof"],
+        "check": "intelligence_arcana",
+        "dc": 15,
+    }
+    bundles["chapters"][0]["checks"] = [check]
+    findings = mechanical_findings(bundles, [])
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "material"
+    assert findings[0]["record_ids"] == ["chapter_roof_content"]
+    assert "unsupported engine check" in findings[0]["evidence"]
+    assert check["dc"] == 15 and check["check"] == "intelligence_arcana"
+    check["check"] = "arcana"
+    assert mechanical_findings(bundles, []) == []
+
+
 def test_source_spellcasting_variants_keep_slots_and_report_unsupported_entries():
-    text = PROFILE[: PROFILE.index("Actions\n")] + """Saving Throws Intelligence +5, Wisdom +4
+    text = (
+        PROFILE[: PROFILE.index("Actions\n")]
+        + """Saving Throws Intelligence +5, Wisdom +4
 Spellcasting. The mage is a 7th level spellcaster. His spellcasting ability is Intelligence (spell save DC 14, spell attacks +6 to hit). He has the following spells prepared:
 Cantrips (at will): Sacred Flame, Mending.
 First level (four slots): Cure Wounds, Jump.
@@ -147,11 +185,14 @@ Fourth level (one slot): Polymorph.
 Actions
 Dagger. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 4 (1d4 + 2) piercing damage.
 """
+    )
     stats = parse_monster_stats(text, name="Timber Drake")
     assert stats.saves == {"INT": 5, "WIS": 4}
     assert stats.spellcasting.save_dc == 14
     assert stats.spellcasting.attack_bonus == 6
     assert stats.spellcasting.slots == {"1": 4, "2": 3, "3": 3, "4": 1}
     assert stats.spellcasting.spells == ((0, "Sacred Flame"), (1, "Cure Wounds"))
-    assert any("unsupported spell list" in note and "not executed" in note for note in stats.declared)
+    assert any(
+        "unsupported spell list" in note and "not executed" in note for note in stats.declared
+    )
     assert "Polymorph" in source_profile(text, name="Timber Drake")["text"]

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from edgar_core.manifests import ResolutionPolicy
+
+from .compile import derived
 from .mechanics import source_profile
 from .store import digest
 
@@ -11,11 +14,33 @@ def mechanical_findings(bundles, mechanics):
     uses = {}
     findings = []
     for bundle in bundles["chapters"]:
+        for check in bundle.get("checks", []):
+            try:
+                ResolutionPolicy(
+                    policy_id=check["id"],
+                    action=check["action"],
+                    scene_ids=check["event_ids"],
+                    passage_ids=["source_check_evidence"],
+                    mode="check",
+                    check=check["check"],
+                    dc=check["dc"],
+                )
+            except ValueError as exc:
+                findings.append(
+                    {
+                        "id": "mechanics_" + digest([bundle["chapter_id"], check])[:16],
+                        "severity": "material",
+                        "record_ids": [derived(bundle["chapter_id"], "content")],
+                        "evidence": "Source check cannot become an engine policy: " + str(exc),
+                        "instruction": "Preserve this source check's action, DC, success/failure guidance and provenance. Use the canonical supported engine check identifier (for example arcana, persuasion, athletics or thieves_tools) rather than a descriptive compound such as intelligence_arcana. Correct only this check in its chapter content.",
+                    }
+                )
         for event in bundle["events"]:
             for encounter in event["encounters"]:
                 actor = encounter["actor_id"]
                 profile = encounter.get("source_stat_block", "").strip()
-                binding = "source:" + digest(profile) if profile else encounter["creature"]
+                normalized = " ".join(profile.split()).casefold()
+                binding = "source:" + digest(normalized) if profile else encounter["creature"]
                 uses.setdefault(actor, []).append((event["id"], binding))
                 if profile:
                     try:

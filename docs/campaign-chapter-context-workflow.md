@@ -12,6 +12,10 @@ pages may be assigned to several chapters. Each chapter receives its complete or
 selected original page images, shared entities/truths (including future reveals), chapter
 briefs and compact commitments from actual dependency chapters. Images are attached to those
 same planning, chapter and review requests; there is no separate visual semantic stage.
+The local context join also follows the page references of identities and secrets used by
+that chapter. This supplies a shared appendix even when the planner allocated it elsewhere.
+Uncertain shared source references attach their original page images in the same calls.
+The chapter's base page inventory remains distinct from this supporting evidence inventory.
 Local visual diagnostics and saved earlier interpretation receipts remain readable evidence.
 AI campaigns create their spine directly from the request and use the same chapter path.
 
@@ -42,16 +46,22 @@ event/goal identities and page inventory, then recheck affected records and actu
 No routine per-chapter critic is added. Saved accepted responses replay without another paid
 submission. Old completed bundle shapes retain their original registry/fingerprint inventory;
 archived Phandelver has no executable recovery path.
+Before assembly, a local join check detects concrete ID collisions, dangling event links and
+missing encounter/reveal references. Valid bundles add no call. A defective bundle receives
+one repair restricted to the named fields and actual reference consumers; unrelated rows,
+source prose and mechanics remain identical. The original and paid repair receipts are kept.
 
 Preserving exact source instructions does not implement all their mechanics. Canonical item
 custody and ordinary fixed-DC checks compile to existing engine definitions. Attunement,
 persistent charge reset/escalation, arbitrary transformations, area damage and unsupported
 traits/spells remain explicit capability findings. These execution limits are separate from
 source omissions and must not trigger an endless paid prose-repair loop.
+Source check policies currently execute the fixed-DC roll only; their private success and
+failure text does not itself commit discoveries or other persistent outcomes.
 
 Versioned prompts are in `apps/api/services/campaign_prep/prompts/`: `principles-v2.md`,
 `spine-v2.md`, `chapters-v2.md`, `review-v2.md`, `repair-v2.md`, `continuity-v2.md` and
-`read-source-v2.md` (oversized source fallback). The obsolete standalone `visual-v2.md`
+`structural-repair-v2.md`, plus `read-source-v2.md` (oversized source fallback). The obsolete standalone `visual-v2.md`
 prompt and `VisualEvidence` dispatch schema were removed. The earlier replacement commit
 `2b7fb4d` contains the removal of the superseded blueprint executor and its callers; this
 change does not reintroduce it.

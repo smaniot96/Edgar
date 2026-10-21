@@ -23,6 +23,25 @@ def derived(identity, suffix):
     return value
 
 
+def chapter_source_pages(spine, chapter):
+    """Original chapter pages plus the evidence behind its shared identities/truths.
+
+    The planner's prose can recognize an appendix without allocating its page. Follow
+    explicit source references locally so the next author/DM does not lose that detail.
+    Base chapter membership stays stable; this is its supporting source context.
+    """
+    wanted = set(chapter["entity_ids"] + chapter["secret_ids"])
+    return sorted(
+        set(chapter["pages"])
+        | {
+            page
+            for row in spine["entities"] + spine["secrets"]
+            if row["id"] in wanted
+            for page in row["origin"]["pages"]
+        }
+    )
+
+
 class SemanticExtraction(Extraction):
     def markdown(self):
         return "\n\n".join(
@@ -268,12 +287,14 @@ def validate_semantics(spine, bundles, source=None):
             if not set(origin["regions"]) <= regions:
                 raise NeedsAttention("Origin region is absent from its cited pages: " + key)
         for bundle in bundles["chapters"]:
+            chapter = next(c for c in spine["chapters"] if c["id"] == bundle["chapter_id"])
+            context_pages = set(chapter_source_pages(spine, chapter))
             for row in bundle.get("items", []) + bundle.get("checks", []):
                 origin = row["origin"]
                 cited = set(origin["pages"])
-                if not cited <= set(bundle.get("source_pages", [])):
+                if not cited <= context_pages:
                     raise NeedsAttention(
-                        "Chapter procedure cites evidence outside its assigned pages."
+                        "Chapter procedure cites evidence outside its source context."
                     )
                 if source["kind"] == "ai" and (
                     cited or origin["regions"] or origin["kind"] == "pdf"
@@ -288,16 +309,16 @@ def validate_semantics(spine, bundles, source=None):
                         raise NeedsAttention(
                             "Authored encounter must use verified catalogue mechanics."
                         )
-                    if not set(encounter.get("source_pages", [])) <= set(
-                        bundle.get("source_pages", [])
-                    ):
+                    if not set(encounter.get("source_pages", [])) <= context_pages:
                         raise NeedsAttention(
-                            "Source profile cites evidence outside its assigned pages."
+                            "Source profile cites evidence outside its source context."
                         )
     return registry
 
 
-def retain_chapter_source(source, chapters, by_chapter, pages, passages, scenes, goals, visuals):
+def retain_chapter_source(
+    source, spine, chapters, by_chapter, pages, passages, scenes, goals, visuals
+):
     """Publish immutable OCR as private chapter evidence, independently of author prose.
 
     A shared appendix is stored once and linked into every chapter that needs it.
@@ -307,9 +328,15 @@ def retain_chapter_source(source, chapters, by_chapter, pages, passages, scenes,
     if not source or source.get("kind") != "pdf":
         return []
     source_pages = {p["page"]: p for p in source.get("pages", [])}
+    assigned = {number for chapter in chapters for number in chapter["pages"]}
+    if set(source_pages) - assigned:
+        raise NeedsAttention(
+            "Physical source pages are absent from the chapter plan: "
+            + str(sorted(set(source_pages) - assigned))
+        )
     chapters_by_page = {}
     for chapter in chapters:
-        for number in chapter["pages"]:
+        for number in chapter_source_pages(spine, chapter):
             chapters_by_page.setdefault(number, []).append(chapter["id"])
     if set(source_pages) - chapters_by_page.keys():
         raise NeedsAttention(
@@ -723,8 +750,10 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                 + check["failure_text"]
                 + "\n\nProvenance: "
                 + json.dumps(check["origin"], ensure_ascii=False)
-                + "\n\nThe engine resolves this check. Guidance supplies source meaning; "
-                "it does not itself authorize inventory, damage, transformation or other persistent effects. "
+                + "\n\nEngine support: fixed-DC roll only. Source success/failure guidance "
+                "is private reference; this policy has no authored outcome effects. A successful "
+                "roll does not itself commit a discovery or make an associated clue known. "
+                "It does not authorize inventory, damage, transformation or other persistent effects. "
                 "This is an available approach, not a compulsory solution or route.",
                 check["event_ids"],
             )
@@ -741,10 +770,21 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                     "on_failure": [],
                 }
             )
+            capability_findings.append(
+                {
+                    "check_id": check["id"],
+                    "chapter_id": chapter["id"],
+                    "detail": "Fixed-DC source check supports the roll only. Its private "
+                    "success/failure guidance is retained, but no associated discovery or "
+                    "other persistent outcome is committed by this policy.",
+                    "source_pages": check["origin"]["pages"],
+                }
+            )
     objects.extend(item_objects.values())
 
     source_receipts = retain_chapter_source(
         source,
+        spine,
         chapters,
         by_chapter,
         pages,

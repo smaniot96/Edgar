@@ -24,7 +24,15 @@ from edgar_core.campaign_semantics import (
     Spine,
 )
 
-from .compile import assemble, closure, dependencies, derived, records, validate_semantics
+from .compile import (
+    assemble,
+    chapter_source_pages,
+    closure,
+    dependencies,
+    derived,
+    records,
+    validate_semantics,
+)
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
 from .provider import SemanticClient
@@ -38,6 +46,7 @@ from .source import (
     visual_page_reasons,
 )
 from .store import NeedsAttention, Store, atomic_json, digest
+from .structural_repair import repair_structure
 
 
 class Address(TypedDict):
@@ -267,6 +276,13 @@ class Workflow:
 
     def retain_visual_selection(self, selected):
         source = self.store.get("source")
+        spine = self.store.get("spine") or {}
+        selected = set(selected) | {
+            page
+            for row in spine.get("entities", []) + spine.get("secrets", [])
+            if row["origin"].get("uncertain")
+            for page in row["origin"]["pages"]
+        }
         known = {p["page"] for p in source.get("pages", [])}
         if not set(selected) <= known:
             raise NeedsAttention("Visual evidence request cites nonexistent physical pages.")
@@ -282,9 +298,9 @@ class Workflow:
         # One chapter per call, with complete original pages and a compact shared dossier.
         items = []
         for chapter in chapters:
-            numbers = chapter["pages"] if source["kind"] == "pdf" else []
+            numbers = chapter_source_pages(spine, chapter) if source["kind"] == "pdf" else []
             pages = evidence_pages(source, numbers)
-            items.append({"chapter": chapter, "source_evidence": pages})
+            items.append({"chapter": chapter, "source_evidence": pages, "context_pages": numbers})
 
         async def author(item):
             chapter = item["chapter"]
@@ -332,13 +348,14 @@ class Workflow:
                 "shared_truths": spine["secrets"],
                 "requested_chapter": chapter,
                 "source_evidence": item["source_evidence"],
+                "source_context_pages": item["context_pages"],
                 "source_kind": source["kind"],
                 "original_request": source.get("request"),
                 "accepted_dependencies": accepted,
                 "verified_creatures": self.templates(item["source_evidence"]),
                 "preferences": self.request()["preferences"],
                 "image_pages": sorted(
-                    set(chapter["pages"]) & set(self.store.get("visual-candidates") or [])
+                    set(item["context_pages"]) & set(self.store.get("visual-candidates") or [])
                 ),
             }
             dependency = digest(evidence)
@@ -364,7 +381,7 @@ class Workflow:
                 "chapters",
                 Bundles,
                 evidence,
-                self.source_images(chapter["pages"]),
+                self.source_images(item["context_pages"]),
             )
             if len(value.chapters) != 1 or value.chapters[0].chapter_id != number:
                 raise NeedsAttention("Authoring response must cover its one requested chapter.")
@@ -384,7 +401,7 @@ class Workflow:
                             "image_sha256": p["image_sha256"],
                         }
                         for p in source.get("pages", [])
-                        if p["page"] in chapter["pages"]
+                        if p["page"] in item["context_pages"]
                     ],
                     "shared_context_sha256": digest([spine["entities"], spine["secrets"]]),
                     "dependency_chapters": sorted(dependency_ids),
@@ -423,6 +440,7 @@ class Workflow:
 
     async def continuity(self, address):
         self.store.enter("continuity")
+        await repair_structure(self)
         spine, bundles = self.store.get("spine"), self.store.get("bundles")
         registry = validate_semantics(spine, bundles, self.store.get("source"))
         # Explicit joins: additions only, no silent last-writer overwrite of shared truth.
@@ -575,7 +593,7 @@ class Workflow:
                 p
                 for c in self.store.get("spine")["chapters"]
                 if c["id"] in relevant_chapters
-                for p in c["pages"]
+                for p in chapter_source_pages(self.store.get("spine"), c)
             )
             relevant_pages.update(
                 p

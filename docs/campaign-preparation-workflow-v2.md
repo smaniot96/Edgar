@@ -47,7 +47,12 @@ Embedding submissions/vectors use the same receipt owner and separate truthful a
 `compile.py` uses existing engine manifests, exact source module profiles, verified creature
 templates and local assembly. Original OCR and detailed chapter notes are published as private
 chapter references. Source items retain exact procedures with honest execution limitations;
-ordinary fixed-DC checks and item custody use existing engine definitions.
+ordinary fixed-DC checks and item custody use existing engine definitions. Source check
+policies currently execute the roll only: their private success/failure guidance does not
+commit an associated discovery or other persistent consequence. The compiler records that
+limitation alongside item and creature capability gaps. Invalid engine check identifiers
+become specific chapter-content findings before manifest construction, and formatting-only
+differences in repeated source profiles do not trigger mechanical repairs.
 Encounter quantities remain reusable source/module quantities. Local incompatible
 actor/template joins become material findings before assembly. Scoped repair can add a
 distinct NPC identity only when an affected event actually references it. Actual combat fitting,

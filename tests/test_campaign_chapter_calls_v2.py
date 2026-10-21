@@ -320,3 +320,27 @@ async def test_chapter_repair_cannot_rewrite_an_unaffected_contained_entity(pdf_
         await Workflow(pdf_store, semantic=Repair()).repair({"slug": pdf_store.slug})
     assert pdf_store.get("bundles") == original
     assert pdf_store.get("repair-history") is None
+
+
+@pytest.mark.asyncio
+async def test_shared_origins_restore_appendix_and_uncertain_image_without_extra_calls(
+    pdf_store, monkeypatch
+):
+    responses = ChapterResponses(pdf_store)
+    responses.spine["chapters"][0]["pages"] = [1]
+    responses.bundles["chapters"][0]["source_pages"] = [1]
+    responses.spine["important_visual_pages"] = []
+    responses.spine["entities"][0]["origin"].update(kind="pdf", pages=[3], uncertain=True)
+    monkeypatch.setattr(graph, "candidate_visual_pages", lambda _: [])
+    monkeypatch.setattr(publication, "publish", lambda _: None)
+    await workflow(pdf_store, responses).run()
+    assert [r["schema"] for r in responses.requests] == ["Spine", "Bundles", "Bundles", "Review"]
+    first = responses.requests[1]
+    assert first["evidence"]["requested_chapter"]["pages"] == [1]
+    assert first["evidence"]["source_context_pages"] == [1, 3]
+    assert [p["physical_page"] for p in first["evidence"]["source_evidence"]] == [1, 3]
+    assert first["images"] == [b"source-image-3"]
+    assert [p["page"] for p in pdf_store.get("chapter-context-ch_bell")["source_pages"]] == [1, 3]
+    compiled = pdf_store.get("compiled")
+    scene = next(s for s in compiled["manifest"]["scenes"] if s["scene_id"] == "event_square")
+    assert "source_page_0003" in scene["references"]

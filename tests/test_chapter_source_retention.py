@@ -161,6 +161,8 @@ Sword. Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (1d8 + 2)
     assert guard.stat_reference.creature_name == "Bridge Guard"
     assert manifest.resolution_policies[0].dc == 15
     assert manifest.resolution_policies[0].check == "arcana"
+    assert not manifest.resolution_policies[0].on_success
+    assert not manifest.resolution_policies[0].on_failure
     text = "\n".join(page["text"] for page in compiled["pages"])
     assert bundle["items"][0]["procedure"] in text
     assert "forty feet" in compiled["guide"]
@@ -168,3 +170,10 @@ Sword. Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (1d8 + 2)
     assert any(
         "no executable use" in finding["detail"] for finding in compiled["capability_findings"]
     )
+    assert any(
+        finding.get("check_id") == "inspect_key"
+        and "roll only" in finding["detail"]
+        and "no associated discovery" in finding["detail"]
+        for finding in compiled["capability_findings"]
+    )
+    assert "A successful roll does not itself commit a discovery" in text
