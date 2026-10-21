@@ -27,14 +27,20 @@ from ingestion.artifacts import (
     source_digest,
     text_digest,
 )
+from ingestion.chunk import has_chunkable_content
 from ingestion.layout import Line, native_lines, ocr_stat_header, render_native_page
 from ingestion.quality import check_text, diagnostic_message, has_section_heading, has_stat_record
+from ingestion.readiness import degraded_page_allowance
 from ingestion.text_quality import is_degraded, prefer_ocr, score_text
 
 EXTRACTION_VERSION = 1
 SUMMARY_PAGE_LIMIT = 20
 RASTER_ITEMS_PER_PAGE = 6
-EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index")
+QUALITY_FAILED = "quality_failed"
+EXCLUSION_REASONS = ("cover", "credits", "art", "form", "index", QUALITY_FAILED)
+# Running heads and folios sit in these top and bottom bands of a page. The OCR route drops them
+# (header/footer off), so they are not source numbers OCR is expected to keep.
+PAGE_FURNITURE_BAND = 0.06
 # Tesseract at the 600 dpi used for raster stat headings in layout.ocr_stat_header.
 OCR_LAYOUT_DPI = 600
 OCR_MIN_CONFIDENCE = 30
@@ -143,13 +149,47 @@ class Extraction:
                 f"... {len(failing) - SUMMARY_PAGE_LIMIT} more pages; see the extraction bundle."
             )
         lines += self._raster_review_lines()
+        picture_only = [
+            p.page
+            for p in self.pages
+            if p.page not in self.excluded_numbers()
+            and p.text.strip()
+            and not has_chunkable_content(p.text)
+        ]
+        if picture_only:
+            lines.append(
+                f"Pages with text but nothing chunkable, not required for coverage "
+                f"(picture_placeholder_only, {len(picture_only)}): "
+                + ", ".join(str(n) for n in picture_only[:SUMMARY_PAGE_LIMIT])
+                + (
+                    "; more in the extraction bundle"
+                    if len(picture_only) > SUMMARY_PAGE_LIMIT
+                    else ""
+                )
+            )
         if self.excluded_pages:
-            listed = [f"page {e['page']} ({e['reason']})" for e in self.excluded_pages]
+            listed = [
+                f"page {e['page']} ({e['reason']}"
+                + (f": {', '.join(e['causes'])}; {e['chars']} chars" if "causes" in e else "")
+                + ")"
+                for e in self.excluded_pages
+            ]
             lines.append(
                 f"Excluded from indexing ({len(listed)}): "
                 + ", ".join(listed[:SUMMARY_PAGE_LIMIT])
                 + ("; more in the extraction bundle" if len(listed) > SUMMARY_PAGE_LIMIT else "")
             )
+            by_reason = Counter(e["reason"] for e in self.excluded_pages)
+            lines.append(
+                "Excluded by reason: "
+                + ", ".join(f"{reason} x{n}" for reason, n in sorted(by_reason.items()))
+            )
+            failed_causes = Counter(c for e in self.excluded_pages for c in e.get("causes", []))
+            if failed_causes:
+                lines.append(
+                    f"Failed pages excluded ({by_reason[QUALITY_FAILED]}) by cause: "
+                    + ", ".join(f"{c} x{n}" for c, n in sorted(failed_causes.items()))
+                )
             for entry in self.excluded_pages:
                 excluded = next(p for p in self.pages if p.page == entry["page"])
                 if has_section_heading(excluded.text):
@@ -204,14 +244,23 @@ class Extraction:
             )
         return lines
 
-    def require_valid(self) -> None:
+    def require_valid(self, degraded_page_budget: float | None = None) -> None:
+        """Every page must pass, or, with a budget (uploaded adventures), few enough may fail."""
         if self.rules_edition not in ("2014", "2024", "unspecified"):
             raise ValueError("Declare rules edition 2014, 2024 or unspecified.")
         errors = self.failing_pages()
-        if errors:
-            raise ValueError(
-                f"Extraction quality checks failed: {errors}. Save and inspect the preview before indexing."
-            )
+        if not errors:
+            return
+        if degraded_page_budget is not None:
+            content = [
+                p for p in self.pages
+                if p.page not in self.excluded_numbers() and p.method != "blank_page"
+            ]
+            if len(errors) <= degraded_page_allowance(len(content), degraded_page_budget):
+                return
+        raise ValueError(
+            f"Extraction quality checks failed: {errors}. Save and inspect the preview before indexing."
+        )
 
 
 def validate_exclusions(
@@ -224,7 +273,7 @@ def validate_exclusions(
     for entry in entries:
         if (
             not isinstance(entry, dict)
-            or set(entry) != {"page", "reason"}
+            or not {"page", "reason"} <= set(entry) <= {"page", "reason", "causes", "chars"}
             or type(entry["page"]) is not int
         ):
             raise ValueError("Each excluded page needs a physical page number and a reason.")
@@ -236,7 +285,26 @@ def validate_exclusions(
             raise ValueError(f"Excluded page {number} is not an extracted physical PDF page.")
         if number in seen:
             raise ValueError(f"Page {number} is excluded more than once.")
-        if has_stat_record(by_number[number].text):
+        page = by_number[number]
+        if reason == QUALITY_FAILED:
+            # The only reason allowed on a page with a stat record, and only for a page that
+            # truly fails its checks; causes and chars are always derived from the page itself.
+            causes = page.errors()
+            if not causes:
+                raise ValueError(
+                    f"Page {number} passes its quality checks and cannot be excluded as quality_failed."
+                )
+            expected = {"causes": causes, "chars": len(page.text)}
+            if any(key in entry and entry[key] != expected[key] for key in expected):
+                raise ValueError(
+                    f"Recorded causes of excluded page {number} do not match the page."
+                )
+            seen.add(number)
+            cleaned.append({"page": number, "reason": reason, **expected})
+            continue
+        if set(entry) != {"page", "reason"}:
+            raise ValueError("Only quality_failed exclusions record causes and characters.")
+        if has_stat_record(page.text):
             raise ValueError(f"Page {number} contains a stat record and cannot be excluded.")
         seen.add(number)
         cleaned.append({"page": number, "reason": str(reason)})
@@ -413,6 +481,13 @@ def _verify_applied_corrections(
                 raise ValueError(changed)
 
 
+def _is_page_furniture(line: Line, page_height: float) -> bool:
+    """A line wholly inside the top or bottom band: a running head or folio, not source text."""
+    band = page_height * PAGE_FURNITURE_BAND
+    _x0, y0, _x1, y1 = line.bbox
+    return y1 <= band or y0 >= page_height - band
+
+
 def _ocr_page(doc: pymupdf.Document, number: int) -> str:
     """Full-page Tesseract read through the same route for sparse and degraded pages."""
     return pymupdf4llm.to_markdown(
@@ -581,8 +656,9 @@ def extract_document(path: str | Path, *, pages: list[int] | None = None) -> Ext
                     warnings.append("full_page_ocr_review_required")
                     # A sparse native layer may still contain authoritative numbers.
                     # Require those to survive OCR; never silently overwrite them.
+                    body = [item for item in lines if not _is_page_furniture(item, page.rect.height)]
                     native_numbers = Counter(
-                        re.findall(r"\b\d+(?:d\d+)?\b", " ".join(item.text for item in lines))
+                        re.findall(r"\b\d+(?:d\d+)?\b", " ".join(item.text for item in body))
                     )
                     ocr_numbers = Counter(re.findall(r"\b\d+(?:d\d+)?\b", text))
                     if native_numbers - ocr_numbers:
@@ -671,7 +747,12 @@ def save_extraction(
     return markdown, report
 
 
-def load_reviewed_extraction(pdf_path: str | Path | None, report_path: str | Path) -> Extraction:
+def load_reviewed_extraction(
+    pdf_path: str | Path | None,
+    report_path: str | Path,
+    *,
+    degraded_page_budget: float | None = None,
+) -> Extraction:
     """Use the exact preview explicitly acknowledged by the caller, without re-extracting.
 
     Pass pdf_path=None only for an explicitly generated/text manuscript bundle.
@@ -743,5 +824,5 @@ def load_reviewed_extraction(pdf_path: str | Path | None, report_path: str | Pat
     )
     if extraction.text_sha256() != data["markdown_sha256"]:
         raise ValueError("Selected text differs from the reviewed Markdown preview.")
-    extraction.require_valid()
+    extraction.require_valid(degraded_page_budget)
     return extraction

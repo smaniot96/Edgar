@@ -25,6 +25,7 @@ from starlette.requests import Request
 from apps.api import limits
 from apps.api.limits import (
     Admission,
+    JobSpend,
     LimitConfigurationError,
     LimitRejected,
     UploadSizeLimitMiddleware,
@@ -237,6 +238,122 @@ async def test_handed_over_job_keeps_its_reservation(redis_client, monkeypatch) 
     assert int(await redis_client.get(limits._spend_key(time.time()))) == 400_000
     await background()
     assert await redis_client.zcard(JOB_GLOBAL) == 0
+
+
+# --- EDG-055 F6: a finished job keeps only what it spent ---------------------------------------
+
+
+async def _run_job_with_probe(redis_client, readings: list, reserved: int = 400_000) -> int:
+    """Hand a reserved job to the background queue with a probe returning `readings` in turn."""
+    admission = await admit_job(_request(), redis_client)
+    await admission.reserve_daily_spend(reserved)
+    probe_values = iter(readings)
+
+    def probe():
+        value = next(probe_values)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def job(slug: str) -> None:
+        return None
+
+    background = BackgroundTasks()
+    schedule_job(background, admission, job, "slug-p", spend_probe=probe)
+    await admission.settle()
+    await background()
+    assert await redis_client.zcard(JOB_GLOBAL) == 0
+    return int(await redis_client.get(limits._spend_key(time.time())) or 0)
+
+
+async def test_a_failed_job_with_no_spend_returns_its_whole_reservation(
+    redis_client, monkeypatch
+) -> None:
+    monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 50_000_000)
+    readings = [JobSpend(0, terminal=False), JobSpend(0, terminal=True)]
+    assert await _run_job_with_probe(redis_client, readings, reserved=20_000_000) == 0
+
+
+async def test_a_finished_job_keeps_only_what_this_attempt_spent(redis_client, monkeypatch) -> None:
+    monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 1_000_000)
+    # The run already held 100k from an earlier attempt; this attempt spent 150k more.
+    readings = [JobSpend(100_000, terminal=False), JobSpend(250_000, terminal=True)]
+    assert await _run_job_with_probe(redis_client, readings) == 150_000
+
+
+async def test_spend_above_the_reservation_is_added_when_its_baseline_is_known(
+    redis_client, monkeypatch
+) -> None:
+    monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 10_000_000)
+    readings = [JobSpend(0, terminal=False), JobSpend(900_000, terminal=True)]
+    assert await _run_job_with_probe(redis_client, readings) == 900_000
+    # Without a baseline, earlier attempts' spend is never charged to this one.
+    await redis_client.delete(limits._spend_key(time.time()))
+    readings = [RuntimeError("unreadable"), JobSpend(900_000, terminal=True)]
+    assert await _run_job_with_probe(redis_client, readings) == 400_000
+
+
+@pytest.mark.parametrize(
+    "final",
+    [JobSpend(0, terminal=False), None, RuntimeError("ledger unreadable")],
+    ids=["not_terminal", "no_ledger", "unreadable"],
+)
+async def test_a_job_whose_spend_is_not_final_keeps_its_reservation(
+    redis_client, monkeypatch, final
+) -> None:
+    monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 1_000_000)
+    readings = [JobSpend(0, terminal=False), final]
+    assert await _run_job_with_probe(redis_client, readings) == 400_000
+
+
+async def test_a_job_that_raises_still_settles_its_reservation(redis_client, monkeypatch) -> None:
+    monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 1_000_000)
+    admission = await admit_job(_request(), redis_client)
+    await admission.reserve_daily_spend(500_000)
+    readings = iter([JobSpend(0, terminal=False), JobSpend(0, terminal=True)])
+
+    def failing(slug: str) -> None:
+        raise RuntimeError("preparation failed")
+
+    background = BackgroundTasks()
+    schedule_job(background, admission, failing, "slug-f", spend_probe=lambda: next(readings))
+    await admission.settle()
+    with pytest.raises(RuntimeError):
+        await background()
+    assert int(await redis_client.get(limits._spend_key(time.time()))) == 0
+    assert await redis_client.zcard(JOB_GLOBAL) == 0
+
+
+# --- EDG-055 F7: a refused reservation says what was asked and what is left ---------------------
+
+
+async def test_refused_reservation_reports_the_budget_gap_and_reset(
+    clock, redis_client, monkeypatch
+) -> None:
+    monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 50_000_000)
+    await redis_client.set(limits._spend_key(clock["t"]), 500_000)
+    admission = await admit_job(_request(), redis_client)
+    with pytest.raises(LimitRejected) as refused:
+        await admission.reserve_daily_spend(50_000_000)
+    await admission.settle()
+
+    response = limit_rejection_response(refused.value)
+    body = json.loads(response.body)
+    assert response.status_code == 429
+    assert body["code"] == "daily_budget_exhausted"
+    assert body["retry_after_seconds"] == refused.value.retry_after
+    assert response.headers["Retry-After"] == str(refused.value.retry_after)
+    assert body["daily_budget"] == {
+        "requested_microusd": 50_000_000,
+        "remaining_microusd": 49_500_000,
+        "daily_limit_microusd": 50_000_000,
+    }
+
+    # A turn pre-check names no budget of its own.
+    await redis_client.set(limits._spend_key(clock["t"]), 50_000_000)
+    with pytest.raises(LimitRejected) as turn_refused:
+        await admit_turn(_request(), redis_client)
+    assert "daily_budget" not in json.loads(limit_rejection_response(turn_refused.value).body)
 
 
 def test_turn_cost_charges_unknown_calls_at_the_assumed_cost(monkeypatch) -> None:
@@ -779,3 +896,20 @@ def test_client_principal_keys_on_the_authenticated_user_when_there_is_one():
     assert limits.client_principal(request) == "ip:203.0.113.9"
     request.state.principal = Principal(user_id=42, token_id=7, is_admin=False)
     assert limits.client_principal(request) == "user:42"
+
+
+async def test_a_private_upload_that_fails_before_any_work_releases_its_reservation(
+    limits_client, redis_client
+) -> None:
+    """EDG-055 F6: the upload left USD 0.50 on the daily counter after failing with no spend."""
+    from apps.api.services import adventures_meta
+
+    response = await limits_client.post(
+        "/api/adventures/upload", files={"file": ("ok.pdf", b"%PDF-1.4 small", "application/pdf")}
+    )
+
+    assert response.status_code == 202
+    # With no captured setup the real preparation job stops before any run or provider call.
+    assert adventures_meta.load_meta(response.json()["slug"])["status"] == "failed"
+    assert int(await redis_client.get(limits._spend_key(time.time())) or 0) == 0
+    assert await redis_client.zcard(JOB_GLOBAL) == 0

@@ -72,77 +72,92 @@ retries = 2
 
 # P01..P12 are the durable EDG-155 preparation stage roles. Stages with deterministic work
 # may not call a model; when a stage does call one, use its mapped profile and frozen snapshot.
+# A Sol/high study of a full source group outlasts the 60 s default timeout, so every stage sets
+# 300 s (Lost Mine of Phandelver timed out at P02, 20 October 2026). Their output caps include
+# high-effort reasoning tokens, so the profile only bounds the per-task caps from above.
 [profiles.preparation.p01]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 3000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p02]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 7000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p03]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 7000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p04]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 7000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p05]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 7000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p06]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 7000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p07]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 4000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p08]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 7000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p09]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 5000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p10]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 5000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p11]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 5000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 [profiles.preparation.p12]
 model = "gpt-6.1-sol"
 reasoning_effort = "high"
 api = "responses"
-max_output_tokens = 3000
+max_output_tokens = 64000
+timeout_seconds = 300
 
 # Images have their own model/options. These names are configuration targets only; offline
 # validation does not imply that the deployed provider account can access a given image model.

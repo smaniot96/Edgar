@@ -28,12 +28,12 @@ from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.nodes.manifest_effects import enforce_manifest_effects
 from agent.nodes.story_effects import (
     committed_facts,
+    is_dm_goal_candidate,
     prepare_story_validation_state,
     safe_story_summary,
     story_candidates,
     validate_story_effects,
 )
-from agent.prepared_amendments import accept_runtime_amendment, amendment_prompt_block
 from agent.prompts import RULES_ADJUDICATOR, wrap_player_action, wrap_retrieved_excerpt
 from agent.provider_trace import traced_call
 from agent.resolution import (
@@ -64,7 +64,7 @@ from agent.supported_rules import (
 from db.vector.retrieval import rule_policy
 from edgar_core.log_safety import error_summary
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
-from edgar_core.story import player_story_effect
+from edgar_core.story import StoryRef, player_story_effect
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +122,7 @@ def build_adjudicator_prompt(
     *,
     extra_outcome: str | None = None,
     dice_log: list[dict] | None = None,
+    policy_effects: list | None = None,
 ) -> list[dict]:
     player_input = state.get("player_input", "")
     parsed = state.get("parsed_input")
@@ -140,6 +141,13 @@ def build_adjudicator_prompt(
         parts.append(f"Additional engine results this turn: {extra_outcome}")
     for entry in dice_log or []:
         parts.append(f"Other roll: {entry.get('expression')} = {entry.get('total')}")
+    if policy_effects is not None:
+        parts.append(
+            "Reviewed selected action: these exact engine-authored story effects occur this turn: "
+            + json.dumps([effect.model_dump() for effect in policy_effects])
+            + ". Do not repeat, change or replace them. Propose only additional earned "
+            "objective/milestone consequences of this action, with a private achievement_basis."
+        )
     if parsed is not None and getattr(parsed, "target", None):
         parts.append(f"Target: {parsed.target}")
 
@@ -219,17 +227,6 @@ def build_adjudicator_prompt(
             wrap_retrieved_excerpt(cited_excerpt(c, state.get("rules_edition", "2014")))
             for c in state["planner_context"]
         )
-    if not (state.get("combat_state") or {}).get("ended") and not getattr(
-        parsed, "resolution_policy_id", None
-    ):
-        amendment_context = amendment_prompt_block(state)
-        if amendment_context:
-            parts.append(amendment_context)
-            parts.append(
-                "For an uncovered plausible action only, return a proposed_prepared_amendment "
-                "using the exact scene-bound structure above. A proposal is not accepted until "
-                "the engine validates it. Do not tell the player about preparation or validation."
-            )
     if state.get("discovery_entities"):
         parts.append(
             f"Canonical discoveries: {state['discovery_entities']}. Set only their exact discovery_flag to discovered after a justified successful discovery."
@@ -395,15 +392,41 @@ async def adjudicate(
     state[ENGINE_ROLL_MODE_KEY] = check_result.roll_mode if check_result is not None else "normal"
     actions = actions_for_state(state)
 
+    policy_effects: list = []
+    reveal_authorizations: list = []
+    if selected is not None:
+        policy_effects, reveal_authorizations = policy_effects_for_outcome(
+            state, selected, success=check_result.success if check_result else True
+        )
+    dm_goal_targets = set()
+    if selected is not None:
+        terminal_goals = {
+            fact.target.model_dump_json()
+            for fact in committed_facts(state)
+            if fact.kind in {"objective", "milestone"} and fact.status in {"completed", "failed"}
+        }
+        dm_goal_targets = {
+            target
+            for candidate in story_candidates(state)
+            if is_dm_goal_candidate(candidate)
+            and (target := StoryRef.model_validate(candidate["target"]).model_dump_json())
+            not in terminal_goals
+        }
     messages = build_adjudicator_prompt(
-        state, check_result, extra_outcome=extra_outcome, dice_log=extra_log
+        state,
+        check_result,
+        extra_outcome=extra_outcome,
+        dice_log=extra_log,
+        policy_effects=policy_effects if selected is not None else None,
     )
     result = (
-        await _invoke_with_retry(messages) if selected is None else _neutral(check_result, state)
+        await _invoke_with_retry(messages)
+        if selected is None or dm_goal_targets
+        else _neutral(check_result, state)
     )
     if result is None:
         result = _neutral(check_result, state)
-    # These fields are engine-owned even if a provider returns undeclared output fields.
+    # Retained saved rulings may carry this receipt; live play never creates amendments.
     result.accepted_prepared_amendment = None
     if in_combat:
         # Homebrew improvisation never mutates a live combat (EDG-169).
@@ -428,14 +451,20 @@ async def adjudicate(
         result.success = True
         result.dice_result = extra_log[0]["total"] if extra_log else None
 
-    policy_effects: list = []
     if selected is not None:
-        # Policy turns accept only reviewed, engine-authored changes. Model proposals are
-        # cleared before the normal validators and persistence hooks run.
-        policy_effects, reveal_authorizations = policy_effects_for_outcome(
-            state, selected, success=result.success
-        )
-        result.story_effects = policy_effects
+        # The same consequence call may recognize a goal, but cannot edit the exact policy
+        # contract or propose other mechanics. The normal validator still judges each goal.
+        policy_targets = {
+            (effect.kind, effect.target.model_dump_json()) for effect in policy_effects
+        }
+        goal_effects = [
+            effect
+            for effect in result.story_effects
+            if effect.kind in {"objective", "milestone"}
+            and effect.target.model_dump_json() in dm_goal_targets
+            and (effect.kind, effect.target.model_dump_json()) not in policy_targets
+        ]
+        result.story_effects = policy_effects + goal_effects
         result.character_update = None
         result.damage = None
         result.conditions = []
@@ -478,9 +507,16 @@ async def adjudicate(
     result = validate_story_effects(result, state)
     if selected is not None:
         accepted = result.accepted_story_effects
+        policy_accepted = [
+            effect
+            for effect in accepted
+            if (effect.kind, effect.target.model_dump_json()) in policy_targets
+        ]
         # Persistence validates the canonicalized accepted effects again. Object validation
         # may add a quantity or resolved owner, so authorize exactly that sealed form.
-        state["authorized_policy_effect_keys"] = [policy_effect_key(effect) for effect in accepted]
+        state["authorized_policy_effect_keys"] = [
+            policy_effect_key(effect) for effect in policy_accepted
+        ]
         missing = [
             proposal
             for proposal in policy_effects
@@ -488,13 +524,13 @@ async def adjudicate(
                 fact.kind == proposal.kind
                 and fact.target == proposal.target
                 and fact.status == proposal.status
-                for fact in accepted
+                for fact in policy_accepted
             )
         ]
         if (
             selected.get("generation_failed")
             or len(policy_effects) != selected.get("expected_effect_count", len(policy_effects))
-            or len(accepted) != len(policy_effects)
+            or len(policy_accepted) != len(policy_effects)
             or missing
         ):
             # A policy is atomic: never commit a discovery while dropping its authored cost,
@@ -516,8 +552,23 @@ async def adjudicate(
             )
         else:
             state["policy_narration"] = describe_policy_result(
-                result.success, accepted, selected.get("existing_effects", [])
+                result.success, policy_accepted, selected.get("existing_effects", [])
             )
+            goal_texts = [
+                public["text"]
+                for effect in accepted
+                if effect.evidence_kind == "dm_adjudication"
+                and (public := player_story_effect(effect)) is not None
+                and public.get("text")
+            ]
+            if goal_texts:
+                if not policy_accepted and not any(
+                    effect.kind == "discover" for effect in selected.get("existing_effects", [])
+                ):
+                    state["policy_narration"] = (
+                        "Your approach succeeds." if result.success else "The check fails."
+                    )
+                state["policy_narration"] += "\n\n" + "\n\n".join(dict.fromkeys(goal_texts))
     if selected is None and (state.get("manifest_status") == "reviewed" or result.story_effects):
         safe_story_summary(
             result,
@@ -542,20 +593,6 @@ async def adjudicate(
     }
     result.citations = [refs[rid] for rid in dict.fromkeys(result.citation_ids) if rid in refs]
     result.citation_ids = [r["reference_id"] for r in result.citations]
-    if (
-        selected is None
-        and not in_combat
-        and not result.accepted_story_effects
-        and not result.flags_set
-        and not result.flags_cleared
-        and (not result.scene_id or result.scene_id == state.get("current_scene_id"))
-    ):
-        receipt = accept_runtime_amendment(
-            result.proposed_prepared_amendment, state, in_combat=in_combat
-        )
-        if receipt is not None:
-            result.accepted_prepared_amendment = receipt
-            state["accepted_prepared_amendment"] = receipt
     return result
 
 
@@ -569,6 +606,5 @@ async def rules_adjudicator_node(state: AgentState) -> dict:
         "policy_narration": state.get("policy_narration"),
         "authorized_policy_effect_keys": state.get("authorized_policy_effect_keys", []),
         "policy_reveal_authorizations": state.get("policy_reveal_authorizations", []),
-        "accepted_prepared_amendment": state.get("accepted_prepared_amendment"),
         ENGINE_ROLL_MODE_KEY: engine_applied_for_state(state).roll_mode,
     }

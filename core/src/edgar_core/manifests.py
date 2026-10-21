@@ -8,13 +8,14 @@ Campaign progress remains in Session.current_scene_id and WorldFlag rows.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from edgar_core.artifacts import text_digest
 from edgar_core.identifiers import Digest, Identifier
-from edgar_core.prepared import PreparedCampaign
+from edgar_core.prepared import CommittedPreparedFact, PreparedCampaign
 from edgar_core.sources import SourceEdition
 
 
@@ -111,6 +112,13 @@ class ClockReveal(Record):
     completion_requires: dict[Identifier, str] | None = None
 
 
+class GoalEngineRequirement(Record):
+    """Optional combat-state boundary; never a script for resolving a story goal."""
+
+    actor_id: Identifier
+    statuses: list[Literal["dead", "defeated", "captive", "released"]] = Field(min_length=1)
+
+
 class StoryDefinition(Record):
     """Optional explicitly reviewed story identity; never automatically player knowledge."""
 
@@ -128,6 +136,10 @@ class StoryDefinition(Record):
     initial_owner: str | None = Field(default=None, max_length=200)
     announcement_passage_ids: list[Identifier] = Field(default_factory=list)
     clock_reveal: ClockReveal | None = None
+    # Source describes the achievement; the live DM judges when play earns it.
+    completion_condition: str | None = None
+    engine_requirements: list[GoalEngineRequirement] = Field(default_factory=list)
+    engine_forbidden: list[GoalEngineRequirement] = Field(default_factory=list)
 
 
 class OpeningJournalSeed(Record):
@@ -261,6 +273,36 @@ class PolicyEffect(Record):
         return self
 
 
+class PolicyFactRequirement(Record):
+    """A committed canonical state; all records must hold, any listed status may hold."""
+
+    kind: Literal["entity", "objective", "milestone"]
+    target_id: Identifier
+    statuses: list[str] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def supported_statuses(self):
+        allowed = (
+            {"discovered", "encountered", "friendly", "neutral", "hostile", "captive", "dead", "defeated", "released"}
+            if self.kind == "entity"
+            else {"announced", "active", "completed", "failed"}
+        )
+        if len(self.statuses) != len(set(self.statuses)) or not set(self.statuses) <= allowed:
+            raise ValueError("Fact prerequisites need unique statuses supported by their kind.")
+        return self
+
+
+def policy_fact_requirements_met(
+    requirements: Iterable[PolicyFactRequirement], facts: Iterable[CommittedPreparedFact]
+) -> bool:
+    """Evaluate canonical facts already scoped to one exact collection/source/manifest."""
+    available = {(fact.kind, fact.target_id, fact.status) for fact in facts}
+    return all(
+        any((required.kind, required.target_id, status) in available for status in required.statuses)
+        for required in requirements
+    )
+
+
 class ResolutionPolicy(Record):
     """Reviewed action policy. The model selects a policy ID; the engine owns its mechanics."""
 
@@ -269,6 +311,7 @@ class ResolutionPolicy(Record):
     scene_ids: list[Identifier] = Field(min_length=1)
     passage_ids: list[Identifier] = Field(min_length=1)
     requires: dict[Identifier, str] = Field(default_factory=dict)
+    requires_facts: list[PolicyFactRequirement] = Field(default_factory=list, max_length=100)
     requires_items: list[str] = Field(default_factory=list, max_length=8)
     mode: Literal["check", "automatic"]
     check: Identifier | None = None
@@ -280,6 +323,9 @@ class ResolutionPolicy(Record):
 
     @model_validator(mode="after")
     def valid_resolution(self):
+        fact_targets = {(row.kind, row.target_id) for row in self.requires_facts}
+        if len(fact_targets) != len(self.requires_facts):
+            raise ValueError("Combine alternative prerequisite statuses for the same canonical fact.")
         if self.mode == "check":
             if not self.check or self.dc is None or self.on_automatic:
                 raise ValueError("Check policies need a check and DC, but no automatic effects.")
@@ -298,6 +344,8 @@ class ResolutionPolicy(Record):
             targets = {(effect.kind, effect.target_id) for effect in outcomes}
             if len(targets) != len(outcomes):
                 raise ValueError("A policy outcome cannot repeat the same kind and target.")
+            if sum(effect.kind == "move" for effect in outcomes) > 1:
+                raise ValueError("A policy outcome can move to only one destination per action.")
         effects = self.on_automatic + self.on_success + self.on_failure
         if self.failure_mode == "no_progress" and self.on_failure:
             raise ValueError("No-progress failure policies cannot declare failure effects.")
@@ -445,6 +493,11 @@ class AdventureManifest(Record):
         if len({p.policy_id for p in self.resolution_policies}) != len(self.resolution_policies):
             raise ValueError("Resolution policy IDs must be unique within an adventure.")
         entities_by_id = {entity.entity_id: entity for entity in self.entities}
+        for definition in (*self.objectives, *self.milestones):
+            for requirement in (*definition.engine_requirements, *definition.engine_forbidden):
+                actor = entities_by_id.get(requirement.actor_id)
+                if actor is None or actor.kind != "actor":
+                    raise ValueError("Goal engine constraints must name an existing actor.")
         definitions = {
             kind: {item.canonical_id: item for item in getattr(self, category)}
             for kind, category in _POLICY_CATEGORIES.items()
@@ -458,6 +511,21 @@ class AdventureManifest(Record):
                 if passage.passage_id in policy.passage_ids
             ):
                 raise ValueError("Resolution policy evidence must belong to one of its scenes.")
+            for required in policy.requires_facts:
+                if required.kind == "entity":
+                    entity = entities_by_id.get(required.target_id)
+                    if entity is None:
+                        raise ValueError("Resolution prerequisite names an unknown entity.")
+                    allowed = (
+                        {"encountered", "friendly", "neutral", "hostile", "captive", "dead", "defeated", "released"}
+                        if entity.kind == "actor" else {"discovered"}
+                    )
+                    if not set(required.statuses) <= allowed:
+                        raise ValueError("Resolution prerequisite has an unsupported entity status.")
+                else:
+                    definition = definitions[required.kind].get(required.target_id)
+                    if definition is None or not set(required.statuses) <= set(definition.statuses):
+                        raise ValueError("Resolution prerequisite names an unknown definition or status.")
             for effect in _policy_effects(policy):
                 if not set(effect.passage_ids) <= passages:
                     raise ValueError("Resolution effect names an unknown passage.")
@@ -699,8 +767,22 @@ def manifest_digest(manifest: AdventureManifest) -> str:
     for passage in body["passages"]:
         if not passage["known_scene_ids"]:
             passage.pop("known_scene_ids")
+    for policy in body["resolution_policies"]:
+        if not policy["requires_facts"]:
+            policy.pop("requires_facts")
+    if body["prepared"] is not None:
+        if body["prepared"]["narrative_mode"] == "scripted":
+            body["prepared"].pop("narrative_mode")
+        for quest in body["prepared"]["quests"]:
+            if quest["required_for_completion"]:
+                quest.pop("required_for_completion")
+            if not quest["required_milestone_ids"]:
+                quest.pop("required_milestone_ids")
     for category in ("objects", "objectives", "milestones", "promises", "clocks"):
         for definition in body[category]:
+            for field in ("completion_condition", "engine_requirements", "engine_forbidden"):
+                if not definition[field]:
+                    definition.pop(field)
             if not definition["announcement_passage_ids"]:
                 definition.pop("announcement_passage_ids")
             if definition["clock_reveal"] is None:

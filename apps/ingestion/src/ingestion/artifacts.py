@@ -12,6 +12,9 @@ class ExcludedPage(TypedDict):
 
     page: int
     reason: str
+    # Only for reason "quality_failed": the page's failing codes and selected text length.
+    causes: NotRequired[list[str]]
+    chars: NotRequired[int]
 
 
 class TextCorrection(TypedDict):

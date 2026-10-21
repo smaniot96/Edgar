@@ -66,9 +66,14 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             "failed": "failed",
             "cancelled": "cancelled",
         }.get(projected.status.value, "running")
-        action_copy = {
+        saved_run = bool(meta.get("preparation_run_id"))
+        # A short button label and a separate sentence, so the card never repeats itself.
+        action_label = "Retry preparation" if projected.action == "retry" else None
+        explanation = {
             "wait": "Preparation is in progress. Check back for an update.",
-            "retry": "Saved preparation work can be retried.",
+            "retry": "Saved preparation work is kept. Retrying continues from the last accepted step."
+            if saved_run
+            else "No preparation work was saved before this failure. Retrying starts again from the same source and setup.",
             "restart": "Preparation needs attention before it can continue.",
             "none": "Your adventure is ready to play.",
         }.get(projected.action)
@@ -80,13 +85,13 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             stage=projected.stage,
             completed_chapters=0,
             total_chapters=None,
-            checkpoint_available=bool(meta.get("preparation_run_id")),
+            checkpoint_available=saved_run,
             retryable=projected.retryable,
             retained_work=(job.get("retained_work") if job.get("retained_work") in {
                 "none", "outline_and_chapters", "complete_manuscript", "source_pdf", "inspected_extraction", "published"
             } else "none"),
-            action_label=action_copy,
-            explanation=action_copy,
+            action_label=action_label,
+            explanation=explanation,
             source_version=(meta.get("prepared_bundle") or {}).get("bundle_sha256")
             if projected.status.value == "ready" else None,
             failure=projected.failure,
@@ -102,6 +107,8 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
     retained_work = "none"
     action_label = explanation = None
     if kind == "generation":
+        # Archived chapter jobs remain readable, but their retired worker cannot resume.
+        retryable = False
         checkpoint_error = bool(job.get("checkpoint_corrupt"))
         try:
             from .adventures_meta import load_generation_checkpoint
@@ -123,25 +130,23 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             checkpoint_error = True
         if checkpoint_error:
             checkpoint = False
-            retryable = False
             explanation = (
-                "Saved generation progress is unreadable. Create a new campaign to generate again; "
-                "any previously published source remains available."
+                "Saved generation progress is unreadable. Its files and any previously "
+                "published source are preserved."
             )
         elif complete:
             retained_work = "complete_manuscript"
-            action_label = "Rebuild index from saved manuscript"
-            explanation = "The outline and every chapter are saved. Retrying rebuilds the index without another generation call."
+            explanation = "The outline and every chapter are saved."
         elif checkpoint:
             retained_work = "outline_and_chapters"
-            action_label = "Resume saved chapters"
             explanation = (
-                f"The outline and {chapters} of {total or 'the required'} chapters are saved. "
-                "Retry generates only chapters that are still missing."
+                f"The outline and {chapters} of {total or 'the required'} chapters are saved."
             )
         else:
-            action_label = "Restart generation"
-            explanation = "No generation checkpoint is available. Retrying starts over and repeats paid model generation calls."
+            explanation = "No generation checkpoint is available."
+        if state != "completed":
+            action_label = "Preparation conversion required"
+            explanation += " Continuing this saved campaign requires conversion to the current preparation workflow."
     elif job.get("retained_source_attempt_id") or source_pdf_path(slug, meta).is_file():
         retained_work = "source_pdf"
         action_label = "Retry extraction and indexing"
@@ -302,8 +307,12 @@ def source_read(slug: str) -> SourceRead:
         from .preparation_runtime import private_preparation_ready, safe_preparation_status
 
         if not private_preparation_ready(slug, raw_meta):
+            from .preparation_runtime import failed_source_preview_dir
+
             projected = safe_preparation_status(raw_meta, slug)
             failed = projected is not None and projected.status.value in ("blocked", "failed", "cancelled")
+            # Only a PDF that failed before any run existed has an inspectable extraction.
+            failed_preview = failed and failed_source_preview_dir(slug, raw_meta) is not None
             return SourceRead(
                 slug=slug,
                 title="Private adventure",
@@ -320,8 +329,8 @@ def source_read(slug: str) -> SourceRead:
                     else "Your adventure is being prepared privately."
                 ),
                 failure_code=projected.failure.code if failed and projected and projected.failure else None,
-                extraction_preview_available=False,
-                extraction_preview_current=False,
+                extraction_preview_available=failed_preview,
+                extraction_preview_current=failed_preview,
                 ingestion=None,
                 job=safe_job_read(raw_meta, slug),
             )

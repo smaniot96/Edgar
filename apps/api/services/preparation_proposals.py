@@ -1,0 +1,124 @@
+"""Private rejected proposals and correction feedback, bound to exact saved dependencies.
+
+These files are diagnostic work, never accepted evidence or a publication receipt.
+They live beside the private preparation checkpoint and are not projected by the API.
+"""
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+
+from edgar_core.preparation import canonical_sha256
+
+from .preparation_store import _atomic_write, preparation_path
+
+
+def proposal_directory(binding, task):
+    identity = canonical_sha256({"binding": binding.binding_sha256,
+                                 "task": task.model_dump(mode="json")})
+    return preparation_path(binding.source_slug, binding.run_id).parent / "proposals" / identity
+
+
+def latest_rejection(binding, task, schema, logical_call):
+    return latest_proposal(binding, task, schema, logical_call, rejected_only=True)
+
+
+def latest_proposal(binding, task, schema, logical_call, *, rejected_only=False):
+    """Retain the newest paid proposal across local failures and worker restarts.
+
+    A successful correction can still need local compilation/source repair. Older
+    rejection feedback must never replace that newer retained semantic work.
+    """
+    directory = proposal_directory(binding, task)
+    if not directory.exists():
+        return None
+    records = []
+    for path in directory.glob("*.json"):
+        record = json.loads(path.read_text())
+        if (record.get("schema") == schema.__name__
+                and (not rejected_only or record.get("diagnostics"))
+                and record.get("task_id") == task.task_id and record.get("stage") == task.stage.value
+                and (record.get("logical_call") == logical_call or (
+                    record.get("logical_call") is None and task.stage.value != "P09"
+                ))
+                and record.get("binding_sha256") == binding.binding_sha256):
+            records.append(record)
+    return max(records, key=lambda record: record["created_at"], default=None)
+
+
+def save_proposal(binding, task, schema, value, usage, key, *, evidence=None):
+    binding.assert_integrity()
+    path = proposal_directory(binding, task) / (canonical_sha256(key) + ".json")
+    record = {
+        "binding_sha256": binding.binding_sha256,
+        "task_id": task.task_id,
+        "stage": task.stage.value,
+        "schema": schema.__name__,
+        "logical_call": key.split(":attempt:", 1)[0],
+        "created_at": datetime.now(UTC).isoformat(),
+        "proposal": value.model_dump(mode="json") if hasattr(value, "model_dump") else value,
+        "usage": usage.model_dump(mode="json"),
+        "diagnostics": [],
+    }
+    if schema.__name__ == "CriticObservations" and evidence is not None:
+        record["review_assignment"] = critic_assignment(evidence)
+    _atomic_write(path, record)
+    return path, record
+
+
+def critic_assignment(evidence):
+    """Bind reusable critic coverage to the exact reviewed inventory and text."""
+    from edgar_core.artifacts import text_digest
+
+    return {
+        "bindings_sha256": evidence.get("review_bindings_sha256") or canonical_sha256(evidence["binding"]),
+        "ranges": [{"chapter_id": chapter["chapter_id"],
+                    "start": chapter["text_start"], "end": chapter["text_end"],
+                    "text_sha256": text_digest(chapter["text"])}
+                   for chapter in evidence["reviewed_chapters"]],
+    }
+
+
+def retained_critic_reviews(binding, task, review_bindings):
+    """Read completed paid reviews only when their entire subject inventory agrees."""
+    digest = canonical_sha256(review_bindings)
+    directory = preparation_path(binding.source_slug, binding.run_id).parent / "proposals"
+    records = []
+    for path in directory.glob("*/*.json"):
+        record = json.loads(path.read_text())
+        if (record.get("schema") == "CriticObservations"
+                and record.get("task_id") == task.task_id and record.get("stage") == "P09"
+                and record.get("binding_sha256") == binding.binding_sha256
+                and record.get("review_assignment", {}).get("bindings_sha256") == digest):
+            records.append((path, record))
+    # Keep every paid response, including rejected/overlapping assignments. Usage
+    # deduplicates by response ID; the caller validates and merges exact coverage.
+    return tuple(sorted(records, key=lambda row: row[1]["created_at"]))
+
+
+def reject_proposal(path, record, error):
+    # This detail can contain private model/source text, so retain it only here.
+    record["diagnostics"] = getattr(error, "diagnostics", None) or [
+        {"type": type(error).__name__, "message": str(error)}]
+    _atomic_write(path, record)
+    from .preparation_responses import reject_responses
+
+    reject_responses(path.parent, {r["response_id"] for r in record["usage"].get("responses", [])})
+
+
+def save_diagnostic(binding, boundary, error, *, task=None, dependencies=()):
+    """Keep exact code errors private at boundaries without a provider proposal."""
+    directory = preparation_path(binding.source_slug, binding.run_id).parent / "diagnostics"
+    chain, seen = [], set()
+    cause = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        chain.append({"error_type": type(cause).__name__, "message": str(cause)})
+        cause = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
+    record = {"binding_sha256": binding.binding_sha256, "boundary": boundary,
+              "created_at": datetime.now(UTC).isoformat(),
+              "task_id": task.task_id if task is not None else None,
+              "error_type": type(error).__name__, "message": str(error),
+              "causes": chain,
+              "dependencies": {a.artifact_id: a.content_sha256 for a in dependencies}}
+    _atomic_write(directory / (canonical_sha256(record) + ".json"), record)

@@ -191,6 +191,14 @@ def _build_sections(pages: list[tuple[int, str]]) -> list[_Section]:
     return sections
 
 
+def has_chunkable_content(text: str) -> bool:
+    """False for pages whose only text is image placeholders and picture-text OCR noise.
+
+    Such a page has characters but nothing the chunker can emit, so it cannot be covered.
+    """
+    return next(_blocks(text), None) is not None
+
+
 def _blocks(text: str):
     """Yield ("heading", (level, title)) and ("para", text) in document order."""
     buf: list[str] = []

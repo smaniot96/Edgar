@@ -93,6 +93,8 @@ async def persist_story_effects(
             turn_id=effect.turn_id,
             source_refs=effect.source_refs,
             display_name=effect.display_name,
+            evidence_kind=effect.evidence_kind,
+            origin_turn_id=effect.origin_turn_id,
             knowledge_kind=effect.knowledge_kind,
             clock_disclosure=effect.clock_disclosure,
             related_object=effect.related_object,

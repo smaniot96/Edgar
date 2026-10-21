@@ -108,6 +108,10 @@ def test_identical_overlapping_native_layer_removed_without_dropping_repeated_ta
         ("## Creature\n\nMedium construct, unaligned\nHit Points 9", "incomplete_stat_fields"),
         ("Armor Class 14\nHit Points 9", "missing_stat_heading"),
         (
+            "Armo.r Class 17 (natural armor, shield)\nHit Points 39 (6d8 + 12)\nSpeed 30 ft.",
+            "incomplete_stat_fields",
+        ),
+        (
             "## Creature\n\nMedium construct, unaligned\n\nArmor Class 14\nHit Points 9\n\n"
             "## ACTIONS\n\nBite. The creature hits.\n\n"
             "Armor Class 16\nHit Points 23",
@@ -122,6 +126,11 @@ def test_identical_overlapping_native_layer_removed_without_dropping_repeated_ta
 )
 def test_corrupt_layers_and_stat_boundaries_detected(text, error):
     assert error in check_text(text)["errors"]
+
+
+def test_hit_points_prose_without_a_speed_line_is_not_a_lost_armor_class():
+    prose = "## Healing Surges\n\nHit Points 25 is the most a character can regain in a day."
+    assert "incomplete_stat_fields" not in check_text(prose)["errors"]
 
 
 def test_repeated_numbers_and_list_markers_are_not_a_duplicate_layer():
@@ -226,9 +235,12 @@ def test_hit_points_formula_counts_as_a_hit_points_field():
         "## ACTIONS\n\nReaping Scythe. The avatar sweeps its spectral scythe."
     )
     assert check_text(text)["errors"] == []
-    assert "incomplete_stat_fields" in check_text(
-        text.replace("Hit Points half the hit point maximum of its summoner\n", "")
-    )["errors"]
+    assert (
+        "incomplete_stat_fields"
+        in check_text(text.replace("Hit Points half the hit point maximum of its summoner\n", ""))[
+            "errors"
+        ]
+    )
 
 
 def test_object_records_with_colon_fields_and_a_size_line_are_not_stat_records():
@@ -1118,6 +1130,41 @@ def test_excluded_cover_passes_while_other_pages_still_gate(two_page_pdf):
     assert result["exclusions_sha256"] == exclusions_digest(excluded)
 
 
+def test_quality_failed_exclusion_records_causes_and_allows_stat_record_pages(two_page_pdf):
+    book = _book(two_page_pdf, body_errors=["missing_stat_type"])
+    book.pages[1].text = "Goblin\nSmall humanoid, neutral evil\nArmor Class 15\nHit Points 7"
+    excluded = validate_exclusions([{"page": 2, "reason": "quality_failed"}], book.pages, 2)
+    (entry,) = excluded
+    assert entry["reason"] == "quality_failed"
+    assert "missing_stat_type" in entry["causes"]
+    assert entry["chars"] == len(book.pages[1].text)
+    book.excluded_pages = excluded
+    assert book.failing_pages() == {}
+    assert exclusions_digest(excluded) != exclusions_digest([{"page": 2, "reason": "art"}])
+    summary = "\n".join(book.quality_summary())
+    assert "quality_failed x1" in summary and "missing_stat_type x1" in summary
+
+
+def test_quality_failed_exclusion_is_refused_on_a_passing_page(two_page_pdf):
+    with pytest.raises(ValueError, match="passes its quality checks"):
+        validate_exclusions([{"page": 2, "reason": "quality_failed"}], _book(two_page_pdf).pages, 2)
+
+
+def test_recorded_quality_failed_causes_must_match_the_page(two_page_pdf):
+    pages = _book(two_page_pdf, body_errors=["duplicate_word_layer"]).pages
+    entry = {"page": 2, "reason": "quality_failed", "causes": ["other"], "chars": 31}
+    with pytest.raises(ValueError, match="do not match"):
+        validate_exclusions([entry], pages, 2)
+    (good,) = validate_exclusions([{"page": 2, "reason": "quality_failed"}], pages, 2)
+    assert validate_exclusions([good], pages, 2) == [good]
+
+
+def test_other_reasons_cannot_carry_causes(two_page_pdf):
+    entry = {"page": 1, "reason": "cover", "causes": [], "chars": 10}
+    with pytest.raises(ValueError, match="Only quality_failed"):
+        validate_exclusions([entry], _book(two_page_pdf).pages, 2)
+
+
 def test_exclusions_never_hide_failures_on_non_excluded_pages(two_page_pdf):
     excluded = [{"page": 1, "reason": "cover"}]
     book = _book(
@@ -1755,3 +1802,35 @@ def test_three_column_word_set_index_is_not_read_as_a_table():
                     Line(f"w{r}{column}{w}", (x0 + w * 36, y, x0 + w * 36 + 33, y + 10), 8)
                 )
     assert _table_band(lines) is None
+
+
+def test_folio_alone_is_not_a_number_ocr_must_keep(tmp_path, monkeypatch):
+    """A map page whose only native text is its folio: OCR drops footers, so nothing is lost."""
+    path = tmp_path / "map.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.draw_rect(pymupdf.Rect(40, 40, 500, 760))
+        page.insert_text((560, page.rect.height - 20), "43")
+        doc.save(path)
+    monkeypatch.setattr(
+        extract.pymupdf4llm,
+        "to_markdown",
+        lambda *_a, **_kw: "Wave Echo Cave map with numbered areas and a legend of terrain.",
+    )
+    assert "partial_native_numbers_lost_in_ocr" not in extract_document(path).pages[0].quality["errors"]
+
+
+def test_require_valid_tolerates_failing_pages_only_within_a_budget():
+    pages = [
+        ExtractedPage(n, f"## Area {n}\n\nRoom {n}.", "native_geometry", {"errors": []})
+        for n in range(1, 21)
+    ]
+    pages[2].quality["errors"] = ["incomplete_stat_fields"]
+    extraction = Extraction("source", "hash", 20, pages, rules_edition="2014")
+    with pytest.raises(ValueError, match="Extraction quality"):
+        extraction.require_valid()
+    extraction.require_valid(degraded_page_budget=0.10)
+    for n in (5, 7):
+        pages[n].quality["errors"] = ["ambiguous_column_gutter"]
+    with pytest.raises(ValueError, match="Extraction quality"):
+        extraction.require_valid(degraded_page_budget=0.10)

@@ -85,6 +85,8 @@ class StoryEffect(StoryRecord):
     destination: str | None = Field(default=None, max_length=200)
     operation: Identifier | None = None
     promise_actor: StoryRef | None = None
+    # Private DM reasoning about what actually happened in play, never player-facing source text.
+    achievement_basis: str | None = None
 
 
 class ClockDisclosure(StoryRecord):
@@ -99,7 +101,7 @@ class AcceptedStoryEffect(StoryEffect):
     display_name: str = Field(default="", max_length=200)
     # Full existing citation records, copied by the validator, never model supplied.
     source_refs: list[dict] = Field(default_factory=list)
-    evidence_kind: Literal["source", "player_utterance"] = "source"
+    evidence_kind: Literal["source", "player_utterance", "dm_adjudication"] = "source"
     origin_turn_id: str | None = None
     # Validator-owned metadata, never accepted from a model's StoryEffect proposal.
     knowledge_kind: Literal["hint"] | None = None
@@ -129,7 +131,7 @@ def accept_story_effect(
     turn_id: str,
     source_refs: list[dict],
     display_name: str = "",
-    evidence_kind: Literal["source", "player_utterance"] = "source",
+    evidence_kind: Literal["source", "player_utterance", "dm_adjudication"] = "source",
     origin_turn_id: str | None = None,
     knowledge_kind: Literal["hint"] | None = None,
     clock_disclosure: ClockDisclosure | None = None,
@@ -149,6 +151,10 @@ def accept_story_effect(
             identity[name] = value.model_dump() if isinstance(value, BaseModel) else value
     if identity["promise_actor"] is None:
         identity.pop("promise_actor")
+    if identity["achievement_basis"] is None:
+        identity.pop("achievement_basis")
+    if evidence_kind == "dm_adjudication":
+        identity["adjudication_turn_id"] = origin_turn_id or turn_id
     if effect.kind in {
         "acquire",
         "consume",
@@ -184,6 +190,30 @@ def player_promise_ref(actor: StoryRef, quotation: str) -> StoryRef:
     """An event-authored promise identity, rooted in an already encountered actor."""
     identity = hashlib.sha256((actor.model_dump_json() + "\n" + quotation).encode()).hexdigest()
     return actor.model_copy(update={"kind": "promise", "canonical_id": "promise_" + identity[:48]})
+
+
+def dm_adjudication_reference(
+    turn_id: str, target: StoryRef, *, action: str, success: bool
+) -> dict:
+    """Code-owned event receipt: source defines the goal; this turn establishes its progress.
+
+    The private achievement basis and source criteria are deliberately absent. The action's
+    hash binds the reviewed turn without publishing hidden source passages or player input.
+    """
+    body = {
+        "audience": "play_event",
+        "provenance": "dm_adjudication",
+        "collection": target.collection,
+        "source_sha256": target.source_sha256,
+        "manifest_sha256": target.manifest_sha256,
+        "target_sha256": story_target_id(target),
+        "origin_turn_id": turn_id,
+        "action_sha256": hashlib.sha256(action.encode()).hexdigest(),
+        "success": success,
+    }
+    return {"reference_id": hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest(), **body}
 
 
 # EDG-169: homebrew play has no reviewed manifest. Its improvised places, people, clues and
@@ -251,6 +281,28 @@ def known_story_name(fact: AcceptedStoryEffect) -> str:
 
 
 def _public_origin(ref: dict, effect: AcceptedStoryEffect) -> bool:
+    if ref.get("provenance") == "dm_adjudication":
+        expected_keys = {"reference_id", "audience", "provenance", "collection",
+            "source_sha256", "manifest_sha256", "target_sha256", "origin_turn_id",
+            "action_sha256", "success"}
+        return (
+            effect.evidence_kind == "dm_adjudication"
+            and effect.kind in {"objective", "milestone"}
+            and set(ref) == expected_keys
+            and ref.get("audience") == "play_event"
+            and ref.get("collection") == effect.target.collection
+            and ref.get("source_sha256") == effect.target.source_sha256
+            and ref.get("manifest_sha256") == effect.target.manifest_sha256
+            and ref.get("target_sha256") == story_target_id(effect.target)
+            and ref.get("origin_turn_id") == (effect.origin_turn_id or effect.turn_id)
+            and type(ref.get("success")) is bool
+            and isinstance(ref.get("action_sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", ref["action_sha256"]) is not None
+            and ref.get("reference_id") == hashlib.sha256(json.dumps(
+                {key: value for key, value in ref.items() if key != "reference_id"},
+                sort_keys=True, separators=(",", ":"),
+            ).encode()).hexdigest()
+        )
     if is_homebrew_effect(effect):
         return (
             ref.get("audience") == "homebrew"
@@ -279,6 +331,8 @@ def _public_origin(ref: dict, effect: AcceptedStoryEffect) -> bool:
 
 def player_story_effect(effect: AcceptedStoryEffect) -> dict | None:
     """Shared player allowlist for an accepted consequence or committed fact."""
+    if effect.evidence_kind == "dm_adjudication" and not effect.player_text:
+        return None
     origins = [
         {
             key: copy.deepcopy(ref[key])
@@ -292,6 +346,7 @@ def player_story_effect(effect: AcceptedStoryEffect) -> dict | None:
                 "page_end",
                 "source_pages",
                 "provenance",
+                "origin_turn_id",
             )
             if key in ref
         }

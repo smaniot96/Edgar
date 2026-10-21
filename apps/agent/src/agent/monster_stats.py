@@ -82,9 +82,10 @@ _STAT_LINE = re.compile(
     r"Damage (?:Resistances|Immunities|Vulnerabilities)|Condition Immunities|Proficiency Bonus)\b",
     re.IGNORECASE,
 )
-_ENTRY = re.compile(r"^([A-Z][\w'’ ()/,\u2013\u2014-]{0,70}?)\.\s+(\S.*)$")
+_ENTRY = re.compile(r"^([A-Z][\w'’ ()}/{,\u2013\u2014-]{0,70}?)\.\s+(\S.*)$")
+_LOWER_ATTACK_ENTRY = re.compile(r"^([a-z][\w'’ ()/,\u2013\u2014-]{0,70}?)\.\s+(\S.*)$")
 _ATTACK = re.compile(
-    r"^(Melee or Ranged|Melee|Ranged) Weapon Attack:\s*\+(-?\d+) to hit\b.*?\bHit:\s*(\d+)\s*"
+    r"^(Melee or Ranged|Melee|Ranged) Weapon Attack:\s*\+(-?\d+) to hit\b.*?\bHit:\s*([0-9lI]+)\s*"
     r"\(([^)]*)\)\s*([A-Za-z]+) damage\b(.*)$",
     re.IGNORECASE,
 )
@@ -529,7 +530,10 @@ def _exact_damage(average: str, dice_text: str, damage_type: str) -> tuple[str, 
         return None
     parsed = parse_dice(dice)
     expected = math.floor(parsed.count * (parsed.sides + 1) / 2 + parsed.modifier)
-    return (dice, damage_type) if expected == int(average) else None
+    # PDF OCR can render printed 11 as ll. Only accept this digit-confusable
+    # average when it agrees with the independently parsed exact damage dice.
+    normalized = average.translate(str.maketrans({"l": "1", "I": "1"}))
+    return (dice, damage_type) if normalized.isdecimal() and expected == int(normalized) else None
 
 
 def _save_action(body: str, name: str, recharge: int | None) -> MonsterAttack | None:
@@ -698,10 +702,12 @@ def _multiattack(
 
 
 _SPELLCAST_ABILITY = re.compile(
-    r"spellcasting ability is (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)",
+    r"spellcasting ability is (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)|"
+    r"uses (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) as "
+    r"(?:its|his|her|their) spellcasting ability",
     re.IGNORECASE,
 )
-_SPELLCAST_LEVEL = re.compile(r"\b(\d+)(?:st|nd|rd|th)-level spellcaster\b", re.IGNORECASE)
+_SPELLCAST_LEVEL = re.compile(r"\b(\d+)(?:st|nd|rd|th)[·‐‑–—-]level spell\s*caster\b", re.IGNORECASE)
 _SPELLCAST_DC = re.compile(r"spell save DC\s+(\d+)", re.IGNORECASE)
 _SPELLCAST_ATTACK = re.compile(r"([+-]\d+) to hit with spell attacks?", re.IGNORECASE)
 _SPELL_LIST_HEADING = re.compile(
@@ -747,7 +753,7 @@ def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[st
     if not spells:
         unsupported.append("no listed spell is in the engine's action-spell catalog")
     result = MonsterSpellcasting(
-        ability=ability.group(1).upper()[:3],
+        ability=(ability.group(1) or ability.group(2)).upper()[:3],
         caster_level=int(caster_level_match.group(1)),
         save_dc=int(dc.group(1)),
         attack_bonus=int(attack.group(1)),
@@ -786,7 +792,7 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
     section = "traits"
     current: list[str] | None = None
     for line in lines:
-        heading = _SECTION_HEADINGS.get(line.lower().rstrip(":"))
+        heading = _SECTION_HEADINGS.get(line.strip(" #*_`").lower().rstrip(":"))
         if heading is not None:
             section, current = heading, None
             if heading == "lair":
@@ -798,6 +804,10 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
             current = None
             continue
         match = _ENTRY.match(line)
+        if match is None and section == "actions":
+            possible = _LOWER_ATTACK_ENTRY.match(line)
+            if possible and _ATTACK_LEAD.match(possible.group(2)):
+                match = possible
         if match:
             current = [section, match.group(1).strip(), match.group(2).strip()]
             entries.append(current)
@@ -875,6 +885,11 @@ def parse_monster_stats(text: str, *, name: str) -> MonsterStats:
                 declared.append(f"{entry_name}: no spellcasting effect is executed")
             elif not spellcasting.spells:
                 declared.append(f"{entry_name}: no supported spell is executed")
+        elif (lowered == "brute" and entry_section == "traits"
+              and re.search(r"\bincluded in the attack\b", body, re.IGNORECASE)):
+            # The source's attack dice already include this trait. Do not count
+            # it twice or declare those existing dice an unexecuted ability.
+            pass
         else:
             declared.append(f"{entry_name}: trait not executed")
 

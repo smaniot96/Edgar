@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 
+from agent.committed_facts import committed_prepared_facts
 from agent.models.parsed_input import ParsedInput
 from agent.resolution import normalise_check
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import (
     AdventureManifest,
     ManifestError,
+    policy_fact_requirements_met,
     require_published,
     select_scene_context,
 )
@@ -100,9 +102,14 @@ def policies_for_state(state: dict) -> list[dict]:
             None,
         )
         source_ready = source_status is None or source_status.get("status") == "ready"
+        committed = committed_prepared_facts(state, collection, manifest)
         for policy in manifest.resolution_policies:
             if scene_id not in policy.scene_ids:
                 continue
+            if policy.mode == "automatic" and not any(
+                effect.kind not in {"objective", "milestone"} for effect in policy.on_automatic
+            ):
+                continue  # Narrative-only legacy actions belong to the live DM.
             supported_check = True
             if policy.mode == "check":
                 normalized = normalise_check(policy.check)
@@ -114,7 +121,7 @@ def policies_for_state(state: dict) -> list[dict]:
             prerequisites_met = all(
                 (state.get("world_flags") or {}).get(key) == value
                 for key, value in policy.requires.items()
-            )
+            ) and policy_fact_requirements_met(policy.requires_facts, committed)
             gear_met = all(match_inventory_item(items, item) for item in policy.requires_items)
             evidence_met = set(policy.passage_ids) <= readable_ids
             edition_met = (
@@ -290,6 +297,26 @@ def policy_effects_for_outcome(
     selected["expected_effect_count"] = len(definitions)
     selected["authorized_effect_keys"] = []
     selected["existing_effects"] = []
+    current = next(
+        (item for item in policies_for_state(state) if item["policy_key"] == selected.get("policy_key")),
+        None,
+    )
+    if (
+        current is None
+        or not current["available"]
+        or current["source_sha256"] != selected.get("source_sha256")
+        or current["manifest_sha256"] != selected.get("manifest_sha256")
+        or current["policy"] != policy
+        or not policy_source_is_fresh(current, state)
+    ):
+        selected["generation_failed"] = True
+        return [], []
+    # A reviewed policy can resolve mechanics and disclosures; selecting it does not
+    # establish that its narrative goals were earned. The live DM judges all such goals.
+    definitions = [
+        outcome for outcome in definitions if outcome.kind not in {"objective", "milestone"}
+    ]
+    selected["expected_effect_count"] = len(definitions)
     if not definitions:
         return [], []
 

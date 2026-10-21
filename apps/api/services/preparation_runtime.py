@@ -13,12 +13,13 @@ import fcntl
 import hashlib
 import json
 import re
+import shutil
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -33,11 +34,19 @@ from edgar_core.preparation import (
     canonical_sha256,
     safe_public_stage,
 )
+from edgar_core.safe_errors import safe_code
 
 from . import adventures_meta as meta_store
-from .preparation import PreparationError, PreparationSupervisor
+from .preparation import (
+    PreparationError,
+    PreparationSupervisor,
+    automatically_retryable_preparation_task,
+)
 from .preparation_store import PreparationStore, PreparationStoreError, preparation_path
 from .safe_errors import classify_error, new_support_ref, safe_failure_metadata
+
+if TYPE_CHECKING:
+    from ..limits import JobSpend
 
 log = structlog.get_logger()
 
@@ -45,6 +54,26 @@ _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 _RECOVERY_TASKS: set[asyncio.Task] = set()
+# Failures before a run exists that the setup form recovers. Every other pre-run failure
+# (an extraction rejection, an unexpected fault) is retried from the same source and setup.
+_SETUP_RECOVERY_CODES = {
+    "preparation_setup_required",
+    "preparation_setup_invalid",
+    "preparation_profile_invalid",
+}
+# Records written before `preparation_blocked_code` existed carry only these codes.
+_LEGACY_PRE_RUN_CODES = _SETUP_RECOVERY_CODES | {"preparation_source_invalid"}
+# Canonical codes that older pre-run records stored for a setup failure.
+_LEGACY_SETUP_CANONICAL_CODES = {
+    "validation_failed": "preparation_setup_invalid",
+    "provider_configuration": "preparation_profile_invalid",
+}
+_TERMINAL_RUN_STATUSES = {
+    PreparationJobStatus.READY,
+    PreparationJobStatus.BLOCKED,
+    PreparationJobStatus.FAILED,
+    PreparationJobStatus.CANCELLED,
+}
 _RESTART_PREPARATION_CODES = {
     "required_book_phb_unindexed",
     "required_book_dmg_unindexed",
@@ -57,12 +86,6 @@ _RESTART_PREPARATION_CODES = {
     "unsupported_edition",
     "unsupported_progression",
     "unsupported_hero_capability",
-    "budget_exhausted",
-    "run_budget_exhausted",
-    "attempt_budget_exhausted",
-    "provider_budget_exhausted",
-    "providerbudget_exhausted",
-    "repair_budget_exhausted",
     "required_assets_unavailable",
 }
 _PREPARATION_FAILURE_MESSAGES = {
@@ -77,27 +100,37 @@ _PREPARATION_FAILURE_MESSAGES = {
     "unsupported_edition": "This rules edition is not supported for preparation. Choose a supported edition and start a new adventure.",
     "unsupported_progression": "The requested character progression is not supported. Change the target level or party and start a new adventure.",
     "unsupported_hero_capability": "A selected hero capability is not supported by preparation. Choose a different party and start a new adventure.",
-    "budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
-    "run_budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
-    "attempt_budget_exhausted": "The preparation exceeded its commissioned budget. Start a new preparation with a larger budget.",
-    "provider_budget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
-    "providerbudget_exhausted": "The preparation exceeded its commissioned provider budget. Start a new preparation with a larger budget.",
-    "repair_budget_exhausted": "The adventure needs more repair work than this commission allows. Start a new preparation with a larger repair budget.",
+    "budget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "run_budget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "attempt_budget_exhausted": "Retry to continue the saved preparation work.",
+    "provider_budget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "providerbudget_exhausted": "Preparation usage is an estimate. Retry to continue the saved work.",
+    "repair_budget_exhausted": "Retry to continue the saved preparation repairs.",
+    "quota_exceeded": "The model provider account has no available credits or quota. Restore provider access, then retry this saved preparation.",
+    "provider_quota_exceeded": "The model provider account has no available credits or quota. Restore provider access, then retry this saved preparation.",
+    "credit_balance_exhausted": "The model provider account has no available credits. Add credits, then retry this saved preparation.",
+    "insufficient_quota": "The model provider account has no available quota. Restore provider access, then retry this saved preparation.",
+    "billing_hard_limit_reached": "The model provider account needs billing attention. Restore provider access, then retry this saved preparation.",
+    "provider_configuration": "The model provider configuration needs attention. Correct it, then retry this saved preparation.",
+    "provider_output_invalid": "The retained preparation needs a content correction. Its completed work is saved.",
+    "preparation_compile_invalid": "Prepared campaign data needs a local repair. Its completed work is saved.",
+    "creature_unresolved": "Exact creature evidence needs a local source repair. Retry this saved preparation after the repair.",
+    "creature_record_incomplete": "Exact creature evidence is incomplete. Retry this saved preparation after the source repair.",
+    "creature_mechanics_unreadable": "Exact creature mechanics need a local source repair. Retry this saved preparation after the repair.",
+    "creature_identity_changed": "The creature source identity changed. Review its source binding before retrying the saved preparation.",
     "required_assets_unavailable": "Required maps or handouts could not be prepared. Change asset requirements and start a new preparation.",
 }
 
 
 def _needs_new_commission(code: str | None) -> bool:
-    return code in _RESTART_PREPARATION_CODES or (
-        isinstance(code, str) and "budget" in code.lower()
-    )
+    return code in _RESTART_PREPARATION_CODES
 
 
 def _preparation_failure_message(code: str | None) -> str:
     if isinstance(code, str):
         return _PREPARATION_FAILURE_MESSAGES.get(
             code,
-            "The preparation needs a new commission. Review the party, rules edition, sourcebooks, assets, and budget before starting again."
+            "The preparation needs a new commission. Review the party, rules edition, sourcebooks, and assets before starting again."
             if _needs_new_commission(code)
             else "Preparation needs attention. Retry the saved work or start a new adventure.",
         )
@@ -109,6 +142,9 @@ def _setup_failure_code(error: BaseException) -> str:
     code = getattr(error, "code", None)
     if code in {"preparation_profile_invalid", "preparation_source_invalid"}:
         return code
+    if isinstance(error, ValueError) and code == "extraction_quality":
+        # `IngestionRejected` from the extraction quality gate: the PDF, not the setup, failed.
+        return "source_extraction_rejected"
     if isinstance(error, ValueError):
         return "preparation_setup_invalid"
     return classify_error(error).code
@@ -122,6 +158,16 @@ def make_preparation_supervisor(
     from .preparation_stages import make_preparation_supervisor as make_stages_supervisor
 
     return make_stages_supervisor(store=store, provider=provider, book_client=book_client)
+
+
+def _has_retryable_task(state: PreparationRunState) -> bool:
+    """Confirmed transient failures continue with backoff and no attempt cap."""
+    if state.status != PreparationJobStatus.FAILED or state.cancel_requested:
+        return False
+    return any(
+        automatically_retryable_preparation_task(task)
+        for task in state.tasks.values()
+    )
 
 
 def _profiles_snapshot(profiles: Any = None) -> tuple[Any, dict[str, Any]]:
@@ -200,7 +246,6 @@ def _binding_for(
 ) -> PreparationRunBinding:
     from edgar_core.artifacts import source_digest
     from edgar_core.preparation import canonical_sha256 as digest
-    from ingestion.extract import load_reviewed_extraction
 
     request = setup["request"]
     heroes = setup["heroes"]
@@ -214,7 +259,9 @@ def _binding_for(
         retained_pdf = source_dir / f"{slug}.pdf"
         extraction_path = source_dir / f"{slug}.extraction.json"
         if retained_pdf.is_file() and extraction_path.is_file():
-            extraction = load_reviewed_extraction(retained_pdf, extraction_path)
+            from .preparation_sources import load_retained
+
+            extraction = load_retained(retained_pdf, extraction_path)
         else:
             candidate = (
                 Path(pdf_path) if pdf_path is not None else meta_store.source_pdf_path(slug, meta)
@@ -373,12 +420,13 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             return False
         if binding.source_mode == "pdf":
             from edgar_core.artifacts import source_digest
-            from ingestion.extract import load_reviewed_extraction
+
+            from .preparation_sources import load_retained
 
             source_dir = _run_source_dir(slug, binding.run_id)
             pdf = source_dir / f"{slug}.pdf"
             report = source_dir / f"{slug}.extraction.json"
-            extraction = load_reviewed_extraction(pdf, report)
+            extraction = load_retained(pdf, report)
             if source_digest(pdf) != binding.source_sha256:
                 return False
             if extraction.text_sha256() != binding.extraction_sha256:
@@ -389,6 +437,10 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             )
             if "image_budget" in binding.commission:
                 expected_commission["image_budget"] = copy.deepcopy(binding.commission["image_budget"])
+            # Frozen legacy metadata remains part of identity, never execution selection.
+            if "preparation_pipeline" in binding.commission:
+                expected_commission["preparation_pipeline"] = copy.deepcopy(
+                    binding.commission["preparation_pipeline"])
             if canonical_sha256(expected_commission) != binding.commission_sha256:
                 return False
         else:
@@ -398,6 +450,9 @@ def _current_source_matches(slug: str, token: str, binding: PreparationRunBindin
             )
             if "image_budget" in binding.commission:
                 expected_commission["image_budget"] = copy.deepcopy(binding.commission["image_budget"])
+            if "preparation_pipeline" in binding.commission:
+                expected_commission["preparation_pipeline"] = copy.deepcopy(
+                    binding.commission["preparation_pipeline"])
             if (
                 canonical_sha256(expected_commission) != binding.commission_sha256
             ):
@@ -594,7 +649,9 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
     if not isinstance(manifest_value, dict):
         raise PreparationError("The final canonical manifest is missing.")
     manifest = AdventureManifest.model_validate(manifest_value)
-    validate_spans(extraction, manifest)
+    from .preparation_sources import page_budget
+
+    validate_spans(extraction, manifest, degraded_page_budget=page_budget(binding.source_mode))
     if manifest.rules_edition != binding.rules_edition:
         raise PreparationError("Final manifest edition does not match the frozen run.")
     if manifest.reviewed_sha256 not in (None, manifest_digest(manifest)):
@@ -647,11 +704,15 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
     # immutable run. The source-mode-specific helper retains the original PDF separately.
     from ingestion.extract import save_extraction
 
-    report_chunks = manifest_chunks(extraction, manifest)
+    report_chunks = manifest_chunks(
+        extraction, manifest, degraded_page_budget=page_budget(binding.source_mode)
+    )
+
     report = prepare_report(
         extraction,
         source_kind="pdf" if binding.source_mode == "pdf" else "generated",
         chunks=report_chunks,
+        degraded_page_budget=page_budget(binding.source_mode),
     )
     require_ready(report)
     markdown, _ = save_extraction(extraction, source_dir, readiness=report)
@@ -698,6 +759,7 @@ def _publish_candidate_locked(slug: str, token: str, publication: PreparationPub
         None,
         prepared,
         prepared_chunks=report_chunks,
+        degraded_page_budget=page_budget(binding.source_mode),
     )
     require_ready(report_holder)
     # Keep candidate metadata private and processing while the exact index is activated.
@@ -832,21 +894,84 @@ def _find_artifact_from_state(state: PreparationRunState, kind: str) -> dict[str
     return values[0]
 
 
+def _failed_before_run(meta: dict) -> bool:
+    """The job failed before the supervisor checkpoint was created, so no run state exists."""
+
+    if meta.get("private_preparation") is not True or meta.get("preparation_run_id"):
+        return False
+    if meta.get("failure_code") in _LEGACY_PRE_RUN_CODES:
+        return True
+    return meta.get("status") == "failed" and (meta.get("job") or {}).get("state") == "failed"
+
+
+def _pre_run_failure_code(meta: dict) -> str:
+    """The fixed code recorded for a pre-run failure, mapping legacy canonical records."""
+
+    blocked = meta.get("preparation_blocked_code")
+    if safe_code(blocked) is not None:
+        return blocked
+    stored = meta.get("failure_code")
+    if stored in _LEGACY_SETUP_CANONICAL_CODES:
+        return _LEGACY_SETUP_CANONICAL_CODES[stored]
+    return stored if safe_code(stored) is not None else "preparation_setup_invalid"
+
+
+def preparation_setup_needed(meta: dict) -> bool:
+    """Only a missing setup, or a pre-run failure the setup form recovers, asks for setup."""
+
+    if (
+        meta.get("private_preparation") is not True
+        or meta.get("preparation_run_id")
+        or meta.get("prepared_bundle")
+    ):
+        return False
+    if not meta.get("preparation_setup"):
+        return True
+    return _failed_before_run(meta) and _pre_run_failure_code(meta) in _SETUP_RECOVERY_CODES
+
+
+def _unbound_run_id(slug: str, meta: dict) -> str | None:
+    """The run identity of a job that failed before its checkpoint was written."""
+
+    if not _failed_before_run(meta):
+        return None
+    job_id = (meta.get("job") or {}).get("job_id")
+    if not isinstance(job_id, str) or not _HEX32.fullmatch(job_id):
+        return None
+    run_id = "prep-" + job_id
+    return None if preparation_path(slug, run_id).exists() else run_id
+
+
+def failed_source_preview_dir(slug: str, meta: dict) -> Path | None:
+    """The extraction an uploaded PDF left when it failed before a run existed.
+
+    Nothing was prepared from it, so the operator may inspect it like any extraction preview.
+    """
+
+    if not meta.get("source_filename"):
+        return None
+    run_id = _unbound_run_id(slug, meta)
+    if run_id is None:
+        return None
+    directory = _run_source_dir(slug, run_id)
+    if (directory / f"{slug}.extraction.json").is_file() and (directory / f"{slug}.md").is_file():
+        return directory
+    return None
+
+
+def discard_unbound_source(slug: str, meta: dict) -> None:
+    """Drop the retained source of a pre-run failure so recovery reads the source again."""
+
+    run_id = _unbound_run_id(slug, meta)
+    if run_id is not None:
+        shutil.rmtree(_run_source_dir(slug, run_id), ignore_errors=True)
+
+
 def _private_binding(meta: dict, slug: str) -> tuple[str, PreparationRunBinding | None] | None:
     run_id = meta.get("preparation_run_id")
     if not isinstance(run_id, str):
         job_id = (meta.get("job") or {}).get("job_id")
-        if (
-            isinstance(job_id, str)
-            and _HEX32.fullmatch(job_id)
-            and meta.get("failure_code")
-            in {
-                "preparation_setup_required",
-                "preparation_setup_invalid",
-                "preparation_profile_invalid",
-                "preparation_source_invalid",
-            }
-        ):
+        if isinstance(job_id, str) and _HEX32.fullmatch(job_id) and _failed_before_run(meta):
             return "prep-" + job_id, None
         return None
     try:
@@ -953,11 +1078,11 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
             )
         ):
             return False
-        from ingestion.extract import load_reviewed_extraction
+        from .preparation_sources import load_retained
 
         source_dir = _run_source_dir(slug, run_id)
         pdf = source_dir / f"{slug}.pdf" if binding.source_mode == "pdf" else None
-        retained = load_reviewed_extraction(pdf, source_dir / f"{slug}.extraction.json")
+        retained = load_retained(pdf, source_dir / f"{slug}.extraction.json")
         if (
             retained.source_sha256 != canonical_extraction.source_sha256
             or retained.text_sha256() != canonical_extraction.text_sha256()
@@ -997,8 +1122,27 @@ def private_preparation_ready(slug: str, meta: dict | None = None) -> bool:
 
 
 def safe_preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | None:
-    """Public safe projection; it never includes private labels, counts or findings."""
+    """Public safe projection; it never includes private labels, counts or findings.
 
+    The job's action and its failure always agree: a failure is retryable exactly when the
+    job offers a retry, so the player is never told both "retry" and "unavailable".
+    """
+
+    status = _preparation_status(meta, slug)
+    if status is None:
+        return None
+    retryable = status.action == "retry"
+    failure = status.failure
+    if failure is not None and retryable:
+        failure = failure.model_copy(update={"recovery_action": "retry", "retryable": True})
+    elif failure is not None and (failure.retryable or failure.recovery_action == "retry"):
+        failure = failure.model_copy(
+            update={"recovery_action": "restart_preparation", "retryable": False}
+        )
+    return status.model_copy(update={"retryable": retryable, "failure": failure})
+
+
+def _preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | None:
     if meta.get("private_preparation") is not True:
         return None
     pair = _private_binding(meta, slug)
@@ -1006,18 +1150,17 @@ def safe_preparation_status(meta: dict, slug: str) -> PublicPreparationStatus | 
     if not isinstance(run_id, str) or not re.fullmatch(r"prep-[0-9a-f]{32}", run_id):
         return None
     if pair is not None and pair[1] is None:
-        failure = _failure_projection(
-            meta.get("failure_code") or "preparation_setup_invalid",
-            meta.get("support_ref"),
-            run_id,
-        )
+        # Failed before a run existed: a setup problem is fixed in the setup form; anything
+        # else (an extraction rejection, an unexpected fault) is retried from the same source.
+        code = _pre_run_failure_code(meta)
+        setup_recovery = code in _SETUP_RECOVERY_CODES
         return PublicPreparationStatus(
             run_id=run_id,
             status=PreparationJobStatus.BLOCKED,
             stage="Preparation needs attention",
-            retryable=False,
-            action="restart",
-            failure=failure,
+            retryable=not setup_recovery,
+            action="restart" if setup_recovery else "retry",
+            failure=_failure_projection(code, meta.get("support_ref"), run_id),
         )
     try:
         state = PreparationStore().load_run(slug, run_id)
@@ -1090,19 +1233,71 @@ def _failure_projection(
     )
 
 
+def preparation_job_spend(slug: str) -> JobSpend | None:
+    """Spend probe for the daily-limit reservation of a private preparation job.
+
+    Spent and still-reserved semantic usage plus held image budget count as spent, so a
+    settlement never returns money a running task may still use. A job that failed before
+    its run existed has spent nothing.
+    """
+
+    from ..limits import JobSpend
+    from .adventure_assets import run_image_reserved_microusd
+
+    meta = meta_store.load_meta(slug)
+    if meta.get("private_preparation") is not True:
+        return None
+    run_id = meta.get("preparation_run_id")
+    if not isinstance(run_id, str):
+        job_id = (meta.get("job") or {}).get("job_id")
+        if not isinstance(job_id, str) or not _HEX32.fullmatch(job_id):
+            return None
+        run_id = "prep-" + job_id
+    if not preparation_path(slug, run_id).exists():
+        job_state = (meta.get("job") or {}).get("state")
+        return JobSpend(
+            spent_microusd=0,
+            terminal=meta.get("status") == "failed" or job_state in ("failed", "cancelled"),
+        )
+    state = PreparationStore().load_run(slug, run_id)
+    spent = (
+        state.cost_microusd_spent
+        + state.cost_microusd_reserved
+        + run_image_reserved_microusd(slug, run_id)
+    )
+    return JobSpend(spent_microusd=spent, terminal=state.status in _TERMINAL_RUN_STATUSES)
+
+
 def _mark_setup_blocked(slug: str, token: str, code: str) -> None:
-    """A missing setup never reaches supervisor planning or a provider adapter."""
+    """Record a failure before any run exists; it never reaches planning or a provider."""
 
     failure = safe_failure_metadata(code, support_ref=new_support_ref())
     with meta_store.attempt_guard(slug, token) as meta:
         meta.update(
             status="failed",
+            # The specific fixed code decides recovery; `failure_code` holds its canonical form.
+            preparation_blocked_code=code,
             **failure,
         )
         job = meta.get("job") or {}
-        job.update(state="failed", stage="preparation", retryable=False, updated_at=_now())
+        job.update(
+            state="failed",
+            stage="preparation",
+            retryable=code not in _SETUP_RECOVERY_CODES,
+            updated_at=_now(),
+        )
         meta["job"] = job
         meta_store.save_meta(slug, meta)
+        job_id = job.get("job_id")
+    # Correlate the player's support reference with the server log; fixed values only.
+    log.error(
+        "preparation_setup_failed",
+        failure_code=code,
+        safe_failure_code=failure["failure_code"],
+        support_ref=failure["support_ref"],
+        job_id=job_id if isinstance(job_id, str) and _HEX32.fullmatch(job_id) else None,
+        slug=slug,
+    )
 
 
 def _sync_terminal_meta(slug: str, token: str, state: PreparationRunState) -> None:
@@ -1351,7 +1546,7 @@ async def prepare_adventure(
 
         worker_id = f"prep-{current_token}"
         # Keep each loop iteration bounded and cancellation/restart responsive.
-        for _ in range(state.binding.budget.max_provider_calls * 5 + 100):
+        while True:
             state = run_path.load_run(slug, run_id)
             if state.status == PreparationJobStatus.READY:
                 _finalize_ready(slug, current_token, state)
@@ -1360,9 +1555,11 @@ async def prepare_adventure(
                 PreparationJobStatus.BLOCKED,
                 PreparationJobStatus.FAILED,
                 PreparationJobStatus.CANCELLED,
-            ):
+            ) and not _has_retryable_task(state):
                 _sync_terminal_meta(slug, current_token, state)
                 return state
+            # Only confirmed transient failures retry automatically. Quota, unknown
+            # outcomes and unchanged invalid requests pause with retained work.
             result = await supervisor.step(
                 slug,
                 run_id,
@@ -1387,7 +1584,6 @@ async def prepare_adventure(
                 # Never spin through the bounded iteration budget while a valid lease
                 # belongs to a worker that may still be finishing elsewhere.
                 await asyncio.sleep(max(0.05, min(lease_wait, 15.0)))
-        raise PreparationError("Preparation exceeded the bounded runtime iteration limit.")
     except PreparationError:
         raise
     except Exception as exc:
@@ -1408,7 +1604,7 @@ def retry_preparation(slug: str) -> tuple[str, str]:
         raise PreparationError("Private preparation is not enabled for this source.")
     run_id = meta.get("preparation_run_id")
     if not isinstance(run_id, str):
-        raise PreparationError("No retained preparation run is available to retry.")
+        return _retry_before_run(slug, meta)
     state = PreparationStore().load_run(slug, run_id)
     if _needs_new_commission(state.last_safe_error_code):
         raise PreparationError("This preparation needs a new commission and cannot be retried.")
@@ -1420,6 +1616,24 @@ def retry_preparation(slug: str) -> tuple[str, str]:
         current["status"] = "processing"
         current["error"] = None
         current["failure_code"] = None
+        meta_store.save_meta(slug, current)
+    return run_id, token
+
+
+def _retry_before_run(slug: str, meta: dict) -> tuple[str, str]:
+    """Start the same job again after a failure that happened before its run existed."""
+
+    run_id = _unbound_run_id(slug, meta)
+    if run_id is None or _pre_run_failure_code(meta) in _SETUP_RECOVERY_CODES:
+        raise PreparationError("No retained preparation run is available to retry.")
+    # A stale extraction would make the retry fail the same way without reading the PDF again.
+    discard_unbound_source(slug, meta)
+    token = meta_store.begin_attempt(
+        slug, job_attempt=True, job_kind=(meta.get("job") or {}).get("kind") or "ingestion"
+    )
+    with meta_store.attempt_guard(slug, token) as current:
+        current.pop("preparation_blocked_code", None)
+        current["support_ref"] = None
         meta_store.save_meta(slug, current)
     return run_id, token
 

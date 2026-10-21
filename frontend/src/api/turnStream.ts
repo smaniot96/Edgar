@@ -1,3 +1,4 @@
+import { dailyBudgetMessage, type DailyBudgetGap } from "../lib/usageLimits";
 import { readSse } from "./sse";
 import type { AdjudicationResult, DebugPayload, TurnResult } from "./types";
 
@@ -28,6 +29,10 @@ export interface TurnError {
   retryable?: boolean;
   outcome?: "not_committed" | "committed" | "unknown";
   supportRef?: string;
+  /** Seconds until a refused limit resets, from the server's `retry_after_seconds`. */
+  retryAfterSeconds?: number;
+  /** A refused job reservation: its budget and what is left of today's allowance. */
+  dailyBudget?: DailyBudgetGap;
 }
 
 export type SafeErrorCategory =
@@ -56,6 +61,7 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   required_assets_unavailable: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   preparation_source_invalid: { category: "source", message: "The adventure source needs attention before play can continue.", action: "repair_source" },
   adventure_source_unverified: { category: "source", message: "This adventure has no verified source record, so its review draft cannot be prepared. Start a new campaign with the current preparation pipeline, then remove this one.", action: "restart_preparation" },
+  source_extraction_rejected: { category: "source", message: "The uploaded PDF did not pass the extraction quality checks, so no preparation work was started. Inspect the extraction preview, then retry or upload a corrected PDF as a new adventure.", action: "repair_source" },
   preparation_failed: { category: "source", message: "Adventure preparation needs attention. Review its setup and restart preparation to continue.", action: "restart_preparation" },
   adventure_manifest_review_required: { category: "review", message: "Review the current adventure material before continuing.", action: "review_source" },
   manifest_review_required: { category: "review", message: "Review the current adventure material before continuing.", action: "review_source" },
@@ -93,6 +99,12 @@ const SAFE_CODES: Record<string, { category: SafeErrorCategory; message: string;
   llm_unavailable: { category: "provider_unavailable", message: "The Dungeon Master service could not complete this action. Check save status before retrying.", action: "check_existing_result" },
   rate_limited: { category: "rate_limited", message: "The Dungeon Master service is receiving too many requests. Check save status before retrying.", action: "check_existing_result" },
   quota_exceeded: { category: "quota_exceeded", message: "The configured service allowance has been reached. Review the provider setup before continuing.", action: "configure_provider" },
+  // Request limits (EDG-066): refused before any work started, so nothing needs checking.
+  daily_budget_exhausted: { category: "quota_exceeded", message: dailyBudgetMessage(), action: "wait" },
+  concurrency_limited: { category: "rate_limited", message: "Too many actions are being processed right now. Try again shortly.", action: "retry" },
+  limits_unavailable: { category: "internal", message: "Usage limits could not be confirmed, so this action was not started. Try again shortly.", action: "wait" },
+  upload_too_large: { category: "validation", message: "That file is larger than the upload limit. Choose a smaller PDF.", action: "fix_input" },
+  upload_unsupported: { category: "validation", message: "Only PDF files can be uploaded. Choose a PDF and try again.", action: "fix_input" },
   provider_configuration: { category: "provider_configuration", message: "The Dungeon Master service needs configuration before it can continue.", action: "configure_provider" },
   cancelled: { category: "cancelled", message: "Preparation was cancelled. Your saved work is retained.", action: "restart_preparation" },
   interrupted: { category: "interrupted", message: "The connection stopped before the result was confirmed. Check the saved result before retrying.", action: "check_existing_result" },
@@ -140,6 +152,20 @@ function safeSupportRef(value: unknown): string | undefined {
   return typeof value === "string" && /^err-[a-f0-9]{16}$/.test(value) ? value : undefined;
 }
 
+function safeCount(value: unknown, max: number): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= max ? value : undefined;
+}
+
+/** Only the two integer amounts of a refused reservation; anything else is dropped. */
+function safeDailyBudget(value: unknown): DailyBudgetGap | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const requested = safeCount(v.requested_microusd, Number.MAX_SAFE_INTEGER);
+  const remaining = safeCount(v.remaining_microusd, Number.MAX_SAFE_INTEGER);
+  return requested !== undefined && remaining !== undefined
+    ? { requestedMicrousd: requested, remainingMicrousd: remaining } : undefined;
+}
+
 /** Parse a server error into fixed player copy; free-form details never reach the UI. */
 export function safeTurnError(payload: unknown, fallback = GENERIC_SAFE_ERROR): TurnError {
   if (typeof payload === "string") {
@@ -171,9 +197,14 @@ export function safeTurnError(payload: unknown, fallback = GENERIC_SAFE_ERROR): 
       const outcome = outcomeValue === "not_committed" || outcomeValue === "committed" || outcomeValue === "unknown"
         ? outcomeValue : undefined;
       const retryable = retryableValue === true && recoveryAction === "retry" && outcome === "not_committed";
+      const retryAfterSeconds = safeCount(p.retry_after_seconds, 7 * 24 * 3600) || undefined;
+      const dailyBudget = code === "daily_budget_exhausted" ? safeDailyBudget(p.daily_budget) : undefined;
       return {
-        code, category, recoveryAction, message: mapped.message,
+        code, category, recoveryAction,
+        message: code === "daily_budget_exhausted" ? dailyBudgetMessage(dailyBudget) : mapped.message,
         retryable, outcome, supportRef: safeSupportRef(supportRefValue),
+        ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+        ...(dailyBudget ? { dailyBudget } : {}),
       };
     }
   }

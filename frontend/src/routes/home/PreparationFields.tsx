@@ -51,15 +51,15 @@ export function usePreparationSetup() {
         <TextField label="Target level (optional)" type="number" min={hero?.level ?? 1} max={20}
           value={target} onChange={(event) => setTarget(event.target.value)}
           placeholder={hero ? String(hero.level) : "Same as starting level"} />
-        <TextField label="Preparation budget (USD)" required type="number" min="0.01" max="1000" step="0.01"
-          value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="Maximum spend" />
+        <TextField label="Preparation cost target (USD)" required type="number" min="0.01" max="1000" step="0.01"
+          value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="Cost target" />
       </div>
       {!characters.loading && characters.data?.length === 0 && <p className="text-sm text-ink-muted">
         Create a hero in Characters, then return to prepare your adventure.
       </p>}
       <ErrorNotice error={characters.error} onRetry={characters.refetch} />
-      <p className="text-xs text-ink-muted">Preparation stops at this budget. It may need a retry;
-        this limit is not a promise about cost or completion time.</p>
+      <p className="text-xs text-ink-muted">This target is used to compare actual cost afterward.
+        Preparation continues past it; it does not limit spending or guarantee completion time.</p>
       <p className="text-xs text-ink-muted">The current rules engine supports one active hero and 2014 rules.
         A request needing unsupported level progression, spells or other mechanics will stop before readiness.</p>
     </fieldset>

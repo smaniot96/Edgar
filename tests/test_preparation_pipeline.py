@@ -14,6 +14,7 @@ from edgar_core.preparation import (
     PreparationBudget,
     PreparationRunBinding,
     ProviderUsage,
+    ResponseUsage,
     canonical_sha256,
 )
 
@@ -127,117 +128,93 @@ def _binding(*, mode="ai", level=1, rounds=2):
     )
 
 
+def _blueprint_content(binding, design, fragments):
+    from apps.api.services.preparation_blueprint import source_spans
+    from apps.api.services.preparation_content import extraction_for_design
+
+    spans = source_spans(extraction_for_design(binding, design))
+    scenes, facts = [], []
+    for index, act in enumerate(design.acts, 1):
+        pages = set(act.source_pages if binding.source_mode == "pdf" else [index])
+        sources = [span.id for span in spans if span.page in pages]
+        fragment = next(fragment for fragment in fragments if fragment.act_id == act.act_id)
+        for scene in fragment.scenes:
+            scenes.append({"id": scene.scene_id, "title": scene.title, "sources": sources,
+                           "public": sources[:1], "notes": CHAPTER,
+                           "links": [{"to": link.scene_id} for link in scene.links]})
+        facts.extend({"key": key, "kind": "objective", "title": "Allow the stranded villagers aboard",
+                      "completion_condition": "The villagers are safely aboard the crossing ferry.",
+                      "scenes": act.scene_ids, "sources": sources[1:2] or sources[:1]}
+                     for key in act.advance_ids)
+    facts.append({"key": "crossing_ending", "kind": "ending", "title": "The crossing remains possible",
+                  "scenes": design.acts[-1].scene_ids, "sources": [spans[-1].id]})
+    return {"scenes": scenes, "facts": facts,
+            "resource_plan": "This social crossing requires no mandatory resource expenditure or rest.",
+            "progression_plan": "The actual hero stays at the commissioned level without invented XP or abilities."}
+
+
 class OfflineAuthor:
     def __init__(self, *, criticize_once=False, content=None):
         self.calls = []
         self.criticize_once = criticize_once
         self.critic_count = 0
+        self.reviewed_chapters = set()
         self.content = content
 
     async def __call__(self, binding, task, schema, *, instruction, evidence, idempotency_key):
-        from apps.api.services.preparation_stages import (
-            ActMechanics,
-            AssetRequests,
-            BookSelection,
-            CompleteChapter,
-            CriticObservations,
-            RepairDirections,
-            ScenePreparation,
-        )
+        from apps.api.services.preparation_blueprint import CampaignBlueprint
+        from apps.api.services.preparation_corrections import ProposalCorrection
+        from apps.api.services.preparation_stages import BookSelection, CriticObservations
 
         design, fragment = _design_and_fragment(binding.source_slug)
+        fragments = [fragment]
         if self.content:
             design, fragments = self.content
-            fragment = next((f for f in fragments if f.act_id in task.scope_keys), fragments[0])
-        act_id = fragment.act_id
         self.calls.append((task.stage.value, schema.__name__, idempotency_key))
         if schema is BookSelection:
-            data = {
-                "requests": [
-                    {"role": role, "references": headings[:1]}
-                    for role, headings in evidence["headings"].items()
-                ]
-            }
+            data = {"requests": [{"role": role, "references": headings[:1]}
+                                 for role, headings in evidence["headings"].items()]}
         elif schema is CampaignDesign:
             data = design.model_dump()
-        elif schema is CanonicalAct:
-            data = fragment.model_dump()
-        elif schema is ActMechanics:
-            data = {
-                "act_id": act_id,
-                "encounters": [],
-                "mechanics": [],
-                "resource_plan": "The guards negotiate peacefully. No mandatory resources or rest are consumed in this social act.",
-                "progression_plan": "The actual hero stays at the commissioned level; resolving the crossing does not invent XP or abilities.",
-            }
-        elif schema is ScenePreparation:
-            data = {
-                "act_id": act_id,
-                "packets": [p.model_dump() for p in fragment.scene_packets],
-                "extensions": [],
-                "resource_plan": "No mandatory resource expenditure; the guard accepts the keeper's verifiable promise.",
-            }
-        elif schema is AssetRequests:
-            data = {"requirements": []}
-        elif schema is CompleteChapter:
-            data = {"act_id": act_id, "text": CHAPTER}
+        elif schema is CampaignBlueprint:
+            data = _blueprint_content(binding, design, fragments)
+        elif schema is ProposalCorrection:
+            import json
+
+            data = {"base_proposal_sha256": evidence["base_proposal_sha256"],
+                    "edits": [{"op": "replace", "path": "/scenes/0/notes",
+                               "value_json": json.dumps(evidence["previous_proposal"]["scenes"][0]["notes"]
+                                   + " The keeper waits because his neighbours depend on the crossing.")} ]}
         elif schema is CriticObservations:
             from edgar_core.artifacts import text_digest
 
-            finished = evidence["complete_manuscript"]
-            assert len(finished["chapters"]) == len(design.acts)
-            assert evidence["reviewed_chapter"] in finished["chapters"]
-            assert all(chapter["text"] for chapter in finished["chapters"])
+            reviewed = evidence["reviewed_chapters"]
+            assert reviewed and all(chapter["text"] for chapter in reviewed)
+            self.reviewed_chapters.update(chapter["chapter_id"] for chapter in reviewed)
             self.critic_count += 1
             findings = []
             if self.criticize_once and self.critic_count == 1:
-                excerpt = "Begin at the landing as the evening boats return from the island."
-                findings = [
-                    {
-                        "finding_id": "unclear_keeper_motive",
-                        "code": "unclear_keeper_motive",
-                        "severity": "high",
-                        "message": "Clarify why the keeper waits, with a causal connection to the villagers.",
-                        "affected_ids": ["act_one"],
-                        "evidence": [
-                            {
-                                "artifact_id": evidence["manuscript_artifact_id"],
-                                "artifact_sha256": evidence["manuscript_artifact_sha256"],
-                                "json_pointer": evidence["chapter_json_pointer"],
-                                "excerpt": excerpt,
-                                "excerpt_sha256": text_digest(excerpt),
-                            }
-                        ],
-                    }
-                ]
-            data = {
-                "reviewed_chapter_ids": [evidence["reviewed_chapter"]["chapter_id"]],
-                "findings": findings,
-            }
-        elif schema is RepairDirections:
-            data = {
-                "finding_ids": [f["finding_id"] for f in evidence["findings"]],
-                "instructions": "Correct the keeper's causal motivation in canonical facts, then recreate all dependent scenes and complete chapters and independently review them again.",
-                "preserve_exact_source": True,
-            }
+                excerpt = reviewed[0]["text"][:80]
+                findings = [{"finding_id": "unclear_keeper_motive", "code": "unclear_keeper_motive",
+                             "severity": "high", "message": "Clarify why the keeper waits for the villagers.",
+                             "affected_ids": [design.acts[0].act_id], "evidence": [{
+                                 "artifact_id": evidence["manuscript_artifact_id"],
+                                 "artifact_sha256": evidence["manuscript_artifact_sha256"],
+                                 "json_pointer": reviewed[0]["text_json_pointer"],
+                                 "excerpt": excerpt, "excerpt_sha256": text_digest(excerpt)}]}]
+            data = {"reviewed_chapter_ids": [chapter["chapter_id"] for chapter in reviewed],
+                    "findings": findings}
         elif schema.__name__ == "SourceStudy":
-            data = {
-                "page_numbers": [p["page"] for p in evidence["pages"]],
-                "summary": SEED,
-                "commitments": ["Preserve the exact printed crossing and its quotation."],
-            }
+            data = {"page_numbers": [p["page"] for p in evidence["pages"]], "summary": SEED,
+                    "commitments": ["Preserve the exact printed crossing and its quotation."]}
         else:
             pytest.fail(f"Unexpected schema {schema}")
         return schema.model_validate(deepcopy(data)), ProviderUsage(
-            provider_called=True,
-            call_count=1,
-            input_tokens=100,
-            output_tokens=100,
-            cost_microusd=2400,
-            requested_model="gpt-6.1-sol",
-            reasoning_effort="high",
-            task_version="offline-author",
-        )
+            provider_called=True, call_count=1, input_tokens=100, output_tokens=100,
+            cost_microusd=2400, requested_model="gpt-6.1-sol", reasoning_effort="high",
+            task_version="offline-author", responses=(ResponseUsage(
+                response_id=f"resp-offline-{len(self.calls)}", input_tokens=100,
+                output_tokens=100, cost_microusd=2400),))
 
 
 @pytest.mark.asyncio
@@ -474,7 +451,7 @@ async def test_joined_long_high_level_and_pdf_are_independent_scopes(
         a for a in state.artifacts.values() if a.artifact_kind == "retained_manuscript"
     )
     assert len(manuscript.payload["manuscript"]["chapters"]) == count
-    assert author.critic_count == count
+    assert len(author.reviewed_chapters) == count
     assert len(published) == 1
     if mode == "pdf":
         canonical = next(
@@ -558,30 +535,21 @@ async def test_joined_pdf_visual_critic_receives_pixels_and_required_rejection_b
                     reasoning_effort="high",
                     task_version="offline-visual",
                 )
-            result, usage = await super().__call__(binding, task, schema, **kwargs)
-            if schema.__name__ == "AssetRequests":
-                result = schema(
-                    requirements=[
-                        {
-                            "asset_id": "printed_map",
-                            "kind": "source_map",
-                            "required": True,
-                            "act_id": "act_one_0",
-                            "scene_ids": ["dock_0"],
-                            "source_crop": {
-                                "collection": binding.source_slug,
-                                "source_sha256": binding.source_sha256,
-                                "extraction_sha256": binding.extraction_sha256,
-                                "book_title": "Synthetic crossing",
-                                "edition": "2014",
-                                "page": 1,
-                                "crop_id": "blank_corner",
-                                "crop": {"x": 0.7, "y": 0.7, "width": 0.2, "height": 0.2},
-                            },
-                        }
-                    ]
-                )
-            return result, usage
+            return await super().__call__(binding, task, schema, **kwargs)
+
+    from apps.api.services import preparation_stages
+    from edgar_core.assets import AssetRequirement
+
+    original_requirements = preparation_stages.asset_requirements
+    printed_map = AssetRequirement.model_validate({
+        "asset_id": "printed_map", "kind": "source_map", "required": True,
+        "act_id": "act_one_0", "scene_ids": ["dock_0"], "source_crop": {
+            "collection": binding.source_slug, "source_sha256": binding.source_sha256,
+            "extraction_sha256": binding.extraction_sha256, "book_title": "Synthetic crossing",
+            "edition": "2014", "page": 1, "crop_id": "blank_corner",
+            "crop": {"x": 0.7, "y": 0.7, "width": 0.2, "height": 0.2}}})
+    monkeypatch.setattr(preparation_stages, "asset_requirements",
+                        lambda artifacts, manifest: [*original_requirements(artifacts, manifest), printed_map])
 
     author = VisualAuthor(content=_campaign_content(1, pdf_text=extraction.pages[0].text))
     supervisor = make_preparation_supervisor(provider=author, book_client=source_index[0])
@@ -609,24 +577,17 @@ async def test_joined_pdf_visual_critic_receives_pixels_and_required_rejection_b
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("repair_rounds", [0, 1])
-async def test_joined_repair_exhaustion_retains_spend_and_archive_integrity(
+async def test_joined_repair_estimate_does_not_block_and_preserves_archive_integrity(
     tmp_path, monkeypatch, source_index, repair_rounds  # noqa: F811
 ):
     import json
 
     from apps.api.services import adventure_assets
-    from apps.api.services.preparation_stages import CriticObservations
     from apps.api.services.preparation_store import PreparationStoreError, preparation_path
-
-    class PersistentFindingAuthor(OfflineAuthor):
-        async def __call__(self, binding, task, schema, **kwargs):
-            if schema is CriticObservations:
-                self.critic_count = 0
-            return await super().__call__(binding, task, schema, **kwargs)
 
     monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
     monkeypatch.setattr(adventure_assets, "ASSET_ROOT", tmp_path / "assets")
-    author = PersistentFindingAuthor(criticize_once=True)
+    author = OfflineAuthor(criticize_once=True)
     supervisor = make_preparation_supervisor(provider=author, book_client=source_index[0])
     binding = _binding(rounds=repair_rounds)
     supervisor.create_run(binding)
@@ -637,14 +598,15 @@ async def test_joined_repair_exhaustion_retains_spend_and_archive_integrity(
         if result.state.status.value in {"blocked", "failed", "ready"}:
             break
     state = supervisor.store.load_run(binding.source_slug, binding.run_id)
-    assert state.status.value == "blocked"
-    assert state.last_safe_error_code == "repair_budget_exhausted"
-    assert not published
-    assert state.repair_rounds == repair_rounds
+    assert state.status.value == "ready", (state.current_stage, state.last_safe_error_code)
+    assert len(published) == 1
+    assert state.repair_rounds == 1
+    assert sum(stage == "P02" for stage, _, _ in author.calls) == 1
+    assert sum(stage == "P03" for stage, _, _ in author.calls) == 1
     assert state.provider_calls_spent == len(author.calls)
     assert state.cost_microusd_spent == 2400 * len(author.calls)
-    assert len(state.repair_history) == repair_rounds
-    if repair_rounds:
+    assert len(state.repair_history) == 1
+    if state.repair_history:
         path = preparation_path(binding.source_slug, binding.run_id)
         checkpoint = json.loads(path.read_text())
         checkpoint["repair_history"][0]["findings"][0]["message"] = "tampered archive"
@@ -720,14 +682,18 @@ async def test_joined_commissioned_images_use_frozen_budget_and_real_asset_path(
                     provider_called=True, call_count=1, input_tokens=100, output_tokens=100,
                     cost_microusd=2400, task_version="offline-visual",
                 )
-            result, usage = await super().__call__(binding, task, schema, **kwargs)
-            if schema.__name__ == "AssetRequests":
-                result = schema(requirements=[{
-                    "asset_id": "dock_decoration", "kind": "generated_illustration",
-                    "required": False, "act_id": "act_one", "scene_ids": ["dock"],
-                    "prompt": "A plain blue evening sky over the ferry dock, with no labels.",
-                }])
-            return result, usage
+            return await super().__call__(binding, task, schema, **kwargs)
+
+    from apps.api.services import preparation_stages
+    from edgar_core.assets import AssetRequirement
+
+    original_requirements = preparation_stages.asset_requirements
+    decoration = AssetRequirement.model_validate({
+        "asset_id": "dock_decoration", "kind": "generated_illustration", "required": False,
+        "act_id": "act_one", "scene_ids": ["dock"],
+        "prompt": "A plain blue evening sky over the ferry dock, with no labels."})
+    monkeypatch.setattr(preparation_stages, "asset_requirements",
+                        lambda artifacts, manifest: [*original_requirements(artifacts, manifest), decoration])
 
     author = IllustratedAuthor()
     supervisor = make_preparation_supervisor(provider=author, book_client=source_index[0])
@@ -751,3 +717,47 @@ async def test_joined_commissioned_images_use_frozen_budget_and_real_asset_path(
                                prepared_sha256=receipt["prepared_sha256"], run_id=binding.run_id)
     assert usage["reserved"] == 1 and usage["reserved_cost_microusd"] == 100_000
     assert state.cost_microusd_spent + usage["reserved_cost_microusd"] <= commission["max_cost_microusd"]
+
+
+@pytest.mark.asyncio
+async def test_design_rejection_is_retained_and_corrected_without_repeating_studies(
+    tmp_path, monkeypatch, source_index,  # noqa: F811
+):
+    import json
+
+    client, _ = source_index
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    author = OfflineAuthor()
+    design_calls = []
+    all_calls = []
+
+    async def reject_once(binding, task, schema, **kwargs):
+        all_calls.append(task.task_id)
+        result, usage = await author(binding, task, schema, **kwargs)
+        if schema is CampaignDesign:
+            design_calls.append(kwargs)
+            if len(design_calls) == 1:
+                result = result.model_copy(update={"opening_scene_id": "unplanned_opening"})
+            else:
+                assert kwargs["evidence"]["previous_rejected_proposal"]["opening_scene_id"] == "unplanned_opening"
+                assert "opening" in kwargs["evidence"]["code_validation_feedback"][0]["message"]
+        return result, usage
+
+    supervisor = make_preparation_supervisor(provider=reject_once, book_client=client)
+    binding = _binding()
+    supervisor.create_run(binding)
+    for _ in range(12):
+        step = await supervisor.step(binding.source_slug, binding.run_id, "correction-test", lambda _: True)
+        if step.state.tasks.get("P03:design_campaign") and step.state.tasks["P03:design_campaign"].status.value == "accepted":
+            break
+    state = supervisor.store.load_run(binding.source_slug, binding.run_id)
+    assert state.tasks["P03:design_campaign"].status.value == "accepted"
+    assert all_calls.count("study_books") == 1
+    assert len(design_calls) == 2
+    assert design_calls[0]["idempotency_key"] != design_calls[1]["idempotency_key"]
+    assert state.provider_calls_spent == 3
+    assert state.tokens_spent == 600
+    files = list((tmp_path / "adventures").rglob("proposals/*/*.json"))
+    rejected = [json.loads(p.read_text()) for p in files if json.loads(p.read_text())["diagnostics"]]
+    assert len(rejected) == 1
+    assert rejected[0]["proposal"]["opening_scene_id"] == "unplanned_opening"

@@ -29,7 +29,7 @@ it("lets a standalone partial module recover using the exact inspected artifact"
   vi.mocked(getExtractionPreview).mockResolvedValue({ ...ingestion, source_current: true, pages: [], previews: [{ kind: "text", page: 1, page_end: 1, section: "Bridge", text: "The party crosses the bridge." }] });
   vi.mocked(retryAdventure).mockResolvedValue({ ...adventure, status: "processing" });
   const onRetried = vi.fn();
-  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} onRetried={onRetried} />));
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
   expect(container.textContent).toContain("Retry retained source");
   expect(container.textContent).not.toContain("Open the campaign");
   await act(async () => {
@@ -59,7 +59,7 @@ it("shows real chapter progress and lets the owner cancel while the published so
   const card = buildCards([adventure], [], [], 1)[0];
   vi.mocked(cancelAdventure).mockResolvedValue({ ...adventure.job!, state: "cancel_requested" });
   const onRetried = vi.fn();
-  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} onRetried={onRetried} />));
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
   expect(container.textContent).toContain("Generating campaign chapters — 2 of 6 saved.");
   expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Start adventure") && !button.disabled)).toBe(true);
   await act(async () => {
@@ -81,7 +81,7 @@ it("does not offer cancellation after validated-source publication begins", asyn
     },
   };
   const card = buildCards([adventure], [], [], 1)[0];
-  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
   expect(container.textContent).toContain("Finishing publication of the validated source.");
   expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("Cancel preparation"))).toBe(false);
 });
@@ -96,7 +96,7 @@ it("keeps a blocked campaign open for saved history and explains the safe next s
   };
   const card = buildCards([adventure], [campaign], [], 1)[0];
   const onPlay = vi.fn();
-  await act(() => root.render(<CampaignCard card={card} onPlay={onPlay} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={card} onPlay={onPlay} onDelete={vi.fn()} opening={false} />));
   expect(container.textContent).toContain("Needs attention");
   expect(container.textContent).toContain("Review and publish the adventure before starting or continuing play.");
   const open = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("View campaign"))!;
@@ -112,7 +112,7 @@ it.each([false, true])("never advertises index-only standalone modules as playab
   };
   const onPlay = vi.fn();
   const onRetried = vi.fn();
-  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} deleting={false} onRetried={onRetried} />));
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
   expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Start adventure")).toBe(false);
   const blocked = [...container.querySelectorAll("button")].find((button) => button.textContent === (hasProjection ? "Needs attention" : "Readiness unknown"))!;
   expect(blocked.disabled).toBe(true);
@@ -133,7 +133,7 @@ it("renders the public cover from a nested UI route and preserves the action aft
   vi.stubEnv("BASE_URL", "/ui/");
   window.history.replaceState({}, "", "/ui/campaigns/17");
   const onPlay = vi.fn();
-  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={onPlay} onDelete={vi.fn()} opening={false} />));
   const image = container.querySelector("img")!;
   expect(image.getAttribute("src")).toBe("/ui/assets/bridge.svg");
   await act(() => image.dispatchEvent(new Event("error")));
@@ -162,7 +162,7 @@ it("states a failed job's message once on the card, not as both a note and a fai
       failure: { code: "adventure_source_unverified", category: "source", message, recovery_action: "repair_source", retryable: false, support_ref: "ref-1", outcome: "not_committed" },
     },
   };
-  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
   expect(countOf(container.textContent ?? "", message)).toBe(1);
 });
 
@@ -174,7 +174,7 @@ it("states a readiness blocker once when the card's recovery note would repeat i
     retrieval_degraded: true, play_allowed: false, sources: [],
     readiness: { play_allowed: false, history_allowed: true, state: "source_missing", primary_action: "recover_source", blockers: [{ code: "source_missing", message: "The bound source is missing.", action: "recover_source" }] },
   };
-  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
   expect(countOf(container.textContent ?? "", "The bound source is missing.")).toBe(1);
   expect(container.textContent).toContain("Restore the bound adventure source before playing.");
 });
@@ -187,7 +187,7 @@ it("uses wording that does not assume a separate campaign host in local single-u
     retrieval_degraded: true, play_allowed: false, sources: [],
     readiness: { play_allowed: false, history_allowed: true, state: "source_missing", primary_action: "recover_source", blockers: [{ code: "source_missing", message: "The bound source is missing.", action: "recover_source" }] },
   };
-  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
   expect(container.textContent).not.toContain("campaign host");
   expect(container.textContent).not.toContain("Ask the");
 });
@@ -200,7 +200,7 @@ it("shows Homebrew instead of Ready when a homebrew campaign has no adventure so
     retrieval_degraded: false, play_allowed: true, sources: [],
     readiness: { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] },
   };
-  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={buildCards([adventure], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
   const pills = [...container.querySelectorAll("span")].map((span) => span.textContent);
   expect(pills).toContain("Homebrew");
   expect(pills).not.toContain("Ready");
@@ -208,7 +208,7 @@ it("shows Homebrew instead of Ready when a homebrew campaign has no adventure so
 
 it("titles a failed generation without its in-progress placeholder and shows no slug-derived subtitle", async () => {
   const failed: AdventureRead = { slug: "ai-campaign-20261018", title: "AI campaign (generating…)", description: null, level_range: null, cover_image: null, status: "failed" };
-  await act(() => root.render(<CampaignCard card={buildCards([failed], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={buildCards([failed], [], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
   expect(container.querySelector("h3")?.textContent).toBe("AI campaign");
   expect(container.textContent).not.toContain("generating");
 
@@ -219,7 +219,50 @@ it("titles a failed generation without its in-progress placeholder and shows no 
     retrieval_degraded: false, play_allowed: true, sources: [],
     readiness: { play_allowed: true, history_allowed: true, state: "ready", primary_action: "play", blockers: [] },
   };
-  await act(() => root.render(<CampaignCard card={buildCards([module], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} deleting={false} />));
+  await act(() => root.render(<CampaignCard card={buildCards([module], [campaign], [], 1)[0]} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} />));
   expect(container.querySelector("h3")?.textContent).toBe("Lost Mine of Phandelver");
   expect(container.textContent).not.toContain("D D 5E");
+});
+
+it("shows a private preparation that failed before its run as failed, with a retry and its extraction preview (EDG-055 F3, F5)", async () => {
+  const adventure: AdventureRead = {
+    slug: "phandelver", title: "Private adventure", description: null, level_range: null, cover_image: null,
+    status: "failed", can_retry: true, failure_code: "source_extraction_rejected",
+    extraction_preview_available: true, extraction_preview_current: true,
+    preparation_setup_required: false,
+    job: {
+      version: 1, job_id: "d".repeat(32), kind: "ingestion", state: "failed",
+      stage: "Preparation needs attention", completed_chapters: 0, total_chapters: null,
+      checkpoint_available: false, retryable: true, retained_work: "source_pdf",
+      action_label: "Retry preparation",
+      explanation: "No preparation work was saved before this failure. Retrying starts again from the same source and setup.",
+      source_version: null,
+      failure: {
+        code: "source_extraction_rejected", category: "source",
+        message: "The uploaded PDF did not pass the extraction quality checks.",
+        recovery_action: "retry", retryable: true, support_ref: "err-0c4a71fbd8093891", outcome: "unknown",
+      },
+    },
+  };
+  const card = buildCards([adventure], [], [], 1)[0];
+  vi.mocked(retryAdventure).mockResolvedValue({ ...adventure, status: "processing" });
+  const onRetried = vi.fn();
+  await act(() => root.render(<CampaignCard card={card} onPlay={vi.fn()} onDelete={vi.fn()} opening={false} onRetried={onRetried} />));
+
+  const text = container.textContent ?? "";
+  expect(text).toContain("Failed");
+  expect(text).not.toContain("Processing");
+  expect(text).not.toContain("still running");
+  expect(text).not.toContain("Complete your setup");
+  expect(text).toContain("did not pass the extraction quality checks");
+  expect(text).toContain("Support reference: err-0c4a71fbd8093891");
+  expect(text).toContain("Inspect extraction preview");
+  // The retry is offered once as a button, explained once, and nothing calls it unavailable.
+  expect(text.split("No preparation work was saved before this failure").length - 1).toBe(1);
+  expect(text).not.toContain("Unavailable");
+  const buttons = [...container.querySelectorAll("button")];
+  expect(buttons.find((b) => b.textContent === "Not ready to play")?.disabled).toBe(true);
+  await act(async () => buttons.find((b) => b.textContent === "Retry preparation")!.click());
+  expect(retryAdventure).toHaveBeenCalledWith("phandelver", undefined);
+  expect(onRetried).toHaveBeenCalledOnce();
 });

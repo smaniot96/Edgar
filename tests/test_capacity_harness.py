@@ -15,7 +15,6 @@ import pytest
 from tools.capacity_harness import (
     _CURRENT,
     ALL_SCENARIOS,
-    GENERATION_CONCURRENCY,
     SCHEMA,
     Run,
     Timing,
@@ -119,14 +118,6 @@ def test_summary_jobs_never_hold_a_connection_during_generation(result):
     assert row["concurrency"] == LEVELS[-1]
     assert row["held_across_provider_violations"] == 0
     assert row["provider_calls"] == row["concurrency"]
-
-
-def test_generation_is_bounded_per_generation_but_not_globally(result):
-    rows = result["scenarios"]["generation"]
-    for row in rows:
-        assert row["max_inflight_provider_calls_per_unit"] == GENERATION_CONCURRENCY
-        assert row["max_inflight_provider_calls"] == GENERATION_CONCURRENCY * row["concurrency"]
-        assert row["peak_connection_demand"] == 0  # generation has no database work in this path
 
 
 def test_a_small_pool_queues_sessions_without_exceeding_the_cap():

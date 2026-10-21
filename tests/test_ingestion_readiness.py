@@ -11,6 +11,7 @@ from db.vector.embeddings import VECTOR_SIZE
 from db.vector.versions import active_index_read, read_index_state
 from ingestion import embed
 from ingestion.artifacts import corrections_digest, exclusions_digest, source_digest
+from ingestion.chunk import chunk_page_runs
 from ingestion.extract import ExtractedPage, Extraction, apply_text_corrections, save_extraction
 from ingestion.readiness import (
     IngestionRejected,
@@ -20,7 +21,7 @@ from ingestion.readiness import (
 )
 
 
-def report(pages, *, count=None, errors=None, chunks=None, blank=None):
+def report(pages, *, count=None, errors=None, chunks=None, blank=None, budget=None):
     chunks = (
         chunks
         if chunks is not None
@@ -50,7 +51,9 @@ def report(pages, *, count=None, errors=None, chunks=None, blank=None):
             for n, text in pages
         ],
     )
-    return prepare_report(extracted, source_kind="pdf", chunks=chunks)
+    return prepare_report(
+        extracted, source_kind="pdf", chunks=chunks, degraded_page_budget=budget
+    )
 
 
 def persist(result, pages, tmp_path):
@@ -122,6 +125,34 @@ def test_blank_physical_pages_and_complete_cross_page_chunks(tmp_path):
     assert chunks[0]["extraction_sha256"] == result["extraction_sha256"]
     persist(result, pages, tmp_path)
     assert "PDF page 3" in (tmp_path / "source.md").read_text()
+
+
+PICTURE_ONLY = (
+    "**==> picture [578 x 515] intentionally omitted <==**\n\n"
+    "**----- Start of picture text -----**<br>\nMZ Bs gt<br>Jt i, VP<br>"
+    "**----- End of picture text -----**<br>\n"
+)
+
+
+def test_picture_only_page_is_not_required_but_is_logged_as_non_chunkable():
+    pages = [(1, "The opening paragraph of the rules."), (2, PICTURE_ONLY)]
+    chunk_list = chunk_page_runs(pages, "source")
+    assert {n for c in chunk_list for n in c["source_pages"]} == {1}
+    result = report(pages, chunks=chunk_list)
+    require_ready(result)
+    assert result["required_pages"] == [1]
+    (skipped,) = result["non_chunkable_pages"]
+    assert skipped["page"] == 2 and skipped["chunkable_chars"] == 0
+    assert skipped["chars"] == len(PICTURE_ONLY)
+    assert skipped["reason"] == "picture_placeholder_only"
+
+
+def test_real_text_lost_by_the_chunker_still_fails_coverage():
+    pages = [(1, "The opening paragraph of the rules."), (2, "Real rules text on page two.")]
+    chunks = chunk_page_runs(pages[:1], "source")
+    result = report(pages, chunks=chunks)
+    assert "non_chunkable_pages" not in result
+    assert "chunk_page_coverage" in [i["code"] for i in result["issues"]]
 
 
 def test_representative_text_stat_and_unreviewed_scene_candidates():
@@ -403,3 +434,46 @@ def test_ordinary_receipt_and_payload_carry_no_correction_fields(tmp_path, monke
     assert "text_corrections" not in receipt and "corrections_sha256" not in receipt
     assert "text_corrections" not in points[0].payload
     assert "corrected_pages" not in points[0].payload
+
+
+ADVENTURE = [(n, f"## Area {n}\n\nThe room holds clue number {n}.") for n in range(1, 21)]
+
+
+def test_adventure_budget_keeps_a_few_failing_pages_as_degraded():
+    errors = {3: ["incomplete_stat_fields"], 9: ["ambiguous_column_gutter"]}
+    assert not report(ADVENTURE, errors=errors)["quality_passed"]  # a rulebook stays strict
+
+    result = report(ADVENTURE, errors=errors, budget=0.10)
+    assert result["quality_passed"] and result["issues"] == []
+    assert result["degraded_page_allowance"] == 2
+    assert result["degraded_pages"] == [
+        {"page": 3, "causes": ["incomplete_stat_fields"]},
+        {"page": 9, "causes": ["ambiguous_column_gutter"]},
+    ]
+    require_ready(result)
+
+
+def test_adventure_budget_counts_lost_coverage_as_a_degraded_page():
+    chunks = [
+        {"page": n, "source_pages": [n], "text": t, "section": "Area", "stat_block": False}
+        for n, t in ADVENTURE
+        if n != 5
+    ]
+    result = report(ADVENTURE, chunks=chunks, budget=0.10)
+    assert result["quality_passed"]
+    assert result["degraded_pages"] == [{"page": 5, "causes": ["chunk_page_coverage"]}]
+
+
+def test_mostly_failing_scan_is_rejected_with_the_failed_page_count():
+    errors = {n: ["partial_native_numbers_lost_in_ocr"] for n in (2, 4, 6)}
+    result = report(ADVENTURE, errors=errors, budget=0.10)
+    assert not result["quality_passed"] and "degraded_pages" not in result
+    assert result["issues"][0]["code"] == "degraded_pages_over_budget"
+    with pytest.raises(IngestionRejected, match="3 of 20 pages could not be read reliably"):
+        require_ready(result)
+
+
+def test_whole_document_problems_are_never_absorbed_by_the_budget():
+    result = report(ADVENTURE, count=21, budget=0.10)
+    assert not result["quality_passed"]
+    assert {i["code"] for i in result["issues"]} == {"source_page_coverage"}

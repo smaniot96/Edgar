@@ -11,6 +11,7 @@ import type {
   ManifestInspection,
   SoloAdventureReview,
   CampaignCharacterRead,
+  CampaignDeleteRead,
   CampaignRead,
   CharacterAssignmentHistoryRead,
   CharacterListItem,
@@ -92,6 +93,11 @@ export class ApiError extends Error {
       code: failure.code, category: failure.category, detail: failure.message,
       message: failure.message, recovery_action: failure.recoveryAction,
       retryable: failure.retryable, outcome: failure.outcome, support_ref: failure.supportRef,
+      retry_after_seconds: failure.retryAfterSeconds,
+      daily_budget: failure.dailyBudget ? {
+        requested_microusd: failure.dailyBudget.requestedMicrousd,
+        remaining_microusd: failure.dailyBudget.remainingMicrousd,
+      } : undefined,
     });
     this.requestId = requestId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestId)
       ? requestId : undefined;
@@ -342,6 +348,17 @@ export function reopenCampaign(id: number): Promise<CampaignRead> {
 
 export function deleteCampaign(id: number): Promise<void> {
   return send("DELETE", `/api/campaigns/${id}`);
+}
+
+/**
+ * Delete a campaign and its saves, then each bound adventure source that no other campaign uses
+ * and that may still change (EDG-055 F16). The outcome says what happened to every source.
+ */
+export async function deleteCampaignAndUnusedSources(id: number): Promise<CampaignDeleteRead> {
+  return json(await apiFetch(`/api/campaigns/${id}?remove_unused_sources=true`, {
+    method: "DELETE",
+    headers: { "X-Confirm-Delete": "yes" },
+  }));
 }
 
 export function listCampaignCharacters(

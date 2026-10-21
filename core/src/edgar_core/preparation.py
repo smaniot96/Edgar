@@ -186,8 +186,32 @@ class PreparationArtifact(PreparationRecord):
     scope_keys: tuple[str, ...] = ()
 
 
+class ResponseUsage(PreparationRecord):
+    """Known usage or an explicit zero-inference refusal, counted once per response."""
+
+    response_id: str
+    input_tokens: Nonnegative
+    output_tokens: Nonnegative
+    cost_microusd: Nonnegative
+    dispatch_id: str | None = None
+
+
+class UnresolvedProviderCall(PreparationRecord):
+    """An uncertain inference outcome; estimates are never reported as spent usage."""
+
+    dispatch_id: str
+    response_id: str | None = None
+    call_count: Annotated[int, Field(ge=1)] = 1
+    estimated_tokens: Nonnegative = 0
+    estimated_cost_microusd: Nonnegative = 0
+
+
 class ProviderUsage(PreparationRecord):
-    """Usage is recorded for successful and failed calls, without credentials or prompt text."""
+    """Successful/failed call accounting without credentials or prompt text.
+
+    Numeric totals retain the known subtotal even when a later call is unresolved.
+    Unknown inference costs live only in explicitly labelled unresolved estimates.
+    """
 
     provider_called: bool
     usage_known: bool = True
@@ -201,6 +225,8 @@ class ProviderUsage(PreparationRecord):
     task_version: str
     latency_ms: Nonnegative = 0
     failure_code: str | None = None
+    responses: tuple[ResponseUsage, ...] = ()
+    unresolved_calls: tuple[UnresolvedProviderCall, ...] = ()
 
     @model_validator(mode="after")
     def validate_provider_usage(self) -> ProviderUsage:
@@ -210,6 +236,10 @@ class ProviderUsage(PreparationRecord):
             raise ValueError("No-provider work cannot report provider usage.")
         if self.provider_called and self.call_count < 1:
             raise ValueError("A provider attempt must record at least one call.")
+        if self.unresolved_calls and (not self.provider_called or self.usage_known):
+            raise ValueError("Unresolved calls require an unknown provider usage outcome.")
+        if sum(call.call_count for call in self.unresolved_calls) > self.call_count:
+            raise ValueError("Unresolved calls cannot exceed the recorded request count.")
         return self
 
 
@@ -308,6 +338,8 @@ class PreparationTaskState(PreparationRecord):
     task: PreparationTask
     status: PreparationTaskStatus = PreparationTaskStatus.PENDING
     attempt_count: Nonnegative = 0
+    # Retained for checkpoint compatibility; attempt counts are history, not limits.
+    retry_attempt_limit: Nonnegative = 0
     lease_owner: str | None = None
     lease_fence: Nonnegative = 0
     lease_expires_at: str | None = None
@@ -319,6 +351,10 @@ class PreparationTaskState(PreparationRecord):
     validation_receipt_ids: tuple[str, ...] = ()
     last_safe_error_code: TaskId | None = None
     updated_at: str
+
+    def attempt_limit(self, binding: PreparationRunBinding) -> int:
+        """Legacy estimate for checkpoint compatibility; never a supervisor stop gate."""
+        return max(binding.budget.max_attempts_per_task, self.retry_attempt_limit)
 
 
 class PreparationRunState(PreparationRecord):
@@ -344,6 +380,10 @@ class PreparationRunState(PreparationRecord):
     provider_calls_spent: Nonnegative = 0
     tokens_spent: Nonnegative = 0
     cost_microusd_spent: Nonnegative = 0
+    provider_calls_unresolved: Nonnegative = 0
+    tokens_unresolved_estimate: Nonnegative = 0
+    cost_microusd_unresolved_estimate: Nonnegative = 0
+    unresolved_estimates_complete: bool = True
     provider_calls_reserved: Nonnegative = 0
     tokens_reserved: Nonnegative = 0
     cost_microusd_reserved: Nonnegative = 0

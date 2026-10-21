@@ -54,14 +54,15 @@ class PreparedQuest(PreparedRecord):
     quest_id: Identifier
     objective_id: Identifier
     milestone_ids: list[Identifier] = Field(default_factory=list, max_length=100)
+    required_for_completion: bool = True
+    required_milestone_ids: list[Identifier] = Field(default_factory=list, max_length=100)
     scene_ids: list[Identifier] = Field(min_length=1, max_length=200)
     prerequisites: dict[Identifier, str] = Field(default_factory=dict, max_length=32)
-    # The author states which materially different approaches this quest supports.
+    # Archived preparation metadata; it never prescribes the live DM's solutions.
     required_approaches: list[
         Literal["negotiation", "combat", "avoidance", "failure", "partial_success", "unexpected"]
-    ] = Field(min_length=2, max_length=6)
+    ] = Field(default_factory=list, max_length=6)
     provenance: PreparedProvenance
-
 
 class PreparedScenePacket(PreparedRecord):
     scene_id: Identifier
@@ -88,7 +89,17 @@ class PreparedRoute(PreparedRecord):
     def private_routes_have_a_gate(self):
         if self.visibility == "private" and not self.reveal_requires:
             raise ValueError("Private routes need a concrete reveal predicate.")
+        if self.visibility == "private" and any(
+            self.traversal_requires.get(key) != value
+            for key, value in self.reveal_requires.items()
+        ):
+            raise ValueError("Private route traversal must enforce its reveal predicates.")
         return self
+
+
+def route_identity(source: str, destination: str, requires: dict) -> tuple:
+    """One edge is an AND predicate; distinct edges between places are alternatives."""
+    return source, destination, tuple(sorted(requires.items()))
 
 
 class PreparedExtension(PreparedRecord):
@@ -118,7 +129,7 @@ class PreparedBranch(PreparedRecord):
     action: str = Field(min_length=1, max_length=500)
     requires: dict[Identifier, str] = Field(default_factory=dict, max_length=32)
     policy_ids: list[Identifier] = Field(min_length=1, max_length=50)
-    outcome_ids: list[Identifier] = Field(min_length=2, max_length=50)
+    outcome_ids: list[Identifier] = Field(min_length=1, max_length=50)
     provenance: PreparedProvenance
 
 
@@ -144,13 +155,15 @@ class PreparedCampaign(PreparedRecord):
 
     schema_version: Literal[1] = 1
     source_mode: Literal["pdf", "ai"]
+    # Retained solely to read and hash existing saved records. All play is agent-led.
+    narrative_mode: Literal["scripted", "agent"] = "scripted"
     acts: list[PreparedAct] = Field(min_length=1, max_length=100)
     quests: list[PreparedQuest] = Field(min_length=1, max_length=500)
     scene_packets: list[PreparedScenePacket] = Field(min_length=1, max_length=1000)
     routes: list[PreparedRoute] = Field(default_factory=list, max_length=4000)
     extensions: list[PreparedExtension] = Field(default_factory=list, max_length=1000)
-    branches: list[PreparedBranch] = Field(min_length=1, max_length=4000)
-    outcomes: list[PreparedOutcome] = Field(min_length=1, max_length=8000)
+    branches: list[PreparedBranch] = Field(default_factory=list, max_length=4000)
+    outcomes: list[PreparedOutcome] = Field(default_factory=list, max_length=8000)
     unresolved_questions: list[str] = Field(default_factory=list, max_length=100)
     amendment_policy: Literal["bounded_additive_preserve_reveals"] = "bounded_additive_preserve_reveals"
 
@@ -191,6 +204,48 @@ class CommittedPreparedFact(PreparedRecord):
     irreversible: bool = False
 
 
+def prepared_policy_available(
+    prepared: PreparedCampaign | None,
+    policy_id: str,
+    scene_id: str,
+    flags: dict[str, str],
+    facts: list[CommittedPreparedFact],
+    *,
+    result: str | None = None,
+) -> bool:
+    """Apply prepared branch/quest guards to their policies; unbound actions stand alone."""
+    if prepared is None:
+        return True
+    bound_branches = [branch for branch in prepared.branches if policy_id in branch.policy_ids]
+    if not bound_branches:
+        return True
+    quests = {quest.quest_id: quest for quest in prepared.quests}
+    outcomes = {outcome.outcome_id: outcome for outcome in prepared.outcomes}
+    terminal_objectives = {
+        fact.target_id for fact in facts
+        if fact.kind == "objective" and fact.status in {"completed", "failed"}
+    }
+    for branch in bound_branches:
+        quest = quests.get(branch.quest_id)
+        if (
+            quest is None or branch.scene_id != scene_id
+            or quest.objective_id in terminal_objectives
+            or any(flags.get(key) != value for key, value in quest.prerequisites.items())
+            or any(flags.get(key) != value for key, value in branch.requires.items())
+        ):
+            continue
+        if any(
+            outcome is not None
+            and outcome.branch_id == branch.branch_id
+            and all(flags.get(key) == value for key, value in outcome.requires.items())
+            and any(selection.policy_id == policy_id and (result is None or selection.result == result)
+                    for selection in outcome.policy_selections)
+            for outcome in (outcomes.get(outcome_id) for outcome_id in branch.outcome_ids)
+        ):
+            return True
+    return False
+
+
 class PreparedAmendmentResult(PreparedRecord):
     report: PreparedValidationReport
     amended: PreparedCampaign | None = None
@@ -200,7 +255,6 @@ class PreparedAmendmentResult(PreparedRecord):
         return self.report.valid and self.amended is not None
 
 
-_APPROACHES = {"negotiation", "combat", "avoidance", "failure", "partial_success", "unexpected"}
 _TERMINAL_CONFLICTS = {
     frozenset({"completed", "failed"}),
     frozenset({"friendly", "hostile"}),
@@ -212,7 +266,15 @@ _TERMINAL_CONFLICTS = {
 def prepared_digest(prepared: PreparedCampaign | dict) -> str:
     """Canonical SHA256 for exact private prepared content and stable references."""
     value = prepared if isinstance(prepared, PreparedCampaign) else PreparedCampaign.model_validate(prepared)
-    encoded = json.dumps(value.model_dump(mode="json"), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    body = value.model_dump(mode="json")
+    if body["narrative_mode"] == "scripted":
+        body.pop("narrative_mode")
+    for quest in body["quests"]:
+        if quest["required_for_completion"]:
+            quest.pop("required_for_completion")
+        if not quest["required_milestone_ids"]:
+            quest.pop("required_milestone_ids")
+    encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -281,11 +343,11 @@ def validate_prepared_campaign(
     expected_source = "pdf" if canonical.source.lower().endswith(".pdf") else None
     if expected_source and candidate.source_mode != expected_source:
         findings.append(_finding("source_mode_mismatch", "source_mode", "Prepared source mode conflicts with the retained PDF source."))
-
     act_ids = [item.act_id for item in candidate.acts]
     quest_ids = [item.quest_id for item in candidate.quests]
     packet_ids = [item.scene_id for item in candidate.scene_packets]
-    route_keys = [(item.from_scene_id, item.to_scene_id) for item in candidate.routes]
+    route_keys = [route_identity(item.from_scene_id, item.to_scene_id, item.traversal_requires)
+                  for item in candidate.routes]
     extension_ids = [item.extension_id for item in candidate.extensions]
     extension_passages = [item.passage_id for item in candidate.extensions]
     branch_ids = [item.branch_id for item in candidate.branches]
@@ -314,11 +376,12 @@ def validate_prepared_campaign(
         findings.append(_finding("quest_milestone_coverage", "quests", "Every canonical milestone must belong to exactly one quest."))
 
     manifest_routes = {
-        (scene.scene_id, link.scene_id): link.requires
+        route_identity(scene.scene_id, link.scene_id, link.requires): link.requires
         for scene in canonical.scenes
         for link in scene.links
     }
-    prepared_routes = {(route.from_scene_id, route.to_scene_id): route for route in candidate.routes}
+    prepared_routes = {route_identity(route.from_scene_id, route.to_scene_id, route.traversal_requires): route
+                       for route in candidate.routes}
     if set(manifest_routes) != set(prepared_routes):
         findings.append(_finding("topology_coverage", "routes", "Prepared topology must classify every and only reviewed manifest route."))
     for key, route in prepared_routes.items():
@@ -331,6 +394,8 @@ def validate_prepared_campaign(
 
     # A predicate is meaningful only when a production runtime WorldFlag contract reads it.
     runtime_flag_keys = {
+        entity.discovery_flag for entity in canonical.entities if entity.discovery_flag
+    } | {
         key
         for scene in canonical.scenes for link in scene.links for key in link.requires
     } | {
@@ -349,7 +414,8 @@ def validate_prepared_campaign(
     for index, packet in enumerate(candidate.scene_packets):
         if set(packet.entry_requires) - runtime_flag_keys:
             findings.append(_finding("unbacked_world_flag", f"scene_packets[{index}].entry_requires", "Scene entry conditions must use canonical runtime WorldFlag keys."))
-        incoming = [requires for (source, destination), requires in manifest_routes.items() if destination == packet.scene_id]
+        incoming = [requires for (source, destination, _), requires in manifest_routes.items()
+                    if destination == packet.scene_id]
         if packet.entry_requires and (
             packet.scene_id == canonical.opening_scene_id
             or not incoming
@@ -384,7 +450,6 @@ def validate_prepared_campaign(
             findings.append(_finding("unbacked_world_flag", f"extensions[{index}].requires", "Extension reveal predicates must use runtime WorldFlag keys."))
 
     quest_by_id = {quest.quest_id: quest for quest in candidate.quests}
-    branches_by_quest: dict[str, list[PreparedBranch]] = {qid: [] for qid in quest_by_id}
     branch_by_id = {branch.branch_id: branch for branch in candidate.branches}
     for index, quest in enumerate(candidate.quests):
         if quest.objective_id not in objective_by_id or set(quest.milestone_ids) - set(milestone_by_id):
@@ -393,16 +458,18 @@ def validate_prepared_campaign(
             findings.append(_finding("unknown_quest_scene", f"quests[{index}].scene_ids", "Quest names an unknown scene."))
         if set(quest.prerequisites) - runtime_flag_keys:
             findings.append(_finding("unbacked_world_flag", f"quests[{index}].prerequisites", "Quest prerequisites must use runtime WorldFlag keys."))
+        if (
+            len(quest.required_milestone_ids) != len(set(quest.required_milestone_ids))
+            or not set(quest.required_milestone_ids) <= set(quest.milestone_ids)
+        ):
+            findings.append(_finding("invalid_required_milestones", f"quests[{index}].required_milestone_ids", "Required advances must be unique canonical milestones owned by this quest."))
     for index, branch in enumerate(candidate.branches):
         if branch.quest_id not in quest_by_id:
             findings.append(_finding("unknown_branch_quest", f"branches[{index}].quest_id", "Branch names an unknown quest."))
         else:
-            branches_by_quest[branch.quest_id].append(branch)
             quest = quest_by_id[branch.quest_id]
             if branch.scene_id not in quest.scene_ids:
                 findings.append(_finding("branch_outside_quest", f"branches[{index}].scene_id", "Branch scene must belong to its quest."))
-            if branch.approach not in quest.required_approaches and branch.approach != "unexpected":
-                findings.append(_finding("undeclared_approach", f"branches[{index}].approach", "Branch approach was not declared for this quest."))
         if branch.scene_id not in scene_ids:
             findings.append(_finding("unknown_branch_scene", f"branches[{index}].scene_id", "Branch names an unknown scene."))
         if set(branch.requires) - runtime_flag_keys:
@@ -413,11 +480,6 @@ def validate_prepared_campaign(
                 findings.append(_finding("unknown_branch_policy", f"branches[{index}].policy_ids", "Branch policy must be reviewed for the same scene."))
         if set(branch.outcome_ids) - set(outcome_ids):
             findings.append(_finding("unknown_branch_outcome", f"branches[{index}].outcome_ids", "Branch references an unknown outcome."))
-    for quest in candidate.quests:
-        actual_approaches = {branch.approach for branch in branches_by_quest.get(quest.quest_id, [])}
-        if len(actual_approaches) < 2 or not set(quest.required_approaches) <= actual_approaches:
-            findings.append(_finding("quest_branch_coverage", f"quests.{quest.quest_id}", "Quest must contain each declared materially different approach."))
-
     outcome_by_id = {outcome.outcome_id: outcome for outcome in candidate.outcomes}
     for index, outcome in enumerate(candidate.outcomes):
         branch = branch_by_id.get(outcome.branch_id)
@@ -462,8 +524,6 @@ def validate_prepared_campaign(
                 findings.append(_finding("invalid_policy_result", f"outcomes[{index}].policy_selections", "Automatic result requires an automatic reviewed policy."))
             if selection.result in {"success", "failure"} and policy.mode != "check":
                 findings.append(_finding("invalid_policy_result", f"outcomes[{index}].policy_selections", "Check result requires a check-based reviewed policy."))
-            if selection.result == "failure" and policy.failure_mode == "no_progress":
-                findings.append(_finding("unmodeled_failure", f"outcomes[{index}].policy_selections", "Failure outcome needs an authored supported consequence."))
             effects.extend(_policy_effects(policy, selection.result))
         if outcome.result == "partial" and not any(
             selection.result == "failure" and policy_by_id.get(selection.policy_id) and policy_by_id[selection.policy_id].failure_mode == "partial"
@@ -493,19 +553,44 @@ def validate_prepared_campaign(
         branch_outcomes = [outcome_by_id[oid] for oid in branch.outcome_ids if oid in outcome_by_id]
         if any(outcome.branch_id != branch.branch_id for outcome in branch_outcomes):
             findings.append(_finding("outcome_branch_mismatch", f"branches.{branch.branch_id}.outcome_ids", "Every branch outcome must point back to the branch that exposes it."))
-        if len(branch_outcomes) < 2 or "success" not in {row.result for row in branch_outcomes} or not ({"failure", "partial"} & {row.result for row in branch_outcomes}):
-            findings.append(_finding("branch_outcome_coverage", f"branches.{branch.branch_id}", "Each branch needs a reachable success and failure or partial outcome."))
-    ending_ids = {entity.entity_id for entity in canonical.entities if entity.kind == "ending"}
-    prepared_ending_ids = {ending_id for outcome in candidate.outcomes for ending_id in outcome.ending_entity_ids}
-    if ending_ids - prepared_ending_ids:
-        findings.append(_finding("unprepared_ending", "outcomes", "Every canonical ending must have a reachable prepared outcome."))
+    if not any(entity.kind == "ending" for entity in canonical.entities):
+        findings.append(_finding("missing_campaign_ending", "entities", "A prepared campaign needs at least one source-backed ending for the live DM to recognize."))
+
+    flag_entities = {entity.discovery_flag: entity for entity in canonical.entities if entity.discovery_flag}
+    gate_records = [
+        (f"scenes.{scene.scene_id}.links", link.requires)
+        for scene in canonical.scenes for link in scene.links
+    ] + [
+        (f"resolution_policies.{policy.policy_id}.requires", policy.requires)
+        for policy in canonical.resolution_policies
+    ] + [
+        (f"quests.{quest.quest_id}.prerequisites", quest.prerequisites)
+        for quest in candidate.quests
+    ] + [
+        (f"branches.{branch.branch_id}.requires", branch.requires)
+        for branch in candidate.branches
+    ] + [
+        (f"outcomes.{outcome.outcome_id}.requires", outcome.requires)
+        for outcome in candidate.outcomes
+    ] + [
+        (f"passages.{passage.passage_id}.requires", passage.requires)
+        for passage in canonical.passages
+    ] + [
+        (f"definitions.{definition.canonical_id}.requires", definition.requires)
+        for category in (canonical.objects, canonical.objectives, canonical.milestones, canonical.clocks)
+        for definition in category
+    ]
+    for path, requirements in gate_records:
+        for flag, status in requirements.items():
+            if flag not in flag_entities or status != "discovered":
+                findings.append(_finding("invalid_discovery_gate", path, f"Gate {flag}={status} must reference a canonical discovery flag and its supported discovered status."))
 
     # Route graph reachability is checked from the reviewed opening; runtime still enforces gates.
     if canonical.opening_scene_id not in scene_ids:
         findings.append(_finding("missing_opening", "opening_scene_id", "Prepared topology needs a reviewed opening scene."))
     else:
         adjacency: dict[str, set[str]] = {scene_id: set() for scene_id in scene_ids}
-        for source, destination in manifest_routes:
+        for source, destination, _ in manifest_routes:
             adjacency[source].add(destination)
         reached = {canonical.opening_scene_id}
         pending = [canonical.opening_scene_id]

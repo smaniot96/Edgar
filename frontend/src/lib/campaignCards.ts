@@ -6,6 +6,8 @@ export interface CardModel {
   name: string;
   /** Latest campaign row for this module (active preferred). */
   campaign: CampaignRead | null;
+  /** Every campaign of this player the card stands for (an active one and any ended ones). */
+  campaigns: CampaignRead[];
   state: "processing" | "failed" | "ready" | "ended" | "recovery";
   lastPlayed: string | null;
   /** Most useful saved playthrough for the card's primary action, when one exists. */
@@ -93,7 +95,7 @@ export function buildCards(
     const name = campaign
       ? campaignDisplayName(campaign, adventure)
       : stripGenerationPlaceholder(adventure.title);
-    return { adventure, name, campaign, state, lastPlayed, primarySession, readiness: campaign?.readiness ?? adventure.readiness ?? null };
+    return { adventure, name, campaign, campaigns: mine, state, lastPlayed, primarySession, readiness: campaign?.readiness ?? adventure.readiness ?? null };
   });
   // Most recently played first; never-played keep API order after them.
   return cards

@@ -1,4 +1,4 @@
-"""Whole-adventure continuity, critic, path and repair contracts.
+"""Whole-adventure source consistency, critic and repair contracts.
 
 This module consumes the existing reviewed manifest and its one ``PreparedCampaign``.
 It does not create another narrative graph, and it never treats a model's verdict as a
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import deque
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -18,9 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from edgar_core.manifests import (
     AdventureManifest,
-    ResolutionPolicy,
     manifest_digest,
-    select_scene_context,
 )
 from edgar_core.preparation import (
     PreparationArtifact,
@@ -37,7 +34,6 @@ from edgar_core.preparation import (
 from edgar_core.prepared import (
     PreparedCampaign,
     PreparedFinding,
-    _policy_effects,
     prepared_digest,
     validate_prepared_campaign,
 )
@@ -81,16 +77,16 @@ class RetainedChapter(CoherenceRecord):
         "transition",
     ]
     scene_ids: tuple[str, ...] = Field(min_length=1, max_length=200)
-    advance_ids: tuple[str, ...] = Field(min_length=1, max_length=128)
+    advance_ids: tuple[str, ...] = Field(max_length=128)
     climax_ids: tuple[str, ...] = Field(default=(), max_length=32)
-    passage_ids: tuple[str, ...] = Field(default=(), max_length=200)
+    passage_ids: tuple[str, ...] = ()
     continuity_assertions: tuple[ContinuityAssertion, ...] = Field(default=(), max_length=500)
     events: tuple[ManuscriptEvent, ...] = Field(default=(), max_length=500)
     text: str = Field(min_length=1, max_length=2_000_000)
 
 
 class RetainedManuscript(CoherenceRecord):
-    """Canonical full manuscript inventory used by the P09 critic and P10 traversal."""
+    """Canonical full manuscript inventory used by the P09 critic and P10 review."""
 
     schema_version: Literal[1] = 1
     source_mode: Literal["pdf", "ai"]
@@ -120,62 +116,6 @@ class CoherenceFinding(CoherenceRecord):
     resolution_artifact_ids: tuple[str, ...] = ()
 
 
-class PathBudget(CoherenceRecord):
-    max_states: int = Field(default=512, ge=1, le=100_000)
-    max_depth: int = Field(default=64, ge=1, le=1000)
-
-
-class PathExample(CoherenceRecord):
-    scene_ids: tuple[str, ...] = Field(max_length=256)
-    branch_ids: tuple[str, ...] = Field(max_length=256)
-    outcome_ids: tuple[str, ...] = Field(max_length=256)
-
-
-class PathExplorationReport(CoherenceRecord):
-    manifest_artifact_id: str
-    prepared_artifact_id: str
-    manuscript_artifact_id: str
-    budget: PathBudget
-    explored_states: int = Field(ge=0)
-    expected_outcome_ids: tuple[str, ...]
-    reached_outcome_ids: tuple[str, ...]
-    unreachable_outcome_ids: tuple[str, ...]
-    unverified_outcome_ids: tuple[str, ...] = ()
-    exhausted: bool
-    examples: tuple[PathExample, ...] = Field(max_length=64)
-
-    @model_validator(mode="after")
-    def validate_outcome_inventory(self) -> PathExplorationReport:
-        groups = (
-            self.expected_outcome_ids,
-            self.reached_outcome_ids,
-            self.unreachable_outcome_ids,
-            self.unverified_outcome_ids,
-        )
-        if any(len(group) != len(set(group)) for group in groups):
-            raise ValueError("Path outcome inventories must not repeat IDs.")
-        expected = set(self.expected_outcome_ids)
-        reached = set(self.reached_outcome_ids)
-        unreachable = set(self.unreachable_outcome_ids)
-        unverified = set(self.unverified_outcome_ids)
-        if reached - expected or unreachable - expected or unverified - expected:
-            raise ValueError("Path outcome inventory contains an unknown outcome ID.")
-        if reached & unreachable or reached & unverified or unreachable & unverified:
-            raise ValueError("Reached, unreachable and unverified path outcomes must be disjoint.")
-        if reached | unreachable | unverified != expected:
-            raise ValueError("Path report must account for every expected outcome.")
-        if unverified and not self.exhausted:
-            raise ValueError("Only an exhausted path search may contain unverified outcomes.")
-        if self.explored_states > self.budget.max_states:
-            raise ValueError("Path search exceeded its declared state budget.")
-        return self
-
-    @property
-    def exhaustive(self) -> bool:
-        """Whether every authored outcome has a reachable or unreachable classification."""
-        return not self.exhausted and not self.unverified_outcome_ids
-
-
 class ReviewBindings(CoherenceRecord):
     run_id: str
     run_binding_sha256: str
@@ -192,13 +132,43 @@ class ReviewBindings(CoherenceRecord):
     artifact_digests: dict[str, str]
 
 
+class SourceScaffoldReport(CoherenceRecord):
+    """Source and structure consistency, without a simulated play/completion claim."""
+
+    schema_version: Literal[1] = 1
+    report_mode: Literal["source_scaffold"] = "source_scaffold"
+    bindings: ReviewBindings
+    opening_scene_id: str | None
+    scene_ids: tuple[str, ...]
+    topology_semantics: Literal["directed_routes_ignoring_predicate_satisfaction"] = (
+        "directed_routes_ignoring_predicate_satisfaction"
+    )
+    topologically_reachable_scene_ids: tuple[str, ...]
+    route_ids: tuple[str, ...]
+    classified_route_ids: tuple[str, ...]
+    objective_ids: tuple[str, ...]
+    required_objective_ids: tuple[str, ...]
+    source_backed_objective_ids: tuple[str, ...]
+    packet_covered_objective_ids: tuple[str, ...]
+    milestone_ids: tuple[str, ...]
+    required_milestone_ids: tuple[str, ...]
+    source_backed_milestone_ids: tuple[str, ...]
+    packet_covered_milestone_ids: tuple[str, ...]
+    ending_entity_ids: tuple[str, ...]
+    source_backed_ending_entity_ids: tuple[str, ...]
+    grounded_actor_encounter_ids: tuple[str, ...]
+    grounded_actor_ids: tuple[str, ...]
+    findings: tuple[CoherenceFinding, ...] = Field(max_length=4000)
+
+
 class AdventureReviewReport(CoherenceRecord):
     schema_version: Literal[1] = 1
     bindings: ReviewBindings
     chapter_ids: tuple[str, ...]
     scene_ids: tuple[str, ...]
     findings: tuple[CoherenceFinding, ...] = Field(max_length=4000)
-    path_report: PathExplorationReport | None = None
+    # Archived P09 reports may retain an old path payload; it is never executed.
+    path_report: dict[str, Any] | None = None
 
 
 class CriticEvidence(CoherenceRecord):
@@ -251,19 +221,6 @@ class RepairEnvelope(CoherenceRecord):
     replacements: tuple[RepairReplacement, ...] = Field(min_length=1, max_length=256)
     preserved_source_artifact_digests: dict[str, str]
     preserved_revealed_fact_digests: dict[str, str]
-
-
-DEFAULT_PATH_BUDGET = PathBudget()
-PathState = tuple[
-    str,
-    tuple[tuple[str, str], ...],
-    tuple[str, ...],
-    tuple[tuple[str, str], ...],
-    tuple[str, ...],
-    tuple[tuple[str, str, str, tuple[str, ...]], ...],
-    bool,
-]
-PathTrace = tuple[PathState, tuple[str, ...], tuple[str, ...], tuple[str, ...], int]
 
 
 def _digest(value: str) -> str:
@@ -494,6 +451,17 @@ def _structural_findings(
     climaxes: dict[str, list[str]] = {}
     for chapter in manuscript.chapters:
         for advance in chapter.advance_ids:
+            if advance not in {
+                row.canonical_id for row in (*manifest.objectives, *manifest.milestones)
+            }:
+                findings.append(
+                    _coherence_finding(
+                        "chapter_unknown_advance",
+                        f"Chapter {chapter.chapter_id} declares an unknown objective or milestone advance.",
+                        evidence_ids,
+                        affected_ids=(chapter.chapter_id, advance),
+                    )
+                )
             advances.setdefault(advance, []).append(chapter.chapter_id)
         for climax in chapter.climax_ids:
             climaxes.setdefault(climax, []).append(chapter.chapter_id)
@@ -698,483 +666,123 @@ def _unique_findings(rows: list[CoherenceFinding]) -> list[CoherenceFinding]:
     return [by_id[key] for key in sorted(by_id)]
 
 
-def _inventory_names(snapshot: Mapping[str, Any]) -> set[str]:
-    def collect(value: Any, *, in_inventory: bool = False) -> set[str]:
-        names: set[str] = set()
-        if isinstance(value, Mapping):
-            for key, child in value.items():
-                normalized_key = key.casefold()
-                if (
-                    in_inventory
-                    and normalized_key in {"name", "item_name"}
-                    and isinstance(child, str)
-                ):
-                    names.add(child)
-                elif normalized_key in {"inventory", "items"}:
-                    names.update(collect(child, in_inventory=True))
-                else:
-                    names.update(collect(child, in_inventory=in_inventory))
-        elif isinstance(value, (list, tuple)):
-            for child in value:
-                if in_inventory and isinstance(child, str):
-                    names.add(child)
-                else:
-                    names.update(collect(child, in_inventory=in_inventory))
-        elif in_inventory and isinstance(value, str):
-            names.add(value)
-        return names
-
-    return {name.casefold().strip() for name in collect(snapshot) if name.strip()}
-
-
-_STOPWORDS = {"of", "the", "a", "an", "my", "some", "this", "that", "your", "his", "her"}
-
-
-def _tokens(value: str) -> set[str]:
-    return {
-        token
-        for token in re.split(r"[^a-z0-9]+", value.casefold())
-        if token and token not in _STOPWORDS
-    }
-
-
-def _has_required_item(inventory: set[str], required: str) -> bool:
-    if required.casefold().strip() in inventory:
-        return True
-    wanted = _tokens(required)
-    if not wanted:
-        return False
-    for item in inventory:
-        held = _tokens(item)
-        if held and (wanted <= held or held <= wanted):
-            return True
-        if held and (
-            {token.rstrip("s") for token in wanted} <= {token.rstrip("s") for token in held}
-        ):
-            return True
-    return False
-
-
-def explore_prepared_paths(
+def _grounded_actor_events(
     binding: PreparationRunBinding,
-    manifest_artifact: PreparationArtifact,
-    prepared_artifact: PreparationArtifact,
-    manuscript_artifact: PreparationArtifact,
-    *,
-    initial_world_flags: Mapping[str, str] | None = None,
-    budget: PathBudget = DEFAULT_PATH_BUDGET,
-) -> PathExplorationReport:
-    """Find a witness for each authored outcome under runtime route and policy rules.
+    manifest: AdventureManifest,
+    artifacts: tuple[PreparationArtifact, ...],
+) -> dict[str, list[tuple[str, str]]]:
+    """Validate exact grounded source, hero and stat bindings for authored encounter actors."""
+    from edgar_core.grounding import (
+        EncounterGroundingReceipt,
+        EncounterPlan,
+        HeroPartySnapshot,
+        VerifiedBookSnapshot,
+    )
 
-    Movement uses ``select_scene_context`` (the same reviewed WorldFlag gate consumed by
-    runtime). Policy predicates and inventory prerequisites are checked before an outcome;
-    discovery outcomes set only the canonical session discovery flag, and move outcomes can
-    move only into the runtime's currently allowed scene set. Once every authored outcome has
-    a witness, the search stops without enumerating every combination of those alternatives.
-    """
-
-    manifest = _manifest(manifest_artifact)
-    prepared = _prepared(prepared_artifact)
-    manuscript = _manuscript(manuscript_artifact)
-    if prepared.source_mode != binding.source_mode or manuscript.source_mode != binding.source_mode:
-        raise ValueError(
-            "Prepared campaign and retained manuscript must use the frozen source mode."
-        )
-    if (
-        manifest.source_sha256
-        and binding.source_sha256
-        and manifest.source_sha256 != binding.source_sha256
-    ):
-        raise ValueError("Reviewed manifest source digest does not match the frozen run binding.")
-    if (
-        binding.manuscript_sha256
-        and binding.manuscript_sha256 != manuscript_artifact.content_sha256
-    ):
-        raise ValueError(
-            "Retained manuscript digest does not match the frozen preparation binding."
-        )
-    if not manifest.opening_scene_id:
-        raise ValueError("Bound manifest has no reviewed opening scene.")
-    policies = {policy.policy_id: policy for policy in manifest.resolution_policies}
-    entities = {entity.entity_id: entity for entity in manifest.entities}
-    quests = {quest.quest_id: quest for quest in prepared.quests}
-    branches_by_scene: dict[str, list[Any]] = {}
-    outcomes = {outcome.outcome_id: outcome for outcome in prepared.outcomes}
-    for branch in prepared.branches:
-        branches_by_scene.setdefault(branch.scene_id, []).append(branch)
-    inventory = _inventory_names(binding.hero_party_snapshot)
-    object_by_id = {row.canonical_id: row for row in manifest.objects}
-    scene_links = {
-        scene.scene_id: {link.scene_id for link in scene.links} for scene in manifest.scenes
+    grounded = []
+    for artifact in artifacts:
+        if artifact.artifact_kind not in {"act_grounding", "grounding_report"}:
+            continue
+        assert_artifact_integrity(binding, artifact)
+        payloads = ([artifact.payload] if artifact.artifact_kind == "act_grounding"
+                    else artifact.payload.get("acts", ()))
+        for payload in payloads:
+            if artifact.artifact_kind == "grounding_report" and any(
+                payload.get(key) != artifact.payload.get(key)
+                for key in ("book_snapshot_sha256", "hero_party_sha256")
+            ):
+                raise ValueError("Aggregated encounter evidence changed its exact hero/book binding.")
+            grounded.append((artifact, payload))
+    if not grounded:
+        return {}
+    latest = {}
+    for artifact, payload in grounded:
+        act_id = payload["plan"]["act_id"]
+        previous = latest.get(act_id)
+        revision = (artifact.stage.ordinal, artifact.version)
+        if previous is None or revision > previous[0]:
+            latest[act_id] = (revision, payload)
+        elif revision == previous[0] and payload != previous[1]:
+            raise ValueError("Accepted encounter evidence repeats one act with conflicting plans.")
+    party = HeroPartySnapshot.model_validate(binding.hero_party_snapshot)
+    book_digests = {
+        VerifiedBookSnapshot.model_validate(row.payload["snapshot"]).snapshot_sha256
+        for row in artifacts if row.artifact_kind == "book_dossier"
     }
-    reachable_cache: dict[str, set[str]] = {}
-
-    def reachable_scenes(scene_id: str) -> set[str]:
-        if scene_id not in reachable_cache:
-            reachable = {scene_id}
-            pending = [scene_id]
-            while pending:
-                current = pending.pop()
-                for destination in scene_links.get(current, set()) - reachable:
-                    reachable.add(destination)
-                    pending.append(destination)
-            reachable_cache[scene_id] = reachable
-        return reachable_cache[scene_id]
-
-    def normalize_state(state: PathState) -> PathState:
-        (
-            scene_id,
-            flag_items,
-            inventory_items,
-            object_location_items,
-            resolved_quest_items,
-            durable_fact_items,
-            terminal,
-        ) = state
-        future_scene_ids = reachable_scenes(scene_id)
-        future_policies = [
-            policy
-            for policy in manifest.resolution_policies
-            if future_scene_ids.intersection(policy.scene_ids)
-        ]
-        future_branches = [
-            branch for branch in prepared.branches if branch.scene_id in future_scene_ids
-        ]
-        future_quest_ids = {branch.quest_id for branch in future_branches}
-        future_branch_ids = {branch.branch_id for branch in future_branches}
-        future_fact_targets = {
-            (effect.kind, effect.target_id)
-            for policy in future_policies
-            for result in ("automatic", "success", "failure")
-            for effect in _policy_effects(policy, result)
-            if effect.kind in {"objective", "milestone", "relationship", "encounter"}
+    actors = {row.entity_id: row for row in manifest.entities if row.kind == "actor"}
+    events: dict[str, list[tuple[str, str]]] = {}
+    for _, payload in latest.values():
+        if (
+            payload.get("hero_party_sha256") != party.party_sha256
+            or (book_digests and payload.get("book_snapshot_sha256") not in book_digests)
+        ):
+            raise ValueError("Encounter evidence does not match the frozen hero and book inputs.")
+        plans = {
+            row["encounter_id"]: EncounterPlan.model_validate(row)
+            for row in payload["plan"]["encounters"]
         }
-        future_object_ids = {
-            effect.target_id
-            for policy in future_policies
-            for result in ("automatic", "success", "failure")
-            for effect in _policy_effects(policy, result)
-            if effect.kind in {"acquire", "consume", "transfer", "use"}
-        }
-        relevant_flags = {
-            key
-            for candidate_scene in manifest.scenes
-            if candidate_scene.scene_id in future_scene_ids
-            for link in candidate_scene.links
-            for key in link.requires
-        }
-        relevant_flags.update(key for policy in future_policies for key in policy.requires)
-        relevant_flags.update(
-            key
-            for quest in prepared.quests
-            if quest.quest_id in future_quest_ids
-            for key in quest.prerequisites
-        )
-        relevant_flags.update(key for branch in future_branches for key in branch.requires)
-        relevant_flags.update(
-            key
-            for outcome in prepared.outcomes
-            if outcome.branch_id in future_branch_ids
-            for key in outcome.requires
-        )
-        relevant_items = {
-            item.casefold().strip() for policy in future_policies for item in policy.requires_items
-        }
-        relevant_items.update(
-            object_by_id[object_id].title.casefold().strip()
-            for object_id in future_object_ids
-            if object_id in object_by_id
-        )
-        return (
-            scene_id,
-            tuple((key, value) for key, value in flag_items if key in relevant_flags),
-            tuple(item for item in inventory_items if item in relevant_items),
-            tuple(
-                (object_id, location)
-                for object_id, location in object_location_items
-                if object_id in future_object_ids
-            ),
-            tuple(quest_id for quest_id in resolved_quest_items if quest_id in future_quest_ids),
-            tuple(fact for fact in durable_fact_items if (fact[0], fact[1]) in future_fact_targets),
-            terminal,
-        )
-
-    # The party snapshot is the authoritative source for initially carried items. Object
-    # definitions supply location and consumption rules for later authored effects.
-    object_locations: dict[str, str] = {}
-    for object_id, definition in object_by_id.items():
-        if _has_required_item(inventory, definition.title):
-            object_locations[object_id] = "party"
-        elif definition.initial_owner:
-            object_locations[object_id] = definition.initial_owner
-    flags = dict(initial_world_flags or {})
-    if any(
-        not isinstance(key, str) or not key or not isinstance(value, str)
-        for key, value in flags.items()
-    ):
-        raise ValueError("Initial path flags must map nonempty WorldFlag IDs to string values.")
-    # Include the opening's unconditional canonical state only; do not infer authored future facts.
-    start: PathState = normalize_state(
-        (
-            manifest.opening_scene_id,
-            tuple(sorted(flags.items())),
-            tuple(sorted(inventory)),
-            tuple(sorted(object_locations.items())),
-            (),
-            (),
-            False,
-        )
-    )
-    queue: deque[PathTrace] = deque([(start, (), (), (manifest.opening_scene_id,), 0)])
-    queued = {start}
-    visited: set[PathState] = set()
-    reached_outcomes: set[str] = set()
-    expected = set(outcomes)
-    examples: list[PathExample] = []
-    exhausted = False
-    while queue and reached_outcomes != expected:
-        state, path_branches, path_outcomes, path_scenes, depth = queue.popleft()
-        if state in visited:
-            continue
-        if len(visited) >= budget.max_states:
-            exhausted = True
-            break
-        (
-            scene_id,
-            flag_items,
-            inventory_items,
-            object_location_items,
-            resolved_quest_items,
-            durable_fact_items,
-            terminal,
-        ) = state
-        visited.add(state)
-        current_flags = dict(flag_items)
-        current_inventory = set(inventory_items)
-        current_object_locations = dict(object_location_items)
-        resolved_quests = set(resolved_quest_items)
-        durable_facts = set(durable_fact_items)
-        try:
-            scene = select_scene_context(manifest, scene_id, current_flags)
-        except Exception:
-            continue
-
-        if terminal:
-            continue
-
-        # Scene navigation is constrained by the exact links and conditions used in play.
-        for next_scene in sorted(set(scene.get("allowed_scene_ids", ()))):
-            if next_scene == scene_id:
-                continue
-            next_state: PathState = normalize_state(
-                (
-                    next_scene,
-                    flag_items,
-                    inventory_items,
-                    object_location_items,
-                    resolved_quest_items,
-                    durable_fact_items,
-                    terminal,
-                )
-            )
-            if depth >= budget.max_depth:
-                if next_state not in visited and next_state not in queued:
-                    exhausted = True
-                continue
-            if next_state not in visited and next_state not in queued:
-                queued.add(next_state)
-                queue.append(
-                    (
-                        next_state,
-                        path_branches,
-                        path_outcomes,
-                        path_scenes + (next_scene,),
-                        depth + 1,
+        for raw in payload.get("encounters", ()):
+            receipt = EncounterGroundingReceipt.model_validate(raw)
+            plan = plans.get(receipt.encounter_id)
+            if (
+                plan is None or not receipt.valid
+                or receipt.plan_sha256 != plan.plan_sha256
+                or receipt.scene_id != plan.scene_id
+                or receipt.hero_party_sha256 != party.party_sha256
+                or receipt.book_snapshot_sha256 != payload.get("book_snapshot_sha256")
+                or receipt.rules_edition != manifest.rules_edition
+                or set(receipt.actor_ids) != set(plan.actor_ids)
+                or len(receipt.actor_ids) != len(set(receipt.actor_ids))
+                or len(plan.actor_ids) != len(set(plan.actor_ids))
+            ):
+                raise ValueError("Actor event needs a valid exact accepted encounter receipt.")
+            allocated: dict[tuple[str, str | None], int] = {}
+            for actor_id in receipt.actor_ids:
+                actor = actors.get(actor_id)
+                reference = actor.stat_reference if actor else None
+                if (
+                    reference is None
+                    or not any(actor_id in row.entity_ids and receipt.scene_id in row.scene_ids
+                               for row in manifest.passages)
+                ):
+                    raise ValueError("Encounter actor is absent from its reviewed scene/stat binding.")
+                matches = [
+                    member for member in receipt.creatures
+                    if member.effective_quantity > 0
+                    and member.actor_id == actor_id
+                    and member.creature.creature_name == reference.creature_name
+                    and member.creature.rules_edition == manifest.rules_edition
+                    and (
+                        (reference.kind == "template"
+                         and member.creature.collection == reference.collection
+                         and member.creature.source_sha256 == reference.source_sha256)
+                        or (reference.kind == "module"
+                            and member.creature.collection == binding.source_slug
+                            and member.creature.source_sha256 == manifest.source_sha256
+                            and member.creature.extraction_sha256 == manifest.extraction_sha256
+                            and member.creature.evidence_origin == "prepared_module"
+                            and member.creature.module_evidence is not None
+                            and member.creature.module_evidence.actor_id == actor_id
+                            and member.creature.module_evidence.passage_id == reference.passage_id
+                            and any(row.passage_id == reference.passage_id
+                                    and row.text_sha256 == member.creature.text_sha256
+                                    and row.page == member.creature.page
+                                    for row in manifest.passages))
                     )
-                )
-
-        for branch in branches_by_scene.get(scene_id, ()):
-            quest = quests.get(branch.quest_id)
-            if quest is None or quest.quest_id in resolved_quests:
-                continue
-            if not _matches_predicates(
-                current_flags, quest.prerequisites
-            ) or not _matches_predicates(current_flags, branch.requires):
-                continue
-            for outcome_id in branch.outcome_ids:
-                outcome = outcomes.get(outcome_id)
-                if outcome is None or outcome.branch_id != branch.branch_id:
-                    continue
-                if not _matches_predicates(current_flags, outcome.requires):
-                    continue
-                selected: list[tuple[ResolutionPolicy, str]] = []
-                unavailable = False
-                for selection in outcome.policy_selections:
-                    policy = policies.get(selection.policy_id)
-                    if (
-                        policy is None
-                        or policy.policy_id not in branch.policy_ids
-                        or scene_id not in policy.scene_ids
-                    ):
-                        unavailable = True
-                        break
-                    if not _matches_predicates(current_flags, policy.requires):
-                        unavailable = True
-                        break
-                    if not all(
-                        _has_required_item(current_inventory, item)
-                        for item in policy.requires_items
-                    ):
-                        unavailable = True
-                        break
-                    if selection.result == "automatic" and policy.mode != "automatic":
-                        unavailable = True
-                        break
-                    if selection.result in {"success", "failure"} and policy.mode != "check":
-                        unavailable = True
-                        break
-                    selected.append((policy, selection.result))
-                if unavailable:
-                    continue
-                next_flags = dict(current_flags)
-                next_inventory = set(current_inventory)
-                next_object_locations = dict(current_object_locations)
-                next_durable_facts = set(durable_facts)
-                next_scene = scene_id
-                next_terminal = False
-                move_allowed = set(scene.get("allowed_scene_ids", ()))
-                for policy, result in selected:
-                    for effect in _policy_effects(policy, result):
-                        definition = object_by_id.get(effect.target_id)
-                        if effect.kind in {"acquire", "consume", "transfer", "use"}:
-                            if definition is None:
-                                unavailable = True
-                                break
-                            owner = next_object_locations.get(
-                                effect.target_id, definition.initial_owner or ""
-                            )
-                            if effect.kind == "acquire":
-                                if (
-                                    not definition.portable
-                                    or owner in {"party", "consumed"}
-                                    or (owner and owner != scene_id)
-                                ):
-                                    unavailable = True
-                                    break
-                                next_object_locations[effect.target_id] = "party"
-                                next_inventory.add(definition.title.casefold().strip())
-                            elif effect.kind == "consume":
-                                if owner != "party" or not definition.consumable:
-                                    unavailable = True
-                                    break
-                                next_object_locations[effect.target_id] = "consumed"
-                                next_inventory.discard(definition.title.casefold().strip())
-                            elif effect.kind == "transfer":
-                                if (
-                                    owner != "party"
-                                    or not definition.portable
-                                    or effect.destination != scene_id
-                                ):
-                                    unavailable = True
-                                    break
-                                next_object_locations[effect.target_id] = effect.destination
-                                next_inventory.discard(definition.title.casefold().strip())
-                            elif owner != "party":
-                                unavailable = True
-                                break
-                        if effect.kind in {"objective", "milestone", "relationship", "encounter"}:
-                            for prior_kind, prior_target, prior_status, _ in next_durable_facts:
-                                conflicts = {
-                                    frozenset({"completed", "failed"}),
-                                    frozenset({"friendly", "hostile"}),
-                                }
-                                if (
-                                    effect.kind == prior_kind
-                                    and effect.target_id == prior_target
-                                    and effect.status != prior_status
-                                    and frozenset({effect.status, prior_status}) in conflicts
-                                ):
-                                    unavailable = True
-                                    break
-                            if unavailable:
-                                break
-                            next_durable_facts.add(
-                                (
-                                    effect.kind,
-                                    effect.target_id,
-                                    effect.status,
-                                    tuple(effect.passage_ids),
-                                )
-                            )
-                        if effect.kind == "discover":
-                            entity = entities.get(effect.target_id)
-                            if entity and entity.discovery_flag:
-                                next_flags[entity.discovery_flag] = "discovered"
-                            if entity and entity.kind == "ending":
-                                next_terminal = True
-                        elif effect.kind == "move":
-                            if effect.target_id in move_allowed:
-                                next_scene = effect.target_id
-                            else:
-                                unavailable = True
-                                break
-                    if unavailable:
-                        break
-                if unavailable:
-                    continue
-                reached_outcomes.add(outcome.outcome_id)
-                new_branches = path_branches + (branch.branch_id,)
-                new_outcomes = path_outcomes + (outcome.outcome_id,)
-                next_state = normalize_state(
-                    (
-                        next_scene,
-                        tuple(sorted(next_flags.items())),
-                        tuple(sorted(next_inventory)),
-                        tuple(sorted(next_object_locations.items())),
-                        tuple(sorted(resolved_quests | {branch.quest_id})),
-                        tuple(sorted(next_durable_facts)),
-                        next_terminal or bool(outcome.ending_entity_ids),
-                    )
-                )
-                next_scenes = (
-                    path_scenes if path_scenes[-1] == next_scene else path_scenes + (next_scene,)
-                )
-                if len(examples) < 64:
-                    examples.append(
-                        PathExample(
-                            scene_ids=next_scenes,
-                            branch_ids=new_branches,
-                            outcome_ids=new_outcomes,
-                        )
-                    )
-                if next_state not in visited and next_state not in queued:
-                    if depth >= budget.max_depth:
-                        exhausted = True
-                    else:
-                        queued.add(next_state)
-                        queue.append(
-                            (next_state, new_branches, new_outcomes, next_scenes, depth + 1)
-                        )
-    unverified = expected - reached_outcomes if exhausted else set()
-    unreachable = expected - reached_outcomes if not exhausted else set()
-    # The report carries exact source artifacts, not claims about arbitrary player prompts.
-    return PathExplorationReport(
-        manifest_artifact_id=manifest_artifact.artifact_id,
-        prepared_artifact_id=prepared_artifact.artifact_id,
-        manuscript_artifact_id=manuscript_artifact.artifact_id,
-        budget=budget,
-        explored_states=len(visited),
-        expected_outcome_ids=tuple(sorted(expected)),
-        reached_outcome_ids=tuple(sorted(reached_outcomes)),
-        unreachable_outcome_ids=tuple(sorted(unreachable)),
-        unverified_outcome_ids=tuple(sorted(unverified)),
-        exhausted=exhausted,
-        examples=tuple(examples),
-    )
+                ]
+                if len(matches) != 1:
+                    raise ValueError("Encounter actor has no unique exact grounded creature binding.")
+                member = matches[0]
+                key = (member.creature.creature_id, member.actor_id)
+                allocated[key] = allocated.get(key, 0) + 1
+                if allocated[key] > member.effective_quantity:
+                    raise ValueError("Grounded encounter adaptation removed a declared actor.")
+                events.setdefault(receipt.scene_id, []).append((receipt.encounter_id, actor_id))
+    return {scene_id: sorted(set(rows)) for scene_id, rows in events.items()}
 
 
-def _matches_predicates(flags: Mapping[str, str], predicates: Mapping[str, str]) -> bool:
-    return all(flags.get(key) == value for key, value in predicates.items())
+def _scaffold_route_id(source: str, destination: str, requires: Mapping[str, str]) -> str:
+    return "route_" + canonical_sha256([source, destination, dict(requires)])[:24]
 
 
 def _latest_artifact_by_kind(
@@ -1192,47 +800,215 @@ def _latest_artifact_by_kind(
     return candidates[0]
 
 
+def build_source_scaffold_report(
+    binding: PreparationRunBinding,
+    manifest_artifact: PreparationArtifact,
+    prepared_artifact: PreparationArtifact,
+    manuscript_artifact: PreparationArtifact,
+    *,
+    dependency_artifacts: tuple[PreparationArtifact, ...],
+) -> SourceScaffoldReport:
+    """Check an agent's reviewed source scaffold without enumerating ways to play it.
+
+    Route connectivity deliberately ignores predicate satisfaction. Source/packet goal
+    coverage establishes that the live DM has canonical achievement criteria and evidence;
+    it does not assert that a goal has been earned or that a campaign was completed.
+    """
+
+    inventory = _unique_artifacts(
+        (*dependency_artifacts, manifest_artifact, prepared_artifact, manuscript_artifact)
+    )
+    for artifact in inventory:
+        assert_artifact_integrity(binding, artifact)
+    bindings = build_review_bindings(
+        binding, manifest_artifact, prepared_artifact, manuscript_artifact, inventory
+    )
+    manifest, prepared, manuscript = (
+        _manifest(manifest_artifact), _prepared(prepared_artifact), _manuscript(manuscript_artifact)
+    )
+    if manifest.prepared != prepared:
+        raise ValueError("Manifest and prepared artifacts must contain the same canonical scaffold.")
+    if binding.extraction_sha256 and manifest.extraction_sha256 != binding.extraction_sha256:
+        raise ValueError("Manifest extraction digest does not match the frozen source binding.")
+    if manifest.rules_edition != binding.rules_edition:
+        raise ValueError("Manifest rules edition does not match the frozen run binding.")
+    evidence_ids = (
+        manifest_artifact.artifact_id, prepared_artifact.artifact_id, manuscript_artifact.artifact_id
+    )
+    findings = _structural_findings(manifest, prepared, manuscript, evidence_ids)
+    if not manifest.reviewed_by or manifest.reviewed_sha256 != manifest_digest(manifest):
+        findings.append(_coherence_finding(
+            "source_scaffold_manifest_unreviewed",
+            "The source scaffold must bind the current explicitly reviewed manifest digest.",
+            evidence_ids,
+            severity="critical",
+        ))
+    if any(row.audience == "unreviewed" or not row.text_sha256 for row in manifest.passages):
+        findings.append(_coherence_finding(
+            "source_scaffold_passage_unreviewed",
+            "Every retained source passage needs its reviewed audience classification and exact text digest.",
+            evidence_ids,
+        ))
+    if not manifest.opening_scene_id or not any(
+        row.audience == "player" and manifest.opening_scene_id in row.scene_ids and not row.requires
+        for row in manifest.passages
+    ):
+        findings.append(_coherence_finding(
+            "source_scaffold_opening_missing",
+            "The opening scene needs unconditional reviewed player text.",
+            evidence_ids,
+        ))
+
+    scene_by_id = {row.scene_id: row for row in manifest.scenes}
+    reachable = {manifest.opening_scene_id} if manifest.opening_scene_id else set()
+    pending = list(reachable)
+    while pending:
+        source = pending.pop()
+        for link in scene_by_id[source].links:
+            if link.scene_id not in reachable:
+                reachable.add(link.scene_id)
+                pending.append(link.scene_id)
+    route_ids = {
+        _scaffold_route_id(row.scene_id, link.scene_id, link.requires)
+        for row in manifest.scenes for link in row.links
+    }
+    classified_routes = {
+        _scaffold_route_id(row.from_scene_id, row.to_scene_id, row.traversal_requires)
+        for row in prepared.routes
+    } & route_ids
+    passages = {row.passage_id: row for row in manifest.passages}
+    packets = {row.scene_id: row for row in prepared.scene_packets}
+    source_covered: dict[str, set[str]] = {"objective": set(), "milestone": set()}
+    packet_covered: dict[str, set[str]] = {"objective": set(), "milestone": set()}
+    for kind, definitions in (("objective", manifest.objectives), ("milestone", manifest.milestones)):
+        for goal in definitions:
+            evidence = [passages[pid] for pid in goal.passage_ids]
+            evidence_scenes = {
+                scene_id for row in evidence if row.text_sha256 and row.audience in {"player", "planner"}
+                for scene_id in row.scene_ids
+            }
+            if (
+                all(row.text_sha256 and row.audience in {"player", "planner"} for row in evidence)
+                and set(goal.scene_ids) <= evidence_scenes
+            ):
+                source_covered[kind].add(goal.canonical_id)
+            else:
+                findings.append(_coherence_finding(
+                    "source_scaffold_goal_evidence_missing",
+                    f"Canonical {kind} {goal.canonical_id} needs reviewed source evidence covering its declared scenes.",
+                    evidence_ids, affected_ids=(goal.canonical_id,),
+                ))
+            if all(
+                scene_id in packets
+                and goal.canonical_id in getattr(packets[scene_id], f"{kind}_ids")
+                for scene_id in goal.scene_ids
+            ):
+                packet_covered[kind].add(goal.canonical_id)
+            else:
+                findings.append(_coherence_finding(
+                    "source_scaffold_goal_packet_missing",
+                    f"Canonical {kind} {goal.canonical_id} must be available in every declared scene packet.",
+                    evidence_ids, affected_ids=(goal.canonical_id,),
+                ))
+        definitions_by_id = {row.canonical_id: row for row in definitions}
+        for packet in prepared.scene_packets:
+            for goal_id in getattr(packet, f"{kind}_ids"):
+                goal = definitions_by_id.get(goal_id)
+                if goal is not None and packet.scene_id not in goal.scene_ids:
+                    findings.append(_coherence_finding(
+                        "source_scaffold_goal_scene_mismatch",
+                        f"Scene packet {packet.scene_id} lists {kind} {goal_id} outside its reviewed scene scope.",
+                        evidence_ids, affected_ids=(packet.scene_id, goal_id),
+                    ))
+
+    endings = {row.entity_id for row in manifest.entities if row.kind == "ending"}
+    source_endings = {
+        ending_id for ending_id in endings if any(
+            ending_id in row.entity_ids and row.text_sha256 and row.audience in {"player", "planner"}
+            for row in manifest.passages
+        )
+    }
+    for ending_id in sorted(endings - source_endings):
+        findings.append(_coherence_finding(
+            "source_scaffold_ending_evidence_missing",
+            f"Ending identity {ending_id} needs reviewed retained source evidence.",
+            evidence_ids, affected_ids=(ending_id,),
+        ))
+    try:
+        grounded_events = _grounded_actor_events(binding, manifest, inventory)
+    except (KeyError, TypeError, ValueError):
+        grounded_events = {}
+        findings.append(_coherence_finding(
+            "source_scaffold_grounding_invalid",
+            "Authored encounter actors must retain exact accepted source, scene, stat, hero and book bindings.",
+            bindings.grounding_artifact_ids,
+            severity="critical",
+        ))
+    return SourceScaffoldReport(
+        bindings=bindings,
+        opening_scene_id=manifest.opening_scene_id,
+        scene_ids=tuple(sorted(scene_by_id)),
+        topologically_reachable_scene_ids=tuple(sorted(reachable)),
+        route_ids=tuple(sorted(route_ids)),
+        classified_route_ids=tuple(sorted(classified_routes)),
+        objective_ids=tuple(sorted(row.canonical_id for row in manifest.objectives)),
+        required_objective_ids=tuple(sorted(
+            row.objective_id for row in prepared.quests if row.required_for_completion
+        )),
+        source_backed_objective_ids=tuple(sorted(source_covered["objective"])),
+        packet_covered_objective_ids=tuple(sorted(packet_covered["objective"])),
+        milestone_ids=tuple(sorted(row.canonical_id for row in manifest.milestones)),
+        required_milestone_ids=tuple(sorted({
+            mid for row in prepared.quests for mid in row.required_milestone_ids
+        })),
+        source_backed_milestone_ids=tuple(sorted(source_covered["milestone"])),
+        packet_covered_milestone_ids=tuple(sorted(packet_covered["milestone"])),
+        ending_entity_ids=tuple(sorted(endings)),
+        source_backed_ending_entity_ids=tuple(sorted(source_endings)),
+        grounded_actor_encounter_ids=tuple(sorted({
+            encounter_id for rows in grounded_events.values() for encounter_id, _ in rows
+        })),
+        grounded_actor_ids=tuple(sorted({
+            actor_id for rows in grounded_events.values() for _, actor_id in rows
+        })),
+        findings=tuple(_unique_findings(findings)),
+    )
+
+
 def build_path_exploration_artifact(
     binding: PreparationRunBinding,
     *,
     dependency_artifacts: tuple[PreparationArtifact, ...],
     created_at: str,
-    budget: PathBudget = DEFAULT_PATH_BUDGET,
-    initial_world_flags: Mapping[str, str] | None = None,
     task_id: str = "p10_path_exploration",
     scope_keys: tuple[str, ...] | None = None,
 ) -> PreparationArtifact:
-    """Build the deterministic P10 path report from the latest accepted P09 subjects."""
+    """Build P10 source consistency; artifact identity retains the saved-run contract."""
 
     manifest_artifact = _latest_artifact_by_kind(dependency_artifacts, "canonical_manifest")
     prepared_artifact = _latest_artifact_by_kind(dependency_artifacts, "prepared_campaign")
     manuscript_artifact = _latest_artifact_by_kind(dependency_artifacts, "retained_manuscript")
-    report = explore_prepared_paths(
-        binding,
-        manifest_artifact,
-        prepared_artifact,
-        manuscript_artifact,
-        initial_world_flags=initial_world_flags,
-        budget=budget,
+    report = build_source_scaffold_report(
+        binding, manifest_artifact, prepared_artifact, manuscript_artifact,
+        dependency_artifacts=dependency_artifacts,
     )
     return build_artifact(
         binding,
         stage=PreparationStage.P10,
         task_id=task_id,
         artifact_kind="path_exploration_report",
-        payload={"path_report": report.model_dump(mode="json")},
+        payload={
+            "report_mode": "source_scaffold",
+            "scaffold_report": report.model_dump(mode="json"),
+        },
         dependency_artifacts=_unique_artifacts(dependency_artifacts),
         created_at=created_at,
-        scope_keys=scope_keys if scope_keys is not None else report.expected_outcome_ids,
+        scope_keys=scope_keys if scope_keys is not None else report.scene_ids,
     )
 
 
-def make_path_exploration_validator(
-    *,
-    budget: PathBudget = DEFAULT_PATH_BUDGET,
-    initial_world_flags: Mapping[str, str] | None = None,
-) -> Callable[..., ValidationResult]:
-    """Create the required P10 validator; its receipt covers every proposed artifact."""
+def make_path_exploration_validator() -> Callable[..., ValidationResult]:
+    """Recompute P10 source consistency using the existing saved-run validator ID."""
 
     def validate(
         binding: PreparationRunBinding,
@@ -1245,62 +1021,48 @@ def make_path_exploration_validator(
             manifest_artifact = _latest_artifact_by_kind(dependencies, "canonical_manifest")
             prepared_artifact = _latest_artifact_by_kind(dependencies, "prepared_campaign")
             manuscript_artifact = _latest_artifact_by_kind(dependencies, "retained_manuscript")
-            expected = explore_prepared_paths(
-                binding,
-                manifest_artifact,
-                prepared_artifact,
-                manuscript_artifact,
-                initial_world_flags=initial_world_flags,
-                budget=budget,
-            )
-            actual = PathExplorationReport.model_validate(
-                report_artifact.payload["path_report"], strict=False
-            )
-            if actual != expected:
-                raise ValueError(
-                    "Path report differs from bounded runtime-compatible recomputation."
-                )
+            for artifact in _unique_artifacts((*dependencies, *proposed_artifacts)):
+                assert_artifact_integrity(binding, artifact)
             if report_artifact.dependency_digests != {
                 a.artifact_id: a.content_sha256 for a in dependencies
             }:
-                raise ValueError("Path report does not bind exact accepted task dependencies.")
-            evidence_ids = tuple(a.artifact_id for a in dependencies) + tuple(
-                a.artifact_id for a in proposed_artifacts
+                raise ValueError("P10 report does not bind exact accepted task dependencies.")
+            if (
+                report_artifact.payload.get("report_mode") != "source_scaffold"
+                or set(report_artifact.payload) != {"report_mode", "scaffold_report"}
+            ):
+                raise ValueError("P10 requires the source-scaffold report schema.")
+            actual = SourceScaffoldReport.model_validate(
+                report_artifact.payload["scaffold_report"], strict=False
             )
-            findings: list[PreparationFinding] = []
-            if actual.exhausted:
-                finding = _coherence_finding(
-                    "path_budget_exhausted",
-                    "Bounded authored-path exploration reached its state or depth limit; complete path coverage was not established.",
-                    evidence_ids,
-                    affected_ids=actual.unverified_outcome_ids,
-                    severity="medium",
-                )
-                findings.append(_preparation_finding(finding))
-            for outcome_id in actual.unreachable_outcome_ids:
-                finding = _coherence_finding(
-                    "unreachable_prepared_outcome",
-                    f"Prepared outcome {outcome_id} has no feasible path from the reviewed opening under runtime policy and route checks.",
-                    evidence_ids,
-                    affected_ids=(outcome_id,),
-                    severity="high",
-                )
-                findings.append(_preparation_finding(finding))
+            expected = build_source_scaffold_report(
+                binding, manifest_artifact, prepared_artifact, manuscript_artifact,
+                dependency_artifacts=dependencies,
+            )
+            if actual != expected:
+                raise ValueError("Source-scaffold report differs from exact deterministic recomputation.")
             receipt = build_validation_receipt(
                 "p10_path_exploration",
                 artifacts=proposed_artifacts,
                 dependencies=dependencies,
                 passed=True,
-                details={"path_report_sha256": report_artifact.content_sha256},
+                details={
+                    "report_mode": "source_scaffold",
+                    "scaffold_report_sha256": report_artifact.content_sha256,
+                },
                 created_at=_utc_now(),
             )
-            return ValidationResult(passed=True, receipts=(receipt,), findings=tuple(findings))
+            return ValidationResult(
+                passed=True,
+                receipts=(receipt,),
+                findings=tuple(_preparation_finding(row) for row in actual.findings),
+            )
         except Exception:
             failure = PreparationFinding(
                 finding_id="p10-path-validator-failed",
                 code="path_exploration_invalid",
                 severity="critical",
-                message="The path exploration report did not match its exact inputs or bounds.",
+                message="The P10 source-scaffold report did not match its exact reviewed subjects and source bindings.",
                 evidence_artifact_ids=tuple(a.artifact_id for a in proposed_artifacts),
             )
             return ValidationResult(

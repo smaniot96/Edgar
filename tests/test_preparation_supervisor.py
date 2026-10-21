@@ -58,16 +58,21 @@ def binding() -> PreparationRunBinding:
 
 
 @pytest.mark.asyncio
-async def test_supervisor_reserves_usage_and_accepts_bound_receipt(private_store: PreparationStore) -> None:
+@pytest.mark.parametrize("exceed_estimates", [False, True])
+async def test_supervisor_reserves_usage_and_accepts_bound_receipt(private_store: PreparationStore, exceed_estimates: bool) -> None:
     run = binding()
+    if exceed_estimates:
+        run = run.model_copy(update={"budget": run.budget.model_copy(update={
+            "max_provider_calls": 1, "max_total_tokens": 1, "max_cost_microusd": 1,
+        })})
     task = PreparationTask(
         task_id="brief",
         stage=PreparationStage.P01,
         task_kind="commission",
         scope_keys=("brief",),
-        max_input_tokens=100,
-        max_output_tokens=100,
-        max_cost_microusd=10,
+        max_input_tokens=1 if exceed_estimates else 100,
+        max_output_tokens=1 if exceed_estimates else 100,
+        max_cost_microusd=1 if exceed_estimates else 10,
     )
     plan = StagePlan(stage=PreparationStage.P01, tasks=(task,), required_scope_keys=("brief",))
     supervisor: PreparationSupervisor
@@ -205,3 +210,105 @@ async def test_unknown_failed_provider_usage_charges_the_full_reservation(
     assert result.state.tokens_spent == 200
     assert result.state.cost_microusd_spent == 10
     assert result.state.usage_attempts[0].usage_known is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_model_answer_with_known_usage_is_retried_not_blocking(
+    private_store: PreparationStore,
+) -> None:
+    """A completed call whose answer failed validation fails the task retryably; the job goes on."""
+    from apps.api.services.preparation import PreparationTaskFailure
+    from apps.api.services.preparation_runtime import _has_retryable_task
+
+    run = binding()
+    task = PreparationTask(
+        task_id="brief",
+        stage=PreparationStage.P01,
+        task_kind="commission",
+        scope_keys=("brief",),
+        max_input_tokens=100,
+        max_output_tokens=100,
+        max_cost_microusd=10,
+    )
+    plan = StagePlan(stage=PreparationStage.P01, tasks=(task,), required_scope_keys=("brief",))
+    usage = ProviderUsage(
+        provider_called=True,
+        call_count=1,
+        input_tokens=17,
+        output_tokens=23,
+        cost_microusd=2,
+        requested_model="gpt-6.1-sol",
+        reasoning_effort="high",
+        task_version="1",
+    )
+
+    def execute(bound, planned, dependencies, attempt, idempotency_key):
+        if attempt == 1:
+            invalid = usage.model_copy(update={"failure_code": "provider_output_invalid"})
+            raise PreparationTaskFailure("provider_output_invalid", usage=invalid)
+        artifact = build_artifact(
+            bound,
+            stage=planned.stage,
+            task_id=planned.task_id,
+            artifact_kind="commission_record",
+            payload={"ready": True},
+            dependency_artifacts=(),
+            created_at="2026-10-16T00:00:00+00:00",
+            scope_keys=planned.scope_keys,
+        )
+        return StageExecutionResult(proposed_artifacts=(artifact,), usage=usage)
+
+    def validate(bound, planned, artifacts, dependencies):
+        receipt = ValidationReceipt(
+            validator_id="p01_code_check",
+            passed=True,
+            artifact_digests={a.artifact_id: a.content_sha256 for a in artifacts},
+            dependency_digests={},
+            details_sha256=canonical_sha256({"valid": True}),
+            created_at="2026-10-16T00:00:01+00:00",
+        )
+        return ValidationResult(passed=True, receipts=(receipt,))
+
+    validate.validator_id = "p01_code_check"
+    supervisor = PreparationSupervisor(
+        adapters={PreparationStage.P01: StageAdapter(plan=lambda _b, _a: plan, execute=execute)},
+        validators={PreparationStage.P01: (validate,)},
+        store=private_store,
+    )
+    supervisor.create_run(run)
+
+    first = await supervisor.step("mystery", run.run_id, "worker-1", lambda _binding: True)
+    assert first.state.status == "failed"
+    assert first.state.tasks["P01:brief"].status == "failed"
+    assert first.state.tokens_spent == 40  # the known usage, not the reservation ceiling
+    assert _has_retryable_task(first.state)
+
+    second = await supervisor.step("mystery", run.run_id, "worker-1", lambda _binding: True)
+    assert second.state.tasks["P01:brief"].status == "accepted"
+    assert second.state.tasks["P01:brief"].attempt_count == 2
+
+
+def test_explicit_retry_extends_exhausted_task_without_changing_binding_or_usage(private_store):
+    run = binding()
+    supervisor = PreparationSupervisor(adapters={}, validators={}, store=private_store)
+    supervisor.create_run(run)
+    planned = PreparationTask(task_id="brief", stage=PreparationStage.P03, task_kind="brief",
+                              max_input_tokens=1, max_output_tokens=1, max_cost_microusd=1)
+
+    def blocked(payload):
+        payload.update(status="blocked", current_stage="P03", provider_calls_spent=2,
+                       tokens_spent=400, cost_microusd_spent=80,
+                       last_safe_error_code="provider_unavailable")
+        payload["tasks"]["P03:brief"] = {
+            "task": planned.model_dump(mode="json"), "status": "blocked", "attempt_count": 2,
+            "last_safe_error_code": "provider_unavailable", "updated_at": payload["updated_at"],
+        }
+
+    before = private_store.mutate_run("mystery", run.run_id, update=blocked)
+    assert supervisor.status("mystery", run.run_id).action == "retry"
+    after = supervisor.retry("mystery", run.run_id)
+    task_state = after.tasks["P03:brief"]
+    assert task_state.status == "pending"
+    assert task_state.attempt_count == 2 and task_state.attempt_limit(after.binding) == 4
+    assert after.binding.binding_sha256 == before.binding.binding_sha256
+    assert (after.provider_calls_spent, after.tokens_spent, after.cost_microusd_spent) == (2, 400, 80)

@@ -354,12 +354,8 @@ def test_amendment_is_bounded_additive_and_preserves_irreversible_facts():
     assert "amendment_rewrites_irreversible_fact" in {row.code for row in rejected.report.findings}
 
 
-def test_ordinary_play_amendment_is_engine_accepted_and_replayed_in_future_context():
-    from agent.prepared_amendments import (
-        accept_runtime_amendment,
-        amendment_prompt_block,
-        prepared_runtime_context,
-    )
+def test_saved_amendment_receipt_revalidates_binding_and_preserves_privacy():
+    from agent.prepared_amendments import accept_runtime_amendment
 
     manifest, prepared = _fixture()
     reviewed = _approved(manifest, prepared)
@@ -393,21 +389,6 @@ def test_ordinary_play_amendment_is_engine_accepted_and_replayed_in_future_conte
             manifests=state["adventure_manifests"],
         )
 
-    from agent.nodes.rules_adjudicator import build_adjudicator_prompt
-
-    planner_prompt = build_adjudicator_prompt(state, None)[-1]["content"]
-    assert "proposed_prepared_amendment" in planner_prompt
-    assert receipt["base_prepared_sha256"] in planner_prompt
-
-    accepted = validate_prepared_amendment(reviewed, prepared, amendment, [], [])
-    state["prepared_campaign_overlays"] = {"sample.pdf": accepted.amended.model_dump(mode="json")}
-    future = prepared_runtime_context(state)
-    assert future[0]["prepared_sha256"] == receipt["prepared_sha256"]
-    assert "unexpected_plan" in {branch["branch_id"] for branch in future[0]["branches"]}
-    prompt = amendment_prompt_block(state)
-    assert "Try an unanticipated plan." in prompt
-    assert receipt["prepared_sha256"] in prompt
-
     stale = amendment.model_copy(update={"base_prepared_sha256": "f" * 64})
     assert accept_runtime_amendment(stale, {**state, "prepared_campaign_overlays": {}}) is None
 
@@ -417,7 +398,6 @@ def test_ordinary_play_amendment_is_engine_accepted_and_replayed_in_future_conte
     public = public_adjudication(
         AdjudicationResult(
             success=True,
-            proposed_prepared_amendment=amendment,
             accepted_prepared_amendment=receipt,
         )
     )

@@ -15,8 +15,16 @@ class ManifestSourceUnverified(ManifestError):
     """No verified source kind exists, so no reviewed extraction can be trusted for this adventure."""
 
 
+def _page_budget(meta: dict) -> float | None:
+    from ingestion.readiness import ADVENTURE_DEGRADED_PAGE_BUDGET
+
+    return (ADVENTURE_DEGRADED_PAGE_BUDGET
+            if (meta.get("ingestion") or {}).get("source_kind") == "pdf" else None)
+
+
 def _bundle(slug: str):
     from ingestion.extract import load_reviewed_extraction
+    from ingestion.readiness import ADVENTURE_DEGRADED_PAGE_BUDGET
 
     validate_binding(slug)
     raw_meta = store.load_meta(slug)
@@ -40,6 +48,8 @@ def _bundle(slug: str):
         extraction = load_reviewed_extraction(
             store.source_pdf_path(slug, meta) if kind == "pdf" else None,
             _active_extraction_path(slug, meta),
+            # A published upload may carry the degraded pages its preparation accepted.
+            degraded_page_budget=ADVENTURE_DEGRADED_PAGE_BUDGET if kind == "pdf" else None,
         )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ManifestError(
@@ -95,7 +105,7 @@ def inspect_manifest(slug: str) -> dict:
     manifest = AdventureManifest.model_validate(value)
     from ingestion.manifest import validate_spans
 
-    validate_spans(extraction, manifest)
+    validate_spans(extraction, manifest, degraded_page_budget=_page_budget(meta))
     pages = dict(extraction.text_pages())
     return {
         "manifest": manifest.model_dump(),
@@ -112,7 +122,8 @@ def compile_draft(slug: str) -> dict:
     from ingestion.manifest import compile_manifest
 
     meta, extraction = _bundle(slug)
-    draft = compile_manifest(extraction, rules_edition=meta.get("rules_edition", "unspecified"))
+    draft = compile_manifest(extraction, rules_edition=meta.get("rules_edition", "unspecified"),
+                             degraded_page_budget=_page_budget(meta))
     meta["manifest_draft"] = draft.model_dump()
     store.save_meta(slug, meta)
     return inspect_manifest(slug)
@@ -123,7 +134,7 @@ def edit_draft(slug: str, manifest: AdventureManifest) -> dict:
     from ingestion.manifest import validate_spans
 
     meta, extraction = _bundle(slug)
-    validate_spans(extraction, manifest, check_digests=False)
+    validate_spans(extraction, manifest, check_digests=False, degraded_page_budget=_page_budget(meta))
     pages = dict(extraction.text_pages())
     for passage in manifest.passages:
         passage.text_sha256 = text_digest(pages[passage.page][passage.start : passage.end])
@@ -154,7 +165,8 @@ def publish_manifest(slug: str, *, reviewed_digest: str, reviewer: str) -> dict:
             return {"status": "ready", "manifest_sha256": reviewed_digest, "chunks": meta.get("chunks")}
         raise ManifestError("No editable manifest draft is awaiting review.")
     manifest = review_manifest(
-        extraction, draft, reviewed_digest=reviewed_digest, reviewer=reviewer
+        extraction, draft, reviewed_digest=reviewed_digest, reviewer=reviewer,
+        degraded_page_budget=_page_budget(meta),
     )
     if manifest.rules_edition != meta.get("rules_edition", "unspecified"):
         raise ManifestError("The source edition changed. Inspect and review the current draft.")

@@ -13,13 +13,15 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import structlog
 from qdrant_client.models import Condition, FieldCondition, Filter, MatchValue
 
 from agent.encounter_budget import apply_solo_budget
 from agent.monster_stats import MonsterStatsError, parse_monster_stats
 from agent.supported_rules import SUPPORTED_MECHANICS
 from db.vector.client import get_qdrant_client
-from db.vector.creatures import CreatureResolutionError, resolve_creature
+from db.vector.creatures import CreatureResolutionError, identified_creature, resolve_creature
+from db.vector.references import reference_matches
 from db.vector.retrieval import rule_policy
 from db.vector.versions import active_index_read
 from edgar_core.grounding import (
@@ -45,7 +47,13 @@ from edgar_core.grounding import (
     select_book_evidence,
     validate_mechanic_requirements,
 )
-from edgar_core.manifests import ManifestError
+from edgar_core.manifests import AdventureManifest, ManifestError
+
+log = structlog.get_logger(__name__)
+# Share of a book's active records that may be uncitable (blank, or no exact page or heading,
+# typically OCR damage) and be left out of verified evidence. They can never be cited; more than
+# this means the index itself is unreliable and the book stays unavailable.
+UNCITABLE_RECORD_BUDGET = 0.01
 
 
 class GroundingUnavailable(ValueError):
@@ -124,6 +132,7 @@ def read_verified_book_snapshot(
 
         state: dict[str, Any] = {}
         text_rows: list[dict[str, Any]] = []
+        uncitable: Counter[str] = Counter()
         with active_index_read(qdrant, binding.collection, state_out=state) as active_filter:
             matching_active = []
             for source, entry in (state.get("sources") or {}).items():
@@ -175,9 +184,8 @@ def read_verified_book_snapshot(
                     page_end = payload.get("page_end", page)
                     section = payload.get("section") or payload.get("heading_path")
                     if not isinstance(text, str) or not text.strip():
-                        raise GroundingUnavailable(
-                            "book_evidence_incomplete", f"The {role.upper()} contains a blank active record."
-                        )
+                        uncitable["book_evidence_incomplete"] += 1
+                        continue
                     if (
                         type(page) is not int
                         or page < 1
@@ -186,9 +194,8 @@ def read_verified_book_snapshot(
                         or not isinstance(section, str)
                         or not section.strip()
                     ):
-                        raise GroundingUnavailable(
-                            "book_citation_incomplete", f"The {role.upper()} contains a record without an exact page or heading."
-                        )
+                        uncitable["book_citation_incomplete"] += 1
+                        continue
                     exact_section = payload.get("section") or payload.get("heading_path") or ""
                     policy = rule_policy({"text": text, "section": exact_section, **payload})
                     text_rows.append(
@@ -205,9 +212,27 @@ def read_verified_book_snapshot(
                 if offset is None:
                     break
         expected_count = receipt.get("chunk_count")
-        if type(expected_count) is not int or expected_count < 1 or len(text_rows) != expected_count:
+        read_count = len(text_rows) + sum(uncitable.values())
+        if type(expected_count) is not int or expected_count < 1 or read_count != expected_count:
             raise GroundingUnavailable(
                 "book_evidence_incomplete", f"The active {role.upper()} text does not cover its complete indexed source."
+            )
+        if uncitable:
+            allowed = max(1, int(UNCITABLE_RECORD_BUDGET * expected_count))
+            if sum(uncitable.values()) > allowed:
+                # A public, recoverable code: the book's index version is not usable as evidence.
+                raise GroundingUnavailable(
+                    "book_version_unavailable",
+                    f"The {role.upper()} has {sum(uncitable.values())} active records without exact "
+                    f"text, page or heading; at most {allowed} may be left out.",
+                )
+            log.warning(
+                "book_records_uncitable",
+                role=role,
+                collection=binding.collection,
+                skipped=dict(uncitable),
+                allowed=allowed,
+                records=expected_count,
             )
         if not text_rows:
             raise GroundingUnavailable("required_book_unavailable", f"No exact text is available for the {role.upper()}.")
@@ -268,14 +293,100 @@ def _mechanic_matches_party(mechanic_id: str, party: HeroPartySnapshot) -> bool:
     return True
 
 
-def _grounded_creature(name: str, snapshot: VerifiedBookSnapshot, client: Any) -> GroundedCreature:
+def _module_creature_record(
+    name: str, actor_id: str, scene_id: str | None,
+    manifest: AdventureManifest | None, source_pages: Mapping[int, str] | None,
+    snapshot: VerifiedBookSnapshot,
+) -> dict[str, Any] | None:
+    """Read an explicit actor reference from the already verified module extraction.
+
+    This private preparation path never treats an actor name as a monster alias or
+    claims a not-yet-published module passage belongs to an active vector index.
+    """
+    def unavailable(message: str) -> None:
+        raise GroundingUnavailable("actor_source_unavailable", f"Actor {actor_id!r}: {message}")
+
+    if manifest is None or manifest.rules_edition != snapshot.rules_edition:
+        unavailable("an exact module manifest with the commissioned edition is required.")
+    actor = next((e for e in manifest.entities if e.entity_id == actor_id and e.kind == "actor"), None)
+    if actor is None or actor.stat_reference is None:
+        unavailable("an explicit statistics reference is required.")
+    reference = actor.stat_reference
+    if not reference_matches(name, reference.creature_name):
+        unavailable(f"request {name!r} differs from the exact statistics name {reference.creature_name!r}.")
+    if not scene_id or not any(
+        scene_id in passage.scene_ids and actor_id in passage.entity_ids
+        and passage.audience in ("player", "planner") for passage in manifest.passages
+    ):
+        unavailable("the actor is outside the encounter's source-backed scene.")
+    if reference.kind == "template":
+        mm = snapshot.for_role("mm").binding
+        if (reference.collection != mm.collection or reference.source_sha256 != mm.source_sha256
+                or reference.rules_edition != mm.rules_edition):
+            unavailable("the template differs from the commissioned Monster Manual binding.")
+        return None
+    passage = next((p for p in manifest.passages if p.passage_id == reference.passage_id), None)
+    if (passage is None or passage.audience not in ("player", "planner")
+            or actor_id not in passage.entity_ids or scene_id not in passage.scene_ids):
+        unavailable("the exact module statistics passage is not reviewed for this actor and scene.")
+    page_text = source_pages.get(passage.page) if source_pages is not None else None
+    if (not isinstance(page_text, str) or passage.end <= passage.start
+            or passage.end > len(page_text)):
+        unavailable("the exact statistics span is outside the verified extraction page.")
+    text = page_text[passage.start:passage.end]
+    text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if not passage.text_sha256 or passage.text_sha256 != text_sha256:
+        unavailable("the exact statistics span does not match its frozen text digest.")
+    record = identified_creature({
+        "collection": manifest.source, "source": manifest.source,
+        "source_sha256": manifest.source_sha256,
+        "extraction_sha256": manifest.extraction_sha256,
+        "rules_edition": manifest.rules_edition, "index_version": None,
+        "section": reference.creature_name, "page": passage.page, "page_end": passage.page,
+        "stat_block": True, "text": text, "evidence_origin": "prepared_module",
+        "module_evidence": {
+            "source_sha256": manifest.source_sha256,
+            "extraction_sha256": manifest.extraction_sha256, "actor_id": actor_id,
+            "passage_id": passage.passage_id, "page": passage.page,
+            "start": passage.start, "end": passage.end, "text_sha256": text_sha256,
+        },
+    })
+    if record is None:
+        unavailable("the exact passage is not one complete headed creature statistics record.")
+    from db.vector.creature_sources import reviewed_module_parsing_text
+
+    try:
+        parsing_text, corrections = reviewed_module_parsing_text(text, name=reference.creature_name,
+            source_sha256=manifest.source_sha256, rules_edition=manifest.rules_edition, page=passage.page)
+    except CreatureResolutionError as exc:
+        unavailable(str(exc))
+    if corrections:
+        record["parsing_text"] = parsing_text
+        record["module_evidence"].update({"source_corrections": corrections,
+            "parsing_text_sha256": hashlib.sha256(parsing_text.encode("utf-8")).hexdigest()})
+    return record
+
+
+def _grounded_creature(
+    name: str, snapshot: VerifiedBookSnapshot, client: Any, *,
+    actor_id: str | None = None, scene_id: str | None = None,
+    actor_manifest: AdventureManifest | None = None,
+    source_pages: Mapping[int, str] | None = None,
+) -> GroundedCreature:
     mm_evidence = snapshot.for_role("mm")
     mm = mm_evidence.binding
-    try:
-        record = resolve_creature(name, client=client, rules_edition=snapshot.rules_edition)
-    except (CreatureResolutionError, ManifestError) as exc:
-        raise GroundingUnavailable("creature_unresolved", "Required exact creature evidence is unavailable or ambiguous.") from exc
-    if (
+    record = _module_creature_record(name, actor_id, scene_id, actor_manifest, source_pages, snapshot) if actor_id else None
+    if record is None:
+        try:
+            record = resolve_creature(
+                name, client=client, rules_edition=snapshot.rules_edition,
+                collections=[mm.collection], source_sha256=mm.source_sha256,
+            )
+        except (CreatureResolutionError, ManifestError) as exc:
+            raise GroundingUnavailable(
+                "creature_unresolved", f"Exact creature {name!r} could not be grounded: {exc}"
+            ) from exc
+    if record.get("evidence_origin") != "prepared_module" and (
         record.get("collection") != mm.collection
         or record.get("source") != mm.source
         or record.get("source_sha256") != mm.source_sha256
@@ -285,7 +396,7 @@ def _grounded_creature(name: str, snapshot: VerifiedBookSnapshot, client: Any) -
     ):
         raise GroundingUnavailable(
             "creature_book_mismatch",
-            "The creature is not from the bound verified MM source and active index version.",
+            f"Creature {name!r} is not from the bound verified MM source and active index version.",
         )
     text = record.get("text")
     page = record.get("page")
@@ -298,15 +409,18 @@ def _grounded_creature(name: str, snapshot: VerifiedBookSnapshot, client: Any) -
         or type(page_end) is not int
         or page_end < page
     ):
-        raise GroundingUnavailable("creature_record_incomplete", "The exact creature record is empty.")
+        raise GroundingUnavailable("creature_record_incomplete", f"Exact creature {name!r} has no complete text/page citation.")
     text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
     if record.get("text_sha256") != text_sha256:
-        raise GroundingUnavailable("creature_record_incomplete", "The exact creature text digest is invalid.")
+        raise GroundingUnavailable("creature_record_incomplete", f"Exact creature {name!r} has an invalid text digest.")
     try:
         rating, xp = challenge_xp_from_stat_block(text)
-        parsed = parse_monster_stats(text, name=record["creature_name"])
+        parsed = parse_monster_stats(record.get("parsing_text", text), name=record["creature_name"])
     except (ValueError, MonsterStatsError, KeyError) as exc:
-        raise GroundingUnavailable("creature_mechanics_unreadable", "The exact creature record has unreadable required mechanics.") from exc
+        raise GroundingUnavailable(
+            "creature_mechanics_unreadable",
+            f"Exact creature {name!r} on physical page {page} has unreadable required mechanics: {exc}",
+        ) from exc
     return GroundedCreature(
         creature_id=record["creature_id"],
         creature_name=record["creature_name"],
@@ -323,7 +437,39 @@ def _grounded_creature(name: str, snapshot: VerifiedBookSnapshot, client: Any) -
         challenge_rating=rating,
         xp=xp,
         monster_stats=parsed.to_dict(),
+        evidence_origin=record.get("evidence_origin", "active_index"),
+        source_evidence=record.get("source_evidence"),
+        module_evidence=record.get("module_evidence"),
     )
+
+
+def preflight_creature_sources(
+    names: Sequence[str], snapshot: VerifiedBookSnapshot, *, client: Any = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Inspect every requested exact identity before semantic correction or authoring.
+
+    Return concise verified references and all local source/parser defects together.
+    This never writes sources, embeds text, calls a model or substitutes statistics.
+    """
+    qdrant = client if client is not None else get_qdrant_client()
+    available, findings = [], []
+    for name in dict.fromkeys(names):
+        try:
+            creature = _grounded_creature(name, snapshot, qdrant)
+        except GroundingUnavailable as exc:
+            findings.append({"creature_name": name, "code": exc.code, "message": str(exc)})
+            continue
+        available.append({
+            "requested_name": name, "creature_name": creature.creature_name,
+            "creature_id": creature.creature_id, "collection": creature.collection,
+            "source_sha256": creature.source_sha256, "extraction_sha256": creature.extraction_sha256,
+            "index_version": creature.index_version, "page": creature.page,
+            "page_end": creature.page_end, "text_sha256": creature.text_sha256,
+            "evidence_origin": creature.evidence_origin,
+            "source_evidence": creature.source_evidence.model_dump(mode="json")
+            if creature.source_evidence else None,
+        })
+    return {"available": available, "findings": findings}
 
 
 def _difficulty_limit(difficulty: str) -> int:
@@ -336,6 +482,8 @@ def ground_encounter_plan(
     books: VerifiedBookSnapshot,
     *,
     client: Any = None,
+    actor_manifest: AdventureManifest | None = None,
+    source_pages: Mapping[int, str] | None = None,
 ) -> EncounterGroundingReceipt:
     """P05 helper: resolve exact source records, adapt solo roster, and calculate XP challenge.
 
@@ -349,7 +497,10 @@ def ground_encounter_plan(
     qdrant = client if client is not None else get_qdrant_client()
     grouped: list[tuple[EncounterCreatureRequest, GroundedCreature]] = []
     for request in plan.creatures:
-        grounded = _grounded_creature(request.creature_name, books, qdrant)
+        grounded = _grounded_creature(
+            request.creature_name, books, qdrant, actor_id=request.actor_id,
+            scene_id=plan.scene_id, actor_manifest=actor_manifest, source_pages=source_pages,
+        )
         grouped.append((request, grounded))
 
     requirements_supported, requirements_unsupported = validate_mechanic_requirements(
@@ -371,6 +522,7 @@ def ground_encounter_plan(
     members = [
         GroundedEncounterMember(
             creature=creature,
+            actor_id=request.actor_id,
             requested_quantity=request.quantity,
             effective_quantity=request.quantity,
             role=request.role,
@@ -388,20 +540,28 @@ def ground_encounter_plan(
             for index in range(request.quantity):
                 roster.append(
                     {
-                        "name": creature.creature_name,
+                        "name": next((actor.title for actor in actor_manifest.entities
+                                      if actor.entity_id == request.actor_id), creature.creature_name)
+                                if request.actor_id and actor_manifest else creature.creature_name,
                         "creature_id": creature.creature_id,
+                        "source_reference": {"actor_id": request.actor_id}
+                                            if request.actor_id else {},
                         "hp_max": stats["hp_max"],
                         "hp_current": stats["hp_max"],
                         "attack_bonus": first_attack.get("bonus", 0),
                         "damage_dice": first_attack.get("damage_dice", "0"),
                         "is_boss": request.role == "boss",
+                        "challenge_cr": creature.challenge_rating,
+                        "challenge_xp": creature.xp,
                         "_instance": index,
                     }
                 )
         fitted, solo_summary = apply_solo_budget(roster, party.heroes[0].level)
-        kept = Counter(row["creature_id"] for row in fitted)
+        kept = Counter((row["creature_id"], row.get("source_reference", {}).get("actor_id"))
+                       for row in fitted)
         members = [
-            member.model_copy(update={"effective_quantity": kept[member.creature.creature_id]})
+            member.model_copy(update={"effective_quantity": kept[(member.creature.creature_id,
+                                                                  member.actor_id)]})
             for member in members
         ]
         adaptation_notes = list(solo_summary.get("notes") or [])
@@ -409,6 +569,18 @@ def ground_encounter_plan(
             raise GroundingUnavailable("solo_encounter_empty", "Solo adaptation removed every creature from the encounter.")
 
     active_members = [member for member in members if member.effective_quantity]
+    for member in active_members:
+        stats = member.creature.monster_stats
+        casting = stats.get("spellcasting") or {}
+        if not stats.get("attacks") and not casting.get("spells"):
+            raise GroundingUnavailable("creature_mechanics_unreadable",
+                                       f"Exact creature {member.creature.creature_name!r} has no executable attack or listed supported spell.")
+        # The parser explicitly discloses the simplified runtime's omissions in
+        # combat. They are not claims of supported required mechanics. Preserve
+        # every exact limitation in the preparation receipt instead of making
+        # ordinary Speed entries block every real creature in every PDF.
+        adaptation_notes.extend(f"{member.creature.creature_name}: {note}"
+                                for note in stats.get("declared", []))
     monster_count = sum(member.effective_quantity for member in active_members)
     raw_xp = sum(member.creature.xp * member.effective_quantity for member in active_members)
     multiplier = encounter_multiplier(monster_count, len(party.heroes))
@@ -416,8 +588,6 @@ def ground_encounter_plan(
     thresholds = encounter_thresholds(party)
     difficulty = encounter_difficulty(adjusted_xp, thresholds)
     findings = []
-    if any(member.creature.monster_stats.get("declared") for member in members):
-        findings.append("unsupported_creature_mechanics")
     if difficulty_exceeds(difficulty, plan.maximum_difficulty):
         findings.append("encounter_exceeds_authored_maximum_difficulty")
     if any(hero.level != plan.target_level for hero in party.heroes):
@@ -453,6 +623,8 @@ def ground_prepared_encounters(
     books: VerifiedBookSnapshot,
     *,
     client: Any = None,
+    actor_manifest: AdventureManifest | None = None,
+    source_pages: Mapping[int, str] | None = None,
 ) -> list[EncounterGroundingReceipt]:
     """Ground all encounters for an act; any required failure prevents a complete result."""
     if not plans:
@@ -460,10 +632,12 @@ def ground_prepared_encounters(
     ids = [plan.encounter_id for plan in plans]
     if len(ids) != len(set(ids)):
         raise GroundingUnavailable("duplicate_encounter", "Encounter IDs must be unique within the grounded act.")
-    return [ground_encounter_plan(plan, party, books, client=client) for plan in plans]
+    return [ground_encounter_plan(plan, party, books, client=client,
+                actor_manifest=actor_manifest, source_pages=source_pages) for plan in plans]
 
 
 __all__ = [
     "GroundingUnavailable", "ground_prepared_encounters", "ground_encounter_plan",
     "read_verified_book_snapshot", "snapshot_heroes", "study_book_references",
+    "preflight_creature_sources",
 ]

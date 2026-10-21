@@ -58,3 +58,41 @@ it("keeps read-only refresh available for internal and source list failures", as
   }
   expect(refresh).toHaveBeenCalledTimes(2);
 });
+
+it("names the daily allowance, its reset time and the budget gap instead of a rate limit (EDG-055 F7)", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  cleanup = () => { root.unmount(); container.remove(); };
+  const { ApiError } = await import("../../api/client");
+  const error = new ApiError(429, JSON.stringify({
+    code: "daily_budget_exhausted", category: "quota_exceeded", recovery_action: "wait",
+    retryable: false, outcome: "not_committed", support_ref: "err-0123456789abcdef",
+    retry_after_seconds: 57_600,
+    daily_budget: { requested_microusd: 50_000_000, remaining_microusd: 49_500_000, daily_limit_microusd: 50_000_000 },
+  }));
+
+  await act(() => root.render(<ErrorNotice error={error} />));
+
+  const text = container.textContent ?? "";
+  expect(text).not.toContain("too many requests");
+  expect(text).not.toContain("Check save status");
+  expect(text).toContain("This preparation asks for USD 50.00, but only USD 49.50 of today's usage allowance is left");
+  expect(text).toContain("Lower the preparation budget to USD 49.50 or less");
+  expect(text).toContain("resets at midnight UTC, in about 16 hours");
+});
+
+it("says the daily allowance is used up when nothing is left", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  cleanup = () => { root.unmount(); container.remove(); };
+
+  await act(() => root.render(<ErrorNotice error={{
+    code: "daily_budget_exhausted", retry_after_seconds: 1_800,
+    daily_budget: { requested_microusd: 500_000, remaining_microusd: 0 },
+  }} />));
+
+  const text = container.textContent ?? "";
+  expect(text).toContain("Today's usage allowance has been used up, so this was not started.");
+  expect(text).toContain("Try again after the allowance resets at midnight UTC, in about 30 minutes.");
+  expect(text).not.toContain("Lower the preparation budget");
+});
