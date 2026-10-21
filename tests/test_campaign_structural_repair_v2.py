@@ -668,3 +668,109 @@ async def test_ai_fictitious_region_references_remain_invalid(recovery):
         validate_semantics(recovery.store.get("spine"), original, recovery.store.get("source"))
     assert recovery.store.get("bundles") == original
     assert recovery.calls == []
+
+
+@pytest.mark.asyncio
+async def test_partial_reference_result_continues_only_unresolved_rows(recovery):
+    original = recovery.store.get("bundles")
+    event = original["chapters"][0]["events"][0]
+    event["clue_ids"] = ["missing_cargo", "missing_treasure"]
+    recovery.store.put("bundles", original)
+    requests = []
+
+    async def call(node, prompt, schema, evidence, images, **kwargs):
+        assert prompt == "structural-links"
+        assert schema is StructuralLinks
+        requests.append((node, deepcopy(evidence)))
+        identity = "missing_cargo" if len(requests) == 1 else "missing_treasure"
+        if len(requests) == 2:
+            assert node.startswith("structural-links-residual-")
+            assert "chapters" not in evidence
+            assert "spine" not in evidence
+            assert len(evidence["affected_rows"]) == 1
+            assert evidence["allowed_new_entities"] == [
+                {
+                    "chapter_id": original["chapters"][0]["chapter_id"],
+                    "id": identity,
+                    "kinds": ["clue"],
+                }
+            ]
+        entity = npc(identity) | {"kind": "clue"}
+        return schema.model_validate(
+            {
+                "new_entities": [
+                    {"chapter_id": original["chapters"][0]["chapter_id"], "entity": entity}
+                ]
+            }
+        )
+
+    recovery.semantic = SimpleNamespace(call=call)
+    assert await repair_structure(recovery)
+    accepted = recovery.store.get("bundles")
+    validate_semantics(recovery.store.get("spine"), accepted, recovery.store.get("source"))
+    assert accepted["chapters"][0]["events"] == original["chapters"][0]["events"]
+    assert len(requests) == 2
+    # Replay retained candidates after an aggregate reconstruction; no new payment.
+    recovery.store.put("bundles", original)
+    assert await repair_structure(recovery)
+    assert len(requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_reference_residual_no_progress_is_held_without_resubmission(recovery):
+    bundles = recovery.store.get("bundles")
+    bundles["chapters"][0]["events"][0]["clue_ids"] = ["missing_cargo"]
+    recovery.store.put("bundles", bundles)
+    requests = []
+
+    async def call(node, prompt, schema, evidence, images, **kwargs):
+        requests.append(node)
+        return schema.model_validate({})
+
+    recovery.semantic = SimpleNamespace(call=call)
+    with pytest.raises(NeedsAttention, match="made no progress"):
+        await repair_structure(recovery)
+    assert len(requests) == 2
+    with pytest.raises(NeedsAttention, match="made no progress"):
+        await repair_structure(recovery)
+    assert len(requests) == 2
+    assert recovery.store.get("bundles") == bundles
+
+
+@pytest.mark.asyncio
+async def test_v5_rejected_reference_candidate_resumes_without_repaying_original(recovery):
+    spine, bundles = recovery.store.get("spine"), recovery.store.get("bundles")
+    bundles["chapters"][0]["events"][0]["clue_ids"] = ["missing_cargo"]
+    recovery.store.put("bundles", bundles)
+    signature = digest({"spine": spine, "bundles": bundles, "issues": []})
+    history_key = "structural-repair-" + signature
+    recovery.store.put(
+        history_key,
+        {
+            "state": "rejected",
+            "policy": "sparse-reference-joins-retain-content-5",
+            "reference_candidate": {},
+            "error": "Missing cargo identity",
+        },
+    )
+    requests = []
+
+    async def call(node, prompt, schema, evidence, images, **kwargs):
+        assert node.startswith("structural-links-residual-")
+        requests.append(node)
+        return schema.model_validate(
+            {
+                "new_entities": [
+                    {
+                        "chapter_id": bundles["chapters"][0]["chapter_id"],
+                        "entity": npc("missing_cargo") | {"kind": "clue"},
+                    }
+                ]
+            }
+        )
+
+    recovery.semantic = SimpleNamespace(call=call)
+    assert await repair_structure(recovery)
+    assert len(requests) == 1
+    assert recovery.store.get(history_key)["reference_candidate"] == {}
+    assert recovery.store.get(history_key)["state"] == "accepted"

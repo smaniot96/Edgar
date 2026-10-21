@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import re
+
 from agent.monster_stats import MonsterStatsError, parse_monster_stats
+from agent.resolution import normalise_check
 from db.vector.client import get_qdrant_client
 from db.vector.creatures import identified_creature
 from db.vector.versions import active_index_read
 from edgar_core.artifacts import text_digest
+
+
+def source_check(raw):
+    """Use the engine's existing check aliases without changing retained source fields."""
+    normalized = normalise_check(raw)
+    return normalized[0] if normalized is not None else raw
 
 
 def source_profile(text, *, name, source_evidence=None):
@@ -17,6 +26,13 @@ def source_profile(text, *, name, source_evidence=None):
     source review. Runtime resolves this same text through a module StatReference and
     the same conservative parser, so preparation cannot promise unimplemented traits.
     """
+    source_text = text
+    heading = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    if re.match(r"^(?:tiny|small|medium|large|huge|gargantuan)\s+\S", heading, re.IGNORECASE):
+        # The encounter already supplies this exact identity. A profile starting at
+        # size/type omitted only its heading; retain every supplied byte after it.
+        # Existing different headings are never relabeled into another creature.
+        text = name + "\n" + text
     # Parenthetical authoring/provenance annotations in a heading are presentation,
     # not a second creature. Check the exact base name without rewriting retained
     # evidence or any mechanical line. A different name or multiple blocks still fail.
@@ -46,6 +62,8 @@ def source_profile(text, *, name, source_evidence=None):
         "name": name,
         "text": text,
         "text_sha256": text_digest(text),
+        "source_text": source_text,
+        "source_text_sha256": text_digest(source_text),
         "monster_stats": stats.to_dict(),
         "source_evidence": source_evidence or {},
         "capability_findings": list(stats.declared),

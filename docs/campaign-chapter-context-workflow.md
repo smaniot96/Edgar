@@ -151,6 +151,15 @@ traits/spells remain explicit capability findings. These execution limits are se
 source omissions and must not trigger an endless paid prose-repair loop.
 Source check policies currently execute the fixed-DC roll only; their private success and
 failure text does not itself commit discoveries or other persistent outcomes.
+Preparation translates existing engine check aliases locally, preserving the original source
+identifier, DC and procedure. A stat profile that begins directly with size/type receives its
+already-declared encounter name as a derived runtime heading; its original bytes and hash
+remain available. An existing different creature heading is not silently renamed.
+
+If a paid sparse reference response leaves unresolved links, retain and apply its valid work
+before requesting only the residual rows, permitted missing identities and relevant original
+pages. Each residual request has a durable signature and receipt. Replaying a rejected older
+candidate does not repay the completed full request, and unchanged residuals hold for inspection.
 
 Versioned prompts are in `apps/api/services/campaign_prep/prompts/`: `principles-v2.md`,
 `spine-v2.md`, `chapters-v2.md`, `chapter-part-v2.md`, `review-v2.md`, `repair-v2.md`, `continuity-v2.md` and

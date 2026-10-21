@@ -24,6 +24,7 @@ from .store import NeedsAttention, digest
 
 FIELDS = {"goals": "goal", "events": "event", "new_entities": "entity", "new_secrets": "secret"}
 RECOVERY_POLICY = "sparse-reference-joins-retain-content-5"
+REFERENCE_RESIDUAL_POLICY = "scoped-retained-reference-residuals-1"
 
 
 class ScalarJoin(Record):
@@ -705,6 +706,97 @@ def _reference_replacement(bundles, patch, permissions, missing):
     return replacement
 
 
+def _residual_reference_evidence(workflow, spine, bundles, source, issues, permissions, missing):
+    """Supply only unresolved rows and their original pages, never whole chapters."""
+    chapters = {b["chapter_id"]: b for b in bundles["chapters"]}
+    affected = [
+        {
+            "chapter_id": cid,
+            "field": field,
+            "index": index,
+            "record": chapters[cid][field][index],
+        }
+        for cid, field, index in sorted(permissions)
+    ]
+    page_numbers = sorted(
+        {number for row in affected for number in row["record"]["origin"]["pages"]}
+    )
+    return {
+        "defects": issues,
+        "allowed_fields": [
+            {"chapter_id": cid, "field": field, "index": index, "keys": sorted(keys)}
+            for (cid, field, index), keys in sorted(permissions.items())
+        ],
+        "allowed_new_entities": [
+            {"chapter_id": cid, "id": identity, "kinds": sorted(kinds)}
+            for (cid, identity), kinds in sorted(missing.items())
+        ],
+        "affected_rows": affected,
+        "existing_identities": [
+            {
+                "id": row["id"],
+                "kind": row.get("kind", kind),
+                "name": row.get("name", row.get("title", row["id"])),
+            }
+            for _, _, _, kind, row in _rows(spine, bundles)
+        ],
+        "source_evidence": evidence_pages(source, page_numbers),
+        "preferences": workflow.store.state().get("request", {}).get("preferences", ""),
+    }, page_numbers
+
+
+async def _repair_reference_residuals(workflow, spine, bundles, source, history, history_key):
+    """Continue incomplete paid joins with a separately retained, residual-only request.
+
+    Each exact residual basis has one durable provider task. An unchanged or cycling
+    result holds for inspection; there is no call-count cap or full-source replay.
+    """
+    entries = history.setdefault("reference_residuals", [])
+    visited = set()
+    while True:
+        issues, permissions, missing = reference_defects(spine, bundles)
+        if not issues:
+            return bundles
+        signature = digest({"bundles": bundles, "issues": issues})
+        if signature in visited:
+            raise NeedsAttention("Reference residual repair cycled without resolving its joins.")
+        visited.add(signature)
+        entry = next((r for r in entries if r["signature"] == signature), None)
+        if entry is None:
+            entry = {"signature": signature, "defects": issues, "state": "requested"}
+            entries.append(entry)
+        if entry["state"] == "no_progress":
+            raise NeedsAttention("Retained reference residual made no progress; not resubmitted.")
+        evidence, page_numbers = _residual_reference_evidence(
+            workflow, spine, bundles, source, issues, permissions, missing
+        )
+        entry["evidence_sha256"] = digest(evidence)
+        workflow.store.put(history_key, history)
+        raw = entry.get("candidate")
+        if raw is None:
+            result = await workflow.semantic.call(
+                "structural-links-residual-" + signature,
+                "structural-links",
+                StructuralLinks,
+                evidence,
+                workflow.source_images(page_numbers),
+            )
+            raw = result.model_dump()
+            entry["candidate"] = raw
+            workflow.store.put(history_key, history)
+        replacement = _reference_replacement(bundles, raw, permissions, missing)
+        replacement = _project_joins(bundles, replacement, permissions, missing)
+        _check_scope(bundles, replacement, permissions, missing)
+        candidate = _merge_chapters(bundles, replacement)
+        if digest(candidate) == digest(bundles):
+            entry["state"] = "no_progress"
+            workflow.store.put(history_key, history)
+            raise NeedsAttention("Reference residual repair made no progress; not resubmitted.")
+        entry.update(state="projected", result_sha256=digest(candidate))
+        workflow.store.put(history_key, history)
+        bundles = candidate
+
+
 async def _repair_references(workflow, spine, bundles, source, history, prior, history_key):
     issues, permissions, missing = reference_defects(spine, bundles)
     if not issues:
@@ -755,7 +847,9 @@ async def _repair_references(workflow, spine, bundles, source, history, prior, h
     replacement = _reference_replacement(basis, raw, permissions, missing)
     replacement = _project_joins(basis, replacement, permissions, missing)
     _check_scope(basis, replacement, permissions, missing)
-    return _merge_chapters(basis, replacement)
+    return await _repair_reference_residuals(
+        workflow, spine, _merge_chapters(basis, replacement), source, history, history_key
+    )
 
 
 async def repair_structure(workflow):
@@ -775,7 +869,14 @@ async def repair_structure(workflow):
     signature = digest({"spine": spine, "bundles": bundles, "issues": issues})
     history_key = "structural-repair-" + signature
     prior = store.get(history_key) or {}
-    if prior.get("state") == "rejected" and prior.get("policy") == RECOVERY_POLICY:
+    if (
+        prior.get("state") == "rejected"
+        and prior.get("policy") == RECOVERY_POLICY
+        and not (
+            prior.get("reference_candidate") is not None
+            and prior.get("reference_residual_policy") != REFERENCE_RESIDUAL_POLICY
+        )
+    ):
         raise NeedsAttention(
             "Retained structural repair needs attention; unchanged defects were not resubmitted: "
             + prior["error"]
@@ -792,6 +893,8 @@ async def repair_structure(workflow):
         "original_bundles": bundles,
         "original_spine": spine,
         "defects": issues,
+        "reference_residual_policy": REFERENCE_RESIDUAL_POLICY,
+        "reference_residuals": deepcopy(prior.get("reference_residuals", [])),
     }
     store.put(history_key, history)
     retained = _legacy_request(store, evidence) if legacy is None else None

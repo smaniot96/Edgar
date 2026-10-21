@@ -14,6 +14,7 @@ from ingestion.extract import ExtractedPage
 from ingestion.quality import check_text
 from ingestion.semantic import SemanticRecordExtraction as SemanticExtraction, SemanticRecordPage
 
+from .mechanics import source_check
 from .store import NeedsAttention, digest
 
 
@@ -422,8 +423,8 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
     capability_findings = []
     for event in ordered_events:
         for encounter in event["encounters"]:
-            source_stat_block = encounter.get("source_stat_block", "").strip()
-            if source_stat_block:
+            source_stat_block = encounter.get("source_stat_block", "")
+            if source_stat_block.strip():
                 from .mechanics import source_profile
 
                 try:
@@ -732,11 +733,15 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                 }
             )
         for check in bundle.get("checks", []):
+            engine_check = source_check(check["check"])
             passage_id = derived(check["id"], "procedure")
             private_procedure(
                 passage_id,
                 check["action"],
-                f"Engine check: {check['check']}; DC {check['dc']}.\n\n"
+                f"Engine check: {engine_check}; DC {check['dc']}.\n\n"
+                + "Source check identifier: "
+                + check["check"]
+                + "\n\n"
                 + "Source success guidance: "
                 + check["success_text"]
                 + "\n\nSource failure guidance: "
@@ -757,7 +762,7 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
                     "scene_ids": check["event_ids"],
                     "passage_ids": [passage_id],
                     "mode": "check",
-                    "check": check["check"],
+                    "check": engine_check,
                     "dc": check["dc"],
                     "on_success": [],
                     "on_failure": [],

@@ -168,7 +168,7 @@ def test_invalid_source_check_gets_specific_chapter_repair_before_compilation():
         "id": "inspect_relic",
         "action": "Inspect the relic's construction",
         "event_ids": ["event_roof"],
-        "check": "intelligence_arcana",
+        "check": "unsupported_ritual",
         "dc": 15,
     }
     bundles["chapters"][0]["checks"] = [check]
@@ -177,7 +177,7 @@ def test_invalid_source_check_gets_specific_chapter_repair_before_compilation():
     assert findings[0]["severity"] == "material"
     assert findings[0]["record_ids"] == ["chapter_roof_content"]
     assert "unsupported engine check" in findings[0]["evidence"]
-    assert check["dc"] == 15 and check["check"] == "intelligence_arcana"
+    assert check["dc"] == 15 and check["check"] == "unsupported_ritual"
     check["check"] = "arcana"
     assert mechanical_findings(bundles, []) == []
 

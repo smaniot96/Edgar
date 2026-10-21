@@ -5,7 +5,7 @@ from __future__ import annotations
 from edgar_core.manifests import ResolutionPolicy
 
 from .compile import derived
-from .mechanics import source_profile
+from .mechanics import source_check, source_profile
 from .store import digest
 
 
@@ -22,7 +22,7 @@ def mechanical_findings(bundles, mechanics):
                     scene_ids=check["event_ids"],
                     passage_ids=["source_check_evidence"],
                     mode="check",
-                    check=check["check"],
+                    check=source_check(check["check"]),
                     dc=check["dc"],
                 )
             except ValueError as exc:
@@ -32,23 +32,24 @@ def mechanical_findings(bundles, mechanics):
                         "severity": "material",
                         "record_ids": [derived(bundle["chapter_id"], "content")],
                         "evidence": "Source check cannot become an engine policy: " + str(exc),
-                        "instruction": "Preserve this source check's action, DC, success/failure guidance and provenance. Use the canonical supported engine check identifier (for example arcana, persuasion, athletics or thieves_tools) rather than a descriptive compound such as intelligence_arcana. Correct only this check in its chapter content.",
+                        "instruction": "Preserve this source check's action, DC, success/failure guidance and provenance. Use an existing engine ability, saving throw, skill or tool check that represents the original procedure; do not replace its mechanics with an unrelated skill. Correct only this check in its chapter content.",
                     }
                 )
         for event in bundle["events"]:
             for encounter in event["encounters"]:
                 actor = encounter["actor_id"]
-                profile = encounter.get("source_stat_block", "").strip()
-                normalized = " ".join(profile.split()).casefold()
-                binding = "source:" + digest(normalized) if profile else encounter["creature"]
-                uses.setdefault(actor, []).append((event["id"], binding))
-                if profile:
+                profile = encounter.get("source_stat_block", "")
+                binding = encounter["creature"]
+                if profile.strip():
+                    normalized = " ".join(profile.split()).casefold()
+                    binding = "source:" + digest(normalized)
                     try:
-                        source_profile(
+                        validated = source_profile(
                             profile,
                             name=encounter["creature"],
                             source_evidence={"pages": encounter.get("source_pages", [])},
                         )
+                        binding = "source:" + digest(" ".join(validated["text"].split()).casefold())
                     except ValueError as exc:
                         findings.append(
                             {
@@ -69,6 +70,7 @@ def mechanical_findings(bundles, mechanics):
                             "instruction": "If this creature has a source-specific profile, retain that complete stat block with its source pages. Otherwise choose its exact verified catalogue template; preserve source quantities and narrative roles. Do not silently substitute a different creature.",
                         }
                     )
+                uses.setdefault(actor, []).append((event["id"], binding))
     for actor, rows in uses.items():
         if len({name.casefold() for _, name in rows}) > 1:
             findings.append(
