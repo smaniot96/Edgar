@@ -57,11 +57,14 @@ export default function App() {
           >
             <EdgarLogo variant="mark" title="Edgar — home" />
           </Link>
+          <NavLink to="/characters" className={navClass}>
+            Characters
+          </NavLink>
           <NavLink to="/adventures" className={navClass}>
             Adventures
           </NavLink>
-          <NavLink to="/characters" className={navClass}>
-            Characters
+          <NavLink to="/campaigns" className={navClass}>
+            Campaigns
           </NavLink>
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <NavLink to="/settings" className={navClass} title="Settings">

@@ -35,7 +35,7 @@ it("requires the player's explicit fallback click and preserves archived binding
 it("directs held source recovery to fresh preparation without upload controls", async () => {
   await act(() => root.render(<SourceRecovery campaign={missing} onUpdated={vi.fn()} />));
   expect(container.querySelector('input[type="file"]')).toBeNull();
-  expect(container.querySelector('a[href="/ui/campaigns"]')?.textContent).toContain("Prepare a fresh adventure");
+  expect(container.querySelector('a[href="/ui/adventures"]')?.textContent).toContain("Prepare a fresh adventure");
   expect(setCampaignSourceMode).not.toHaveBeenCalled();
 });
 

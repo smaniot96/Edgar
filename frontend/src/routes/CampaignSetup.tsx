@@ -215,7 +215,7 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
     <Page width="md">
       <PageHeader
         title={`Set up ${title}`}
-        description="A campaign is the adventure. A session is one saved playthrough of it."
+        description="Your campaign brings a party to one adventure. Choose the character you will control in this session."
         actions={<Link to={`/campaigns/${campaignId}`} className="inline-flex items-center gap-1 text-sm text-ink-muted hover:text-ink"><ArrowLeftIcon className="h-3.5 w-3.5" /> Campaign</Link>}
       />
 

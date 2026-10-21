@@ -76,6 +76,7 @@ export function DeleteCampaignDialog({
             </p>
           ))}
           <p>Your characters stay in your library.</p>
+          {target.sources.length === 0 ? <p>The adventure stays in your library and can be used for other campaigns.</p> : null}
         </>
       )}
       <p className="font-medium text-ink">This cannot be undone.</p>

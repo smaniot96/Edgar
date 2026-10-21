@@ -21,6 +21,12 @@ def creation_identity(body: BaseModel, *, context: dict | None = None) -> dict[s
     if request_id is None:
         return {"creation_request_id": None, "creation_request_hash": None}
     value = body.model_dump(mode="json", exclude={"request_id"})
+    # Optional party/name fields were added after campaign retry receipts shipped.
+    # Keep the original digest for clients resuming their unchanged older request.
+    if "new_campaign" in value:
+        for key in ("title", "character_ids"):
+            if value.get(key) is None:
+                value.pop(key, None)
     if context is not None:
         value = {"request": value, "context": context}
     payload = json.dumps(

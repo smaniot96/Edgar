@@ -146,11 +146,7 @@ export default function CampaignView() {
   const deleteTarget: DeleteTarget = {
     name,
     campaigns: [c],
-    sources: c.source_mode === "homebrew" ? [] : c.adventure_collections.map((slug) => {
-      const source = c.sources?.find((s) => s.slug === slug);
-      const title = source?.title ?? (adventure.data?.slug === slug ? adventure.data.title : slug);
-      return { slug, title, missing: source?.status === "missing" };
-    }),
+    sources: [],
   };
 
   // End is confirmed in a dialog, so a failure stays there; Reopen runs straight away.
@@ -197,6 +193,11 @@ export default function CampaignView() {
         </div>
         <ErrorNotice error={actionError} />
       </header>
+
+      <section aria-label="Campaign adventure and party" className="grid gap-4 rounded-card border border-line bg-surface-sunken p-4 sm:grid-cols-2">
+        <div><h2 className="text-xs text-ink-subtle">ADVENTURE</h2>{slug ? <Link to={`/adventures/${encodeURIComponent(slug)}`} className="mt-2 block break-words text-sm text-ember-300 hover:underline">{adventureTitle || c.sources?.[0]?.title || slug.replace(/_/g, " ")}</Link> : <p className="mt-2 text-sm">Homebrew story</p>}</div>
+        <div><h2 className="text-xs text-ink-subtle">PARTY</h2><p className="mt-2 break-words text-sm">{c.characters?.map((character) => `${character.name} · Level ${character.level} ${character.character_class}`).join(" / ") || "No characters assigned yet"}</p><button type="button" className="mt-2 min-h-11 text-sm text-ember-300 hover:underline" onClick={() => selectTab("characters")}>View characters</button></div>
+      </section>
 
       <section aria-labelledby="saved-playthrough-title" className="rounded-card border border-line bg-surface-raised p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -281,7 +282,7 @@ export default function CampaignView() {
         {/* Re-mount on status change so lists refresh after End/Reopen. */}
         <TabPanel idBase="campaign" id={tab} key={`${tab}:${c.status}`} className="pt-5">
           {tab === "sessions" ? <SessionsTab campaignId={c.id} ended={ended} readiness={c.readiness} playAllowed={c.readiness?.play_allowed === true} /> : null}
-          {tab === "characters" ? <CharactersTab campaignId={c.id} progressionMode={c.progression_mode ?? "fixed"} /> : null}
+          {tab === "characters" ? <CharactersTab campaignId={c.id} ended={ended} progressionMode={c.progression_mode ?? "fixed"} /> : null}
           {tab === "npcs" ? <NpcsTab campaignId={c.id} /> : null}
           {tab === "world" ? <WorldTab campaignId={c.id} /> : null}
         </TabPanel>

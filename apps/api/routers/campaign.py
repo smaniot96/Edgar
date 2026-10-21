@@ -13,10 +13,11 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from db.postgres.models import Campaign, CharacterAssignment
+from db.postgres.models import Campaign, Character, CharacterAssignment
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 from ..auth import Auth, campaign_scope, member_campaign, owned_campaign, require_admin
@@ -31,11 +32,19 @@ from ..schemas.campaign import (
     SourceReleaseOutcome,
 )
 from ..services.campaign_completion import close_campaign, lock_campaign
+from ..services.campaign_roster import campaign_rosters
 from ..services.campaign_sources import campaign_read, require_sources, validate_binding
+from ..services.character_assignments import seed_assignment_row_payload
 from ..services.setup_requests import creation_identity, creation_replay
 from ._common import Page
 
 router = APIRouter(tags=["campaigns"])
+
+
+async def _read_campaign(campaign: Campaign, db: AsyncSession) -> CampaignRead:
+    result = await campaign_read(campaign)
+    result.characters = (await campaign_rosters(db, [campaign.id]))[campaign.id]
+    return result
 
 
 @router.get("/campaigns", response_model=list[CampaignRead])
@@ -56,13 +65,17 @@ async def list_campaigns(
         stmt = stmt.where(Campaign.status == status)
     result = await db.execute(stmt)
     campaigns = result.scalars().all()
-    return [await campaign_read(c) for c in campaigns]
+    rosters = await campaign_rosters(db, [c.id for c in campaigns])
+    result = [await campaign_read(c) for c in campaigns]
+    for campaign in result:
+        campaign.characters = rosters[campaign.id]
+    return result
 
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignRead)
 async def get_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(get_session)):
     campaign = await member_campaign(db, campaign_id, auth)
-    return await campaign_read(campaign)
+    return await _read_campaign(campaign, db)
 
 
 @router.post("/adventures/{slug}/campaign", response_model=CampaignRead)
@@ -95,7 +108,7 @@ async def open_campaign_for_adventure(
         )
         existing = result.scalar_one_or_none()
     if existing is not None:
-        return await campaign_read(existing)
+        return await _read_campaign(existing, db)
 
     await require_sources([slug], "module")
     meta = await run_in_threadpool(load_adventure_metadata, slug)
@@ -107,8 +120,34 @@ async def open_campaign_for_adventure(
     title = await run_in_threadpool(
         display_title, slug, meta.get("title") or slug.replace("_", " ").title()
     )
+    characters = []
+    if request.character_ids is not None:
+        # Lock the library characters in a stable order. A conflicting assignment rolls
+        # back the entire creation, so a failed party selection leaves no empty campaign.
+        rows = await db.execute(
+            select(Character)
+            .where(Character.id.in_(request.character_ids), Character.owner_user_id == owner_id)
+            .order_by(Character.id)
+            .with_for_update()
+        )
+        characters = list(rows.scalars())
+        if len(characters) != len(request.character_ids):
+            raise HTTPException(status_code=404, detail="One or more characters were not found.")
+        occupied = await db.scalar(
+            select(CharacterAssignment.id)
+            .where(
+                CharacterAssignment.character_id.in_(request.character_ids),
+                CharacterAssignment.ended_at.is_(None),
+            )
+            .limit(1)
+        )
+        if occupied is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="A selected character is already in another campaign. Choose available characters.",
+            )
     campaign = Campaign(
-        title=title,
+        title=request.title or title,
         rules_edition=edition,
         system="D&D 5e",
         created_by=owner_id,
@@ -116,9 +155,27 @@ async def open_campaign_for_adventure(
         **(creation_identity(request, context=context) if request.new_campaign else {}),
     )
     db.add(campaign)
-    await db.commit()
+    try:
+        await db.flush()
+        for character in characters:
+            db.add(
+                CharacterAssignment(
+                    character_id=character.id,
+                    campaign_id=campaign.id,
+                    **seed_assignment_row_payload(character),
+                )
+            )
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if "character_assignments_one_active" not in str(exc.orig):
+            raise
+        raise HTTPException(
+            status_code=409,
+            detail="A selected character just joined another campaign. Choose available characters.",
+        ) from exc
     await db.refresh(campaign)
-    return await campaign_read(campaign)
+    return await _read_campaign(campaign, db)
 
 
 @router.post("/campaigns", response_model=CampaignRead, status_code=201)
@@ -132,6 +189,8 @@ async def create_campaign(
         if body.adventure_collections is not None
         else ([] if body.source_mode == "homebrew" else list(DEFAULT_ADVENTURE_COLLECTIONS))
     )
+    if body.source_mode == "module" and len(adv) != 1:
+        raise HTTPException(status_code=422, detail="Choose exactly one adventure per campaign.")
     for slug in adv:
         validate_binding(slug)
     await require_sources(adv, body.source_mode)
@@ -156,7 +215,7 @@ async def create_campaign(
     db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
-    return await campaign_read(campaign)
+    return await _read_campaign(campaign, db)
 
 
 @router.patch("/campaigns/{campaign_id}", response_model=CampaignRead)
@@ -193,6 +252,13 @@ async def update_campaign(
     for slug in update_data.get("adventure_collections", []):
         validate_binding(slug)
     if "adventure_collections" in update_data or "source_mode" in update_data:
+        if (
+            update_data.get("source_mode", campaign.source_mode) == "module"
+            and len(update_data.get("adventure_collections", campaign.adventure_collections)) != 1
+        ):
+            raise HTTPException(
+                status_code=422, detail="Choose exactly one adventure per campaign."
+            )
         await require_sources(
             update_data.get("adventure_collections", campaign.adventure_collections),
             update_data.get("source_mode", campaign.source_mode),
@@ -208,7 +274,7 @@ async def update_campaign(
         setattr(campaign, key, value)
     await db.commit()
     await db.refresh(campaign)
-    return await campaign_read(campaign)
+    return await _read_campaign(campaign, db)
 
 
 @router.delete(
@@ -272,10 +338,10 @@ async def end_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depends(
     """
     campaign = await owned_campaign(db, campaign_id, auth)
     if not await close_campaign(db, campaign):
-        return await campaign_read(campaign)
+        return await _read_campaign(campaign, db)
     await db.commit()
     await db.refresh(campaign)
-    return await campaign_read(campaign)
+    return await _read_campaign(campaign, db)
 
 
 @router.post("/campaigns/{campaign_id}/reopen", response_model=CampaignRead)
@@ -308,7 +374,7 @@ async def reopen_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depen
         )
     await db.commit()
     await db.refresh(campaign)
-    return await campaign_read(campaign)
+    return await _read_campaign(campaign, db)
 
 
 @router.post(

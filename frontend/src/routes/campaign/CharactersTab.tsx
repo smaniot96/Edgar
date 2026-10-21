@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
-import { levelUpCampaignCharacter, listCampaignCharacters } from "../../api/client";
+import { assignCharacterToCampaign, levelUpCampaignCharacter, listCampaignCharacters, listCharacters } from "../../api/client";
 import type { CampaignCharacterRead, LifeState, ProgressionMode } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { HpBar } from "../../components/ui/HpBar";
@@ -32,9 +32,11 @@ function newRequestId(): string {
 export default function CharactersTab({
   campaignId,
   progressionMode = "fixed",
+  ended = false,
 }: {
   campaignId: number;
   progressionMode?: ProgressionMode;
+  ended?: boolean;
 }) {
   const { isDev } = useMode();
   const chars = useQuery(`campaign-characters:${campaignId}`, (s) =>
@@ -44,6 +46,21 @@ export default function CharactersTab({
   const [error, setError] = useState<unknown>(null);
   const [notices, setNotices] = useState<Record<number, string>>({});
   const [ability, setAbility] = useState<Record<number, string>>({});
+  const available = useQuery(ended ? null : "characters", listCharacters);
+  const [adding, setAdding] = useState(false);
+  const [selection, setSelection] = useState("");
+
+  async function addCharacter() {
+    if (!selection || adding) return;
+    setAdding(true);
+    setError(null);
+    try {
+      await assignCharacterToCampaign(campaignId, Number(selection));
+      setSelection("");
+      chars.refetch();
+      available.refetch();
+    } catch (cause) { setError(cause); available.refetch(); } finally { setAdding(false); }
+  }
 
   async function levelUp(c: CampaignCharacterRead) {
     setBusyId(c.character_id);
@@ -78,13 +95,22 @@ export default function CharactersTab({
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-muted">
-        Characters currently adventuring in this campaign. Characters join when you start a
-        session with them; manage your roster on the{" "}
+        Every character in this campaign's party. Add available characters here, or create more on the{" "}
         <Link to="/characters" className={linkClasses}>
           Characters
         </Link>{" "}
         page.
       </p>
+      {!ended ? <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); void addCharacter(); }}>
+        <label className="min-w-0 flex-1 text-xs text-ink-muted">Add to the party
+          <select value={selection} disabled={adding} onChange={(event) => setSelection(event.target.value)} className="mt-1 block min-h-11 w-full rounded-control border border-line bg-surface px-3 text-sm text-ink">
+            <option value="">Choose an available character</option>
+            {available.data?.filter((character) => !character.current_assignment).map((character) => <option key={character.id} value={character.id}>{character.name} · Level {character.level} {character.character_class}</option>)}
+          </select>
+        </label>
+        <Button type="submit" loading={adding} disabled={!selection}>Add character</Button>
+      </form> : null}
+      {available.error ? <ErrorNotice error={available.error} onRetry={available.refetch} /> : null}
       {error ? <ErrorNotice error={error} /> : null}
       {chars.error && chars.data === undefined ? (
         <ErrorNotice error={chars.error} onRetry={chars.refetch} />
@@ -92,7 +118,7 @@ export default function CharactersTab({
         <LoadingText />
       ) : chars.data.length === 0 ? (
         <EmptyState title="No characters here yet">
-          Start a session with a character to bring them into this campaign.
+          Add an available character to this campaign's party.
         </EmptyState>
       ) : (
         <ul className="space-y-2">

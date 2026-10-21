@@ -260,9 +260,9 @@ export function getOrCreateCampaign(slug: string): Promise<CampaignRead> {
 }
 
 /** Start an independent playthrough; reuse the request ID when retrying an ambiguous response. */
-export function startAdventureCampaign(slug: string, requestId: string): Promise<CampaignRead> {
+export function startAdventureCampaign(slug: string, requestId: string, party?: { title: string; character_ids: number[] }): Promise<CampaignRead> {
   return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/campaign`, {
-    new_campaign: true, request_id: requestId,
+    new_campaign: true, request_id: requestId, ...party,
   });
 }
 

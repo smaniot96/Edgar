@@ -185,65 +185,6 @@ function buttonWith(text: string, exact = false): HTMLButtonElement | undefined 
   );
 }
 
-it("keeps archived duplicate saves accessible and restores their library card without deletion", async () => {
-  const archived = adventure({ slug: "sheep_old", title: "Old Sheep", library_archived: true, readiness: ready });
-  const current = adventure({ slug: "sheep_new", title: "Current Sheep", readiness: ready });
-  const { calls } = installFakeApi([
-    [/^GET \/api\/users\/me$/, () => json(user)],
-    [/^GET \/api\/adventures$/, () => json([archived, current])],
-    [/^GET \/api\/campaigns$/, () => json([campaign({ id: 7, title: "Old Sheep", adventure_collections: ["sheep_old"] })])],
-    [/^GET \/api\/sessions$/, () => json([session({ id: 12, campaign_id: 7, has_history: true })])],
-    [/^PATCH \/api\/adventures\/sheep_old\/library$/, () => json({ ...archived, library_archived: false })],
-  ]);
-  await renderHome();
-  await flush();
-  expect(container.textContent).toContain("Current Sheep");
-  expect(container.textContent).not.toContain("Old Sheep");
-  await act(() => buttonWith("Show archived adventures (1)")!.click());
-  expect(container.textContent).toContain("Old Sheep");
-  expect(container.textContent).toContain("saved games retained");
-  await act(() => buttonWith("Restore to library")!.click());
-  await flush();
-  expect(container.textContent).toContain("Adventure restored to your library");
-  expect(container.textContent).not.toContain("Show archived adventures");
-  expect(container.textContent).not.toContain("Restore to library");
-  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-  expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
-});
-
-it("starts an independent campaign and retries an ambiguous response with the same request identity", async () => {
-  const source = adventure({ slug: "sheep", title: "The Wild Sheep Chase", readiness: ready });
-  const oldCampaign = campaign({ id: 7, title: "Old demonstration name", adventure_collections: [source.slug] });
-  const oldSave = session({ id: 12, campaign_id: 7, has_history: true });
-  let attempts = 0;
-  const { calls } = installFakeApi([
-    [/^GET \/api\/users\/me$/, () => json(user)],
-    [/^GET \/api\/adventures$/, () => json([source])],
-    [/^GET \/api\/campaigns$/, () => json([oldCampaign])],
-    [/^GET \/api\/sessions$/, () => json([oldSave])],
-    [/^POST \/api\/adventures\/sheep\/campaign$/, () => ++attempts === 1
-      ? json({ detail: "Temporary transport failure" }, 503)
-      : json(campaign({ id: 13, title: source.title, adventure_collections: [source.slug] }))],
-  ]);
-  await renderHome();
-  await flush();
-  expect(container.querySelector("h3")?.textContent).toBe("The Wild Sheep Chase");
-  expect(buttonWith("Continue", true)).toBeDefined();
-  await act(() => buttonWith("New campaign", true)!.click());
-  await flush();
-  expect(container.textContent).toContain("The Wild Sheep Chase");
-  await act(() => buttonWith("New campaign", true)!.click());
-  await flush();
-  expect(container.textContent).toContain("Setup page");
-  const starts = calls.filter((call) => call.method === "POST");
-  expect(starts).toHaveLength(2);
-  expect(starts[0].body).toEqual(starts[1].body);
-  expect(starts[0].body).toMatchObject({ new_campaign: true, request_id: expect.any(String) });
-  expect(oldCampaign.id).toBe(7);
-  expect(oldSave.campaign_id).toBe(7);
-  expect(calls.some((call) => call.method === "DELETE")).toBe(false);
-});
-
 it("polls only while a module is preparing, and stops the poll on unmount", async () => {
   vi.useFakeTimers();
   const processing = adventure({ slug: "lighthouse", title: "Lighthouse", status: "processing" });
@@ -286,50 +227,6 @@ it("stops polling once every module is ready", async () => {
   expect(callsTo(/^GET \/api\/adventures$/)).toHaveLength(2);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(callsTo(/^GET \/api\/adventures$/)).toHaveLength(2);
-});
-
-it("Resume opens a completed save as a read-only story, never as a playable session", async () => {
-  const lost = adventure({ slug: "lost_module", title: "Lost module" });
-  installFakeApi([
-    [/^GET \/api\/users\/me$/, () => json(user)],
-    [/^GET \/api\/adventures$/, () => json([lost])],
-    [/^GET \/api\/campaigns$/, () => json([campaign({
-      id: 5, title: "Lost module", status: "ended", ended_at: "2026-10-15", play_allowed: false,
-      readiness: { ...ready, play_allowed: false, state: "completed", primary_action: "read_history" },
-    })])],
-    [/^GET \/api\/sessions$/, () => json([{
-      ...session({ id: 9, campaign_id: 5, character_name: "Eda", has_history: true, last_played_at: "2026-10-15" }),
-      readiness: { play_allowed: false, history_allowed: true, state: "completed", primary_action: "read_history", blockers: [] },
-    }])],
-  ]);
-  await renderHome();
-  await flush();
-  const resume = buttonWith("Read story: Lost module");
-  expect(resume).toBeDefined();
-  expect(container.textContent).toContain("Eda · Save #9");
-  await act(() => resume!.click());
-  await flush();
-  expect(container.textContent).toContain("Play page");
-});
-
-it("opens an ended campaign on its campaign page instead of starting a session", async () => {
-  const lost = adventure({ slug: "lost_module", title: "Lost module" });
-  const { calls } = installFakeApi([
-    [/^GET \/api\/users\/me$/, () => json(user)],
-    [/^GET \/api\/adventures$/, () => json([lost])],
-    // Sources are ready, so an ended campaign keeps play_allowed true; readiness says it is complete.
-    [/^GET \/api\/campaigns$/, () => json([campaign({ id: 5, title: "Lost module", status: "ended", ended_at: "2026-10-15",
-      readiness: { ...ready, play_allowed: false, state: "completed", primary_action: "read_history" } })])],
-    [/^GET \/api\/sessions$/, () => json([])],
-  ]);
-  await renderHome();
-  await flush();
-  const open = buttonWith("Open", true);
-  expect(open).toBeDefined();
-  await act(() => open!.click());
-  await flush();
-  expect(container.textContent).toContain("Campaign page");
-  expect(calls.some((c: FakeCall) => c.method === "POST")).toBe(false);
 });
 
 it("keeps the typed generate form after a failed attempt and submits one more request on retry", async () => {

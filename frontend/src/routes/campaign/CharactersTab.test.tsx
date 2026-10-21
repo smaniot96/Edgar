@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   levelUpCampaignCharacter: vi.fn(),
 }));
 vi.mock("../../api/client", () => ({
+  listCharacters: vi.fn().mockResolvedValue([]),
+  assignCharacterToCampaign: vi.fn(),
   listCampaignCharacters: mocks.listCampaignCharacters,
   levelUpCampaignCharacter: mocks.levelUpCampaignCharacter,
 }));
@@ -45,6 +47,7 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.listCampaignCharacters.mockReset();
   mocks.levelUpCampaignCharacter.mockReset();
   host = document.createElement("div");
@@ -147,7 +150,7 @@ it("asks for the ability score improvement at level 4 and sends it as two points
   mocks.listCampaignCharacters.mockResolvedValue([hero({ level: 3 })]);
   await render({ progressionMode: "milestone", rows: [hero({ level: 3 })] });
 
-  const select = host.querySelector("select") as HTMLSelectElement | null;
+  const select = host.querySelector("li select") as HTMLSelectElement | null;
   expect(select).not.toBeNull();
   await act(async () => {
     select!.value = "DEX";
