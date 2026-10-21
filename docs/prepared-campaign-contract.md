@@ -1,3 +1,7 @@
+> Historical engine contract for saved campaigns and live amendments. Fresh preparation uses
+> `campaign_semantics.py` and `services/campaign_prep/`; it does not produce this old
+> prepared-authoring contract. Retained records remain readable for existing playthroughs.
+
 # EDG-140 private prepared-campaign contract
 
 This document describes the shared, version-bound backbone contract implemented for PDF

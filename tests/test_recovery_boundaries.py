@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import BackgroundTasks, HTTPException
 
 from apps.api.routers import adventures
 from apps.api.services import adventures_meta as store, campaign_sources
@@ -34,24 +33,6 @@ def recovery_store(tmp_path, monkeypatch):
     return pdf_dir
 
 
-def _generation_metadata(slug: str, *, stage: str, state: str, total_chapters: int = 3):
-    job = store.new_job("generation", stage, total_chapters=total_chapters)
-    token = "a" * 32
-    job.update(state=state, attempt_id=token)
-    store.save_meta(
-        slug,
-        {
-            "title": "A saved campaign",
-            "rules_edition": "2014",
-            "status": "processing",
-            "generation": {"kind": "ai", "size": "small", "theme": "a mystery"},
-            "attempt": {"id": token},
-            "job": job,
-        },
-    )
-    return token, job
-
-
 def test_failed_job_projection_uses_safe_copy_and_stable_support_reference():
     private_detail = "private generation prompt and sk-secret-123"
     metadata = {
@@ -76,88 +57,6 @@ def test_failed_job_projection_uses_safe_copy_and_stable_support_reference():
     assert first.failure.support_ref == second.failure.support_ref == "err-0123456789abcdef"
     assert first.failure.message != private_detail
     assert private_detail not in first.model_dump_json()
-
-
-def test_archived_outline_reports_conversion_without_calling_provider(
-    recovery_store,
-):
-    _generation_metadata("outline_only", stage="outline", state="running")
-
-    assert store.fail_stale_processing() == ["outline_only"]
-    job = campaign_sources.safe_job_read(store.load_meta("outline_only"), "outline_only")
-
-    assert job is not None
-    assert job.state == "interrupted"
-    assert job.stage == "outline"
-    assert not job.checkpoint_available
-    assert not job.retryable
-    assert job.action_label == "Preparation conversion required"
-    assert "conversion to the current preparation workflow" in (job.explanation or "")
-
-
-@pytest.mark.parametrize(
-    ("source_available", "expected_retryable"), [(False, False), (True, True)]
-)
-def test_startup_finalizes_queued_cancellation_using_ingestion_source_availability(
-    recovery_store, source_available, expected_retryable
-):
-    slug = f"cancelled_ingestion_{source_available}"
-    token = "b" * 32
-    job = store.new_job("ingestion", "extracting")
-    job.update(state="cancel_requested", attempt_id=token)
-    store.save_meta(slug, {"status": "processing", "attempt": {"id": token}, "job": job})
-    if source_available:
-        (recovery_store / f"{slug}.pdf").write_bytes(b"retained test source")
-
-    assert store.fail_stale_processing() == [slug]
-
-    cancelled = store.load_meta(slug)["job"]
-    assert cancelled["state"] == "cancelled"
-    assert cancelled["retryable"] is expected_retryable
-
-
-@pytest.mark.parametrize("stage", ["extracting", "embedding"])
-def test_restart_during_ingestion_stage_retries_from_retained_pdf(
-    recovery_store, tmp_path, stage
-):
-    slug = f"restart_{stage}"
-    token = "c" * 32
-    source_bytes = b"retained source PDF bytes across a process restart"
-    source = tmp_path / "original-name.pdf"
-    source.write_bytes(source_bytes)
-    job = store.new_job("ingestion", stage)
-    job.update(state="running", attempt_id=token)
-    store.save_meta(
-        slug,
-        {"status": "processing", "attempt": {"id": token}, "job": job},
-    )
-
-    store.stage_attempt_pdf(slug, token, source, "original-name.pdf")
-    job_id = job["job_id"]
-
-    assert store.fail_stale_processing() == [slug]
-    interrupted = campaign_sources.safe_job_read(store.load_meta(slug), slug)
-    assert interrupted is not None
-    assert interrupted.state == "interrupted"
-    assert interrupted.stage == stage
-    assert interrupted.job_id == job_id
-    assert interrupted.retryable
-    assert interrupted.retained_work == "source_pdf"
-
-    tasks = BackgroundTasks()
-    accepted = adventures.retry_adventure(slug, tasks)
-    assert accepted.status == "processing"
-    assert len(tasks.tasks) == 1
-
-    retried = store.load_meta(slug)
-    assert retried["job"]["job_id"] == job_id
-    retry_token = retried["attempt"]["id"]
-    retry_candidate = store.candidate_pdf_path(slug, retry_token)
-    assert retry_candidate.read_bytes() == source_bytes
-
-    with pytest.raises(HTTPException) as duplicate:
-        adventures.retry_adventure(slug, BackgroundTasks())
-    assert duplicate.value.status_code == 409
 
 
 @pytest.mark.parametrize("title_hint", ["", "An earlier working title"])

@@ -186,30 +186,22 @@ async def test_rejected_job_start_returns_its_lease(redis_client, monkeypatch) -
 # --- Daily provider spend -----------------------------------------------------------------------
 
 
-async def test_daily_spend_ceiling_refuses_and_resets_next_day(
+async def test_daily_spend_is_advisory_and_uses_separate_day_counters(
     clock, redis_client, monkeypatch
 ) -> None:
     monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 1_000_000)
     first = await admit_job(_request(), redis_client)
     await first.reserve_daily_spend(600_000)
-
     second = await admit_job(_request("198.51.100.4"), redis_client)
-    with pytest.raises(LimitRejected) as refused:
-        await second.reserve_daily_spend(500_000)
-    assert refused.value.code == "daily_budget_exhausted"
-    assert refused.value.retry_after is not None and refused.value.retry_after > 0
+    await second.reserve_daily_spend(500_000)
+    assert int(await redis_client.get(limits._spend_key(clock["t"]))) == 1_100_000
+    await _release_all(await admit_turn(_request(), redis_client))
     await second.settle()
-    # The refused reservation was not added to today's spend.
     assert int(await redis_client.get(limits._spend_key(clock["t"]))) == 600_000
-
-    await first.reserve_daily_spend(400_000)
-    # At the ceiling, even a turn pre-check is refused: it is the fail-closed path.
-    with pytest.raises(LimitRejected) as turn_refused:
-        await admit_turn(_request(), redis_client)
-    assert turn_refused.value.code == "daily_budget_exhausted"
-
+    await first.settle()
     clock["t"] += 86_400
     await _release_all(await admit_turn(_request(), redis_client))
+    assert int(await redis_client.get(limits._spend_key(clock["t"]))) == 0
 
 
 async def test_settle_refunds_a_reservation_for_work_never_started(
@@ -324,36 +316,13 @@ async def test_a_job_that_raises_still_settles_its_reservation(redis_client, mon
     assert await redis_client.zcard(JOB_GLOBAL) == 0
 
 
-# --- EDG-055 F7: a refused reservation says what was asked and what is left ---------------------
-
-
-async def test_refused_reservation_reports_the_budget_gap_and_reset(
-    clock, redis_client, monkeypatch
-) -> None:
-    monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 50_000_000)
-    await redis_client.set(limits._spend_key(clock["t"]), 500_000)
-    admission = await admit_job(_request(), redis_client)
-    with pytest.raises(LimitRejected) as refused:
-        await admission.reserve_daily_spend(50_000_000)
-    await admission.settle()
-
-    response = limit_rejection_response(refused.value)
-    body = json.loads(response.body)
-    assert response.status_code == 429
-    assert body["code"] == "daily_budget_exhausted"
-    assert body["retry_after_seconds"] == refused.value.retry_after
-    assert response.headers["Retry-After"] == str(refused.value.retry_after)
-    assert body["daily_budget"] == {
-        "requested_microusd": 50_000_000,
-        "remaining_microusd": 49_500_000,
-        "daily_limit_microusd": 50_000_000,
-    }
-
-    # A turn pre-check names no budget of its own.
-    await redis_client.set(limits._spend_key(clock["t"]), 50_000_000)
-    with pytest.raises(LimitRejected) as turn_refused:
-        await admit_turn(_request(), redis_client)
-    assert "daily_budget" not in json.loads(limit_rejection_response(turn_refused.value).body)
+def test_preparation_target_is_accounting_metadata_and_old_cap_is_ignored() -> None:
+    assert (
+        limits.declared_budget_microusd({"request": {"cost_target_microusd": 5_000_000}})
+        == 5_000_000
+    )
+    assert limits.declared_budget_microusd({"request": {"max_cost_microusd": 1}}) is None
+    assert limits.declared_budget_microusd({"request": {"cost_target_microusd": True}}) is None
 
 
 def test_turn_cost_charges_unknown_calls_at_the_assumed_cost(monkeypatch) -> None:
@@ -412,15 +381,11 @@ async def test_redis_outage_fails_rate_and_concurrency_open(monkeypatch) -> None
     assert {e["policy"] for e in open_events} == {"fail_open"}
 
 
-async def test_redis_outage_fails_the_spend_ceiling_closed(monkeypatch) -> None:
-    fresh = structlog.get_logger()
-    monkeypatch.setattr(limits, "log", fresh)
+async def test_redis_outage_does_not_block_advisory_cost_accounting(monkeypatch) -> None:
+    monkeypatch.setattr(limits, "log", structlog.get_logger())
     with structlog.testing.capture_logs() as logs:
-        with pytest.raises(LimitRejected) as refused:
-            await limits._reserve_daily_spend(_BrokenRedis(), 0)
-    assert refused.value.code == "limits_unavailable"
-    assert any(e["policy"] == "fail_closed" for e in logs)
-    assert limit_rejection_response(refused.value).status_code == 503
+        assert await limits._reserve_daily_spend(_BrokenRedis(), 0) == ""
+    assert any(e.get("policy") == "fail_open" for e in logs)
 
 
 # --- Safe response shape and observers ----------------------------------------------------------
@@ -615,7 +580,7 @@ async def test_turn_rate_limit_returns_a_safe_429_before_any_turn_work(
     assert calls["initial"] == 1 and calls["run"] == 1
 
 
-async def test_turn_is_refused_before_provider_work_at_the_daily_ceiling(
+async def test_turn_is_allowed_above_the_daily_cost_estimate(
     limits_client, redis_client, monkeypatch
 ) -> None:
     monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 1_000)
@@ -623,9 +588,8 @@ async def test_turn_is_refused_before_provider_work_at_the_daily_ceiling(
     calls = _turn_stubs(monkeypatch)
 
     response = await limits_client.post("/api/sessions/1/turn", json={"message": "look"})
-    assert response.status_code == 429
-    assert response.json()["code"] == "daily_budget_exhausted"
-    assert calls == {"initial": 0, "run": 0}
+    assert response.status_code != 429
+    assert calls == {"initial": 1, "run": 1}
     assert await redis_client.zcard(TURN_GLOBAL) == 0
 
 
@@ -712,9 +676,7 @@ async def test_upload_declaring_a_non_pdf_type_is_refused(limits_client, monkeyp
     assert ingested == []
 
 
-async def test_oversized_upload_is_413_before_the_app_runs(
-    limits_client, monkeypatch
-) -> None:
+async def test_oversized_upload_is_413_before_the_app_runs(limits_client, monkeypatch) -> None:
     from apps.api.routers import adventures
 
     monkeypatch.setattr(limit_config, "LIMIT_MAX_UPLOAD_BYTES", 1024 * 1024)
@@ -778,44 +740,41 @@ async def test_upload_rate_limit_and_job_cap_are_safe_refusals(
     assert ingested == ["x"]
 
 
-async def test_generation_is_refused_at_the_daily_ceiling_before_a_slug_exists(
+async def test_generation_cost_target_does_not_block_work_above_daily_estimate(
     limits_client, redis_client, monkeypatch, tmp_path
 ) -> None:
-    from apps.api.services import campaign_generator
+    from apps.api.services.campaign_prep import runtime
 
     started: list[str] = []
 
     async def build(*args, **kwargs):
         started.append("x")
 
-    monkeypatch.setattr(campaign_generator, "build_generated_campaign", build)
+    monkeypatch.setattr(runtime, "prepare_adventure", build)
     monkeypatch.setattr(limit_config, "LIMIT_DAILY_SPEND_MICROUSD", 100_000)
     monkeypatch.setattr(limit_config, "LIMIT_UNBUDGETED_JOB_COST_MICROUSD", 500_000)
 
     response = await limits_client.post("/api/adventures/generate", json={"size": "small"})
-    assert response.status_code == 429
-    assert response.json()["code"] == "daily_budget_exhausted"
-    assert started == []
-    assert not (tmp_path / "adventures").exists() or not any((tmp_path / "adventures").iterdir())
+    assert response.status_code == 202
+    assert started == ["x"]
+    assert any((tmp_path / "adventures").iterdir())
 
 
 async def test_accepted_generation_reserves_its_budget_and_releases_its_lease(
     limits_client, redis_client, monkeypatch
 ) -> None:
-    from apps.api.services import campaign_generator
+    from apps.api.services.campaign_prep import runtime
 
     started: list[str] = []
 
     async def build(*args, **kwargs):
         started.append("x")
 
-    monkeypatch.setattr(campaign_generator, "build_generated_campaign", build)
+    monkeypatch.setattr(runtime, "prepare_adventure", build)
     response = await limits_client.post("/api/adventures/generate", json={"size": "small"})
     assert response.status_code == 202
     assert started == ["x"]
-    assert int(await redis_client.get(limits._spend_key(time.time()))) == (
-        limit_config.LIMIT_UNBUDGETED_JOB_COST_MICROUSD
-    )
+    assert int(await redis_client.get(limits._spend_key(time.time()))) == (5_000_000)
     assert await redis_client.zcard(JOB_GLOBAL) == 0
 
 
@@ -832,9 +791,7 @@ async def test_usage_endpoint_is_developer_gated(limits_client, monkeypatch) -> 
     assert "ip:" not in json.dumps(body)
 
 
-async def test_usage_endpoint_reports_redis_outage_safely(
-    limits_client, monkeypatch
-) -> None:
+async def test_usage_endpoint_reports_redis_outage_safely(limits_client, monkeypatch) -> None:
     from apps.api.dependencies import get_redis
     from apps.api.main import app
 
@@ -849,7 +806,9 @@ async def test_usage_endpoint_reports_redis_outage_safely(
     assert "connection" not in json.dumps(response.json())
 
 
-async def test_retry_is_rate_limited_before_its_work(limits_client, redis_client, monkeypatch) -> None:
+async def test_retry_is_rate_limited_before_its_work(
+    limits_client, redis_client, monkeypatch
+) -> None:
     monkeypatch.setattr(limit_config, "LIMIT_JOB_STARTS_PER_HOUR", 1)
     first = await limits_client.post("/api/adventures/missing-adventure/retry")
     assert first.status_code != 429  # The saved adventure is absent, so the route itself refuses.

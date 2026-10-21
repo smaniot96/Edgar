@@ -18,9 +18,9 @@ setting but never its value. Defaults are sized so one local player never notice
 | `LIMIT_MAX_CONCURRENT_TURNS_PER_CLIENT` | 4 | Turns in flight per client. Must not exceed the global cap. |
 | `LIMIT_MAX_CONCURRENT_JOBS` | 4 | Background jobs in flight across all replicas (ingestion, embedding, generation, preparation). |
 | `LIMIT_MAX_UPLOAD_BYTES` | 67108864 (64 MiB) | Largest accepted PDF. Enforced on the declared length before parsing and on the exact copied size. |
-| `LIMIT_DAILY_SPEND_MICROUSD` | 50000000 (USD 50) | UTC-day ceiling on estimated provider spend, in USD micro-units. |
+| `LIMIT_DAILY_SPEND_MICROUSD` | 50000000 (USD 50) | Advisory UTC-day threshold for estimated provider spend, in USD micro-units. |
 | `LIMIT_ASSUMED_CALL_COST_MICROUSD` | 100000 (USD 0.10) | Charged for a provider call whose cost is unknown, and for each intro generation. |
-| `LIMIT_UNBUDGETED_JOB_COST_MICROUSD` | 500000 (USD 0.50) | Reserved against the ceiling for a job that declares no preparation budget. Must not exceed the daily ceiling. |
+| `LIMIT_UNBUDGETED_JOB_COST_MICROUSD` | 500000 (USD 0.50) | Accounting reservation for a job that declares no preparation cost target. |
 | `LIMIT_TURN_LEASE_SECONDS` | 300 | Lifetime of a turn lease. A lease whose holder died is freed after this long. |
 | `LIMIT_JOB_LEASE_SECONDS` | 7200 | Lifetime of a job lease. Must be at least 60. |
 
@@ -46,28 +46,19 @@ every refusal has the same shape:
 }
 ```
 
-The response also carries `Retry-After` when a window or the day's reset sets the wait.
+The response carries `Retry-After` when a rate window sets the wait.
 
-A refused job reservation (`daily_budget_exhausted` on an operator route) also says whether the
-job's own budget is the problem, so the UI can tell "used up" apart from "asks for more than is
-left" (EDG-055 F7). Turn pre-checks reserve nothing and omit it.
-
-```json
-"daily_budget": {
-  "requested_microusd": 50000000,
-  "remaining_microusd": 49500000,
-  "daily_limit_microusd": 50000000
-}
-```
+Daily cost estimates do not refuse work. Crossing the advisory threshold emits
+`daily_spend_estimate_exceeded`, and preparation continues. Retained historical error
+records may still contain `daily_budget_exhausted`.
 
 | Code | Status | When |
 | --- | --- | --- |
 | `rate_limited` | 429 | A per-client window is exhausted. Retry after `retry_after_seconds`. |
 | `concurrency_limited` | 429 | The global or per-client concurrency cap is full. Retry shortly. |
-| `daily_budget_exhausted` | 429 | Today's spend ceiling would be exceeded. Retry after the UTC day resets. |
 | `upload_too_large` | 413 | The PDF exceeds `LIMIT_MAX_UPLOAD_BYTES`. |
 | `upload_unsupported` | 415 | The upload is not a PDF: the content lacks a PDF header, or the declared type is not a PDF type. |
-| `limits_unavailable` | 503 | Redis is down and the spend ceiling cannot be confirmed, so new paid work is refused. |
+| `limits_unavailable` | 503 | The developer usage view cannot read Redis. |
 
 No response contains a client address, a Redis key, a traceback, or provider text.
 
@@ -75,12 +66,12 @@ No response contains a client address, a Redis key, a traceback, or provider tex
 
 | Route | Checks, in order |
 | --- | --- |
-| `POST /api/sessions/{id}/turn`, `/turn/stream`, `/intro` | Per-client turn rate; spend ceiling pre-check; global and per-client turn leases. The lease is released on every exit, including a client disconnect. |
+| `POST /api/sessions/{id}/turn`, `/turn/stream`, `/intro` | Per-client turn rate; advisory cost accounting; global and per-client turn leases. The lease is released on every exit, including a client disconnect. |
 | `POST /api/adventures/upload` | Content-length guard (before multipart parsing); per-client job starts; job lease; PDF content and type check; copy cap; reservation of the unbudgeted cost. |
-| `POST /api/adventures/generate` | Job starts; job lease; reservation of the declared preparation budget (or the unbudgeted cost) before any slug is created. |
-| `POST /api/adventures/{slug}/preparation/setup` | Job starts; job lease; reservation of the declared budget. |
-| `POST /api/adventures/{slug}/retry` | Job starts; job lease; reservation of the saved budget (or the unbudgeted cost). |
-| `POST /api/campaigns/{id}/sources/{slug}/upload` | As for upload, with the same content check. |
+| `POST /api/adventures/generate` | Job starts; job lease; reservation of the advisory preparation cost target (or the unbudgeted cost) before any slug is created. |
+| `POST /api/adventures/{slug}/preparation/setup` | Job starts; job lease; reservation of the advisory cost target. |
+| `POST /api/adventures/{slug}/retry` | Job starts; job lease; reservation of the saved cost target (or the unbudgeted cost). |
+| `POST /api/campaigns/{id}/sources/{slug}/upload` | Inert compatibility route: checks ownership and binding, then reports held immutable source. No job is admitted. |
 | `GET /api/limits/usage` | Developer view (see below). |
 
 A job's lease is released when its background task finishes, whether it succeeds, fails or is
@@ -92,14 +83,14 @@ cancelled. A job that never reaches its background task is undone when the reque
   is unknown, or that the collector dropped, is charged `LIMIT_ASSUMED_CALL_COST_MICROUSD`. Unknown
   spend is never counted as zero.
 - An intro is charged the assumed call cost.
-- A job reserves its declared preparation budget (`max_cost_microusd`) when it is accepted, or
-  `LIMIT_UNBUDGETED_JOB_COST_MICROUSD` when it declares none. The reservation is atomic and is
-  refused when it would cross the ceiling. A reservation for a request that is refused or fails
+- A job reserves its advisory preparation cost target (`cost_target_microusd`) when it is accepted, or
+  `LIMIT_UNBUDGETED_JOB_COST_MICROUSD` when it declares none. The reservation is atomic;
+  exceeding the advisory threshold logs a warning and work continues. A reservation for a request that is refused or fails
   before its job starts is returned.
 - A private preparation job settles its reservation when it ends in a terminal state (ready,
   failed, blocked or cancelled), whether it returned or raised (EDG-055 F6). The job's own run
   ledger is read before it starts and after it ends: the reservation is replaced by what this
-  attempt spent (spent and still-reserved semantic usage plus held image budget), so a job that
+  attempt spent (recorded semantic response usage), so a job that
   fails before any provider call returns its whole reservation. Spend above the reservation is
   added when the starting ledger was readable; otherwise the reservation is the most charged.
 - A job whose ledger is unreadable, or which ends without a terminal state (a stale worker, a
@@ -108,7 +99,7 @@ cancelled. A job that never reaches its background task is undone when the reque
 - Repeated preparation or retry of the same adventure reserves again; each attempt settles its
   own reservation against its own share of the run ledger.
 
-The ceiling is an estimate. It is not a billing reconciliation.
+The advisory cost record is an estimate, separate from billing reconciliation.
 
 ## Principal
 
@@ -128,8 +119,8 @@ Counters live in Redis, so every replica agrees.
 - Rate windows and concurrency leases **fail open** and log `limits_backend_unavailable` with
   `policy=fail_open`. The turn lock already needs Redis and fails closed on its own, so a Redis
   outage stops turns regardless.
-- The daily spend ceiling **fails closed**. A paid route returns 503 `limits_unavailable` rather
-  than start unbounded work.
+- Daily cost accounting **fails open**. Missing usage counters never turn the preparation
+  measurement goal into a stopping condition.
 - Recording spend after work already ran **fails open**. An outage under-counts spend and logs
   `limits_spend_record_failed`.
 

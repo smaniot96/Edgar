@@ -8,12 +8,10 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
-    Request,
     Response,
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from redis.asyncio import Redis
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -22,8 +20,7 @@ from db.postgres.models import Campaign, CharacterAssignment
 from db.vector.collections import DEFAULT_ADVENTURE_COLLECTIONS
 
 from ..auth import Auth, campaign_scope, member_campaign, owned_campaign, require_admin
-from ..dependencies import current_user_id, get_redis, get_session
-from ..limits import admit_job
+from ..dependencies import current_user_id, get_session
 from ..schemas.campaign import (
     CampaignCreate,
     CampaignDeleteRead,
@@ -303,9 +300,8 @@ async def reopen_campaign(campaign_id: int, auth: Auth, db: AsyncSession = Depen
 
 @router.post(
     "/campaigns/{campaign_id}/sources/{slug}/upload",
-    status_code=202,
-    # Recovery rewrites a shared source-library file, so it is an operator action as well as
-    # an ownership check on the campaign that is bound to it.
+    status_code=409,
+    # Retained for existing clients; source bindings are immutable under the new workflow.
     dependencies=[Depends(require_admin)],
 )
 async def recover_campaign_source(
@@ -313,26 +309,17 @@ async def recover_campaign_source(
     slug: str,
     background: BackgroundTasks,
     auth: Auth,
-    request: Request,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_session),
-    redis: Redis = Depends(get_redis),
 ):
-    """Recover an unusable bound source at its original slug using the player's PDF.
+    """Explain immutable source recovery after checking campaign ownership and binding.
 
-    Bindings and session history stay intact. This does not replace a ready source and never
-    synthesizes a lost PDF from old logs or metadata. Ingestion uses the existing pipeline.
-    Rate and job-concurrency limits apply (EDG-066).
+    Create a fresh adventure through the current preparation workflow. This compatibility
+    endpoint never stages a replacement PDF, changes archived records or starts a job.
     """
     from .adventures import recover_source_upload
 
-    admission = await admit_job(request, redis)
-    try:
-        campaign = await owned_campaign(db, campaign_id, auth)
-        if slug not in campaign.adventure_collections:
-            raise HTTPException(
-                status_code=422, detail="That source is not bound to this campaign."
-            )
-        return await recover_source_upload(slug, file, background, admission)
-    finally:
-        await admission.settle()
+    campaign = await owned_campaign(db, campaign_id, auth)
+    if slug not in campaign.adventure_collections:
+        raise HTTPException(status_code=422, detail="That source is not bound to this campaign.")
+    return await recover_source_upload(slug, file, background)

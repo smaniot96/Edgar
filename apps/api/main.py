@@ -14,7 +14,6 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
 from edgar_core.config import API_TITLE, API_VERSION
@@ -84,19 +83,10 @@ async def lifespan(app: FastAPI):
     from db.postgres import session as db_session_module
 
     await start_replica_guard(db_session_module.engine)
-    # Background ingest/generation tasks die with the process; flag the ones a previous run
-    # left in "processing" as failed so the UI can offer a retry instead of spinning forever.
-    from .services.adventures_meta import fail_stale_processing
+    # Only the new graph may recover its own marked durable jobs. Old jobs remain held.
+    from .services.campaign_prep.runtime import recover_private_preparations
 
-    try:
-        stale = await run_in_threadpool(fail_stale_processing)
-        if stale:
-            log.warning("adventures_marked_failed_after_restart", slugs=stale)
-        from .services.preparation_runtime import recover_private_preparations
-
-        await recover_private_preparations()
-    except OSError:
-        log.exception("adventures_stale_scan_failed")
+    await recover_private_preparations()
     try:
         yield
     finally:
@@ -108,6 +98,9 @@ async def lifespan(app: FastAPI):
 
         # Open session streams end with `closed: server_shutdown` at their next tick (EDG-047).
         begin_drain()
+        from .services.campaign_prep.runtime import shutdown
+
+        await shutdown()
         try:
             await close_redis()
         finally:
@@ -252,9 +245,11 @@ def _frontend_dist_dir() -> Path | None:
 
 _frontend_dist = _frontend_dist_dir()
 
+
 def mount_frontend_routes(api: FastAPI, frontend_dist: Path | None) -> None:
     """Mount the same-origin Vite bundle and nested SPA routes on an ASGI app."""
     if frontend_dist is None:
+
         @api.get("/ui", include_in_schema=False)
         @api.get("/ui/", include_in_schema=False)
         @api.get("/ui/{path:path}", include_in_schema=False)

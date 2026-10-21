@@ -335,6 +335,7 @@ def _embed_and_upsert(
     *,
     replace: bool = False,
     publication_guard: Callable | None = None,
+    embedding_provider: Callable | None = None,
 ) -> int:
     """Stage one immutable source version, validate its stored points, then activate it.
 
@@ -415,7 +416,7 @@ def _embed_and_upsert(
         texts = [p["text"] for _, p in missing]
 
         try:
-            embeddings = get_embeddings(texts) if texts else []
+            embeddings = (embedding_provider or get_embeddings)(texts) if texts else []
             if len(embeddings) != len(texts) or any(
                 len(v) != VECTOR_SIZE or not all(math.isfinite(x) for x in v) or not any(v)
                 for v in embeddings

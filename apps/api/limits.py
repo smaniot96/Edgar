@@ -56,7 +56,9 @@ _UPLOAD_PATH = re.compile(r"/api/(adventures/upload|campaigns/\d+/sources/[^/]+/
 # A PDF header may sit up to 1024 bytes into the file, as readers allow.
 _PDF_HEADER = b"%PDF-"
 _PDF_HEADER_SEARCH_BYTES = 1024
-PDF_CONTENT_TYPES = frozenset({"application/pdf", "application/x-pdf", "application/octet-stream", ""})
+PDF_CONTENT_TYPES = frozenset(
+    {"application/pdf", "application/x-pdf", "application/octet-stream", ""}
+)
 
 # Fixed scope names only. They appear in logs and observer callbacks, never raw client values.
 SCOPE_TURNS = "turns"
@@ -228,8 +230,12 @@ async def _reserve_daily_spend(redis: Redis, amount: int) -> str:
                     spent = int(await pipe.get(key) or 0)
                     over = spent >= ceiling if amount == 0 else spent + amount > ceiling
                     if over:
-                        log.warning("daily_spend_estimate_exceeded", scope=SCOPE_DAILY_SPEND,
-                                    estimated_microusd=spent + amount, advisory_microusd=ceiling)
+                        log.warning(
+                            "daily_spend_estimate_exceeded",
+                            scope=SCOPE_DAILY_SPEND,
+                            estimated_microusd=spent + amount,
+                            advisory_microusd=ceiling,
+                        )
                     pipe.multi()
                     pipe.incrby(key, amount)
                     pipe.expire(key, _SPEND_KEY_TTL_SECONDS)
@@ -380,7 +386,9 @@ class Admission:
 async def admit_turn(request: Request, redis: Redis) -> Admission:
     """Admit one play turn or intro: per-client rate, daily ceiling, concurrency leases."""
     principal = client_principal(request)
-    await _enforce_rate(redis, SCOPE_TURNS, principal, limit_config.LIMIT_TURNS_PER_MINUTE, _TURN_WINDOW_SECONDS)
+    await _enforce_rate(
+        redis, SCOPE_TURNS, principal, limit_config.LIMIT_TURNS_PER_MINUTE, _TURN_WINDOW_SECONDS
+    )
     await _reserve_daily_spend(redis, 0)
     admission = Admission(redis=redis, principal=principal)
     try:
@@ -412,7 +420,11 @@ async def admit_job(request: Request, redis: Redis) -> Admission:
     """
     principal = client_principal(request)
     await _enforce_rate(
-        redis, SCOPE_JOB_STARTS, principal, limit_config.LIMIT_JOB_STARTS_PER_HOUR, _JOB_WINDOW_SECONDS
+        redis,
+        SCOPE_JOB_STARTS,
+        principal,
+        limit_config.LIMIT_JOB_STARTS_PER_HOUR,
+        _JOB_WINDOW_SECONDS,
     )
     admission = Admission(redis=redis, principal=principal)
     try:
@@ -487,13 +499,13 @@ def schedule_job(
 
 
 def declared_budget_microusd(captured: Any) -> int | None:
-    """The preparation budget a captured setup declares (`capture_setup` shape), if any."""
+    """The advisory preparation cost target in a captured setup, if supplied."""
     if not isinstance(captured, dict):
         return None
     request = captured.get("request")
     if not isinstance(request, dict):
         return None
-    value = request.get("max_cost_microusd")
+    value = request.get("cost_target_microusd")
     return value if type(value) is int and value > 0 else None
 
 
@@ -528,9 +540,16 @@ class UploadSizeLimitMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["method"] == "POST" and _UPLOAD_PATH.fullmatch(scope["path"]):
+        if (
+            scope["type"] == "http"
+            and scope["method"] == "POST"
+            and _UPLOAD_PATH.fullmatch(scope["path"])
+        ):
             declared = _declared_length(scope)
-            if declared is not None and declared > limit_config.LIMIT_MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES:
+            if (
+                declared is not None
+                and declared > limit_config.LIMIT_MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES
+            ):
                 response = limit_rejection_response(reject(SCOPE_UPLOAD_SIZE, "upload_too_large"))
                 await response(scope, receive, send)
                 return

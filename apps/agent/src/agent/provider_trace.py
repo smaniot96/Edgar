@@ -37,9 +37,9 @@ from agent.turn_diagnostics import TurnDiagnostics, current_collector, normalize
 from edgar_core.model_profiles import effective_profile
 from edgar_core.safe_errors import ErrorCategory, classify_failure
 
-# USD micro-units per token (input, output) for models with a configured price. Mirrors the frozen
-# preparation ceilings in apps/api/services/preparation_provider.py (asserted equal in tests). A
-# model absent here has no configured price, so its cost stays unknown. Do not add guessed prices.
+# USD micro-units per token (input, output) for measured play calls. Campaign preparation
+# keeps its own response ledger. A model absent here has no configured price, so its cost
+# stays unknown. Do not add guessed prices.
 CONFIGURED_PRICES: dict[str, tuple[int, int]] = {"gpt-6.1-sol": (4, 20)}
 
 # The safe-failure taxonomy (edgar_core.safe_errors) mapped onto the closed diagnostics vocabulary.
@@ -97,9 +97,7 @@ def _sum(values: list[int | None]) -> int | None:
     return sum(values)  # type: ignore[arg-type]
 
 
-def _add_usage(
-    total: dict[str, int | None] | None, usage: Any
-) -> dict[str, int | None] | None:
+def _add_usage(total: dict[str, int | None] | None, usage: Any) -> dict[str, int | None] | None:
     if not usage:
         return total
     normalized = normalize_usage(usage)

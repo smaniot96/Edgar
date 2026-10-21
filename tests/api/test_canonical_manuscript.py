@@ -222,11 +222,9 @@ def test_replacement_extraction_drops_stale_manifest_and_manuscript_pointer(manu
         manuscripts.resolve_canonical_manuscript("authored")
 
 
-def test_invalid_binding_and_attempt_ids_are_rejected(manuscript_store):
+def test_invalid_manuscript_binding_is_rejected(manuscript_store):
     with pytest.raises(manuscripts.ManuscriptUnavailable, match="binding is invalid"):
         manuscripts.resolve_canonical_manuscript("../outside")
-    with pytest.raises(manuscripts.ManuscriptUnavailable, match="attempt identity is invalid"):
-        manuscripts.save_candidate_manuscript("authored", "../outside", "text")
 
 
 def test_player_source_projection_never_includes_manuscript_pointer_or_content(

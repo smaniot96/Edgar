@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from edgar_core.preparation import SafePreparationFailure
+from edgar_core.preparation_status import SafePreparationFailure
 from edgar_core.sources import RulesEdition, SourceEdition
 
 from .preparation_setup import PreparationSetup

@@ -254,9 +254,13 @@ def _restore_generation_title(meta: dict) -> None:
     if (meta.get("generation") or {}).get("kind") == "ai":
         title_hint = (meta.get("generation") or {}).get("title_hint")
         title = meta.get("title")
-        placeholder = title_hint if isinstance(title_hint, str) and title_hint.strip() else "AI campaign"
-        if isinstance(title, str) and title.strip() and title not in (
-            f"{placeholder} (generating…)", f"{placeholder} (generating...)"
+        placeholder = (
+            title_hint if isinstance(title_hint, str) and title_hint.strip() else "AI campaign"
+        )
+        if (
+            isinstance(title, str)
+            and title.strip()
+            and title not in (f"{placeholder} (generating…)", f"{placeholder} (generating...)")
         ):
             return
         meta["title"] = placeholder
@@ -325,7 +329,10 @@ def load_generation_checkpoint(
         raise ValueError("Saved chapters have no matching outline.")
     if outline is not None:
         required_outline_fields = ("title", "premise", "setting", "hook")
-        if any(not isinstance(outline.get(field), str) or not outline[field].strip() for field in required_outline_fields):
+        if any(
+            not isinstance(outline.get(field), str) or not outline[field].strip()
+            for field in required_outline_fields
+        ):
             raise ValueError("Saved outline is incomplete.")
         outline_chapters = outline.get("chapters")
         if not isinstance(outline_chapters, list) or not outline_chapters:
@@ -342,7 +349,7 @@ def load_generation_checkpoint(
         # Validate every model field (including the optional faction/NPC lists) before
         # treating this as resumable work. A structurally plausible but invalid outline
         # would otherwise fail every retry during chapter prompt construction.
-        from .campaign_generator import CampaignOutline
+        from .campaign_prep.archive import CampaignOutline
 
         outline = CampaignOutline.model_validate(outline).model_dump()
         expected = len(outline_chapters)
@@ -360,62 +367,6 @@ def load_generation_checkpoint(
         "outline": value.get("outline"),
         "chapters": chapters,
     }
-
-
-def save_generation_checkpoint(
-    slug: str,
-    token: str,
-    checkpoint: GenerationCheckpoint,
-    *,
-    stage: str,
-    total_chapters: int,
-) -> dict[str, Any]:
-    """Write work before its metadata summary; stale attempts cannot publish checkpoints."""
-    from db.vector.versions import SupersededIngestion
-
-    with attempt_guard(slug, token) as meta:
-        job = meta.get("job")
-        if (
-            not isinstance(job, dict)
-            or job.get("attempt_id") != token
-            or job.get("job_id") != checkpoint["job_id"]
-            or job.get("kind") != "generation"
-        ):
-            raise SupersededIngestion("A newer accepted adventure attempt owns this job.")
-        if job.get("state") == "cancel_requested":
-            raise JobCancelled("The adventure preparation was cancelled by its owner.")
-        expected_keys = {str(index) for index in range(total_chapters)}
-        if set(checkpoint["chapters"]).difference(expected_keys):
-            raise ValueError("Checkpoint chapter indexes do not match the requested campaign size.")
-        directory = job_dir(slug, checkpoint["job_id"])
-        directory.mkdir(parents=True, exist_ok=True)
-        temporary: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=directory, suffix=".tmp", delete=False
-            ) as file:
-                temporary = Path(file.name)
-                json.dump(checkpoint, file, ensure_ascii=False, separators=(",", ":"))
-                file.flush()
-                os.fsync(file.fileno())
-            temporary.replace(directory / "checkpoint.json")
-            directory_fd = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-        job.update(
-            stage=stage,
-            completed_chapters=len(checkpoint["chapters"]),
-            total_chapters=total_chapters,
-            checkpoint_available=bool(checkpoint["outline"] or checkpoint["chapters"]),
-            updated_at=datetime.now(UTC).isoformat(),
-        )
-        save_meta(slug, meta)
-        return dict(job)
 
 
 @contextmanager
@@ -484,46 +435,6 @@ def _publish_candidate_pdf(slug: str, token: str) -> bool:
     finally:
         os.close(directory_fd)
     return True
-
-
-def set_attempt_fields(slug: str, token: str, **values: Any) -> None:
-    """Attach private staged-source bookkeeping to the fenced attempt."""
-    with attempt_guard(slug, token) as meta:
-        meta.setdefault("attempt", {}).update(values)
-        save_meta(slug, meta)
-
-
-def stage_attempt_pdf(slug: str, token: str, source: Path, filename: str | None = None) -> Path:
-    """Copy a candidate replacement into its immutable attempt before indexing it."""
-    destination = candidate_pdf_path(slug, token)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=destination.parent, suffix=".tmp", delete=False) as out:
-            temporary = Path(out.name)
-            with source.open("rb") as incoming:
-                shutil.copyfileobj(incoming, out)
-            out.flush()
-            os.fsync(out.fileno())
-        temporary.replace(destination)
-        directory_fd = os.open(destination.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-    if filename:
-        set_attempt_fields(slug, token, source_filename=filename)
-    update_job(
-        slug,
-        token,
-        retained_work="source_pdf",
-        retained_source_attempt_id=token,
-        retained_source_filename=filename,
-    )
-    return destination
 
 
 def cancel_attempt(slug: str, token: str) -> bool:
@@ -621,7 +532,11 @@ def check_job_running(slug: str, token: str) -> None:
     if (meta.get("attempt") or {}).get("id") != token:
         raise SupersededIngestion("A newer accepted adventure attempt owns this job.")
     job = meta.get("job")
-    if isinstance(job, dict) and job.get("attempt_id") == token and job.get("state") == "cancel_requested":
+    if (
+        isinstance(job, dict)
+        and job.get("attempt_id") == token
+        and job.get("state") == "cancel_requested"
+    ):
         raise JobCancelled("The adventure preparation was cancelled by its owner.")
 
 
@@ -729,9 +644,7 @@ def finish_attempt(slug: str, token: str, updates: dict, *, success: bool = Fals
                     job.update(
                         retained_work="source_pdf",
                         retained_source_attempt_id=token,
-                        retained_source_filename=(meta.get("attempt") or {}).get(
-                            "source_filename"
-                        ),
+                        retained_source_filename=(meta.get("attempt") or {}).get("source_filename"),
                     )
             if success or not previous:
                 staged = attempt_dir(slug, token)
@@ -779,92 +692,3 @@ def finish_attempt(slug: str, token: str, updates: dict, *, success: bool = Fals
             return True
     except SupersededIngestion:
         return False
-
-
-STALE_PROCESSING_ERROR = (
-    "Processing was interrupted by a server restart. Use retry to process it again."
-)
-
-
-def fail_stale_processing() -> list[str]:
-    """Mark every adventure still in "processing" as failed; return the affected slugs.
-
-    Call once at startup: ingestion/generation run as in-process background tasks, so anything
-    still "processing" when the process starts belongs to a run that no longer exists.
-    """
-    stale: list[str] = []
-    for slug in sorted(metadata_slugs()):
-        with lifecycle_lock(slug):
-            meta = load_meta(slug)
-            if meta.get("status") != "processing":
-                continue
-            current_attempt = (meta.get("attempt") or {}).get("id")
-            current_candidate = (
-                candidate_pdf_path(slug, current_attempt)
-                if isinstance(current_attempt, str)
-                else None
-            )
-            accepted = None
-            if meta.get("index_receipts"):
-                from .campaign_sources import active_metadata
-
-                active = active_metadata(slug, meta)
-                if current_attempt and active.get("artifact_attempt") == current_attempt:
-                    accepted = active
-                    _publish_candidate_pdf(slug, current_attempt)
-                    accepted.pop("source_pdf_attempt_id", None)
-            job = meta.get("job")
-            if isinstance(job, dict) and job.get("state") in ("queued", "running"):
-                job.update(
-                    state="interrupted",
-                    retryable=bool(
-                        not job.get("checkpoint_corrupt")
-                        and (
-                            job.get("kind") == "generation"
-                            or (current_candidate is not None and current_candidate.is_file())
-                            or canonical_pdf_path(slug).is_file()
-                        )
-                    ),
-                    interruption="server_restart",
-                    updated_at=datetime.now(UTC).isoformat(),
-                )
-                if current_candidate is not None and current_candidate.is_file():
-                    job.update(
-                        retained_work="source_pdf",
-                        retained_source_attempt_id=current_attempt,
-                        retained_source_filename=(meta.get("attempt") or {}).get("source_filename"),
-                    )
-                job.pop("attempt_id", None)
-            elif isinstance(job, dict) and job.get("state") == "cancel_requested":
-                job.update(
-                    state="cancelled",
-                    stage="cancelled",
-                    retryable=bool(
-                        not job.get("checkpoint_corrupt")
-                        and (
-                            job.get("kind") == "generation"
-                            or (current_candidate is not None and current_candidate.is_file())
-                            or canonical_pdf_path(slug).is_file()
-                        )
-                    ),
-                    updated_at=datetime.now(UTC).isoformat(),
-                )
-            previous = meta.get("ready_receipt")
-            if accepted is not None and accepted.get("status") == "ready":
-                meta.update(accepted)
-                if isinstance(job, dict):
-                    job.update(state="completed", stage="completed", retryable=False)
-                    meta["job"] = job
-                job = None
-            elif previous:
-                meta.update(previous)
-                if isinstance(job, dict):
-                    meta["job"] = job
-                meta["last_attempt"] = {"status": "failed", "error": STALE_PROCESSING_ERROR}
-            else:
-                meta.update({"status": "failed", "error": STALE_PROCESSING_ERROR})
-                _restore_generation_title(meta)
-            meta.pop("attempt", None)
-            save_meta(slug, meta)
-            stale.append(slug)
-    return stale

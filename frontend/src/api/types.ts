@@ -111,11 +111,8 @@ export interface ExtractionPreview extends IngestionSummary {
 export type AdventureSize = "small" | "medium" | "large" | "gigantic";
 
 export interface PreparationSetup {
-  character_ids?: number[];
-  target_level?: number;
-  max_cost_microusd: number;
-  required_maps: boolean;
-  required_handouts: boolean;
+  cost_target_microusd?: number;
+  preferences?: string;
 }
 
 export interface AdventureGenerateRequest {

@@ -136,9 +136,7 @@ async def test_explicit_homebrew_preserves_bindings_and_empty_means_no_module(
     assert (await api_client.post("/api/campaigns", json=body)).status_code == 422
 
 
-async def test_ready_adventure_does_not_return_stale_raw_error_metadata(
-    api_client, source_corpus
-):
+async def test_ready_adventure_does_not_return_stale_raw_error_metadata(api_client, source_corpus):
     private_detail = "private player prompt and sk-provider-secret"
     source(source_corpus, "ready_source", ["The complete adventure"], expected=1)
     adventures_meta.save_meta(
@@ -153,87 +151,36 @@ async def test_ready_adventure_does_not_return_stale_raw_error_metadata(
     assert private_detail not in response.text
 
 
-async def test_reupload_restores_exact_bound_slug_and_preserves_history(
+async def test_archived_source_reupload_is_held_and_preserves_history(
     api_client, source_corpus, db_session, monkeypatch
 ):
     seed = (await api_client.post("/api/seed")).json()
     cid = seed["campaign_id"]
-    old = (await api_client.get(f"/api/campaigns/{cid}")).json()
-    slug = old["adventure_collections"][0]
-    source(source_corpus, "unrelated", ["Do not change this"])
-    unrelated = source_corpus.scroll("unrelated", with_vectors=True)[0]
-    before = await db_session.scalar(select(func.count(EventLog.id)))
-    ingests = []
-
-    def ingest(target, path, *, attempt_id, source_filename):
-        pending = adventures_meta.load_meta(target)
-        assert pending["status"] == "processing"
-        candidate = adventures_meta.candidate_pdf_path(target, attempt_id)
-        assert str(candidate) == path
-        assert candidate.read_bytes() == b"%PDF-1.4 supplied source"
-        assert not adventures._PDF_DIR.joinpath(f"{target}.pdf").exists()
-        assert source_filename == "Original adventure.pdf"
-        ingests.append((target, path))
-        source(source_corpus, target, ["Restored opening"], expected=1)
-        # This route/history test substitutes indexing, then completes the real source
-        # publication lifecycle. Real extraction/index activation has separate coverage.
-        adventures_meta.save_meta(target, pending)
-        assert adventures_meta.finish_attempt(
-            target, attempt_id, {"status": "ready", "chunks": 1}, success=True
-        )
-
-    monkeypatch.setattr(adventures, "_ingest_adventure", ingest)
+    campaign = (await api_client.get(f"/api/campaigns/{cid}")).json()
+    slug = campaign["adventure_collections"][0]
+    metadata = {"status": "failed", "title": "Retained source"}
+    adventures_meta.save_meta(slug, metadata)
+    path = adventures_meta.meta_path(slug)
+    before_metadata = path.read_bytes()
+    before_events = await db_session.scalar(select(func.count(EventLog.id)))
+    monkeypatch.setattr(
+        adventures, "_ingest_adventure", lambda *_a, **_kw: pytest.fail("Archived dispatch")
+    )
     uploaded = await api_client.post(
         f"/api/campaigns/{cid}/sources/{slug}/upload",
-        files={"file": ("Original adventure.pdf", b"%PDF-1.4 supplied source", "application/pdf")},
+        files={"file": ("Original adventure.pdf", b"%PDF-1.4 replacement", "application/pdf")},
     )
-    assert uploaded.status_code == 202 and uploaded.json()["slug"] == slug
-    assert len(ingests) == 1
-    restored = (await api_client.get(f"/api/campaigns/{cid}")).json()
-    assert restored["adventure_collections"] == old["adventure_collections"]
-    assert restored["source_mode"] == "module" and restored["play_allowed"]
-    assert restored["sources"][0]["source_pdf_available"]
-    assert adventures._PDF_DIR.joinpath(f"{slug}.pdf").read_bytes() == b"%PDF-1.4 supplied source"
-    assert adventures_meta.load_meta(slug)["source_filename"] == "Original adventure.pdf"
-    assert await db_session.scalar(select(func.count(EventLog.id))) == before
-    assert source_corpus.scroll("unrelated", with_vectors=True)[0] == unrelated
+    assert uploaded.status_code == 409
+    assert "immutable" in uploaded.json()["detail"]
+    assert path.read_bytes() == before_metadata
+    assert await db_session.scalar(select(func.count(EventLog.id))) == before_events
+    assert not adventures._PDF_DIR.joinpath(f"{slug}.pdf").exists()
     assert (
         await api_client.post(
-            f"/api/campaigns/{cid}/sources/unbound/upload", files={"file": ("x.pdf", b"%PDF-1.4 x")}
+            f"/api/campaigns/{cid}/sources/unbound/upload",
+            files={"file": ("x.pdf", b"%PDF-1.4 x")},
         )
     ).status_code == 422
-    assert (
-        await api_client.post(
-            f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"%PDF-1.4 x")}
-        )
-    ).status_code == 409
-
-
-async def test_rejected_reupload_keeps_retained_pdf_and_retry_never_invents_missing_source(
-    api_client, source_corpus, monkeypatch
-):
-    seed = (await api_client.post("/api/seed")).json()
-    cid = seed["campaign_id"]
-    slug = (await api_client.get(f"/api/campaigns/{cid}")).json()["adventure_collections"][0]
-    adventures_meta.save_meta(slug, {"status": "ready", "chunks": 5})
-    assert (await api_client.post(f"/api/adventures/{slug}/retry")).status_code == 410
-    adventures._PDF_DIR.mkdir(parents=True)
-    retained = adventures._PDF_DIR / f"{slug}.pdf"
-    retained.write_bytes(b"%PDF-1.4 retained")
-    rejected = await api_client.post(
-        f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"")}
-    )
-    assert rejected.status_code == 400
-    assert retained.read_bytes() == b"%PDF-1.4 retained"
-    assert adventures_meta.load_meta(slug)["status"] == "ready"
-    monkeypatch.setattr(adventures, "_ingest_adventure", lambda *_, **_kw: None)
-    assert (await api_client.post(f"/api/adventures/{slug}/retry")).status_code == 202
-    assert adventures_meta.load_meta(slug)["status"] == "processing"
-    assert (
-        await api_client.post(
-            f"/api/campaigns/{cid}/sources/{slug}/upload", files={"file": ("x.pdf", b"%PDF-1.4 x")}
-        )
-    ).status_code == 409
 
 
 async def test_legacy_invalid_binding_remains_visible(api_client, source_corpus, db_session):

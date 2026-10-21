@@ -58,14 +58,8 @@ PLAY_STAGES = (
     "play.memory_summarizer",
     "play.session_intro",
 )
-AUTHORING_STAGES = (
-    "authoring.outline",
-    "authoring.chapter",
-    "authoring.coherence",
-    "authoring.manifest",
-)
-PREPARATION_STAGES = tuple(f"preparation.p{i:02d}" for i in range(1, 13))
-TEXT_STAGES = PLAY_STAGES + AUTHORING_STAGES + PREPARATION_STAGES
+CAMPAIGN_STAGES = tuple("campaign." + role for role in ("spine", "chapters", "visual", "review", "repair", "source_reading", "continuity"))
+TEXT_STAGES = PLAY_STAGES + CAMPAIGN_STAGES
 IMAGE_STAGES = ("image.adventure_map", "image.illustration", "image.creature_art")
 
 
@@ -447,7 +441,7 @@ def load_model_profiles(
             base["reasoning_effort"] = env_effort
             base["api"] = "responses"
         defaults[name] = base
-    for name in AUTHORING_STAGES + PREPARATION_STAGES:
+    for name in CAMPAIGN_STAGES:
         defaults[name] = {
             "model": LOCKED_MODEL,
             "reasoning_effort": LOCKED_EFFORT,
@@ -456,7 +450,7 @@ def load_model_profiles(
     profiles = {
         name: _profile_from_mapping(
             name, {**defaults[name], **flattened_profiles.get(name, {})},
-            locked=name in AUTHORING_STAGES + PREPARATION_STAGES,
+            locked=name in CAMPAIGN_STAGES,
         )
         for name in TEXT_STAGES
     }
@@ -512,7 +506,7 @@ def effective_profile(
     name = _validated_name(stage, TEXT_STAGES, "text")
     snapshot = profiles or current_model_profiles()
     profile = snapshot.profiles[name]
-    if name in AUTHORING_STAGES + PREPARATION_STAGES and (
+    if name in CAMPAIGN_STAGES and (
         profile.model != LOCKED_MODEL
         or profile.reasoning_effort != LOCKED_EFFORT
         or profile.api != LOCKED_API

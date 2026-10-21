@@ -10,7 +10,7 @@ from apps.api.routers import adventures
 from apps.api.schemas.adventure import AdventureRetryRequest
 from apps.api.services import adventures_meta, campaign_sources
 from ingestion.extract import ExtractedPage, Extraction, save_extraction
-from ingestion.readiness import IngestionRejected, prepare_report, report_summary
+from ingestion.readiness import prepare_report, report_summary
 
 
 @pytest.fixture
@@ -64,57 +64,6 @@ def extraction(*, source_hash="source", failed=False):
     return result, extracted
 
 
-def test_rejected_worker_preserves_inspectable_preview_without_ready_promotion(
-    local_sources, monkeypatch
-):
-    root, _ = local_sources
-    result, extracted = extraction(failed=True)
-    adventures_meta.save_meta("bridge", {"status": "processing"})
-
-    def reject(**kwargs):
-        save_extraction(extracted, kwargs["preview_dir"], readiness=result)
-        kwargs["on_prepared"](result)
-        raise IngestionRejected(
-            "extraction_quality",
-            "Page 1 has duplicated OCR words. Inspect preview and retry.",
-            result,
-        )
-
-    monkeypatch.setattr("ingestion.embed.run_pipeline", reject)
-    adventures._ingest_adventure("bridge", "unused.pdf")
-    meta = adventures_meta.load_meta("bridge")
-    assert meta["status"] == "failed" and meta["failure_code"] == "campaign_sources_unavailable"
-    assert meta["chunks"] == 0
-    source = campaign_sources.source_read("bridge")
-    assert source.message == "The adventure source needs attention before play can continue."
-    assert "duplicated OCR" not in source.message
-    assert source.extraction_preview_available
-    assert (root / "bridge" / "bridge.md").is_file()
-
-
-def test_nonempty_worker_result_cannot_promote_incomplete_index(local_sources, monkeypatch):
-    result, _ = extraction()
-    adventures_meta.save_meta("bridge", {"status": "processing"})
-
-    def ingest(**kwargs):
-        kwargs["on_prepared"](result)
-        return 1
-
-    monkeypatch.setattr("ingestion.embed.run_pipeline", ingest)
-    calls = []
-
-    def incomplete(slug, **kwargs):
-        calls.append(kwargs)
-        return {"status": "partial"}
-
-    monkeypatch.setattr(campaign_sources, "inspect_source", incomplete)
-    adventures._ingest_adventure("bridge", "unused.pdf")
-    meta = adventures_meta.load_meta("bridge")
-    assert meta["status"] == "failed" and meta["failure_code"] == "index_coverage"
-    assert calls[0]["expected_source_hash"] == "source"
-    assert calls[0]["expected_pages"] == [1]
-
-
 def test_changed_retained_pdf_and_failed_quality_cannot_read_as_ready(local_sources):
     _, pdfs = local_sources
     pdf = pdfs / "bridge.pdf"
@@ -158,7 +107,7 @@ def test_local_preview_endpoints_expose_report_and_literal_markdown(local_source
         assert raw["previews"]
 
 
-def test_reviewed_retry_requires_current_acknowledged_hashes_before_reservation(local_sources):
+def test_archived_reviewed_retry_is_held_without_metadata_changes(local_sources):
     root, pdfs = local_sources
     pdf = pdfs / "bridge.pdf"
     pdf.write_bytes(b"Retained test source")
@@ -166,22 +115,17 @@ def test_reviewed_retry_requires_current_acknowledged_hashes_before_reservation(
     save_extraction(extracted, root / "bridge", readiness=result)
     original = {"status": "failed", "chunks": 1, "ingestion": report_summary(result)}
     adventures_meta.save_meta("bridge", original)
-    stale = AdventureRetryRequest(
-        reviewed_source_sha256=extracted.source_sha256, reviewed_extraction_sha256="0" * 64
-    )
-    background = BackgroundTasks()
-    with pytest.raises(HTTPException) as caught:
-        adventures._retry_adventure("bridge", background, stale)
-    assert caught.value.status_code == 409
-    assert not background.tasks and adventures_meta.load_meta("bridge") == original
     current = AdventureRetryRequest(
         reviewed_source_sha256=extracted.source_sha256,
         reviewed_extraction_sha256=extracted.text_sha256(),
     )
-    accepted = adventures._retry_adventure("bridge", background, current)
-    assert accepted.status == "processing"
-    assert background.tasks[0].args[-1] == (extracted.source_sha256, extracted.text_sha256())
-    assert background.tasks[0].args[-2] == str(root / "bridge" / "bridge.extraction.json")
+    background = BackgroundTasks()
+    before = adventures_meta.meta_path("bridge").read_bytes()
+    with pytest.raises(HTTPException) as caught:
+        adventures._retry_adventure("bridge", background, current)
+    assert caught.value.status_code == 409
+    assert not background.tasks
+    assert adventures_meta.meta_path("bridge").read_bytes() == before
 
 
 def test_changed_pdf_makes_retained_preview_explicitly_previous(local_sources):

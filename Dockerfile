@@ -15,6 +15,13 @@ COPY frontend/ .
 RUN npm run build
 
 FROM python:3.12-slim-bookworm AS python-base
+ARG EDGAR_SOURCE_REVISION=unknown
+ARG EDGAR_SOURCE_BRANCH=unknown
+ARG EDGAR_SOURCE_CREATED=unknown
+LABEL org.opencontainers.image.title="Edgar" \
+    org.opencontainers.image.revision="${EDGAR_SOURCE_REVISION}" \
+    org.opencontainers.image.created="${EDGAR_SOURCE_CREATED}" \
+    io.edgar.source.branch="${EDGAR_SOURCE_BRANCH}"
 COPY --from=ghcr.io/astral-sh/uv:0.9.9 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -23,6 +30,9 @@ ENV UV_COMPILE_BYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin edgar
 WORKDIR /app
+# Build metadata lives inside every owned target as well as in its image labels.
+# tools/dev_rollout.py supplies these values from the committed dev archive.
+RUN python -c 'import json,os; from pathlib import Path; Path("/app/edgar-build.json").write_text(json.dumps({"revision":os.environ["EDGAR_SOURCE_REVISION"],"branch":os.environ["EDGAR_SOURCE_BRANCH"],"created":os.environ["EDGAR_SOURCE_CREATED"]}, sort_keys=True)+"\n")'
 # Workspace manifests only (uv needs every member's pyproject to resolve the workspace).
 COPY pyproject.toml uv.lock ./
 COPY core/pyproject.toml core/
@@ -42,7 +52,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 USER edgar
 CMD ["alembic", "-c", "db/alembic.ini", "upgrade", "head"]
 
-# PDF extraction uses targeted Tesseract TSV crops for raster-only stat headings.
+# Campaign acquisition uses full-page local OCR; rulebooks retain their own extraction path.
 # Share this runtime only between PDF consumers; migrate/rules_engine stay small.
 FROM python-base AS pdf-base
 RUN apt-get update \

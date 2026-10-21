@@ -15,7 +15,8 @@ from edgar_core.model_profiles import (
 
 
 def test_legacy_environment_remains_play_default_without_a_profile_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("edgar_core.model_profiles.DEFAULT_PROFILE_PATH", tmp_path / "missing.toml")
     snapshot = load_model_profiles(
@@ -27,8 +28,8 @@ def test_legacy_environment_remains_play_default_without_a_profile_file(
     assert effective_profile("play.parser", snapshot).model == "gpt-4o-mini"
     assert effective_profile("play.narrator", snapshot).model == "gpt-4o-mini"
     assert effective_profile("play.parser", snapshot).temperature is None
-    assert effective_profile("authoring.outline", snapshot).model == "gpt-6.1-sol"
-    assert effective_profile("authoring.outline", snapshot).reasoning_effort == "high"
+    assert effective_profile("campaign.spine", snapshot).model == "gpt-6-luna"
+    assert effective_profile("campaign.spine", snapshot).reasoning_effort == "medium"
 
 
 def test_explicit_missing_profile_does_not_silently_use_defaults(tmp_path: Path) -> None:
@@ -70,8 +71,8 @@ def test_toml_override_changes_only_its_named_stage_and_image_options_are_separa
 @pytest.mark.parametrize(
     "body",
     [
-        "[profiles.preparation.p01]\nmodel = 'gpt-6-luna'\n",
-        "[profiles.authoring.chapter]\nreasoning_effort = 'low'\n",
+        "[profiles.campaign.spine]\nmodel = 'gpt-6.1-sol'\n",
+        "[profiles.campaign.chapters]\nreasoning_effort = 'low'\n",
         "[profiles.play.narrator]\nmodel = 'gpt-6.1-sol'\ntemperature = 0.5\n",
         "[profiles.play.parser]\nretries = 99\n",
     ],
@@ -93,8 +94,7 @@ def test_snapshot_round_trips_and_scoped_context_ignores_environment_edits(
 ) -> None:
     path = tmp_path / "profiles.toml"
     path.write_text(
-        'profile_version = "snapshot-a"\n'
-        "[profiles.play.parser]\nmodel = 'gpt-4.1'\n",
+        "profile_version = \"snapshot-a\"\n[profiles.play.parser]\nmodel = 'gpt-4.1'\n",
         encoding="utf-8",
     )
     snapshot = load_model_profiles(
@@ -129,7 +129,7 @@ def test_chatopenai_receives_profile_options_and_locked_responses_policy(
     path.write_text(
         'profile_version = "caps"\n'
         "[profiles.play.parser]\nmax_output_tokens = 800\n"
-        "[profiles.preparation.p03]\nmax_output_tokens = 7000\n",
+        "[profiles.campaign.chapters]\nmax_output_tokens = 7000\n",
         encoding="utf-8",
     )
     text_snapshot = load_model_profiles(
@@ -149,9 +149,9 @@ def test_chatopenai_receives_profile_options_and_locked_responses_policy(
     llm.make_chat_model(profile="play.parser", max_tokens=200, profiles=text_snapshot)
     assert calls[-1]["max_tokens"] == 200
 
-    llm.make_chat_model(profile="preparation.p03", max_tokens=1800, profiles=text_snapshot)
-    assert calls[-1]["model"] == "gpt-6.1-sol"
-    assert calls[-1]["reasoning_effort"] == "high"
+    llm.make_chat_model(profile="campaign.chapters", max_tokens=1800, profiles=text_snapshot)
+    assert calls[-1]["model"] == "gpt-6-luna"
+    assert calls[-1]["reasoning_effort"] == "medium"
     assert calls[-1]["use_responses_api"] is True
     assert "temperature" not in calls[-1]
     assert calls[-1]["max_tokens"] == 1800

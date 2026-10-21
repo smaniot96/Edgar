@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from db.vector.collections import is_campaign_lore_collection, is_rules_collection
 from db.vector.source_status import inspect_source
 from db.vector.versions import active_index_version
-from edgar_core.preparation import SafePreparationFailure
+from edgar_core.preparation_status import SafePreparationFailure
 from edgar_core.safe_errors import OutcomeState, classify_failure
 
 from ..schemas.adventure import AdventureJobRead
@@ -41,16 +41,30 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
         return None
     kind, state, job_id = job.get("kind"), job.get("state"), job.get("job_id")
     allowed_states = {
-        "queued", "running", "interrupted", "failed", "completed", "cancel_requested", "cancelled"
+        "queued",
+        "running",
+        "interrupted",
+        "failed",
+        "completed",
+        "cancel_requested",
+        "cancelled",
     }
     allowed_stages = {
-        "queued", "outline", "generating_chapters", "extracting", "embedding", "indexing",
-        "publishing", "completed", "failed", "cancelled",
+        "queued",
+        "outline",
+        "generating_chapters",
+        "extracting",
+        "embedding",
+        "indexing",
+        "publishing",
+        "completed",
+        "failed",
+        "cancelled",
     }
     if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
         return None
     if meta.get("private_preparation") is True:
-        from .preparation_runtime import safe_preparation_status
+        from .campaign_prep.runtime import safe_preparation_status
 
         projected = safe_preparation_status(meta, slug)
         if projected is None:
@@ -66,7 +80,7 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             "failed": "failed",
             "cancelled": "cancelled",
         }.get(projected.status.value, "running")
-        saved_run = bool(meta.get("preparation_run_id"))
+        saved_run = bool(meta.get("preparation_run_id") or meta.get("preparation_workflow"))
         # A short button label and a separate sentence, so the card never repeats itself.
         action_label = "Retry preparation" if projected.action == "retry" else None
         explanation = {
@@ -74,26 +88,39 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             "retry": "Saved preparation work is kept. Retrying continues from the last accepted step."
             if saved_run
             else "No preparation work was saved before this failure. Retrying starts again from the same source and setup.",
-            "restart": "Preparation needs attention before it can continue.",
+            "restart": "Archived preparation is held. Its saved work is preserved. Create a fresh adventure to use the new workflow.",
             "none": "Your adventure is ready to play.",
         }.get(projected.action)
         return AdventureJobRead(
             version=1,
             job_id=job_id,
-            kind="generation" if (meta.get("generation") or {}).get("kind") == "ai" else "ingestion",
+            kind="generation"
+            if (meta.get("generation") or {}).get("kind") == "ai"
+            else "ingestion",
             state=public_state,
             stage=projected.stage,
             completed_chapters=0,
             total_chapters=None,
             checkpoint_available=saved_run,
             retryable=projected.retryable,
-            retained_work=(job.get("retained_work") if job.get("retained_work") in {
-                "none", "outline_and_chapters", "complete_manuscript", "source_pdf", "inspected_extraction", "published"
-            } else "none"),
+            retained_work=(
+                job.get("retained_work")
+                if job.get("retained_work")
+                in {
+                    "none",
+                    "outline_and_chapters",
+                    "complete_manuscript",
+                    "source_pdf",
+                    "inspected_extraction",
+                    "published",
+                }
+                else "none"
+            ),
             action_label=action_label,
             explanation=explanation,
             source_version=(meta.get("prepared_bundle") or {}).get("bundle_sha256")
-            if projected.status.value == "ready" else None,
+            if projected.status.value == "ready"
+            else None,
             failure=projected.failure,
         )
     if kind not in ("generation", "ingestion") or state not in allowed_states:
@@ -103,7 +130,9 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
     chapters = job.get("completed_chapters", 0)
     chapters = chapters if isinstance(chapters, int) and 0 <= chapters <= 24 else 0
     checkpoint = bool(job.get("checkpoint_available"))
-    retryable = bool(job.get("retryable")) and not bool(job.get("checkpoint_corrupt"))
+    # Every non-private job reaching this branch belongs to the retired source workers.
+    # Its retained receipts remain readable, but no active retry can use those executors.
+    retryable = False
     retained_work = "none"
     action_label = explanation = None
     if kind == "generation":
@@ -145,17 +174,19 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
         else:
             explanation = "No generation checkpoint is available."
         if state != "completed":
-            action_label = "Preparation conversion required"
-            explanation += " Continuing this saved campaign requires conversion to the current preparation workflow."
+            explanation += " Archived preparation is held. Create a fresh adventure to use the current workflow."
     elif job.get("retained_source_attempt_id") or source_pdf_path(slug, meta).is_file():
         retained_work = "source_pdf"
-        action_label = "Retry extraction and indexing"
-        explanation = "A retained PDF is available; retry reruns extraction and indexing without model generation."
+        explanation = "The retained PDF is preserved. Archived preparation is held. Create a fresh adventure to use the current workflow."
     ingestion = meta.get("ingestion") or {}
     source_version = ingestion.get("index_version") if isinstance(ingestion, dict) else None
     if not isinstance(source_version, str):
         source_version = None
     safe_failure = _job_failure(meta, job, state, job_id)
+    if safe_failure is not None:
+        safe_failure = safe_failure.model_copy(
+            update={"retryable": False, "recovery_action": "read_history"}
+        )
     return AdventureJobRead(
         version=1,
         job_id=job_id,
@@ -266,7 +297,7 @@ def active_metadata(slug: str, meta: dict | None = None) -> dict:
     """
     meta = load_meta(slug) if meta is None else meta
     if meta.get("private_preparation") is True:
-        from .preparation_runtime import private_preparation_ready
+        from .campaign_prep.runtime import private_preparation_ready
 
         if not private_preparation_ready(slug, meta):
             # A staged candidate can already have an activated vector version. Keep every
@@ -303,14 +334,69 @@ def source_read(slug: str) -> SourceRead:
             message="This legacy source binding is invalid. Bind a valid adventure source or choose homebrew play.",
         )
     raw_meta = load_meta(slug)
+    if raw_meta.get("preparation_workflow") == "campaign-graph-2.0":
+        from .campaign_prep.runtime import private_preparation_ready
+        from .campaign_prep.store import Store
+
+        try:
+            state = Store(slug).state().get("status", "queued")
+            ready = private_preparation_ready(slug, raw_meta)
+            status = (
+                "ready"
+                if ready
+                else "failed"
+                if state in ("ready", "blocked", "cancelled")
+                else "processing"
+            )
+        except Exception:
+            # Database/vector outages are an unavailable read, never evidence of Ready.
+            # Keep provider receipts, private diagnostics and filesystem paths out of DTOs.
+            ready, state, status = False, "unavailable", "unavailable"
+        message = {
+            "ready": None,
+            "processing": "Your adventure is being prepared privately.",
+            "unavailable": "The prepared adventure cannot be checked right now. Try again when the store is available.",
+        }.get(status, "Preparation is saved and needs attention.")
+        if state == "cancelled":
+            message = "Preparation was cancelled. Its saved work is retained."
+        try:
+            public_job = safe_job_read(raw_meta, slug)
+        except Exception:
+            public_job = None
+        if public_job is not None and state == "ready" and not ready:
+            public_job = public_job.model_copy(
+                update={
+                    "state": "failed",
+                    "stage": "Published records need attention",
+                    "retryable": False,
+                    "action_label": None,
+                    "explanation": message,
+                }
+            )
+        return SourceRead(
+            slug=slug,
+            title=raw_meta.get("title") or "Private adventure",
+            status=status,
+            usable_chunks=(raw_meta.get("chunks") or 0) if ready else 0,
+            expected_chunks=raw_meta.get("chunks"),
+            collection_exists=ready,
+            source_pdf_available=False,
+            message=message,
+            job=public_job,
+            ingestion=raw_meta.get("ingestion") if ready else None,
+        )
     if raw_meta.get("private_preparation") is True:
-        from .preparation_runtime import private_preparation_ready, safe_preparation_status
+        from .campaign_prep.runtime import private_preparation_ready, safe_preparation_status
 
         if not private_preparation_ready(slug, raw_meta):
-            from .preparation_runtime import failed_source_preview_dir
+            from .campaign_prep.runtime import failed_source_preview_dir
 
             projected = safe_preparation_status(raw_meta, slug)
-            failed = projected is not None and projected.status.value in ("blocked", "failed", "cancelled")
+            failed = projected is not None and projected.status.value in (
+                "blocked",
+                "failed",
+                "cancelled",
+            )
             # Only a PDF that failed before any run existed has an inspectable extraction.
             failed_preview = failed and failed_source_preview_dir(slug, raw_meta) is not None
             return SourceRead(
@@ -328,7 +414,9 @@ def source_read(slug: str) -> SourceRead:
                     if failed
                     else "Your adventure is being prepared privately."
                 ),
-                failure_code=projected.failure.code if failed and projected and projected.failure else None,
+                failure_code=projected.failure.code
+                if failed and projected and projected.failure
+                else None,
                 extraction_preview_available=failed_preview,
                 extraction_preview_current=failed_preview,
                 ingestion=None,
@@ -360,7 +448,9 @@ def source_read(slug: str) -> SourceRead:
         if candidate_preview is not None
         and (candidate_preview / f"{slug}.extraction.json").is_file()
         and (candidate_preview / f"{slug}.md").is_file()
-        else attempt_dir(slug, token) if token else adventure_path(slug)
+        else attempt_dir(slug, token)
+        if token
+        else adventure_path(slug)
     )
     preview_path = preview_dir / f"{slug}.extraction.json"
     is_private_preparation = raw_meta.get("private_preparation") is True
@@ -450,5 +540,7 @@ async def campaign_read(campaign) -> CampaignRead:
     # New callers use the additive full projection, which includes review/version gates.
     from .campaign_readiness import evaluate_play_readiness
 
-    result.readiness = await evaluate_play_readiness(None, campaign, observed_sources=result.sources)
+    result.readiness = await evaluate_play_readiness(
+        None, campaign, observed_sources=result.sources
+    )
     return result

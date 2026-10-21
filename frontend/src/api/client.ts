@@ -297,12 +297,6 @@ export function levelUpCampaignCharacter(
   return sendJson("POST", `/api/campaigns/${campaignId}/characters/${characterId}/level-up`, body);
 }
 
-export async function recoverCampaignSource(id: number, slug: string, file: File): Promise<AdventureRead> {
-  const form = new FormData();
-  form.append("file", file);
-  return json(await apiFetch(`/api/campaigns/${id}/sources/${encodeURIComponent(slug)}/upload`, { method: "POST", body: form }));
-}
-
 export function retryAdventure(slug: string, reviewed?: { reviewed_source_sha256: string; reviewed_extraction_sha256: string }): Promise<AdventureRead> {
   return sendJson("POST", `/api/adventures/${encodeURIComponent(slug)}/retry`, reviewed);
 }

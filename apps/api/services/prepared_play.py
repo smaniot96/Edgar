@@ -14,8 +14,7 @@ class PreparedPlayError(HTTPException):
 
 
 def require_prepared_play(slugs, edition, *, character_id=None, character=None, require_hero=False):
-    from .preparation_runtime import private_preparation_ready
-    from .preparation_store import PreparationStore
+    from .campaign_prep.runtime import private_preparation_ready
 
     for slug in slugs or []:
         meta = adventures_meta.load_meta(slug)
@@ -26,14 +25,14 @@ def require_prepared_play(slugs, edition, *, character_id=None, character=None, 
                 409, "preparation_in_progress", "This adventure is still being prepared."
             )
         try:
-            binding = PreparationStore().load_run(slug, meta["preparation_run_id"]).binding
+            rules_edition = meta["rules_edition"]
         except (ValueError, KeyError) as exc:
             raise PreparedPlayError(
                 409,
                 "preparation_failed",
                 "The prepared adventure binding needs attention.",
             ) from exc
-        if edition != binding.rules_edition:
+        if edition != rules_edition:
             raise PreparedPlayError(
                 422,
                 "rules_edition_mismatch",

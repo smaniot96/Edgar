@@ -1,11 +1,7 @@
 """Known-only map projection tests: hidden topology never reaches SVG or browser payloads."""
 
-
 from edgar_core.artifacts import text_digest
 from edgar_core.assets import (
-    AssetCoverage,
-    AssetCoverageReceipt,
-    AssetScopeCoverage,
     project_player_map,
     render_player_map_svg,
 )
@@ -14,7 +10,7 @@ from edgar_core.story import StoryEffect, StoryFact, StoryRef, accept_story_effe
 
 
 def _fixture():
-    text = "A safe opening." 
+    text = "A safe opening."
     manifest = AdventureManifest.model_validate(
         {
             "source": "synthetic-map",
@@ -106,7 +102,11 @@ def test_player_map_filters_unknown_topology_and_renders_only_committed_places()
 def test_player_map_uses_session_owned_source_binding_and_known_place_statuses():
     manifest = _fixture()
     other = _fact(manifest, "tower", "visit").model_copy(
-        update={"target": _fact(manifest, "tower", "visit").target.model_copy(update={"collection": "other-source"})}
+        update={
+            "target": _fact(manifest, "tower", "visit").target.model_copy(
+                update={"collection": "other-source"}
+            )
+        }
     )
     projection = project_player_map(
         session_id=9,
@@ -117,7 +117,9 @@ def test_player_map_uses_session_owned_source_binding_and_known_place_statuses()
         current_scene_id=None,
     )
 
-    assert [(place.scene_id, place.status) for place in projection.places] == [("harbor", "visited")]
+    assert [(place.scene_id, place.status) for place in projection.places] == [
+        ("harbor", "visited")
+    ]
     assert "Sentinel" not in render_player_map_svg(projection).decode()
 
 
@@ -125,6 +127,18 @@ def test_prepared_map_requires_reviewed_route_and_current_link_predicates():
     from tests.test_prepared_campaign import _fixture as prepared_fixture
 
     manifest, prepared = prepared_fixture()
+    # The archived engine schema requires discoverable gates and a source-backed ending.
+    # Build a complete retained fixture for this projection check.
+    from edgar_core.manifests import Entity
+
+    manifest.entities = [
+        Entity(entity_id="gate", kind="clue", title="Open gate", discovery_flag="gate_open"),
+        Entity(entity_id="safe", kind="ending", title="The keeper is safe"),
+    ]
+    manifest.passages[0].entity_ids = ["gate", "safe"]
+    manifest.scenes[0].links[0].requires = {"gate_open": "discovered"}
+    manifest.resolution_policies[0].requires = {"gate_open": "discovered"}
+    prepared.routes[0].traversal_requires = {"gate_open": "discovered"}
     manifest.prepared = prepared
     manifest.reviewed_sha256 = manifest_digest(manifest)
     fact = _fact(manifest, "dock", "visit")
@@ -142,12 +156,14 @@ def test_prepared_map_requires_reviewed_route_and_current_link_predicates():
         collection="synthetic-map",
         manifest=manifest,
         facts=[fact],
-        world_flags={"gate_open": "yes"},
+        world_flags={"gate_open": "discovered"},
         current_scene_id="dock",
     )
 
     assert hidden.routes == []
-    assert [(route.from_scene_id, route.to_scene_id) for route in shown.routes] == [("dock", "dock")]
+    assert [(route.from_scene_id, route.to_scene_id) for route in shown.routes] == [
+        ("dock", "dock")
+    ]
 
 
 def test_invalid_prepared_topology_never_falls_back_to_manifest_links():
@@ -168,74 +184,3 @@ def test_invalid_prepared_topology_never_falls_back_to_manifest_links():
 
     assert projection.topology == "unavailable"
     assert projection.routes == []
-
-
-def test_asset_receipt_cannot_be_ready_without_required_item_and_scope_coverage():
-    receipt = AssetCoverageReceipt(
-        manifest_sha256="a" * 64,
-        prepared_sha256="b" * 64,
-        coverage=[],
-    )
-    assert receipt.required_ready is False
-
-    item_only = AssetCoverageReceipt(
-        manifest_sha256="a" * 64,
-        prepared_sha256="b" * 64,
-        coverage=[
-            AssetCoverage(
-                asset_id="map_one",
-                kind="schematic_map",
-                required=True,
-                status="ready",
-                artifact_sha256="c" * 64,
-            )
-        ],
-    )
-    assert item_only.required_ready is False
-
-    complete = item_only.model_copy(
-        update={
-            "act_coverage": [
-                AssetScopeCoverage(scope="act", scope_id="act_one", required=True, status="ready")
-            ],
-            "scene_coverage": [
-                AssetScopeCoverage(scope="scene", scope_id="harbor", required=True, status="ready")
-            ],
-        }
-    )
-    assert complete.required_ready is True
-
-
-def test_required_visual_asset_needs_accepted_review_but_private_map_does_not():
-    from edgar_core.assets import AssetCoverageReceipt, AssetScopeCoverage
-
-    visual = AssetCoverageReceipt(
-        manifest_sha256="a" * 64,
-        prepared_sha256="b" * 64,
-        coverage=[
-            AssetCoverage(
-                asset_id="source_map_one",
-                kind="source_map",
-                required=True,
-                status="ready",
-                artifact_sha256="c" * 64,
-                player_review_status="pending",
-            )
-        ],
-        act_coverage=[
-            AssetScopeCoverage(scope="act", scope_id="act_one", required=True, status="ready")
-        ],
-        scene_coverage=[
-            AssetScopeCoverage(scope="scene", scope_id="harbor", required=True, status="ready")
-        ],
-    )
-    assert visual.required_ready is False
-    reviewed = visual.model_copy(
-        update={
-            "coverage": [
-                visual.coverage[0].model_copy(update={"player_review_status": "approved"})
-            ]
-        }
-    )
-    assert reviewed.required_ready is True
-

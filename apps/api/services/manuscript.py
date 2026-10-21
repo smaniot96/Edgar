@@ -1,4 +1,4 @@
-"""Hash-checked local access to the exact retained generated manuscript.
+"""Hash-checked local access to a published DM guide or retained archived manuscript.
 
 The private manuscript is intentionally not added to player source projections or HTTP links.
 Authors can export the active retained version with ``python -m apps.api.services.manuscript``.
@@ -55,6 +55,8 @@ def resolve_canonical_manuscript(slug: str) -> CanonicalManuscript:
     # Resolve the last published receipt while processing. This keeps an incomplete candidate
     # hidden while preserving local access to the previous original if vectors are unavailable.
     raw_meta = store.load_meta(slug)
+    if raw_meta.get("preparation_workflow") == "campaign-graph-2.0":
+        return _resolve_prepared_guide(slug, raw_meta)
     meta = active_metadata(slug, raw_meta)
     if meta.get("status") != "ready" and isinstance(raw_meta.get("ready_receipt"), dict):
         meta = raw_meta["ready_receipt"]
@@ -112,6 +114,50 @@ def resolve_canonical_manuscript(slug: str) -> CanonicalManuscript:
     )
 
 
+def _resolve_prepared_guide(slug: str, meta: dict) -> CanonicalManuscript:
+    """Export the guide pinned by the completed publication, even while Qdrant is offline.
+
+    The guide is a deterministic assembly of accepted semantic records. Incomplete
+    candidates are private working artifacts and never qualify as a published original.
+    """
+    from edgar_core.manifests import load_published_manifest, manifest_digest
+
+    from .campaign_prep.store import Store, digest
+
+    try:
+        graph_store = Store(slug)
+        compiled = graph_store.get("compiled")
+        publication = graph_store.get("publication")
+        if (
+            meta.get("status") != "ready"
+            or graph_store.state().get("status") != "ready"
+            or not compiled
+            or not publication
+            or digest(compiled) != publication["compiled_sha256"]
+            or meta.get("preparation_publication_receipt") != publication
+            or manifest_digest(load_published_manifest(meta)) != publication["manifest_sha256"]
+        ):
+            raise ManuscriptUnavailable("The prepared DM guide has no current publication receipt.")
+        path = graph_store.directory / "dm-guide.md"
+        content = path.read_bytes()
+        expected = hashlib.sha256(compiled["guide"].encode("utf-8")).hexdigest()
+        checksum = hashlib.sha256(content).hexdigest()
+        if checksum != expected:
+            raise ManuscriptUnavailable("The prepared DM guide failed its integrity check.")
+        return CanonicalManuscript(
+            path=path,
+            version=checksum,
+            sha256=checksum,
+            source_sha256=compiled["manifest"]["source_sha256"],
+            extraction_sha256=compiled["manifest"]["extraction_sha256"],
+            index_version=publication["index_version"],
+        )
+    except ManuscriptUnavailable:
+        raise
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise ManuscriptUnavailable("The prepared DM guide is unavailable or changed.") from exc
+
+
 def export_canonical_manuscript(slug: str, destination: str | Path) -> CanonicalManuscript:
     """Copy the exact UTF-8 bytes of the active original to a local author-chosen path."""
     manuscript = resolve_canonical_manuscript(slug)
@@ -142,55 +188,6 @@ def export_canonical_manuscript(slug: str, destination: str | Path) -> Canonical
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     return manuscript
-
-
-def save_candidate_manuscript(slug: str, attempt_id: str, text: str) -> dict[str, str | None]:
-    """Retain exact generated UTF-8 text in the immutable source attempt before indexing."""
-    from .adventures_meta import attempt_guard
-
-    _validate_binding(slug)
-    if not re.fullmatch(r"[0-9a-f]{32}", attempt_id):
-        raise ManuscriptUnavailable("The manuscript attempt identity is invalid.")
-    content = text.encode("utf-8")
-    digest = hashlib.sha256(content).hexdigest()
-    filename = f"{slug}.manuscript.md"
-    directory = store.attempt_dir(slug, attempt_id)
-    directory.mkdir(parents=True, exist_ok=True)
-    destination = directory / filename
-    temporary: Path | None = None
-    with attempt_guard(slug, attempt_id) as meta:
-        if destination.exists():
-            existing_digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-            if existing_digest != digest:
-                raise ManuscriptUnavailable("A retained manuscript attempt is immutable.")
-        try:
-            with tempfile.NamedTemporaryFile(dir=directory, suffix=".tmp", delete=False) as out:
-                temporary = Path(out.name)
-                out.write(content)
-                out.flush()
-                os.fsync(out.fileno())
-            if not destination.exists():
-                temporary.replace(destination)
-            directory_fd = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-        record: dict[str, str | None] = {
-            "attempt_id": attempt_id,
-            "filename": filename,
-            "version": digest,
-            "sha256": digest,
-            "source_sha256": None,
-            "extraction_sha256": None,
-            "index_version": None,
-        }
-        meta["manuscript"] = record
-        store.save_meta(slug, meta)
-    return record
 
 
 def main() -> None:
