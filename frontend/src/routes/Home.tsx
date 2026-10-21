@@ -260,7 +260,7 @@ export default function Home() {
             Generate one with AI or upload a PDF above — then hit Play.
           </EmptyState>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((card) => (
               <CampaignCard
                 key={card.adventure.slug}

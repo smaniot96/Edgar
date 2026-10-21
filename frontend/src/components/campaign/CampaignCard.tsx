@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { cancelAdventure, retryAdventure } from "../../api/client";
 import type { ReadinessRead } from "../../api/types";
@@ -62,10 +62,10 @@ export function CampaignCard({
   const [retrying, setRetrying] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [retryError, setRetryError] = useState<unknown>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
   const { adventure, name, state, lastPlayed, primarySession } = card;
   const job = adventure.job;
   const jobRunning = job != null && ["queued", "running", "cancel_requested"].includes(job.state);
-  const playable = !!card.campaign || (state === "ready" && card.readiness?.play_allowed === true) || state === "ended";
   const showReadiness = (state === "ready" && card.readiness?.play_allowed !== true) || card.readiness?.play_allowed === false;
   const adventureSubtitle = adventureTitleForDisplay(adventure);
   const showAdventureTitle = adventureSubtitle != null && adventureSubtitle !== name;
@@ -104,6 +104,23 @@ export function CampaignCard({
       setCancelling(false);
     }
   }
+
+  const needsSetup = !!adventure.preparation_setup_required;
+  // The label of what opening this card does, or null when there is nothing to open yet. A card
+  // that cannot be opened offers its one real next step (set up, retry) as the primary button
+  // instead of a disabled one.
+  const playLabel: ReactNode | null =
+    state === "ended" ? "Open"
+    : primarySession?.readiness?.play_allowed === true ? <><PlayIcon className="h-3.5 w-3.5" /> Continue</>
+    : primarySession?.has_history && primarySession.readiness?.history_allowed === true ? "Read story"
+    : card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? "View campaign"
+    : !card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? null
+    : state === "ready" && card.campaign ? "Set up first session"
+    : state === "ready" ? <><PlayIcon className="h-3.5 w-3.5" /> Start adventure</>
+    : state === "recovery" ? "Recover source"
+    : null;
+  const retryLabel = job?.action_label ?? "Retry retained source";
+  const retryAsPrimary = playLabel == null && !needsSetup && canRetryJob;
 
   const progress = preparationProgress(job);
   const failure = job?.failure ?? (adventure.failure_code ? { code: adventure.failure_code } : null);
@@ -184,11 +201,10 @@ export function CampaignCard({
             {job.explanation ? <p className="mt-1 text-xs text-ink-muted">{job.explanation}</p> : null}
           </div>
         ) : null}
-        {canRetryJob ? <Button variant="secondary" size="sm" loading={retrying} onClick={() => void retry()} className="mb-3">{job?.action_label ?? "Retry retained source"}</Button> : null}
-        {adventure.preparation_setup_required ? <PreparationRecovery slug={adventure.slug}
-          edition={adventure.rules_edition} onStarted={onRetried} /> : null}
+        {canRetryJob && !retryAsPrimary && !needsSetup ? <Button variant="secondary" size="sm" loading={retrying} onClick={() => void retry()} className="mb-3 min-h-11">{retryLabel}</Button> : null}
+        {needsSetup ? <p className="mb-3 text-sm text-ink-muted">Complete your setup to start private preparation.</p> : null}
         <ErrorNotice error={retryError} />
-        {state === "processing" && !job ? (
+        {state === "processing" && !job && !needsSetup ? (
           <p className="mb-3 text-xs italic text-ink-muted">
             Preparation is in progress. You can leave this page; it keeps working.
           </p>
@@ -199,40 +215,27 @@ export function CampaignCard({
           </p>
         ) : null}
         <div className="mt-auto flex flex-wrap gap-2">
-          <Button
-            className="min-h-11 min-w-0 flex-1 whitespace-normal break-words"
-            size="sm"
-            variant={state === "ended" ? "secondary" : "primary"}
-            disabled={!playable}
-            loading={opening}
-            loadingText="Opening…"
-            onClick={() => onPlay(card)}
-          >
-            {primarySession?.readiness?.play_allowed === true ? (
-              <><PlayIcon className="h-3.5 w-3.5" /> Continue</>
-            ) : primarySession?.has_history && primarySession.readiness?.history_allowed === true ? (
-              "Read story"
-            ) : card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
-              "View campaign"
-            ) : !card.campaign && state === "ready" && card.readiness?.play_allowed !== true ? (
-              card.readiness ? "Needs attention" : "Readiness unknown"
-            ) : state === "ready" && card.campaign ? (
-              "Set up first session"
-            ) : state === "ready" ? (
-              <>
-                <PlayIcon className="h-3.5 w-3.5" /> Start adventure
-              </>
-            ) : state === "ended" ? (
-              "Open"
-            ) : state === "recovery" ? (
-              "Recover source"
-            ) : state === "failed" ? (
-              "Not ready to play"
-            ) : (
-              "Preparing…"
-            )}
-          </Button>
-          <details className="relative">
+          {needsSetup ? (
+            <Button className="min-h-11 min-w-0 flex-1 whitespace-normal break-words" size="sm" onClick={() => setSetupOpen(true)}>
+              Set up preparation
+            </Button>
+          ) : retryAsPrimary ? (
+            <Button className="min-h-11 min-w-0 flex-1 whitespace-normal break-words" size="sm" loading={retrying} onClick={() => void retry()}>
+              {retryLabel}
+            </Button>
+          ) : playLabel != null ? (
+            <Button
+              className="min-h-11 min-w-0 flex-1 whitespace-normal break-words"
+              size="sm"
+              variant={state === "ended" ? "secondary" : "primary"}
+              loading={opening}
+              loadingText="Opening…"
+              onClick={() => onPlay(card)}
+            >
+              {playLabel}
+            </Button>
+          ) : null}
+          <details className={cn("relative", needsSetup || retryAsPrimary || playLabel != null ? "" : "ml-auto")}>
             <summary className="inline-flex min-h-11 cursor-pointer list-none items-center rounded-control border border-line px-3 text-sm text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-400">More</summary>
             <div className="absolute right-0 z-10 mt-1 rounded-control border border-line bg-surface-raised p-2 shadow-lg">
               <Button
@@ -247,6 +250,8 @@ export function CampaignCard({
             </div>
           </details>
         </div>
+        {needsSetup ? <PreparationRecovery open={setupOpen} slug={adventure.slug} edition={adventure.rules_edition}
+          onClose={() => setSetupOpen(false)} onStarted={onRetried} /> : null}
       </div>
     </article>
   );

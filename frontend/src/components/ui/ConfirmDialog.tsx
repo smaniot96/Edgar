@@ -25,6 +25,8 @@ export function ConfirmDialog({
   busyLabel,
   cancelLabel = "Cancel",
   variant = "danger",
+  role = "alertdialog",
+  confirmDisabled = false,
   busy = false,
   error = null,
   onConfirm,
@@ -38,6 +40,9 @@ export function ConfirmDialog({
   busyLabel?: string;
   cancelLabel?: string;
   variant?: ButtonVariant;
+  /** A form to fill in is a plain dialog; only a consequence to confirm is an alertdialog. */
+  role?: "alertdialog" | "dialog";
+  confirmDisabled?: boolean;
   busy?: boolean;
   error?: unknown;
   onConfirm: () => void;
@@ -104,13 +109,13 @@ export function ConfirmDialog({
       />
       <div
         ref={panel}
-        role="alertdialog"
+        role={role}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={bodyId}
         aria-busy={busy || undefined}
         onKeyDown={onKeyDown}
-        className="relative w-full max-w-md space-y-4 rounded-card border border-line-strong bg-surface-raised p-5 shadow-2xl"
+        className="relative max-h-full w-full max-w-md space-y-4 overflow-y-auto rounded-card border border-line-strong bg-surface-raised p-5 shadow-2xl"
       >
         <h2 id={titleId} className="break-words font-display text-xl [overflow-wrap:anywhere]">{title}</h2>
         <div id={bodyId} className="space-y-2 text-sm text-ink-muted">{children}</div>
@@ -119,7 +124,7 @@ export function ConfirmDialog({
           <Button ref={cancel} variant="secondary" disabled={busy} onClick={onCancel}>
             {cancelLabel}
           </Button>
-          <Button variant={variant} loading={busy} loadingText={busyLabel} onClick={onConfirm}>
+          <Button variant={variant} disabled={confirmDisabled} loading={busy} loadingText={busyLabel} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </div>
