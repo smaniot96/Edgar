@@ -26,6 +26,7 @@ from edgar_core.campaign_semantics import (
     Spine,
 )
 
+from .ai_generation import AI_WORKFLOW, AiGeneration
 from .chapter_parts import author_chapter
 from .compile import (
     assemble,
@@ -239,9 +240,44 @@ class Workflow:
             "publish",
         ):
             builder.add_node(name, getattr(self, name))
+        self.ai = AiGeneration(self)
+        for name in (
+            "ai_premise",
+            "ai_premise_check",
+            "ai_cast",
+            "ai_cast_check",
+            "ai_outline",
+            "ai_outline_check",
+            "ai_chapter",
+            "ai_chapter_check",
+            "ai_compose",
+        ):
+            builder.add_node(name, getattr(self, name))
         builder.add_edge(START, "source")
+        builder.add_conditional_edges(
+            "source", self.route_source, {"spine": "spine", "ai_premise": "ai_premise"}
+        )
+        # Each author node is followed by its check; a failed check routes back to the
+        # author for a revision with the recorded problems.
+        for step, following in (
+            ("ai_premise", "ai_cast"),
+            ("ai_cast", "ai_outline"),
+            ("ai_outline", "ai_chapter"),
+        ):
+            builder.add_edge(step, step + "_check")
+            builder.add_conditional_edges(
+                step + "_check",
+                self.route_ai_check(step),
+                {"revise": step, "next": following},
+            )
+        builder.add_edge("ai_chapter", "ai_chapter_check")
+        builder.add_conditional_edges(
+            "ai_chapter_check",
+            self.route_ai_chapter,
+            {"revise": "ai_chapter", "next": "ai_chapter", "compose": "ai_compose"},
+        )
+        builder.add_edge("ai_compose", "continuity")
         for previous, following in (
-            ("source", "spine"),
             ("spine", "bundles"),
             ("bundles", "continuity"),
             ("continuity", "assemble"),
@@ -261,6 +297,58 @@ class Workflow:
 
     def request(self):
         return self.store.state()["request"]
+
+    def route_source(self, address):
+        return "ai_premise" if self.request().get("ai_workflow") == AI_WORKFLOW else "spine"
+
+    def route_ai_check(self, step):
+        def route(address):
+            return "next" if self.ai.accepted(step.removeprefix("ai_")) is not None else "revise"
+
+        return route
+
+    def route_ai_chapter(self, address):
+        if self.ai.chapters_complete():
+            return "compose"
+        cid, _ = self.ai.current_chapter()
+        attempts = self.ai.attempts("chapter-" + cid)
+        return "revise" if attempts and attempts[-1]["problems"] else "next"
+
+    async def ai_premise(self, address):
+        await self.ai.premise()
+        return address
+
+    async def ai_premise_check(self, address):
+        self.ai.premise_check()
+        return address
+
+    async def ai_cast(self, address):
+        await self.ai.cast()
+        return address
+
+    async def ai_cast_check(self, address):
+        self.ai.cast_check()
+        return address
+
+    async def ai_outline(self, address):
+        await self.ai.outline()
+        return address
+
+    async def ai_outline_check(self, address):
+        self.ai.outline_check()
+        return address
+
+    async def ai_chapter(self, address):
+        await self.ai.chapter()
+        return address
+
+    async def ai_chapter_check(self, address):
+        self.ai.chapter_check()
+        return address
+
+    async def ai_compose(self, address):
+        self.ai.compose()
+        return address
 
     def registry(self, bundles=None):
         bundles = self.store.get("bundles") if bundles is None else bundles
