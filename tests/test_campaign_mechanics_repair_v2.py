@@ -37,8 +37,9 @@ def test_incompatible_templates_are_specific_material_findings():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_existing", [False, True])
 async def test_saved_authoring_is_reused_and_new_actor_stays_in_affected_bundle(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, reuse_existing
 ):
     monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path)
     store = Store("repair_mechanics")
@@ -46,6 +47,11 @@ async def test_saved_authoring_is_reused_and_new_actor_stays_in_affected_bundle(
         {"source_kind": "ai", "generation": {}, "preferences": "", "rules_edition": "2014"}
     )
     spine, bundles = fixture()
+    existing = Entity(
+        id="npc_wolves", kind="npc", name="Guard wolves", description="Original wolves", origin=ORIGIN
+    ).model_dump()
+    if reuse_existing:
+        spine["entities"].append(existing)
     store.put("source", {"kind": "ai", "pages": []})
     store.put("spine", spine)
     store.put("bundles", bundles)
@@ -88,7 +94,11 @@ async def test_saved_authoring_is_reused_and_new_actor_stays_in_affected_bundle(
     assert calls == ["repair", "review"]
     assert store.get("spine") == spine
     repaired = store.get("bundles")["chapters"][0]
-    assert repaired["new_entities"][0]["id"] == "npc_wolves"
+    if reuse_existing:
+        assert repaired["new_entities"] == []
+        assert next(e for e in store.get("spine")["entities"] if e["id"] == "npc_wolves") == existing
+    else:
+        assert repaired["new_entities"][0]["id"] == "npc_wolves"
     assert repaired["events"][0]["encounters"][1]["quantity"] == 3
     assert mechanical_findings(store.get("bundles"), store.get("mechanics")) == []
 

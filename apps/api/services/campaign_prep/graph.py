@@ -766,10 +766,21 @@ class Workflow:
         for kind, row in patches:
             if row.id in new_entities and kind == "entity":
                 continue
-            if row.id not in allowed or registry[row.id]["kind"] != kind:
+            if row.id in registry and registry[row.id]["kind"] != kind:
                 raise NeedsAttention(
-                    "Repair tried to change records outside its dependency closure."
+                    "Repair tried to change a record's kind."
                 )
+        # A referenced identity may already exist outside the affected closure.
+        # Preserve it locally instead of accepting its incidental re-description or
+        # rejecting useful paid repairs. The complete proposal stays in its receipt.
+        discarded = [row.id for _, row in patches if row.id not in allowed | new_entities.keys()]
+        if discarded:
+            self.store.put("repair-preserved-" + signature, {"unchanged_ids": discarded})
+        patches = [
+            (kind, row)
+            for kind, row in patches
+            if row.id in allowed or (kind == "entity" and row.id in new_entities)
+        ]
         spine, bundles = (
             copy.deepcopy(self.store.get("spine")),
             copy.deepcopy(self.store.get("bundles")),

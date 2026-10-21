@@ -17,7 +17,18 @@ def source_profile(text, *, name, source_evidence=None):
     source review. Runtime resolves this same text through a module StatReference and
     the same conservative parser, so preparation cannot promise unimplemented traits.
     """
-    record = identified_creature({"text": text, "section": name, "stat_block": True})
+    # Parenthetical authoring/provenance annotations in a heading are presentation,
+    # not a second creature. Check the exact base name without rewriting retained
+    # evidence or any mechanical line. A different name or multiple blocks still fail.
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        heading = line.strip()
+        if not heading:
+            continue
+        if heading.startswith(name + " (") and heading.endswith(")"):
+            lines[index] = name + ("\n" if line.endswith("\n") else "")
+        break
+    record = identified_creature({"text": "".join(lines), "section": name, "stat_block": True})
     if record is None:
         raise ValueError(
             f"Source profile {name!r} must contain one complete named stat block, "

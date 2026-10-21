@@ -138,11 +138,17 @@ Fill out:
   separated. Never use a made-up achievement_basis to turn unrelated private knowledge
   into an earned answer. The narrator will phrase approved information naturally; raw DM
   wording is internal evidence and must not be copied as dialogue or conditional directions.
+  This field is REQUIRED in every response. For an ordinary answered question or successful
+  observation with relevant source evidence, provide the earned answer in this field even if
+  no canonical discovery can be committed. A move or a citation alone conveys no answer to
+  the narrator. Use [] only when the action earns no source-backed information (or outside
+  reviewed module play). The narrator cannot see your private evidence and cannot recover an
+  answer you omit. Prefer several short exact clauses to one mixed public/private paragraph.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
   Prepared event scenes may share one location. If the actual action meets a supplied linked
   event's trigger (for example following a lead by asking the waiting ferryman), propose a
-  move story_effect to that exact eligible scene with achievement_basis explaining the actual
+  move story_effect with status="visited" to that exact eligible scene with achievement_basis explaining the actual
   matched trigger. Physical relocation is unnecessary. An available link, a greeting unrelated
   to its trigger, or a player's statement of future intent does not itself advance an event.
   Do not advance merely to make progress, and never complete a goal because a scene changed.

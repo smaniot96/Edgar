@@ -56,6 +56,16 @@ def test_source_profile_requires_no_catalogue_substitution_and_reports_limits():
     assert "movement is not simulated" in profile["capability_findings"][0]
 
 
+def test_source_heading_annotation_preserves_exact_evidence_and_all_numbers():
+    annotated = PROFILE.replace(
+        "Timber Drake\n", "Timber Drake (source-specific modification applied)\n", 1
+    )
+    profile = source_profile(annotated, name="Timber Drake")
+    assert profile["text"] == annotated
+    assert profile["monster_stats"] == source_profile(PROFILE, name="Timber Drake")["monster_stats"]
+    assert mechanical_findings(_bundles(annotated), []) == []
+
+
 def test_source_breath_preserves_damage_vulnerability_save_and_recharge():
     stats = parse_monster_stats(PROFILE, name="Timber Drake")
     breath = stats.attacks[-1]

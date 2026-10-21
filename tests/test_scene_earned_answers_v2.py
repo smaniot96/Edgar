@@ -22,6 +22,7 @@ from agent.scene_guidance import (
 from apps.api.services.campaign_prep.compile import assemble, make_extraction
 from edgar_core.manifests import AdventureManifest, manifest_digest
 from edgar_core.sources import source_citation
+from edgar_core.story import StoryEffect
 from ingestion.manifest import manifest_chunks
 
 ANSWER = "The bell is a customary boarding signal, not a safety mechanism."
@@ -128,6 +129,7 @@ async def test_public_adjudication_hides_raw_source_quotations_and_private_basis
     # public; the API must not independently expose that statement as a raw quote.
     public = public_adjudication(result)
     assert "accepted_observations" not in public
+    assert "observation_diagnostics" not in public
     assert "source_observations" not in public
     assert ANSWER not in str(public)
     assert proposed["achievement_basis"] not in str(public)
@@ -188,6 +190,27 @@ async def test_unearned_or_unreviewed_observations_are_rejected(scene_state, def
     )
     validate_story_effects(result, state)
     assert result.accepted_observations == []
+    assert result.observation_diagnostics["proposed"] == 1
+    assert result.observation_diagnostics["accepted"] == 0
+    assert (
+        result.observation_diagnostics.get("blocked") or result.observation_diagnostics["rejected"]
+    )
+
+
+def test_model_must_explicitly_decide_source_answers_without_breaking_archived_rulings():
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    schema = convert_to_openai_tool(AdjudicationResult)["function"]["parameters"]
+    assert "source_observations" in schema["required"]
+    assert "source_observations" in schema["properties"]
+    assert "observation_diagnostics" not in schema["properties"]
+    assert "accepted_observations" not in schema["properties"]
+    validation = AdjudicationResult.model_json_schema(mode="validation")
+    assert "source_observations" in validation["required"]
+    serialization = AdjudicationResult.model_json_schema(mode="serialization")
+    assert "source_observations" not in serialization["properties"]
+    assert "source_observations" not in serialization["required"]
+    assert AdjudicationResult.model_validate({"success": True}).source_observations == []
 
 
 @pytest.mark.asyncio
@@ -239,8 +262,12 @@ async def test_parser_receives_current_guidance_and_retriever_reuses_verified_se
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["visited", "moved"])
+@pytest.mark.parametrize("audience", ["player", "planner"])
 async def test_same_location_event_progress_requires_actual_action_basis_without_goal_completion(
     scene_state,
+    status,
+    audience,
 ):
     state = await prepared(scene_state)
     prompt = "\n".join(m["content"] for m in build_adjudicator_prompt(state, None))
@@ -252,11 +279,16 @@ async def test_same_location_event_progress_requires_actual_action_basis_without
         for c in story_candidates(state)
         if c["target"]["kind"] == "scene" and c["target"]["canonical_id"] == "event_leads"
     )
-    chunk = state["adventure_context"][0]
+    chunk = (
+        state["adventure_context"][0]
+        if audience == "player"
+        else next(c for c in state["planner_context"] if c["passage_id"] == "event_square_dm")
+    )
     move = {
         "kind": "move",
         "target": candidate["target"],
-        "status": "visited",
+        # The real AI turn proposed moved + a private current event reference.
+        "status": status,
         "source_reference_ids": [source_citation(chunk, "2014")["reference_id"]],
     }
     result = validate_story_effects(AdjudicationResult(success=True, story_effects=[move]), state)
@@ -267,4 +299,42 @@ async def test_same_location_event_progress_requires_actual_action_basis_without
     result = validate_story_effects(AdjudicationResult(success=True, story_effects=[move]), state)
     assert result.scene_id == "event_leads"
     assert [effect.kind for effect in result.accepted_story_effects] == ["move"]
+    assert result.accepted_story_effects[0].status == "visited"
+    if audience == "planner":
+        assert result.accepted_story_effects[0].player_text is None
+        assert result.accepted_story_effects[0].evidence_kind == "dm_adjudication"
+        assert UNRELATED not in str(result.accepted_story_effects[0].model_dump())
     assert not any(effect.kind == "objective" for effect in result.accepted_story_effects)
+    # Match persist_turn: reconstruct proposals from the sealed effects, then
+    # revalidate against the locked pre-turn state including the verified cache.
+    resealed = validate_story_effects(
+        AdjudicationResult(
+            success=result.success,
+            story_effects=[
+                StoryEffect.model_validate(
+                    effect.model_dump(include=set(StoryEffect.model_fields))
+                )
+                for effect in result.accepted_story_effects
+            ],
+        ),
+        state,
+    )
+    assert resealed.accepted_story_effects == result.accepted_story_effects
+
+
+@pytest.mark.asyncio
+async def test_normalized_move_still_requires_exact_eligible_source(scene_state):
+    state = await prepared(scene_state)
+    candidate = next(
+        c for c in story_candidates(state) if c["target"]["canonical_id"] == "event_leads"
+    )
+    move = {
+        "kind": "move",
+        "target": candidate["target"],
+        "status": "moved",
+        "source_reference_ids": ["invented_reference"],
+        "achievement_basis": "The actual question follows the linked trigger.",
+    }
+    result = validate_story_effects(AdjudicationResult(success=True, story_effects=[move]), state)
+    assert result.scene_id == "event_square"
+    assert result.accepted_story_effects == []

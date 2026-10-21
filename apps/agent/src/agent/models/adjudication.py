@@ -21,7 +21,7 @@ Keep field names stable: changing them silently breaks the LLM's structured outp
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from edgar_core.story import AcceptedStoryEffect, StoryEffect
@@ -106,7 +106,20 @@ class SourceObservation(BaseModel):
     )
 
 
+def _require_answer_decision(schema: dict) -> None:
+    # Saved rulings and engine-only constructors keep their backwards-compatible
+    # default. The model must explicitly decide which answers this turn earns.
+    required = schema.setdefault("required", [])
+    if (
+        "source_observations" in schema.get("properties", {})
+        and "source_observations" not in required
+    ):
+        required.append("source_observations")
+
+
 class AdjudicationResult(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_require_answer_decision)
+
     success: bool
     damage: int | None = None
     conditions: list[str] = []
@@ -124,9 +137,10 @@ class AdjudicationResult(BaseModel):
     source_observations: list[SourceObservation] = Field(
         default_factory=list,
         exclude=True,
-        description="Reviewed module play only: short exact current-scene source answers/observations actually earned by the action. No future secrets or mechanical/state changes.",
+        description="Required explicit answer decision: return the short exact current-scene source answers/observations earned by the actual action in reviewed module play. Empty only when no source-backed information is earned. No future secrets or mechanical/state changes.",
     )
     accepted_observations: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    observation_diagnostics: SkipJsonSchema[dict] = Field(default_factory=dict)
     # Homebrew only (EDG-169): model-proposed improvised places, people, clues and threats. The
     # validator turns accepted ones into homebrew story effects and clears this list.
     # exclude=True keeps it out of every serialized ruling, frame and golden snapshot.

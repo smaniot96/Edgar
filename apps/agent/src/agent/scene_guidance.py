@@ -147,27 +147,40 @@ def validate_source_observations(adjudication, state):
     from edgar_core.sources import source_citation
 
     adjudication.accepted_observations = []
+    diagnostics = {
+        "proposed": len(adjudication.source_observations),
+        "accepted": 0,
+        "eligible_references": 0,
+        "rejected": [],
+    }
+    adjudication.observation_diagnostics = diagnostics
     if (
         state.get("manifest_status") != "reviewed"
         or not state.get("turn_id")
         or not adjudication.success
     ):
+        diagnostics["blocked"] = "turn_not_eligible"
         return
     evidence = {
         source_citation(c, state.get("rules_edition", "2014"))["reference_id"]: c
         for c in active_observation_chunks(state)
     }
+    diagnostics["eligible_references"] = len(evidence)
     action = state.get("player_input", "")
-    for proposal in adjudication.source_observations:
+    for index, proposal in enumerate(adjudication.source_observations):
         chunk = evidence.get(proposal.source_reference_id)
-        if (
-            not chunk
-            or not proposal.achievement_basis.strip()
-            or not proposal.action_quote.strip()
-            or proposal.action_quote not in action
-            or not proposal.text.strip()
-            or proposal.text not in chunk["text"]
-        ):
+        reason = None
+        if not chunk:
+            reason = "ineligible_source_reference"
+        elif not proposal.achievement_basis.strip():
+            reason = "missing_achievement_basis"
+        elif not proposal.action_quote.strip() or proposal.action_quote not in action:
+            reason = "action_quote_not_exact"
+        elif not proposal.text.strip() or proposal.text not in chunk["text"]:
+            reason = "source_quote_not_exact"
+        if reason:
+            diagnostics["rejected"].append({"index": index, "reason": reason})
             continue
         if proposal.text not in adjudication.accepted_observations:
             adjudication.accepted_observations.append(proposal.text)
+    diagnostics["accepted"] = len(adjudication.accepted_observations)

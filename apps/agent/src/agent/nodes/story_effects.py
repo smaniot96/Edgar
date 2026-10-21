@@ -390,10 +390,19 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 )
             continue
         candidate = candidates.get(proposal.target.model_dump_json())
-        policy_key = policy_effect_key(proposal)
         if candidate is None or not _kind_matches(proposal, candidate):
             continue
+        # A move and an object transfer share the schema's "moved" literal. For a
+        # well-typed scene move it means the canonical visit status; all eligibility,
+        # source and trigger checks below still apply before accepting anything.
+        if proposal.kind == "move" and proposal.status == "moved":
+            proposal = proposal.model_copy(update={"status": "visited"})
+        policy_key = policy_effect_key(proposal)
         dm_goal = is_dm_goal_candidate(candidate)
+        dm_transition = proposal.kind == "move" and any(
+            row.get("scene_id") == proposal.target.canonical_id
+            for row in (state.get("parser_scene_context") or {}).get("event_transitions", [])
+        )
         if dm_goal and (
             not state.get("player_input", "").strip()
             or not (proposal.achievement_basis or "").strip()
@@ -413,14 +422,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             continue
         if proposal.kind == "move" and not candidate.get("can_move"):
             continue
-        if (
-            proposal.kind == "move"
-            and any(
-                row.get("scene_id") == proposal.target.canonical_id
-                for row in (state.get("parser_scene_context") or {}).get("event_transitions", [])
-            )
-            and not (proposal.achievement_basis or "").strip()
-        ):
+        if dm_transition and not (proposal.achievement_basis or "").strip():
             continue  # Same-location event progress needs actual trigger evidence, not an available link.
         if proposal.kind not in _OBJECT_KINDS and proposal.status not in _STATUSES.get(
             proposal.kind, set()
@@ -485,7 +487,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 public = [c for c in public if c.get("passage_id") in policy_reveals[policy_key]]
                 if not policy_reveals[policy_key] <= {c.get("passage_id") for c in public}:
                     continue
-        if not public and not dm_goal:
+        if not public and not dm_goal and not dm_transition:
             continue
         if (
             not dm_goal
@@ -549,6 +551,9 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             public_text = (
                 candidate["title"] if any(candidate["title"] in c["text"] for c in public) else None
             )
+        elif dm_transition and not public:
+            # A private trigger can advance an event without becoming player knowledge.
+            public_text = None
         effect = proposal.model_copy(update={"player_text": public_text})
         if effect.kind in _OBJECT_KINDS:
             try:
@@ -564,7 +569,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 for c in supporting + public
             }.values()
         )
-        if dm_goal:
+        if dm_goal or dm_transition:
             source_refs.append(
                 dm_adjudication_reference(
                     state["turn_id"],
@@ -577,8 +582,8 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             effect,
             turn_id=state["turn_id"],
             source_refs=source_refs,
-            evidence_kind="dm_adjudication" if dm_goal else "source",
-            origin_turn_id=state["turn_id"] if dm_goal else None,
+            evidence_kind="dm_adjudication" if dm_goal or dm_transition else "source",
+            origin_turn_id=state["turn_id"] if dm_goal or dm_transition else None,
             display_name=(
                 candidate["title"]
                 if any(candidate["title"] in c["text"] for c in public)

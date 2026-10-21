@@ -54,6 +54,10 @@ The compiler projects only permitted join fields onto the original bundles local
 does not depend on a model copying unchanged prose exactly. Previously retained proposals
 can be reprocessed after a representation fix without another provider request; original
 discovery wording and conditions stay intact even when an invalid reveal becomes guidance.
+Ordinary scoped patches likewise preserve existing identities outside the repair closure
+when a model incidentally re-describes them. Their ignored IDs are recorded, while their
+accepted records remain unchanged. A parenthetical profile heading annotation is checked
+as presentation without rewriting the retained stat text or paying to regenerate it.
 
 During play, verified current-scene guidance reaches the existing input parser before it
 classifies the action. The existing consequence call can select a short, exact source
