@@ -220,7 +220,7 @@ function EntryBody({ entry, nav, embeddedNotes }: { entry: JournalEntry; nav: Na
       const people = index.peopleMetAt(entry.id);
       return (
         <>
-          <Quote text={entry.text} nav={nav} label="Recorded on first arrival; people and conditions may have changed." />
+          <Quote text={entry.text} nav={nav} label="Recorded on arrival; people and conditions may have changed." />
           {people.length ? (
             <p className="mt-2 text-sm text-ink-muted">
               Met here:{" "}

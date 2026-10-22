@@ -296,6 +296,26 @@ class AiResponses:
             value = world(evidence["places"])
         elif name == Review.__name__:
             value = {"covered_ids": evidence["review_ids"], "findings": []}
+        elif name == "CompatibilityReview":
+            # This fixture has only optional tide-reading checks. Their roll
+            # guidance never gates the threat's independently discoverable clues.
+            value = {
+                "decisions": [
+                    {
+                        "capability_id": gap["capability_id"],
+                        "disposition": "optional",
+                        "required_for_completion": False,
+                        "record_ids": next(
+                            row["scene_ids"]
+                            for row in evidence["compiled_checks"]
+                            if row["policy_id"] == gap["check_id"]
+                        ),
+                        "evidence": "Optional tide-reading checks are not required to learn the threat.",
+                        "alternative_quote": "",
+                    }
+                    for gap in evidence["capabilities"]
+                ]
+            }
         else:
             raise AssertionError("Unexpected semantic stage " + name)
         payload = {
@@ -354,7 +374,8 @@ async def test_medium_request_runs_sequential_steps_into_the_shared_tail(ai_stor
         "AiChapterDraft",
         "AiChapterDraft",
     ]
-    assert set(responses.calls[7:]) == {"Review"}
+    assert set(responses.calls[7:]) == {"Review", "CompatibilityReview"}
+    assert ai_store.get("compatibility-review")["decisions"]
     # Chapters are written in play order, each seeing the accepted ones before it.
     drafts = [e for name, e in responses.evidence if name == "AiChapterDraft"]
     assert [d["requested_chapter"]["chapter_id"] for d in drafts] == [

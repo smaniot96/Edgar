@@ -204,6 +204,7 @@ def test_explicit_failure_discovery_and_monotonic_objective_clock():
         target_kind="objective",
         identity="learn_password",
         status="completed",
+        achievement_basis="The hero reads the public password inscription, satisfying the knowledge goal.",
     )
     accepted = validate_story_effects(
         AdjudicationResult(success=True, story_effects=[objective]), state
@@ -483,7 +484,7 @@ def test_absent_promise_anchor_preserves_existing_effect_hash():
 
     state, _, _ = fixture_state()
     effect = proposal(state)
-    legacy_body = effect.model_dump(exclude={"promise_actor"})
+    legacy_body = effect.model_dump(exclude={"promise_actor", "achievement_basis"})
     legacy_body["source_reference_ids"] = sorted(set(legacy_body["source_reference_ids"]))
     legacy_body["knowledge_fact_ids"] = sorted(set(legacy_body["knowledge_fact_ids"]))
     expected = hashlib.sha256(

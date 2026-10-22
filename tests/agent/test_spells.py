@@ -163,6 +163,7 @@ def _cast(text: str, check: str = "spell_attack") -> ParsedInput:
 def test_catalog_covers_each_kind_with_provenance() -> None:
     assert {s.name for s in CATALOG} == {
         "Fire Bolt",
+        "Ray of Frost",
         "Magic Missile",
         "Sacred Flame",
         "Cure Wounds",

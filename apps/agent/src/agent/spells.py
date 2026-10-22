@@ -79,10 +79,25 @@ class SpellSpec:
     concentration: bool = False  # the caster must concentrate; a second such spell ends this one
     humanoid_only: bool = False  # the target must be a humanoid (its record's type line)
     upcast_targets: bool = False  # one more target per slot level above `level` (Hold Person)
+    declared: tuple[str, ...] = ()  # source effects explicitly omitted by the executable adaptation
     source: str = ""
 
 
 CATALOG: tuple[SpellSpec, ...] = (
+    SpellSpec(
+        name="Ray of Frost",
+        level=0,
+        kind="attack",
+        dice=1,
+        die=8,
+        damage_type="cold",
+        classes=("sorcerer", "wizard"),
+        declared=("Ray of Frost: the 10-foot speed reduction until the caster's next turn is not simulated",),
+        source=(
+            f"{_PHB}, Ray of Frost: ranged spell attack, 1d8 cold damage, scaling at levels 5, 11 and 17. "
+            "Executable adaptation: cold damage only; the source's 10-foot speed reduction is not simulated."
+        ),
+    ),
     SpellSpec(
         name="Fire Bolt",
         level=0,
@@ -625,7 +640,8 @@ def narrate(result: SpellResult, *, hero: str, target: str | None) -> str:
         if not result.attack.success:
             return f"{spec.name} misses{at}."
         crit = "Critical hit! " if result.attack.critical else ""
-        return f"{crit}{spec.name} hits{at} for {result.damage} {spec.damage_type} damage."
+        limitation = " " + "; ".join(spec.declared) + "." if spec.declared else ""
+        return f"{crit}{spec.name} hits{at} for {result.damage} {spec.damage_type} damage.{limitation}"
     if spec.kind == "auto":
         return f"{spec.name} sends {result.darts} darts{at} for {result.damage} force damage."
     if spec.kind == "save":

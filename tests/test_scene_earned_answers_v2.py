@@ -121,6 +121,45 @@ async def test_current_private_answer_reaches_narrator_without_private_dossier(s
     assert result.flags_set == [] and result.character_update is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unsupported", [
+    "The rooms open into a library and laboratory; the nearby wizard is no longer present.",
+    "The rune-banded wand is in Willow's possession.",
+    "The fallen wizard has disappeared.",
+    "The wizard is gone from the room.",
+])
+async def test_selected_source_span_cannot_create_disappearance_or_possession(scene_state, unsupported):
+    state = await prepared(scene_state)
+    # A valid selected span must not lend its provenance to an unsupported live
+    # state mutation. This reproduces079's room-layout-backed disappearance.
+    span = next(iter(observation_span_catalog(state)))
+    result = validate_story_effects(AdjudicationResult(
+        success=True,
+        source_observations=[proposal(state, text=unsupported, source_span_id=span)],
+    ), state)
+    assert result.accepted_observations == []
+    assert result.observation_diagnostics["rejected"] == [
+        {"index": 0, "reason": "state_change_requires_recorded_outcome"},
+    ]
+    state["adjudication_result"] = result
+    prompt = "\n".join(str(message.content) for message in build_narrator_prompt(state))
+    assert unsupported not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scene_state,text", [
+    ("The stolen lens is in the duke’s possession.", "The stolen lens is in the duke’s possession."),
+    ("The old owner has disappeared.", "The old owner has disappeared."),
+], indirect=["scene_state"])
+async def test_authored_possession_and_historical_absence_remain_valid_clues(scene_state, text):
+    state = await prepared(scene_state)
+    result = validate_story_effects(AdjudicationResult(
+        success=True, source_observations=[proposal(state, text=text, source_quote=text)],
+    ), state)
+    assert result.accepted_observations == [text]
+    assert result.observation_diagnostics["rejected"] == []
+
+
 @pytest.mark.parametrize(
     ("quote", "accepted"),
     [

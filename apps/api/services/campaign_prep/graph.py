@@ -40,6 +40,16 @@ from .compile import (
 from .field_edits import apply_field_edits
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
+from .playability import (
+    COMPATIBILITY_POLICY,
+    CompatibilityReview,
+    capability_inventory,
+    compatibility_findings,
+    compatibility_signature,
+    require_compatibility_review,
+    topology,
+    topology_findings,
+)
 from .profiles import canonical_profiles
 from .provider import SemanticClient, request_context
 from .source import (
@@ -930,7 +940,7 @@ class Workflow:
             "mechanical-registry", bundles.get("mechanical_profiles", []), digest(bundles)
         )
         validate_semantics(spine, bundles, self.store.get("source"))
-        local_findings = mechanical_findings(bundles, mechanics)
+        local_findings = mechanical_findings(bundles, mechanics) + topology_findings(spine, bundles)
         self.store.put("assembly-findings", local_findings)
         findings = [f for f in self.store.get("findings") or [] if f["owner"] != "assembly"]
         self.store.put(
@@ -939,7 +949,7 @@ class Workflow:
         )
         if local_findings:
             return address
-        dep = digest([spine, bundles, mechanics, self.store.get("source")])
+        dep = digest([spine, bundles, mechanics, self.store.get("source"), COMPATIBILITY_POLICY])
         if self.store.get("compiled", dep) is None:
             value = assemble(
                 self.store.slug,
@@ -1095,6 +1105,11 @@ class Workflow:
                 "compiled_checks": compiled["manifest"]["resolution_policies"],
                 "source_references": compiled.get("source_references", []),
                 "capability_findings": compiled.get("capability_findings", []),
+                "playability_audit": topology(self.store.get("spine"), bundles_document),
+                "structural_progression_corrections": self.store.get(
+                    "structural-progression-corrections"
+                )
+                or [],
                 "review_direction": "Compare original source to output and identify omitted material within the supplied review scope. The complete chapter_inventory and campaign_record_index establish which records exist across all packets. Full chapter scene and encounter details accompany complete_chapter_ids; campaign_overview audits shared continuity. A record outside this packet is not missing. Private original source references do not replace useful authored running material.",
                 "visual_evidence": [
                     self.store.get("visual-" + str(n))
@@ -1165,7 +1180,51 @@ class Workflow:
             coverage.update(fingerprints)
             self.store.put("review-coverage", coverage)
             self.store.put("findings", findings)
+        await self.review_compatibility(compiled)
         return address
+
+    async def review_compatibility(self, compiled):
+        """Required mechanics get a separate exact, durable acceptance decision."""
+        if not compiled.get("capability_findings"):
+            self.store.put(
+                "findings",
+                [
+                    row
+                    for row in self.store.get("findings") or []
+                    if row["owner"] != "compatibility"
+                ],
+            )
+            return
+        signature = compatibility_signature(compiled)
+        retained = self.store.get("compatibility-review", signature)
+        if retained is None:
+            result = await self.semantic.call(
+                "capability-review",
+                "capability-review",
+                CompatibilityReview,
+                {
+                    "capabilities": capability_inventory(compiled),
+                    "records": compiled["registry"],
+                    "campaign": self.store.get("spine"),
+                    "compiled_objects": compiled["manifest"]["objects"],
+                    "compiled_checks": compiled["manifest"]["resolution_policies"],
+                    "mechanics": compiled["grounded"],
+                    "playability_audit": topology(
+                        self.store.get("spine"), self.store.get("bundles")
+                    ),
+                },
+            )
+        else:
+            result = CompatibilityReview.model_validate(retained)
+        local_findings = compatibility_findings(compiled, result)
+        self.store.put("compatibility-review", result.model_dump(), signature)
+        findings = [
+            row for row in self.store.get("findings") or [] if row["owner"] != "compatibility"
+        ]
+        self.store.put(
+            "findings",
+            findings + [{"owner": "compatibility", "value": finding} for finding in local_findings],
+        )
 
     def route_review(self, address):
         registry, coverage = self.registry(), self.store.get("review-coverage") or {}
@@ -1228,6 +1287,11 @@ class Workflow:
         allowed = set(registry) if "campaign_spine" in changed else set(closure(registry, changed))
         evidence = {
             "findings": findings,
+            "playability_audit": topology(self.store.get("spine"), self.store.get("bundles")),
+            "structural_progression_corrections": self.store.get(
+                "structural-progression-corrections"
+            )
+            or [],
             "allowed_ids": sorted(allowed),
             "affected_records": {key: registry[key] for key in sorted(allowed)},
             "context": {
@@ -1568,6 +1632,7 @@ class Workflow:
         from .publication import publish
 
         registry = self.registry()
+        require_compatibility_review(self.store, self.store.get("compiled"))
         coverage = self.store.get("review-coverage") or {}
         if any(
             coverage.get(key) != value for key, value in self.fingerprints(registry).items()

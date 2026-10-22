@@ -10,6 +10,7 @@ import re
 
 from db.vector.references import normalize_reference
 from edgar_core.manifests import require_published, select_scene_context
+from edgar_core.story import StoryState, player_story_effect
 
 
 def _stat_descriptors(actor: dict, manifest, selection: dict, state: dict, collection: str) -> list[str]:
@@ -55,6 +56,7 @@ def scene_actor_aliases(state: dict) -> dict[str, list[str]]:
     if state.get("manifest_status") != "reviewed" or not current:
         return {}
     result = {}
+    facts = StoryState.model_validate(state.get("story_state") or {}).facts
     for collection, value in (state.get("adventure_manifests") or {}).items():
         manifest = require_published(value)
         selection = select_scene_context(manifest, current, state.get("world_flags"))
@@ -73,6 +75,19 @@ def scene_actor_aliases(state: dict) -> dict[str, list[str]]:
             public = " ".join(
                 normalize_reference(chunk["text"]) for chunk in chunks
                 if actor["entity_id"] in passages[chunk["passage_id"]].entity_ids
+            )
+            # Approved introductions are session evidence, not new source passages.
+            # Keep their actor binding across refresh and later turns even when the
+            # static opening calls this person only "a wizard" or "the guard".
+            public += " " + " ".join(
+                normalize_reference(public_fact.get("text") or "") for fact in facts
+                if fact.kind == "encounter" and fact.status == "encountered"
+                and fact.target.kind == "entity"
+                and fact.target.canonical_id == actor["entity_id"]
+                and fact.target.collection == collection
+                and fact.target.source_sha256 == manifest.source_sha256
+                and fact.target.manifest_sha256 == manifest.reviewed_sha256
+                and (public_fact := player_story_effect(fact)) is not None
             )
             aliases = [
                 " ".join(words[start:]) for start in range(1, len(words))

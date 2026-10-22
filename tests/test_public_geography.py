@@ -127,9 +127,36 @@ def test_journal_groups_physical_places_and_earns_names_from_delivered_narration
     assert len(places) == 1
     assert result.current_place.id == places[0].id
     assert places[0].title == "market town"
-    assert places[0].text == "A sheep approaches."
+    assert places[0].text == "The sheep stays close."
     assert len(places[0].history) == 2
     assert "Secret capital" not in result.model_dump_json()
+
+
+def test_grouped_place_latest_area_title_and_description_share_an_arrival_snapshot():
+    now = datetime.now(UTC)
+    trail = journal_fact(kind="visit", canonical_id="trail", event_id=1, turn_id="a",
+                         status="visited", text="A narrow track leaves the road.")
+    interior = journal_fact(kind="visit", canonical_id="interior", event_id=2, turn_id="b",
+                            status="visited", text="Inside the central platform, shelves crowd the walls.")
+    learned = journal_fact(kind="learn_place", canonical_id="trail", event_id=3, turn_id="c",
+                           status="known", text="The narrow track leads back to town.")
+    learned.target = trail.target
+    learned.fact_id = trail.fact_id
+    prepared = JournalPreparedLabels(scene_places={
+        ("synthetic", scene): {"place_id": "compound", "names": ["Secret tower", "Narrow track"]}
+        for scene in ("trail", "interior")
+    })
+    result = project_player_journal(
+        7, {"facts": [f.model_dump() for f in (trail, interior, learned)]},
+        [_event(n, 7, turn, now + timedelta(seconds=n)) for n, turn in ((1, "a"), (2, "b"), (3, "c"))],
+        current_scene_id="interior", prepared=prepared,
+    )
+    assert len(result.entries) == 1
+    assert result.current_place.title == "Central platform"
+    assert result.current_place.text == interior.player_text
+    assert [change.history_event_id for change in result.current_place.history] == [1, 2]
+    assert result.current_place.origin.history_event_id == 1
+    assert "Secret tower" not in result.model_dump_json()
 
 
 def test_departure_keeps_old_threat_in_history_but_removes_it_as_current_lead():

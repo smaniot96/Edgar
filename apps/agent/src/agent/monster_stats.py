@@ -781,6 +781,7 @@ def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[st
     slots: dict[str, int] = {}
     spells: list[tuple[int, str]] = []
     unsupported: list[str] = []
+    partial: list[str] = []
     for index, heading in enumerate(headings):
         level_text = (heading.group(2) or "").lower()
         if heading.group(1):
@@ -807,8 +808,7 @@ def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[st
                 unsupported.append(spell_name)
                 continue
             spells.append((listed_level, spec.name))
-    if not spells:
-        unsupported.append("no listed spell is in the engine's action-spell catalog")
+            partial.extend(spec.declared)
     result = MonsterSpellcasting(
         ability=(ability.group(1) or ability.group(2)).upper()[:3],
         caster_level=int(caster_level_match.group(1)),
@@ -824,7 +824,7 @@ def _spellcasting_entry(body: str) -> tuple[MonsterSpellcasting | None, tuple[st
         if unsupported
         else ()
     )
-    return result, notes
+    return result, (*notes, *dict.fromkeys(partial))
 
 
 def parse_monster_stats(text: str, *, name: str) -> MonsterStats:

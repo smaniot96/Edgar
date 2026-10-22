@@ -31,12 +31,16 @@ def story_source(monkeypatch, api_client, request):
     from ingestion.manifest import manifest_chunks
     from ingestion.quality import check_text
 
-    earned_name = getattr(request, "param", False)
+    fixture_mode = getattr(request, "param", False)
+    earned_name = fixture_mode is True
+    private_item = fixture_mode == "private_item"
     public_text = (
         PUBLIC.replace("Mara greets you.", "A ferryman greets you.") if earned_name else PUBLIC
     )
     introduction = "The ferryman introduces herself as Mara Fen."
     private_text = introduction + "\n" + SECRET if earned_name else SECRET
+    if private_item:
+        private_text = "The portable Lens note can be picked up from the desk.\n" + SECRET
     q = QdrantClient(":memory:")
     manifests, evidence = {}, {}
     for slug in DEFAULT_ADVENTURE_COLLECTIONS:
@@ -61,6 +65,7 @@ def story_source(monkeypatch, api_client, request):
                     "kind": "clue",
                     "title": "Lens note",
                     "discovery_flag": "note_discovered",
+                    "object_id": "note" if private_item else None,
                 },
             ],
             objects=[
@@ -68,7 +73,7 @@ def story_source(monkeypatch, api_client, request):
                     "canonical_id": "note",
                     "title": "Lens note",
                     "scene_ids": ["room"],
-                    "passage_ids": ["public"],
+                    "passage_ids": ["private" if private_item else "public"],
                 },
                 {
                     "canonical_id": "cord",
@@ -147,7 +152,8 @@ def story_source(monkeypatch, api_client, request):
     monkeypatch.setattr("agent.nodes.world_retriever.search_rules_context", lambda *a, **kw: [])
     slug = next(iter(manifests))
     manifest = manifests[slug]
-    chunk = next(c for c in evidence[slug] if c["audience"] == "player")
+    chunk = next(c for c in evidence[slug]
+                 if c["audience"] == ("planner" if private_item else "player"))
     refid = source_citation({**chunk, "collection": slug}, "2014")["reference_id"]
 
     def effect(kind, identity, *, target_kind="object", status="discovered", **kw):
@@ -185,6 +191,39 @@ def events(text):
         (frame.splitlines()[0][7:], json.loads(frame.splitlines()[1][6:]))
         for frame in text.strip().split("\n\n")
     ]
+
+
+@pytest.mark.parametrize("story_source", ["private_item"], indirect=True)
+@pytest.mark.parametrize("stream", [False, True])
+async def test_visible_pickup_with_private_item_procedure_commits_and_reloads(
+    story_source, fake_llm_schema, api_client, stream,
+):
+    import db.postgres.session as sm
+    from apps.api.services.story_state import load_story_state
+
+    sid = (await api_client.post("/api/seed")).json()["session_id"]
+    pickup = story_source("acquire", "note", status="acquired")
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="exploration")
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(
+        success=True, story_effects=[pickup],
+    )
+    fake_llm_schema.narration = "You take the Lens note from the desk."
+    response = await api_client.post(
+        f"/api/sessions/{sid}/turn" + ("/stream" if stream else ""),
+        json={"message": "I take the note from the desk."},
+    )
+    assert response.status_code == 200, response.text
+    done = events(response.text)[-1][1] if stream else response.json()
+    identity = story_target_id(pickup.target)
+    assert any(isinstance(item, dict) and item.get("story_object_id") == identity
+               for item in done["character"]["inventory"]["items"])
+    async with sm.async_session_factory() as db:
+        state = await load_story_state(db, sid)
+    [fact] = state["facts"]
+    assert fact["kind"] == "acquire" and fact["target"] == pickup.target.model_dump()
+    assert fact["destination"] == f"character:{done['character']['id']}"
+    assert SECRET not in response.text
+    assert SECRET not in fact["player_text"]
 
 
 @pytest.mark.parametrize("story_source", [True], indirect=True)
@@ -312,6 +351,7 @@ async def test_story_pickup_environment_reload_and_rejection(
                 target_kind="objective",
                 status="completed",
                 knowledge_fact_ids=[use["fact_id"]],
+                achievement_basis="The committed tether use and secured brace resolve the fixture's rescue goal.",
             )
         ]
     )
@@ -330,7 +370,12 @@ async def test_story_pickup_environment_reload_and_rejection(
     )
     assert any(f["kind"] == "environment" for f in ledger["facts"])
     assert any(f["kind"] == "objective" and f["status"] == "completed" for f in ledger["facts"])
-    assert all(f["player_text"] == PUBLIC for f in ledger["facts"])
+    # A private goal can record earned progress without publishing its prepared
+    # title; every other fixture fact retains the reviewed public quotation.
+    assert all(
+        f["player_text"] == (None if f["kind"] == "objective" else PUBLIC)
+        for f in ledger["facts"]
+    )
     # A later deliberate drop and pickup is a new occurrence of the same object, while
     # retries/proposals that leave ownership unchanged never create another copy.
     await turn([effect("transfer", "note", status="moved", destination="room")])

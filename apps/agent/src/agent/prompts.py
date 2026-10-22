@@ -189,6 +189,13 @@ Fill out:
   Only one linked scene transition can be accepted this turn. When a journey spans several
   scenes, establish its next meaningful stop and leave onward travel for the next decision;
   never claim arrival at a farther destination than that accepted stop.
+  Distinguish a canonical event transition from local physical movement. Entering an accessible
+  adjoining room, crossing an open doorway, or walking across the current grounds can happen
+  within one scene and does not need a new scene id. Resolve that movement and its available
+  observations now; do not stop at the same threshold across repeated explicit commands. Name
+  an actual established barrier if one prevents it. Asking a question does not move the hero
+  from their last established position, even when it activates a linked contact event. Source
+  observations report facts, never create a new actor disappearance or object possession.
 
 Campaign completion: if the action resolves the adventure's climax — the final antagonist is
 defeated and the story reaches its definitive conclusion — set a flag "campaign_complete" =

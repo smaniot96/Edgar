@@ -951,6 +951,7 @@ def assemble(slug, edition, spine, bundles, mechanics, source=None, visuals=None
             for profile_id, profile in definitions.items()
         },
         "capability_findings": capability_findings,
+        "compatibility_policy": "required-capabilities-1",
         "semantic_sha256": digest({"spine": spine, "bundles": bundles}),
         "manifest_sha256": manifest_digest(manifest),
     }

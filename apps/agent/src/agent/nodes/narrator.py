@@ -186,12 +186,17 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
             "Resolved campaign position (authoritative for this response): "
             f"place={scene['label']}; "
             f"accepted transition={'yes' if scene['moved'] else 'none'}. "
-            "Only an accepted transition changes the location. Stop at this location even if "
-            "the player's intended journey goes farther; describe a concrete next approach. "
-            "Do not narrate arrival, entry, an accompanying actor, or a later destination "
-            "that the validated outcome has not established. An event transition is not itself "
+            "Only an accepted transition changes the canonical scene. The scene is an event "
+            "or area, not a lock on the protagonist's exact position within it. Resolve explicit "
+            "ordinary movement through accessible adjoining rooms, an open doorway, or the "
+            "current grounds in this turn; local movement needs no scene transition. Do not "
+            "repeat that the protagonist has not entered after they explicitly enter an open "
+            "room. If a real established barrier prevents movement, name that barrier and "
+            "the resulting position. For travel between canonical scenes stop at the accepted "
+            "destination; do not claim a farther arrival. An event transition is not itself "
             "permission to move the player physically: preserve an explicitly stationary "
-            "position, and describe contact across a doorway or at a distance when appropriate."
+            "position and the last established local stance across ordinary dialogue; describe "
+            "contact across a doorway or at a distance when appropriate."
         )
         if scene["visible_description"]:
             context_parts.append(
@@ -203,7 +208,10 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
                 "details compatible with the resolved action and established continuity. Do not "
                 "replay default actor presence, possession or behavior after this exchange has "
                 "changed it; never restore a departed actor to satisfy opening prose. Do not "
-                "claim interior details are visible from an exterior position."
+                "claim interior details are visible from an exterior position. A fallen actor "
+                "remains at the last established position: defeat does not make a body "
+                "disappear. Do not invent an actor's removal, return, or change of custody "
+                "from a static room description or an unanswered call."
             )
     elif current_scene_id:
         context_parts.append(
@@ -230,6 +238,26 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
         context_parts.append(
             f"Validated canonical story consequences this turn (persistent discoveries/accomplishments; validated source observations also answer this action): {accepted}"
         )
+        object_changes = {"acquire", "consume", "transfer", "use", "environment"}
+        unaccepted = [
+            {"kind": effect.kind, "operation": effect.operation}
+            for effect in adjudication.story_effects
+            if effect.kind in object_changes
+            and not any(accepted_effect.kind == effect.kind
+                        and accepted_effect.target == effect.target
+                        and accepted_effect.operation == effect.operation
+                        and (accepted_effect.destination == effect.destination
+                             or (effect.kind == "acquire" and effect.destination is None))
+                        for accepted_effect in adjudication.accepted_story_effects)
+        ]
+        if unaccepted:
+            context_parts.append(
+                "Object operations proposed but not accepted: " + str(unaccepted)
+                + ". Do not narrate those operations as completed or change possession. "
+                "Explain that the attempted object change has not been established and keep "
+                "the object in its last recorded state. A success=true check or an engine "
+                "summary cannot override this missing accepted consequence."
+            )
         if state.get("source_mode") == "homebrew" and accepted:
             context_parts.append(
                 "Homebrew play: the validated consequences above are the only new named people, "

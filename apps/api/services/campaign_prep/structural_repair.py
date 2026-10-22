@@ -1027,6 +1027,24 @@ async def repair_structure(workflow):
         raise NeedsAttention("Retained structural repair was rejected: " + str(exc)) from exc
     history.update(state="accepted", candidate=candidate, result_sha256=digest(candidate))
     store.put(history_key, history)
+    original_events = {
+        event["id"]: event for bundle in bundles["chapters"] for event in bundle["events"]
+    }
+    corrections = list(store.get("structural-progression-corrections") or [])
+    for bundle in candidate["chapters"]:
+        for event in bundle["events"]:
+            original = original_events.get(event["id"])
+            if original and original["next_event_ids"] != event["next_event_ids"]:
+                correction = {
+                    "event_id": event["id"],
+                    "original_next_event_ids": original["next_event_ids"],
+                    "repaired_next_event_ids": event["next_event_ids"],
+                    "repair_receipt": history_key,
+                }
+                if correction not in corrections:
+                    corrections.append(correction)
+    if corrections:
+        store.put("structural-progression-corrections", corrections)
     if normalized_spine != spine:
         store.put("spine", normalized_spine)
     store.put("bundles", candidate, digest(normalized_spine))

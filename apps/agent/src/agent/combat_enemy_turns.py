@@ -488,6 +488,7 @@ class EnemyTurns:
         if spec.kind == "attack":
             consume_mark(self.rec.player)  # the spell attack roll spends a mark against its target
         self.rec.dice_log.extend(result.dice_log)
+        self.rec.log_lines.extend(spec.declared)
         if result.healing:
             before_hp = int(e.get("hp_current") or 0)
             e["hp_current"] = min(int(e.get("hp_max") or before_hp), before_hp + result.healing)

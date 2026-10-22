@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RollRecord } from "../../api/types";
-import { adjudicationFromRoll, restSummary, rollParts, rollSummary } from "./rollText";
+import { adjudicationFromRoll, multipleAttackRolls, restSummary, rollParts, rollSummary } from "./rollText";
 
 const disadvantage: RollRecord = {
   turn_id: "t",
@@ -23,6 +23,23 @@ const disadvantage: RollRecord = {
 };
 
 describe("adjudicationFromRoll", () => {
+  it("separates Action Surge rolls without attaching aggregate damage to the miss", () => {
+    const adj = adjudicationFromRoll({ ...disadvantage, check: "attack", dc: 14, against: "AC", damage: 7,
+      dice_log: [
+        { expression: "1d20+5", rolls: [18], modifier: 5, total: 23, purpose: "half-orc attack" },
+        { expression: "1d20+6", rolls: [3], modifier: 6, total: 9, purpose: "attack check" },
+        { expression: "1d20+6", rolls: [8], modifier: 6, total: 14, purpose: "attack check" },
+        { expression: "1d8+4", rolls: [3], modifier: 4, total: 7, purpose: "player damage" },
+      ],
+    });
+    const attacks = multipleAttackRolls(adj);
+    expect(attacks.map(({ adjudication }) => rollParts(adjudication))).toMatchObject([
+      { check: "Attack 1", total: 9, success: false, damage: null },
+      { check: "Attack 2", total: 14, success: true, damage: null },
+    ]);
+    expect(attacks.map(({ index }) => index)).toEqual([1, 2]);
+    expect(multipleAttackRolls(adjudicationFromRoll(disadvantage))).toEqual([]);
+  });
   it("renders both disadvantage faces and the kept natural 1 exactly as stored", () => {
     const parts = rollParts(adjudicationFromRoll(disadvantage));
     expect(parts).toMatchObject({ check: "athletics", total: 6, dc: 15, natural: "nat 1", faces: [1, 12], mode: "disadvantage", success: false, damage: 3 });

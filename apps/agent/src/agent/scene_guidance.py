@@ -428,6 +428,16 @@ def _action_quote_matches(quote: str, action: str) -> bool:
     return bool(quote.strip()) and quote.translate(quotes) in action.translate(quotes)
 
 
+_OBSERVATION_STATE_CHANGE = re.compile(
+    r"\b(?:is|are)\s+(?:now\s+)?no\s+longer\s+(?:present|here|there|alive)\b"
+    r"|\b(?:is|are)\s+(?:now\s+)?gone\b"
+    r"|\b(?:has|have)\s+(?:now\s+)?(?:disappeared|vanished)\b"
+    r"|\b(?:is|are)\s+now\s+(?:gone|dead|defeated|captive|released)\b"
+    r"|\b(?:is|are)\s+in\s+(?:your|his|her|their|[\w'-]+['’]s)\s+possession\b",
+    re.IGNORECASE,
+)
+
+
 def validate_source_observations(adjudication, state):
     """Seal exact grounded answers chosen by the existing live DM judgment stage.
 
@@ -510,6 +520,19 @@ def validate_source_observations(adjudication, state):
             proposal, adjudication, state, evidence, match, evidence[matched_reference]
         ):
             reason = "source_visibility_condition_not_met"
+        unsupported_state_clause = any(
+            _OBSERVATION_STATE_CHANGE.search(clause)
+            and match_source_quote(match["text"], clause.strip().rstrip(".;!?")) is None
+            for clause in re.split(r"[;.!?]\s*", proposal.text)
+        ) if not reason else False
+        if unsupported_state_clause:
+            # This channel has no authority to mutate the live world. A source
+            # span listing rooms cannot remove a fallen actor or transfer an item.
+            # The narrator receives actual inventory, accepted object effects and
+            # engine actor outcomes separately. An exact authored clue or historical
+            # statement may describe possession/absence; an unrelated geometry
+            # citation cannot create a newly asserted live state change.
+            reason = "state_change_requires_recorded_outcome"
         if reason:
             diagnostics["rejected"].append({"index": index, "reason": reason})
             continue

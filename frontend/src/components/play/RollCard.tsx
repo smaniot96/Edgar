@@ -1,6 +1,6 @@
 import type { AdjudicationResult } from "../../api/types";
 import { cn } from "../../lib/cn";
-import { healingRolls, restSummary, rollParts, rollSummary, type HealingRoll } from "./rollText";
+import { healingRolls, multipleAttackRolls, restSummary, rollParts, rollSummary, type HealingRoll } from "./rollText";
 
 const CONTAINER =
   "inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-strong/80 bg-surface/80 px-2.5 py-1 text-xs text-ink";
@@ -27,6 +27,23 @@ function HealingPill({ roll }: { roll: HealingRoll }) {
  * recorded order when the main check has a unique dice-log match; legacy cards keep their order.
  */
 export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }) {
+  const attacks = multipleAttackRolls(adj);
+  if (adj && attacks.length) {
+    const log = adj.dice_log ?? [];
+    return (
+      <div className="flex max-w-full flex-col items-start gap-1" aria-label="Attack sequence" title={adj.mechanical_summary || undefined}>
+        {attacks.map((attack, index) => (
+          <div key={attack.index} className="flex max-w-full flex-wrap items-center gap-1">
+            {healingRolls({ ...adj, dice_log: log.slice(index ? attacks[index - 1].index + 1 : 0, attack.index) }).map((heal, position) => <HealingPill key={position} roll={heal} />)}
+            <RollCard adj={attack.adjudication} />
+          </div>
+        ))}
+        {typeof adj.damage === "number" && adj.damage > 0 ? <span className="text-xs font-mono text-ember-300">Total damage: {adj.damage}</span> : null}
+        {(adj.conditions ?? []).filter(Boolean).map((condition) => <span key={condition} className="text-xs text-ink-muted">{condition}</span>)}
+        {healingRolls({ ...adj, dice_log: log.slice(attacks[attacks.length - 1].index + 1) }).map((heal, index) => <HealingPill key={index} roll={heal} />)}
+      </div>
+    );
+  }
   const p = rollParts(adj);
   const rest = adj?.rest_record ?? null;
   if (!p && rest) {

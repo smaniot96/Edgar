@@ -13,6 +13,7 @@ from ingestion.semantic import prepare_reviewed_manifest_records
 
 from .. import adventures_meta
 from .compile import make_extraction
+from .playability import require_compatibility_review
 from .source import file_hash
 from .store import NeedsAttention, Store, atomic_json, digest
 
@@ -47,6 +48,7 @@ def retained_embeddings(store, texts):
 def publish(store: Store):
     store.check()
     compiled = store.get("compiled")
+    require_compatibility_review(store, compiled)
     extraction = make_extraction(compiled)
     manifest = AdventureManifest.model_validate(compiled["manifest"])
     if manifest_digest(manifest) != compiled["manifest_sha256"]:
@@ -85,6 +87,7 @@ def publish(store: Store):
         "request_sha256": store.state()["request_sha256"],
         "review_sha256": digest(store.get("review-coverage")),
         "findings_sha256": digest(store.get("findings")),
+        "compatibility_review_sha256": digest(store.get("compatibility-review")),
         "guide_sha256": file_hash(store.directory / "dm-guide.md"),
         "playable_sha256": file_hash(store.directory / "playable.json"),
     }

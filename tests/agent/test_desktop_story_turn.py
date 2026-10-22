@@ -5,14 +5,19 @@ from copy import deepcopy
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from agent.models.adjudication import AdjudicationResult
+from agent.combat_identity import canonical_actor_name, public_actor_name, scene_actor_aliases
+from agent.models.adjudication import AdjudicationResult, SourceObservation
 from agent.models.parsed_input import ParsedInput
 from agent.nodes import input_parser
 from agent.nodes.narrator import build_narrator_prompt
 from agent.nodes.rules_adjudicator import rules_adjudicator_node
 from agent.nodes.story_effects import prepare_story_validation_state, validate_story_effects
 from agent.resolution import resolve_from_parsed
-from agent.scene_guidance import selected_source_object, source_object_choices
+from agent.scene_guidance import (
+    observation_span_catalog,
+    selected_source_object,
+    source_object_choices,
+)
 from agent.story_turn import resolved_scene
 from agent.supported_rules import actions_for_state, engine_applied_for_state
 from apps.api.services.journal import project_player_journal
@@ -77,7 +82,7 @@ def test_narration_uses_the_same_one_hop_move_that_will_be_committed(play):
     assert TOWPATH_PUBLIC in prompt and QUAY_PUBLIC not in prompt
     assert QUAY_DM not in prompt and TOWPATH_DM not in prompt
     assert "place=Towpath" in prompt
-    assert "Only an accepted transition changes the location" in prompt
+    assert "Only an accepted transition changes the canonical scene" in prompt
     assert state["current_scene_id"] == "quay"
 
 
@@ -281,6 +286,94 @@ def test_explicit_entry_after_wait_can_accept_an_interior_arrival(play):
     assert len(result.accepted_story_effects) == 1
 
 
+@pytest.mark.parametrize("action", [
+    "Guz has brought Finethir here in his custody. Noke, where are they, and why did you turn Finethir into a sheep?",
+    'I ask the wizard, "Why did you do this?"',
+])
+def test_next_dialogue_inherits_exterior_position_without_repeating_stay(play, action):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "quay_public", "Through the treetops, a strange cabin comes into view.")
+    _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin, papers cover the tables.")
+    state.update(player_input=action, messages=[AIMessage(content="You remain on the lawn and call to the wizard.")])
+    result = _move(manifest, chunks, state)
+    assert result.scene_id == "quay" and not result.accepted_story_effects
+    # The same raw proposal remains rejected when the API revalidates the turn.
+    assert not validate_story_effects(
+        AdjudicationResult(success=True, story_effects=result.story_effects), state,
+    ).accepted_story_effects
+
+
+def test_explicit_entry_supersedes_prior_exterior_stance(play):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin, papers cover the tables.")
+    state.update(
+        player_input="I enter the cabin now.",
+        messages=[AIMessage(content="You remain outside on the lawn.")],
+    )
+    assert _move(manifest, chunks, state).scene_id == "towpath"
+
+
+@pytest.mark.parametrize("stance", [
+    "You are inside the cabin beside the desk.",
+    "You step into the adjoining sitting room and look around.",
+])
+def test_newest_local_entry_overrides_static_exterior_opening(play, stance):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "quay_public", "Through the treetops, a strange cabin comes into view.")
+    _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin, the crew answers your question.")
+    state.update(player_input="I ask the crew to explain.", messages=[AIMessage(content=stance)])
+    assert _move(manifest, chunks, state).scene_id == "towpath"
+
+
+def test_local_room_and_departure_actions_are_not_locked_by_absent_event_move(play):
+    _, _, state = play
+    state.update(
+        player_input="I enter the laboratory now and search its worktables, papers and shelves.",
+        adjudication_result=AdjudicationResult(success=True),
+    )
+    prompt = "\n".join(str(message.content) for message in build_narrator_prompt(state))
+    assert "local movement needs no scene transition" in prompt
+    assert "repeat that the protagonist has not entered" in prompt
+    assert "real established barrier" in prompt
+    assert resolved_scene(state)["scene_id"] == "quay"
+
+
+def test_approved_short_introduction_binds_actor_after_reload_without_private_name(play):
+    # This generated-adventure fixture has the same reviewed contract as an
+    # uploaded PDF. No adventure slug or special NPC identity is required.
+    manifest, chunks, state = play
+    manifest.entities[0].title = "Ahmed Noke"
+    _public_text(manifest, chunks, state, "quay_public", "A human wizard waits beside the desk.")
+    _public_text(manifest, chunks, state, "quay_dm", "The human wizard willingly introduces himself as Noke.")
+    for chunk in chunks.values():
+        chunk["scene_ids"] = [chunk["scene_id"]]
+    state["player_input"] = 'I ask the wizard, "Who are you?"'
+    span = next(span for span in observation_span_catalog(state).values()
+                if "introduces himself" in span["text"])
+    encounter = StoryEffect(
+        kind="encounter", status="encountered", target=_ref(manifest, "entity", "orin_dale"),
+        source_reference_ids=[_cite(chunks["quay_dm"])],
+    )
+    result = validate_story_effects(AdjudicationResult(
+        success=True, story_effects=[encounter], source_observations=[SourceObservation(
+            text="The wizard introduces himself as Noke.", source_span_id=span["source_span_id"],
+            action_quote="Who are you?", achievement_basis="The present wizard willingly answers.",
+        )],
+    ), state)
+    [accepted] = result.accepted_story_effects
+    assert accepted.display_name == "Noke" and "Noke" in accepted.player_text
+    assert "Ahmed" not in accepted.player_text
+    state["story_state"] = {"facts": [StoryFact(
+        **accepted.model_dump(), fact_id=story_target_id(accepted.target),
+    ).model_dump()]}
+    aliases = scene_actor_aliases(state)
+    assert canonical_actor_name("Noke", aliases) == "Ahmed Noke"
+    assert public_actor_name("Ahmed Noke", aliases) == "Noke"
+    # A copied introduction from a different publication cannot grant an alias.
+    state["story_state"]["facts"][0]["target"]["manifest_sha256"] = "f" * 64
+    assert scene_actor_aliases(state) == {}
+
+
 def test_narrator_treats_actor_staging_as_conditional_not_live_state(play):
     manifest, chunks, state = play
     _public_text(manifest, chunks, state, "towpath_public", "The sheep stays close, holding its scroll.")
@@ -406,6 +499,59 @@ def source_object_state(play):
         ),
     )
     return state
+
+
+@pytest.mark.parametrize("visible", [True, False])
+def test_private_item_procedure_can_commit_pickup_only_with_public_object_binding(source_object_state, visible):
+    state = source_object_state
+    if not visible:
+        # Same scene and private procedure are insufficient when the object itself
+        # has never been presented through its reviewed entity→object binding.
+        state["adventure_context"] = []
+    manifest = AdventureManifest.model_validate(state["adventure_manifests"]["ai_campaign"])
+    state["player_input"] = "I take the scroll."
+    proposed = StoryEffect(
+        kind="acquire", status="acquired",
+        target=_ref(manifest, "object", "animal_scroll"),
+        source_reference_ids=[_cite(state["planner_context"][0])],
+        achievement_basis="The hero takes the visible portable scroll.",
+    )
+    result = validate_story_effects(AdjudicationResult(success=True, story_effects=[proposed]), state)
+    assert bool(result.accepted_story_effects) is visible
+    state["adjudication_result"] = result
+    if visible:
+        [acquired] = result.accepted_story_effects
+        assert acquired.destination == "character:1" and acquired.quantity == 1
+        assert acquired.player_text == QUAY_PUBLIC
+        assert validate_story_effects(
+            AdjudicationResult(success=True, story_effects=[proposed]), state,
+        ).accepted_story_effects == result.accepted_story_effects
+    else:
+        prompt = "\n".join(str(message.content) for message in build_narrator_prompt(state))
+        assert "Object operations proposed but not accepted: [{'kind': 'acquire', 'operation': None}]" in prompt
+        assert "Do not narrate those operations as completed" in prompt
+
+
+def test_rejected_use_is_not_hidden_by_another_accepted_use_of_the_same_object(source_object_state):
+    state = source_object_state
+    manifest = AdventureManifest.model_validate(state["adventure_manifests"]["ai_campaign"])
+    acquire = StoryEffect(
+        kind="acquire", status="acquired", target=_ref(manifest, "object", "animal_scroll"),
+        source_reference_ids=[_cite(state["planner_context"][0])],
+    )
+    [owned] = validate_story_effects(AdjudicationResult(success=True, story_effects=[acquire]), state).accepted_story_effects
+    state["story_state"] = {"facts": [StoryFact(
+        **owned.model_dump(), fact_id=story_target_id(owned.target),
+    ).model_dump()]}
+    read = acquire.model_copy(update={"kind": "use", "status": "used", "operation": "read_aloud"})
+    transform = read.model_copy(update={"operation": "transform"})
+    state["adjudication_result"] = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[read, transform]), state,
+    )
+    assert [effect.operation for effect in state["adjudication_result"].accepted_story_effects] == ["read_aloud"]
+    prompt = "\n".join(str(message.content) for message in build_narrator_prompt(state))
+    warning = prompt.split("Object operations proposed but not accepted: ", 1)[1].split(". Do not narrate", 1)[0]
+    assert "transform" in warning and "read_aloud" not in warning
 
 
 @pytest.mark.parametrize(

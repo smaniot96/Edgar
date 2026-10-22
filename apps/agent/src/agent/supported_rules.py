@@ -337,14 +337,16 @@ SUPPORTED_MECHANICS: tuple[Mechanic, ...] = (
     Mechanic(
         id="supported_spells",
         title=(
-            "Catalog spells: Fire Bolt, Magic Missile, Sacred Flame, Cure Wounds, Healing Word, "
+            "Catalog spells: Fire Bolt, Ray of Frost, Magic Missile, Sacred Flame, Cure Wounds, Healing Word, "
             "Guiding Bolt, Blindness/Deafness and Hold Person"
         ),
         scope=(
             "Only these declared spells resolve, and only when the declaration names the spell in English. "
             "Fire Bolt is a spell attack (1d10 fire, two dice "
-            "at 5th level and up, more at 11th and 17th; a critical doubles the dice). Magic Missile "
-            "is three automatic-hit darts of 1d4+1 force, one more dart per slot above 1st. Sacred "
+            "at 5th level and up, more at 11th and 17th; a critical doubles the dice). "
+            "Ray of Frost uses the same ranged attack/scaling, with d8 cold damage; its 10-foot "
+            "speed reduction is not simulated and is explicitly declared before resolution. "
+            "Magic Missile is three automatic-hit darts of 1d4+1 force, one more dart per slot above 1st. Sacred "
             "Flame is a DEX save by the target against the caster's spell save DC, with 1d8 radiant "
             "damage on a failure only. Cure Wounds restores 1d8 plus the spellcasting modifier to the "
             "caster, one die more per slot above 1st; it cannot target anyone else. Healing Word is a "

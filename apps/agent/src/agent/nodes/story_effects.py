@@ -113,22 +113,17 @@ def _movement_source_refs(proposal, candidate, evidence, committed, state):
 
 
 def _stationary_interior_arrival(target: StoryRef, state: AgentState) -> bool:
-    """Do not turn an explicit stationary action into an authored interior arrival.
+    """Do not turn contact from an established exterior into physical entry.
 
     Event nodes can advance without travel, so waiting alone cannot reject a move.
-    This guard covers only a visible mismatch: the player stays put, the current
+    This guard covers only a visible mismatch: the player does not enter, the current
     public opening affirmatively places the viewpoint outside, and the proposed
     arrival explicitly starts inside. An unlabelled current opening proves neither.
     """
     action = re.sub(r'"[^"\n]*"|“[^”\n]*”', "", state.get("player_input", ""))
-    stationary = re.search(
-        r"\b(?:I|we)\s+(?:(?:stay|remain)\s+(?:here|where|in|at|on|outside|still|put)"
-        r"|wait\s+(?:here|in\s+place|where))\b",
-        action,
-        re.IGNORECASE,
-    )
-    if not stationary or re.search(
-        r"\b(?:I|we)\s+(?:then\s+)?(?:enter|walk|go|approach|follow|climb|step|move|leave)\b",
+    if re.search(
+        r"\b(?:I|we)\s+(?:(?:then|now|[a-z]+ly)\s+){0,2}"
+        r"(?:enter|walk|go|approach|follow|climb|step|move|leave|cross)\b",
         action,
         re.IGNORECASE,
     ):
@@ -153,7 +148,31 @@ def _stationary_interior_arrival(target: StoryRef, state: AgentState) -> bool:
         action,
         re.IGNORECASE,
     )
-    if not explicit_outside and not any(exterior.search(c.get("text", "")) for c in current):
+    # A dialogue turn inherits the last established stance. Requiring the player
+    # to repeat "I stay outside" on every question allowed the very next question
+    # to teleport them into the default opening. Only the newest DM reply is used;
+    # an old exterior description must not override a later actual entry.
+    latest_reply = next(
+        (str(message.content) for message in reversed(state.get("messages") or [])
+         if getattr(message, "type", None) == "ai"),
+        "",
+    )
+    latest_outside = re.search(
+        r"\byou\s+(?:(?:remain|stay|stand|wait|are)\s+)?"
+        r"(?:outside|outdoors|on\s+the\s+(?:lawn|grounds))\b",
+        latest_reply, re.IGNORECASE,
+    )
+    latest_inside = re.search(
+        r"\byou\s+(?:(?:are|remain|stay|stand|wait)\s+)?(?:inside|indoors)\b"
+        r"|\byou\s+(?:enter|step\s+into|walk\s+into|go\s+into)\s+"
+        r"[^.!?\n]{0,80}\b(?:room|library|laboratory|kitchen|cabin|house|building|tower)\b",
+        latest_reply, re.IGNORECASE,
+    )
+    if latest_inside and not explicit_outside:
+        return False
+    if not explicit_outside and not latest_outside and not any(
+        exterior.search(c.get("text", "")) for c in current
+    ):
         return False
     return any(
         interior.search(c.get("text", ""))
@@ -501,6 +520,55 @@ def _entity_scene_chunks(
     ]
 
 
+def _object_public_chunks(proposal: StoryEffect, chunks: list[dict], state: AgentState):
+    """A visible object's private item procedure may authorize public custody.
+
+    The reviewed entity→object join proves which object the public description
+    presents; a private item name or mere scene co-occurrence proves nothing.
+    Object ownership/portability/operations are still validated separately.
+    """
+    manifest = require_published(state["adventure_manifests"][proposal.target.collection])
+    entity_ids = {
+        entity.entity_id for entity in manifest.entities
+        if entity.object_id == proposal.target.canonical_id
+    }
+    passage_ids = {
+        passage.passage_id for passage in manifest.passages
+        if passage.audience == "player"
+        and state.get("current_scene_id") in passage.scene_ids
+        and entity_ids.intersection(passage.entity_ids)
+        and all((state.get("world_flags") or {}).get(k) == v
+                for k, v in passage.requires.items())
+    }
+    return [
+        chunk for chunk in chunks
+        if chunk.get("collection") == proposal.target.collection
+        and chunk.get("passage_id") in passage_ids
+        and chunk.get("audience") == "player"
+        and _reviewed_chunk(chunk, state)
+    ]
+
+
+def _earned_actor_name(candidate: dict, candidates: dict, text: str) -> str | None:
+    """An approved short introduction binds one actor without disclosing its title."""
+    title = candidate["title"]
+    words = title.split()
+    for index in range(len(words)):
+        name = " ".join(words[index:])
+        if len(name) < 3 or not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I):
+            continue
+        owners = [
+            value for value in candidates.values()
+            if value["target"]["kind"] == "entity"
+            and value.get("entity_kind") == "actor"
+            and (value["title"].casefold() == name.casefold()
+                 or value["title"].casefold().endswith(" " + name.casefold()))
+        ]
+        if len(owners) == 1:
+            return name
+    return None
+
+
 def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> AdjudicationResult:
     """Reject ungrounded proposals and stamp only server-owned accepted context.
 
@@ -666,6 +734,8 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             public = _entity_scene_chunks(proposal, candidate, chunks, state)
         if not public and proposal.kind == "visit":
             public = _arrival_chunks(proposal.target, chunks, state)
+        if not public and proposal.kind in _OBJECT_KINDS:
+            public = _object_public_chunks(proposal, chunks, state)
         if dm_transition:
             # Current-scene public evidence can justify leaving, but it cannot
             # become the destination's arrival description or map/journal detail.
@@ -734,6 +804,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             c["text"]
             for c in sorted(public, key=lambda c: source_citation(c, edition)["reference_id"])
         )
+        introduced_name = None
         if dm_goal:
             # Private achievement evidence earns progress, not disclosure permission.
             # The journal names a goal only when its reviewed public support names it.
@@ -747,11 +818,11 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             # A name learned in an approved introduction must remain in the earned
             # text as well as the label. Public projections intentionally refuse a
             # prepared title that occurs only in hidden metadata.
-            introductions = [
-                answer for answer in adj.accepted_observations if candidate["title"] in answer
-            ]
+            introductions = [answer for answer in adj.accepted_observations
+                             if _earned_actor_name(candidate, candidates, answer)]
             if introductions:
                 public_text = "\n".join([public_text, *introductions])
+            introduced_name = _earned_actor_name(candidate, candidates, public_text)
         effect = proposal.model_copy(update={"player_text": public_text})
         if effect.kind in _OBJECT_KINDS:
             try:
@@ -784,7 +855,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             origin_turn_id=state["turn_id"] if dm_goal or dm_transition else None,
             display_name=public_place_label(public_text, candidate["title"])
             if proposal.target.kind == "scene" and public_text
-            else (
+            else introduced_name or (
                 candidate["title"]
                 if any(candidate["title"] in c["text"] for c in public)
                 or any(candidate["title"] in answer for answer in adj.accepted_observations)

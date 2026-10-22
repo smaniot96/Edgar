@@ -77,4 +77,29 @@ describe("reloaded roll cards", () => {
     await act(() => root.unmount());
     container.remove();
   });
+
+  it("renders reloaded mixed attacks individually and preserves healing before them", async () => {
+    const mixed: RollRecord = { ...stored, check: "attack", against: "AC", dc: 14,
+      dice_result: 9, modifier: 6, roll_expression: "1d20+6", natural_roll: 3,
+      success: false, damage: 7, healing: 10,
+      dice_log: [
+        { expression: "1d10+4", rolls: [6], modifier: 4, total: 10, purpose: "second wind" },
+        { expression: "1d20+6", rolls: [3], modifier: 6, total: 9, purpose: "attack check" },
+        { expression: "1d20+6", rolls: [8], modifier: 6, total: 14, purpose: "attack check" },
+        { expression: "1d8+4", rolls: [3], modifier: 4, total: 7, purpose: "player damage" },
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(() => root.render(<MessageList messages={linesFromHistory([dm({ roll_status: "captured", roll: mixed })])} pending={null} />));
+    const first = container.querySelector('[aria-label^="Attack 1"]');
+    const second = container.querySelector('[aria-label^="Attack 2"]');
+    expect(first?.textContent).toContain("Failure");
+    expect(first?.textContent).not.toContain("dmg");
+    expect(second?.textContent).toContain("Success");
+    expect(container.textContent).toContain("Total damage: 7");
+    expect(container.textContent!.indexOf("Second Wind")).toBeLessThan(container.textContent!.indexOf("Attack 1"));
+    await act(() => root.unmount());
+  });
 });

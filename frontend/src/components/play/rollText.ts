@@ -50,6 +50,34 @@ function rollModeFields(adj: AdjudicationResult): Pick<RollParts, "faces" | "mod
   return { faces: entry.rolls, mode: entry.roll_mode };
 }
 
+/** The current weapon sequence attacks one target at its recorded AC. Each player
+ * attack has its own engine d20 entry; enemy rolls and damage dice never become checks.
+ * Keep aggregate applied damage separate: damage dice can precede resistance or immunity.
+ */
+export function multipleAttackRolls(adj: AdjudicationResult | null | undefined): Array<{ index: number; adjudication: AdjudicationResult }> {
+  if (!adj || adj.against !== "AC" || typeof adj.dc !== "number" || adj.check !== "attack") return [];
+  const attacks = (adj.dice_log ?? []).flatMap((entry, index) => entry.purpose === "attack check" ? [{ entry, index }] : []);
+  if (attacks.length < 2) return [];
+  return attacks.map(({ entry, index }, position) => {
+    const natural = entry.kept ?? (entry.rolls.length === 1 ? entry.rolls[0] : null);
+    return {
+      index,
+      adjudication: {
+        ...adj,
+        check: `Attack ${position + 1}`,
+        dice_result: entry.total,
+        roll_expression: entry.expression,
+        natural_roll: natural,
+        modifier: entry.modifier,
+        success: natural === 20 || (natural !== 1 && entry.total >= adj.dc!),
+        damage: null,
+        conditions: [],
+        dice_log: [entry],
+      },
+    };
+  });
+}
+
 /** A healing dice roll from the engine's dice log (Second Wind, spell healing, item or rest healing). */
 export interface HealingRoll {
   /** Dice-log purpose, capitalised for display, e.g. "Second Wind" or "Cure Wounds healing". */

@@ -200,6 +200,9 @@ def private_preparation_ready(slug, meta=None):
     try:
         store = Store(slug)
         compiled, publication = store.get("compiled"), store.get("publication")
+        from .playability import require_compatibility_review
+
+        require_compatibility_review(store, compiled)
         if (
             store.state().get("status") != "ready"
             or not publication
@@ -207,6 +210,11 @@ def private_preparation_ready(slug, meta=None):
             or meta.get("preparation_publication_receipt") != publication
             or digest(store.get("review-coverage")) != publication["review_sha256"]
             or digest(store.get("findings")) != publication["findings_sha256"]
+            or (
+                "compatibility_review_sha256" in publication
+                and digest(store.get("compatibility-review"))
+                != publication["compatibility_review_sha256"]
+            )
             or any(f["value"]["severity"] == "material" for f in store.get("findings") or [])
             or file_hash(store.directory / "dm-guide.md") != publication["guide_sha256"]
             or file_hash(store.directory / "playable.json") != publication["playable_sha256"]

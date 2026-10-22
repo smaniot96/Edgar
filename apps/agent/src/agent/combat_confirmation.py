@@ -98,7 +98,11 @@ def summary_of(hero: str, decl: Declaration) -> str:
         what += f"; {decl.contingency.describe()}, {decl.contingency.branch}"
     if decl.ready is not None and decl.ready.standing:
         what = f"keep a standing order to attack {decl.ready.foe_name} each time it closes in (until you cancel it)"
-    return (
+    limitations = (
+        " ".join(decl.spell_plan.spell.declared) + ". "
+        if decl.spell_plan is not None and decl.spell_plan.spell.declared else ""
+    )
+    return limitations + (
         f"Confirm before any dice: {hero} will {what}. Reply yes to commit, or no to change it. "
         "No roll is made and no turn is spent until you reply yes."
     )

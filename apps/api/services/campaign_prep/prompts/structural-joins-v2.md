@@ -14,7 +14,10 @@ Every allowed_fields entry is a permission, not a demand to change that field.
 For identity collisions preserve the canonical entity/secret. Rename the
 colliding event or goal with a unique ID and update all actual typed consumers,
 including item/check event_ids. Resolve dangling next_event_ids to intended
-existing events or remove unsupported edges. Do not invent extra scenes.
+existing events using the supplied chapter/source evidence. Preserve progression
+intent: deleting the only onward edge can orphan escalation or finale even when
+remaining IDs validate. Remove only a demonstrably spurious edge whose deletion
+preserves playable progression. Never invent extra scenes.
 
 An encounter actor must be a canonical NPC and occur in the event participants.
 Use actors entries to change only actor_id at the original encounter index.

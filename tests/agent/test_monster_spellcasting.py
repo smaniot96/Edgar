@@ -155,6 +155,51 @@ def test_incapped_or_blinded_target_does_not_impose_close_ranged_disadvantage() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("band", ["ranged", "melee"])
+async def test_source_ray_of_frost_casts_scaled_cold_damage_and_declares_omitted_speed_rider(fake_llm_schema, fake_retrieval, band):
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=False)
+    text = """Mage
+Medium humanoid (human), neutral evil
+Armor Class 12
+Hit Points 55
+INT 16 (+3)
+Spellcasting. The mage is a 7th level spellcaster. Its spellcasting ability is Intelligence
+(spell save DC 14, spell attacks +6 to hit). It has the following spells prepared:
+Cantrips (at will): Ray of Frost, Mending, Prestidigitation, Message.
+First level (four slots): Expeditious Retreat, Jump, Thunderwave.
+Second level (three slots): Enlarge/Reduce, Levitate.
+Third level (three slots): Haste, Slow.
+Fourth level (one slot): Polymorph.
+Actions
+Dagger. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 4 (1d4 + 2) piercing damage.
+"""
+    stats = parse_monster_stats(text, name="Mage")
+    assert stats.spellcasting.spells == ((0, "Ray of Frost"),)
+    assert "11 unsupported spell list entries" in " ".join(stats.declared)
+    assert "10-foot speed reduction" in " ".join(stats.declared)
+    foe = _foe("Mage", hp=55, ac=12)
+    foe.update(init=20, band=band, monster_stats=stats.to_dict())
+    state = _state("I wait", WAIT, foe)
+    with use_rng(ScriptedDice([15, 3, 4] if band == "ranged" else [15, 2])):
+        out = await combat_round_node(state)
+    dice = out["adjudication_result"].dice_log
+    attack = next(d for d in dice if d["purpose"] == "Ray of Frost spell attack")
+    if band == "ranged":
+        assert attack["total"] == 21
+        damage = next(d for d in dice if d["purpose"] == "Ray of Frost damage")
+        assert damage["expression"] == "2d8" and damage["total"] == 7
+        assert "cold damage" in _summary(out)
+    else:
+        assert attack["roll_mode"] == "disadvantage" and attack["total"] == 8
+        assert not any(d["purpose"] == "Ray of Frost damage" for d in dice)
+    assert _actor(out, "player")["hp_current"] == CLERIC["hp_current"] - (7 if band == "ranged" else 0)
+    assert _actor(out, "Mage")["monster_spell_slots_expended"] == {}
+    assert "speed reduction" in _summary(out) and "not simulated" in _summary(out)
+    assert not any(d.get("purpose", "").startswith("Mage Dagger") for d in dice)
+    assert not effects_of(_actor(out, "player"))
+
+
+@pytest.mark.asyncio
 async def test_melee_hit_crit_against_paralyzed_hero_does_not_turn_a_miss_into_a_hit(
     fake_llm_schema, fake_retrieval
 ) -> None:

@@ -463,6 +463,14 @@ def project_player_journal(
         records.sort(key=lambda record: (event_order.get(record[2], 0), record[0].event_id or 0))
         first_fact, first_public, first_event_id = records[0]
         latest_fact, _, _ = records[-1]
+        # A grouped physical place can include a trail, courtyard and interior. Its
+        # displayed area and description must come from the same committed arrival;
+        # pairing a new area title with the first area's prose invents a location.
+        place_snapshot = next(
+            (record for record in reversed(records) if record[0].kind in {"visit", "move"}),
+            records[-1],
+        ) if category == "place" else records[0]
+        description_public = place_snapshot[1] if category == "place" else first_public
         safe_names = [record[1]["name"] for record in records if record[1]["name"]]
         origin_event_id = first_event_id
         if first_fact.origin_turn_id:
@@ -493,10 +501,19 @@ def project_player_journal(
                 name for fact, _, _ in records
                 for name in _scene_place(fact, prepared).get("names", [])
             ]
+            snapshot_text = description_public["text"] or ""
             title = next(
-                (name for name in candidates if public_place_label(earned_text, name) == name),
+                (name for name in candidates if public_place_label(snapshot_text, name) == name),
                 None,
-            ) or public_place_label(records[-1][1]["text"], title) or "Known location"
+            ) or public_place_label(snapshot_text, title) or "Known location"
+            if title == "Unidentified place":
+                # A name earned in narration still labels a scene with no geographic
+                # noun in its arrival text. Never replace a concrete current area with
+                # an older sublocation merely because both share a coarse place ID.
+                title = next(
+                    (name for name in candidates if public_place_label(earned_text, name) == name),
+                    title,
+                )
             if title == "Unidentified place":
                 first_place = next((fact for fact, _, kind, _ in safe_records if kind == "place"), None)
                 title = "Starting location" if first_place and place_fact_identity(first_place, prepared) == stable_id else "Visited location"
@@ -603,9 +620,10 @@ def project_player_journal(
             related_actor_id=related_actor_id,
             category=category,  # type: ignore[arg-type]
             title=title,
-            # Preserve the first exact earned text as the immutable original. Status changes
-            # remain separate in history, so later clues or summaries cannot replace it.
-            text=first_public["text"],
+            # Knowledge keeps its immutable original. A physical place's latest arrival
+            # snapshot stays aligned with its displayed area; earlier visits remain in
+            # the immutable ledger and linked history.
+            text=description_public["text"],
             status=current_status,  # type: ignore[arg-type]
             # Candidate counts are withheld until the ledger gets an explicit player reveal.
             quantity=quantity,
