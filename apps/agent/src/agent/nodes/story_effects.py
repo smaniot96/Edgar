@@ -59,6 +59,59 @@ def committed_facts(state: AgentState) -> list:
     return StoryState.model_validate(state.get("story_state") or {}).facts
 
 
+def _normalize_linked_visit(proposal: StoryEffect, candidate: dict | None, state: dict):
+    """A proposed visit to a different linked scene is a movement proposal.
+
+    This only normalizes the model's vocabulary. The usual movement, source,
+    trigger, one-hop and stationary-position checks still decide acceptance.
+    """
+    if (
+        proposal.kind == "visit"
+        and proposal.target.kind == "scene"
+        and proposal.target.canonical_id != state.get("current_scene_id")
+        and candidate is not None
+        and candidate.get("can_move")
+    ):
+        return proposal.model_copy(update={"kind": "move"})
+    return proposal
+
+
+def _movement_source_refs(proposal, candidate, evidence, committed, state):
+    """Discard redundant history origins only alongside real current source proof.
+
+    The planner can confuse a committed fact's play-event origin with its source
+    citation. History alone still cannot authorize movement, and unknown or foreign
+    references remain in the proposal so normal source validation rejects them.
+    """
+    if proposal.kind != "move":
+        return proposal
+    identity = ("collection", "source_sha256", "manifest_sha256")
+    target = proposal.target.model_dump()
+    current = {
+        rid for rid in proposal.source_reference_ids
+        if rid in evidence
+        and evidence[rid].get("passage_id") in candidate["passage_ids"]
+        and all(evidence[rid].get(key) == target[key] for key in identity)
+        and _reviewed_chunk(evidence[rid], state)
+    }
+    if not current:
+        return proposal
+    history = {
+        ref.get("reference_id")
+        for fact in committed
+        for ref in fact.source_refs
+        if fact.evidence_kind == "dm_adjudication"
+        and ref.get("audience") == "play_event"
+        and ref.get("provenance") == "dm_adjudication"
+        and ref.get("origin_turn_id") == (fact.origin_turn_id or fact.turn_id)
+        and ref.get("target_sha256") == story_target_id(fact.target)
+        and all(ref.get(key) == target[key] for key in identity)
+        and all(getattr(fact.target, key) == target[key] for key in identity)
+    }
+    references = [rid for rid in proposal.source_reference_ids if rid in current or rid not in history]
+    return proposal.model_copy(update={"source_reference_ids": references})
+
+
 def _stationary_interior_arrival(target: StoryRef, state: AgentState) -> bool:
     """Do not turn an explicit stationary action into an authored interior arrival.
 
@@ -474,6 +527,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     )
     evidence = {source_citation(c, edition)["reference_id"]: c for c in chunks}
     facts = committed_facts(state)
+    committed = list(facts)
     known_ids = {identity for f in facts for identity in (f.fact_id, f.effect_id)}
     authorized_policy_effects = set(state.get("authorized_policy_effect_keys") or [])
     policy_reveals = {
@@ -503,6 +557,8 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             proposal = proposal.model_copy(update={"kind": "encounter", "status": "encountered"})
         if candidate is None or not _kind_matches(proposal, candidate):
             continue
+        proposal = _normalize_linked_visit(proposal, candidate, state)
+        proposal = _movement_source_refs(proposal, candidate, evidence, committed, state)
         # A move and an object transfer share the schema's "moved" literal. For a
         # well-typed scene move it means the canonical visit status; all eligibility,
         # source and trigger checks below still apply before accepting anything.
@@ -610,7 +666,9 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             public = _entity_scene_chunks(proposal, candidate, chunks, state)
         if not public and proposal.kind == "visit":
             public = _arrival_chunks(proposal.target, chunks, state)
-        if not public and dm_transition:
+        if dm_transition:
+            # Current-scene public evidence can justify leaving, but it cannot
+            # become the destination's arrival description or map/journal detail.
             public = _arrival_chunks(
                 proposal.target, state.get("story_arrival_context") or [], state
             )
@@ -880,7 +938,11 @@ async def _prepare_arrival_context(
     from db.vector.retrieval import retrieve_active_scene
 
     state["story_arrival_context"] = []
-    move = next((effect for effect in adj.story_effects[:20] if effect.kind == "move"), None)
+    motions = (
+        _normalize_linked_visit(effect, candidates.get(effect.target.model_dump_json()), state)
+        for effect in adj.story_effects[:20]
+    )
+    move = next((effect for effect in motions if effect.kind == "move"), None)
     if move is None or move.target.canonical_id == state.get("current_scene_id"):
         return
     candidate = candidates.get(move.target.model_dump_json())

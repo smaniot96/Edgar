@@ -10,7 +10,7 @@ from agent.models.parsed_input import ParsedInput
 from agent.nodes import input_parser
 from agent.nodes.narrator import build_narrator_prompt
 from agent.nodes.rules_adjudicator import rules_adjudicator_node
-from agent.nodes.story_effects import validate_story_effects
+from agent.nodes.story_effects import prepare_story_validation_state, validate_story_effects
 from agent.resolution import resolve_from_parsed
 from agent.scene_guidance import selected_source_object, source_object_choices
 from agent.story_turn import resolved_scene
@@ -20,7 +20,13 @@ from apps.api.services.opening_journal import opening_journal_effects
 from edgar_core.artifacts import text_digest
 from edgar_core.assets import project_player_map
 from edgar_core.manifests import AdventureManifest, manifest_digest
-from edgar_core.story import StoryEffect, StoryFact, story_target_id
+from edgar_core.story import (
+    StoryEffect,
+    StoryFact,
+    accept_story_effect,
+    dm_adjudication_reference,
+    story_target_id,
+)
 from tests.agent.test_journal_recording import (
     QUAY_DM,
     QUAY_PUBLIC,
@@ -73,6 +79,121 @@ def test_narration_uses_the_same_one_hop_move_that_will_be_committed(play):
     assert "place=Unidentified place" in prompt
     assert "Only an accepted transition changes the location" in prompt
     assert state["current_scene_id"] == "quay"
+
+
+def _arrival_visit(manifest, chunks, state):
+    motion = _move(manifest, chunks, state).story_effects[0]
+    return motion.model_copy(update={
+        "kind": "visit", "source_reference_ids": [_cite(chunks["quay_public"])],
+        "player_text": "You follow the crew along the route toward their home.",
+    })
+
+
+def test_linked_arrival_visit_is_normalized_before_validation_and_revalidation(play):
+    manifest, chunks, state = play
+    visit = _arrival_visit(manifest, chunks, state)
+    result = validate_story_effects(AdjudicationResult(success=True, story_effects=[visit]), state)
+    [effect] = result.accepted_story_effects
+    assert effect.kind == "move" and result.scene_id == "towpath"
+    assert effect.player_text == TOWPATH_PUBLIC
+    rechecked = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[visit]), state,
+    )
+    assert rechecked.accepted_story_effects == result.accepted_story_effects
+    assert visit.kind == "visit"  # Raw planner receipt remains intact.
+
+
+@pytest.mark.asyncio
+async def test_linked_arrival_visit_preloads_the_same_reviewed_destination(play, monkeypatch):
+    manifest, chunks, state = play
+    visit = _arrival_visit(manifest, chunks, state)
+    state.pop("story_arrival_context")
+    calls = []
+
+    def retrieve(manifests, scene_id, flags, **kwargs):
+        calls.append(scene_id)
+        return {"adventure_context": [chunks["towpath_public"]]}
+
+    monkeypatch.setattr("db.vector.retrieval.retrieve_active_scene", retrieve)
+    result = AdjudicationResult(success=True, story_effects=[visit])
+    await prepare_story_validation_state(result, state)
+    assert calls == ["towpath"]
+    assert state["story_arrival_context"] == [chunks["towpath_public"]]
+    assert validate_story_effects(result, state).scene_id == "towpath"
+
+
+@pytest.mark.parametrize("defect", ["unlinked", "gated", "missing_basis", "unknown_source", "stationary"])
+def test_arrival_visit_normalization_preserves_movement_guards(play, defect):
+    manifest, chunks, state = play
+    visit = _arrival_visit(manifest, chunks, state)
+    if defect in {"unlinked", "gated"}:
+        if defect == "unlinked":
+            manifest.scenes[0].links = []
+        else:
+            manifest.scenes[0].links[0].requires = {"gate_open": "yes"}
+        _public_text(manifest, chunks, state, "quay_public", QUAY_PUBLIC)
+        visit = visit.model_copy(update={"target": _ref(manifest, "scene", "towpath"), "source_reference_ids": [_cite(chunks["quay_public"])]})
+    elif defect == "missing_basis":
+        visit = visit.model_copy(update={"achievement_basis": None})
+    elif defect == "unknown_source":
+        visit = visit.model_copy(update={"source_reference_ids": ["not_a_source"]})
+    else:
+        _public_text(manifest, chunks, state, "quay_public", "You stand outside the cabin.")
+        _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin, books line the walls.")
+        state["player_input"] = "I stay outside and call to the crew."
+        visit = visit.model_copy(update={"target": _ref(manifest, "scene", "towpath"), "source_reference_ids": [_cite(chunks["quay_public"])]})
+    assert validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[visit]), state,
+    ).accepted_story_effects == []
+
+
+def test_current_visit_remains_a_visit_and_absent_proposals_stay_absent(play):
+    manifest, chunks, state = play
+    visit = _arrival_visit(manifest, chunks, state).model_copy(
+        update={"target": _ref(manifest, "scene", "quay")},
+    )
+    result = validate_story_effects(AdjudicationResult(success=True, story_effects=[visit]), state)
+    assert [e.kind for e in result.accepted_story_effects] == ["visit"]
+    assert validate_story_effects(AdjudicationResult(success=True), state).accepted_story_effects == []
+
+
+@pytest.mark.parametrize("references,allowed", [
+    ("mixed", True), ("history_only", False), ("unknown", False),
+    ("cross_manifest", False), ("invalid_knowledge", False),
+])
+def test_movement_history_origins_are_redundant_only_alongside_current_source_proof(
+    play, references, allowed,
+):
+    manifest, chunks, state = play
+    proposal = _arrival_visit(manifest, chunks, state)
+    prior_target = _ref(manifest, "scene", "quay")
+    origin = dm_adjudication_reference("prior-turn", prior_target, action="I arrive at the quay.", success=True)
+    prior = accept_story_effect(
+        StoryEffect(kind="move", status="visited", target=prior_target),
+        turn_id="prior-turn", source_refs=[origin], evidence_kind="dm_adjudication",
+    )
+    fact = StoryFact(**prior.model_dump(), fact_id=story_target_id(prior_target))
+    state["story_state"] = {"facts": [fact.model_dump()]}
+    history_id = origin["reference_id"]
+    if references == "cross_manifest":
+        state["story_state"]["facts"][0]["source_refs"][0]["manifest_sha256"] = "f" * 64
+    ids = [history_id] if references == "history_only" else [_cite(chunks["quay_public"]), history_id]
+    if references == "unknown":
+        ids.append("unknown_reference")
+    proposal = proposal.model_copy(update={
+        "source_reference_ids": ids,
+        "knowledge_fact_ids": ["unknown_fact" if references == "invalid_knowledge" else fact.fact_id],
+    })
+    result = validate_story_effects(AdjudicationResult(success=True, story_effects=[proposal]), state)
+    assert bool(result.accepted_story_effects) is allowed
+    if allowed:
+        [effect] = result.accepted_story_effects
+        assert effect.kind == "move"
+        assert effect.source_reference_ids == [_cite(chunks["quay_public"])]
+        assert effect.knowledge_fact_ids == [fact.fact_id]
+        assert validate_story_effects(
+            AdjudicationResult(success=True, story_effects=[proposal]), state,
+        ).accepted_story_effects == result.accepted_story_effects
 
 
 def test_proposed_or_narrated_position_cannot_move_the_resolved_scene(play):
