@@ -12,6 +12,15 @@ _PLACE_WORDS = frozenset(
     "towpath track trail village warehouse woods".split()
 )
 _NAME_CONNECTORS = frozenset({"a", "an", "the", "of", "and", "at", "on", "in", "by"})
+_ACTOR_ROLES = (
+    "tender|keeper|guard|guards|resident|residents|owner|worker|workers|"
+    "master|mistress|guide|captain|sailor|sailors|warden|merchant"
+)
+
+
+def _actor_compound(text: str, end: int) -> bool:
+    """A geographic noun modifying a person's role does not identify a location."""
+    return bool(re.match(rf"\s+(?:{_ACTOR_ROLES})\b", text[end:], re.IGNORECASE))
 
 
 def public_place_label(text: str | None, name: str = "", *, limit: int = 64) -> str:
@@ -47,7 +56,10 @@ def public_place_label(text: str | None, name: str = "", *, limit: int = 64) -> 
         text,
         re.IGNORECASE,
     )
-    if name_like and (place_word or place_context):
+    occurrences = list(re.finditer(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.IGNORECASE))
+    if name_like and (place_word or place_context) and any(
+        not _actor_compound(text, match.end()) for match in occurrences
+    ):
         return name
     return _descriptive_place_label(text, limit)
 
@@ -60,14 +72,23 @@ def _descriptive_place_label(text: str, limit: int) -> str:
     Keep the phrase short and grounded; do not promote a whole arrival sentence.
     """
     words = "|".join(sorted(_PLACE_WORDS, key=len, reverse=True))
-    match = re.search(
+    matches = re.finditer(
         rf"\b(?:the|a|an)\s+((?:[\w’'-]+\s+){{0,2}}?(?:{words}))\b",
         text,
         re.IGNORECASE,
     )
-    if match:
+    for match in matches:
         phrase = match.group(1)
+        end = match.end()
+        # Preserve compound geography such as 'town landing' rather than stopping
+        # at the first noun that can also identify a place on its own.
+        compound = re.match(rf"(?:\s+(?:{words})){{1,2}}\b", text[end:], re.I)
+        if compound:
+            phrase += compound.group(0)
+            end += compound.end()
         # Do not turn an actor's action ('a sheep near the road') into a place name.
-        if not re.search(r"\b(?:near|at|in|on|to|from|of|and|with|is|are)\b", phrase, re.I):
+        if not _actor_compound(text, end) and not re.search(
+            r"\b(?:near|at|in|on|to|from|of|and|with|is|are)\b", phrase, re.I
+        ):
             return phrase[:1].upper() + phrase[1:limit]
     return "Unidentified place"

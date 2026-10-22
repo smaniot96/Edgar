@@ -1035,7 +1035,7 @@
     "messages": [
       {
         "additional_kwargs": {},
-        "content": "Scripted narration.",
+        "content": "Scripted narration.\n\n**Victory!** The way forward is clear.",
         "id": null,
         "invalid_tool_calls": [],
         "name": null,
@@ -1686,7 +1686,7 @@
     "messages": [
       {
         "additional_kwargs": {},
-        "content": "Scripted narration.",
+        "content": "Scripted narration.\n\n*(You have left the fight.)*",
         "id": null,
         "invalid_tool_calls": [],
         "name": null,
@@ -2271,7 +2271,7 @@
     "messages": [
       {
         "additional_kwargs": {},
-        "content": "Scripted narration.",
+        "content": "Scripted narration.\n\n**Subdued.** You are overwhelmed and knocked unconscious — your story is not over, but you are at the enemy's mercy.",
         "id": null,
         "invalid_tool_calls": [],
         "name": null,
@@ -2389,6 +2389,7 @@
       "dc": null,
       "dice_log": [
         {
+          "applied": 5,
           "expression": "1d10+1",
           "modifier": 1,
           "purpose": "second wind",
@@ -2606,6 +2607,7 @@
           ],
           "dice_log": [
             {
+              "applied": 5,
               "expression": "1d10+1",
               "modifier": 1,
               "purpose": "second wind",
@@ -2661,7 +2663,8 @@
             "bonus_action": {
               "action": "second_wind",
               "recovered": 5,
-              "result": "used"
+              "result": "used",
+              "rolled": 5
             },
             "result": "down"
           },

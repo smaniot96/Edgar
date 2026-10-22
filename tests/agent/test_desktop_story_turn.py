@@ -532,6 +532,43 @@ def test_private_item_procedure_can_commit_pickup_only_with_public_object_bindin
         assert "Do not narrate those operations as completed" in prompt
 
 
+def test_public_object_label_uses_visible_descriptor_instead_of_private_title():
+    from agent.nodes.story_effects import _public_object_label
+
+    title = "Modified Wand of True Polymorph"
+    label = _public_object_label({"title": title}, [{
+        "text": "A human wizard works amid the clutter, with a thin, rune-banded oak wand close at hand.",
+    }])
+    assert label == "thin, rune-banded oak wand"
+    assert "True Polymorph" not in label
+    assert _public_object_label({"title": title}, [{"text": "An empty table."}]) is None
+
+
+@pytest.mark.parametrize("destination", [None, "Hazel", "Hazel Preparation Replay Peace L4"])
+def test_named_pickup_keeps_public_descriptor_and_no_false_narrator_rejection(source_object_state, destination):
+    state = source_object_state
+    manifest = AdventureManifest.model_validate(state["adventure_manifests"]["ai_campaign"])
+    chunks = {chunk["passage_id"]: chunk for chunk in state["adventure_context"] + state["planner_context"]}
+    text = QUAY_PUBLIC + " A folded parchment scroll rests on the quay."
+    _public_text(manifest, chunks, state, "quay_public", text)
+    chunks["quay_public"]["text_sha256"] = text_digest(text)
+    state["character"]["name"] = "Hazel Preparation Replay Peace L4"
+    state["player_input"] = "I take the scroll."
+    proposed = StoryEffect(
+        kind="acquire", status="acquired", target=_ref(manifest, "object", "animal_scroll"),
+        destination=destination, source_reference_ids=[_cite(chunks["quay_dm"])],
+        achievement_basis="The hero takes the visible portable scroll.",
+    )
+    result = validate_story_effects(AdjudicationResult(success=True, story_effects=[proposed]), state)
+    [acquired] = result.accepted_story_effects
+    assert acquired.destination == "character:1"
+    assert acquired.display_name == "folded parchment scroll"
+    assert "Speak with Animals" not in acquired.display_name + acquired.player_text
+    state["adjudication_result"] = result
+    prompt = "\n".join(str(message.content) for message in build_narrator_prompt(state))
+    assert "Object operations proposed but not accepted:" not in prompt
+
+
 def test_rejected_use_is_not_hidden_by_another_accepted_use_of_the_same_object(source_object_state):
     state = source_object_state
     manifest = AdventureManifest.model_validate(state["adventure_manifests"]["ai_campaign"])

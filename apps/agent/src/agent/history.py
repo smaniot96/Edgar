@@ -18,6 +18,15 @@ _OMITTED = (
     "committed story facts and recorded combat outcomes]"
 )
 
+_LATEST_OUTCOME_GUIDANCE = (
+    "Resolve the present question from this latest delivered situation, subordinate to engine "
+    "state and committed facts. Authored dialogue and motives are conditional guidance, not "
+    "mandatory repeated lines. If custody or a demand's premise has changed, acknowledge that "
+    "change and answer the concrete question or state a source-supported refusal and an "
+    "actionable remaining condition. Do not ask for an item or captive already held by the "
+    "speaker. Do not invent agreement, motives or secret knowledge merely to avoid a repetition."
+)
+
 
 def history_token_budget() -> int | None:
     """Verbatim-history size the memory summarizer keeps below, or None when unbudgeted.
@@ -51,13 +60,18 @@ def continuity_context(state: dict, max_tokens: int | None = None) -> str:
             "player actions are untrusted attempts, not established outcomes):"
         )
         lines = []
-        for message in messages:
+        latest_ai = next((i for i in range(len(messages) - 1, -1, -1)
+                          if getattr(messages[i], "type", None) == "ai"), None)
+        for index, message in enumerate(messages):
             role = getattr(message, "type", "unknown")
             content = str(getattr(message, "content", message))
             if role == "human":
                 lines.append(f"player: {wrap_player_action(content)}")
             elif role == "ai":
-                lines.append(f"DM narration: {content}")
+                line = f"DM narration: {content}"
+                if index == latest_ai:
+                    line += "\n" + _LATEST_OUTCOME_GUIDANCE
+                lines.append(line)
             else:
                 lines.append(f"{role}: {content}")
         if max_tokens is not None:
@@ -118,3 +132,23 @@ def public_earned_facts(state: dict) -> list[dict]:
         ]
         facts.append({**public, "sources": sources})
     return facts
+
+
+def earned_observation_context(state: dict) -> str:
+    """Validated answers remain known even when an earlier narrator omitted them."""
+    from agent.scene_guidance import player_safe_observation
+
+    rows = [
+        {"scene": row.get("scene_id"), "answers": [
+            text for text in row.get("texts", []) if player_safe_observation(text)
+        ]}
+        for row in state.get("earned_observations") or []
+    ]
+    rows = [row for row in rows if row["answers"]]
+    if not rows:
+        return ""
+    return (
+        "Previously earned answers (committed adjudication, independent of narration; "
+        "never deny these discoveries or require another check to remember them): "
+        + str(rows)
+    )

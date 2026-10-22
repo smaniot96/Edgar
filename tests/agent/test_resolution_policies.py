@@ -8,7 +8,7 @@ from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagU
 from agent.models.parsed_input import ParsedInput
 from agent.nodes.narrator import deterministic_narration
 from agent.nodes.rules_adjudicator import rules_adjudicator_node
-from agent.resolution_policies import exact_recall_fact
+from agent.resolution_policies import describe_policy_result, exact_recall_fact
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import AdventureManifest, manifest_digest
 from edgar_core.sources import source_citation
@@ -29,6 +29,37 @@ def test_failed_empty_policy_keeps_public_scene_narration_available():
     state.pop("policy_rejection")
     state["adjudication_result"] = AdjudicationResult(success=True)
     assert deterministic_narration(state) == state["policy_narration"]
+
+
+def test_successful_policy_conveys_earned_observation_without_empty_result():
+    signs = "Fresh scuffs and bent reeds point toward the open water."
+    narration = describe_policy_result(True, [], [], [signs])
+    assert signs in narration
+    assert "no further change" not in narration
+    state = {"policy_narration": narration, "adjudication_result": AdjudicationResult(
+        success=True, accepted_observations=[signs],
+    )}
+    assert signs in deterministic_narration(state)
+
+
+@pytest.mark.asyncio
+async def test_search_recovery_uses_committed_answer_without_roll_or_reproof(fake_llm_schema):
+    signs = "Fresh scuffs and bent reeds point toward the open water."
+    state = _policy_state(ParsedInput(intent="exploration", check="investigation"))
+    state["player_input"] = "What did my search find?"
+    state["earned_observations"] = [{"event_id": 12, "scene_id": "hall", "action": "I search the reeds.", "texts": [signs]}]
+    out = await rules_adjudicator_node(state)
+    assert out["exact_recall"]["text"] == signs
+    assert fake_llm_schema.calls == []
+    assert out["adjudication_result"].check is None
+    assert signs in deterministic_narration(out)
+
+
+def test_search_recovery_does_not_take_an_unrelated_scene_answer():
+    state = _policy_state()
+    state["player_input"] = "What did my search find?"
+    state["earned_observations"] = [{"scene_id": "other_scene", "texts": ["A different clue."]}]
+    assert exact_recall_fact(state, state["parsed_input"]) is None
 
 
 def _policy_state(parsed: ParsedInput | None = None) -> dict:
@@ -52,13 +83,15 @@ def _policy_state(parsed: ParsedInput | None = None) -> dict:
                     "audience": "player",
                 }
             ],
-            "objectives": [
+            "objects": [
                 {
-                    "canonical_id": "open_door",
-                    "title": "Open the door",
+                    "canonical_id": "oak_door",
+                    "title": "Oak door",
                     "scene_ids": ["hall"],
                     "passage_ids": ["door"],
-                    "statuses": ["completed"],
+                    "portable": False,
+                    "operations": ["force_open"],
+                    "statuses": ["changed"],
                 }
             ],
             "resolution_policies": [
@@ -73,9 +106,10 @@ def _policy_state(parsed: ParsedInput | None = None) -> dict:
                     "failure_mode": "no_progress",
                     "on_success": [
                         {
-                            "kind": "objective",
-                            "target_id": "open_door",
-                            "status": "completed",
+                            "kind": "environment",
+                            "target_id": "oak_door",
+                            "status": "changed",
+                            "operation": "force_open",
                             "passage_ids": ["door"],
                         }
                     ],
@@ -144,7 +178,7 @@ async def test_policy_uses_authored_dc_and_deterministic_narration(fake_llm_sche
     assert result.flags_set == [] and result.character_update is None
     assert len(result.accepted_story_effects) == 1
     assert out["policy_narration"].startswith("Your approach succeeds.")
-    assert "completed" in out["policy_narration"]
+    assert "changed" in out["policy_narration"]
     assert "A stout oak door bars the way." not in out["policy_narration"]
     assert "impossible" not in out["policy_narration"]
 
@@ -268,6 +302,7 @@ async def test_public_reading_uses_automatic_policy_without_model_or_roll(fake_l
     state["parsed_input"] = ParsedInput(
         intent="exploration", check="history", resolution_policy_id="module:read_sign"
     )
+    state["player_input"] = "I read the public sign."
     out = await rules_adjudicator_node(state)
     result = out["adjudication_result"]
     assert result.success and result.check is None and result.dice_result is None

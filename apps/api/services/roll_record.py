@@ -42,6 +42,7 @@ def build_roll_record(
     if adjudication.dice_result is None and not dice_log and rest is None:
         return None
     update = adjudication.character_update
+    applied_heals = [d["applied"] for d in dice_log if type(d.get("applied")) is int and d["applied"] >= 0]
     return {
         "turn_id": turn_id,
         "check": adjudication.check,
@@ -54,10 +55,10 @@ def build_roll_record(
         "dice_result": adjudication.dice_result,
         "damage": _positive(adjudication.damage),
         # Healing is the applied hp gain on this turn, never an unrolled proposal.
-        "healing": _positive(update.hp_delta) if update is not None else None,
+        "healing": _positive(sum(applied_heals)) if applied_heals else (_positive(update.hp_delta) if update is not None else None),
         "conditions": [c for c in adjudication.conditions or [] if c],
         "mechanical_summary": adjudication.mechanical_summary or "",
-        "dice_log": [{key: d.get(key) for key in _DICE_KEYS} for d in dice_log],
+        "dice_log": [{**{key: d.get(key) for key in _DICE_KEYS}, **({"applied": d["applied"]} if type(d.get("applied")) is int and d["applied"] >= 0 else {})} for d in dice_log],
         # Rest evidence (EDG-026): the hit die rolled, healing applied and Hit Dice left.
         "rest": rest.model_dump() if rest is not None else None,
     }

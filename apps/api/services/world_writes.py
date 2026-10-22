@@ -62,6 +62,13 @@ async def apply_adjudication(
 ) -> None:
     if adj.scene_id:
         known = {game_session.current_scene_id} if game_session.current_scene_id else set()
+        # Validated moves carry the exact publication identity. A similar previous
+        # event ID is not a spelling correction for that canonical destination.
+        known.update(
+            effect.target.canonical_id
+            for effect in adj.accepted_story_effects
+            if effect.kind == "move" and effect.target.kind == "scene"
+        )
         scene_id = validate_scene_id(adj.scene_id, known)
         if scene_id is None:
             log.warning("scene_id_rejected", scene_id=str(adj.scene_id)[:80])

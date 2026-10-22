@@ -45,6 +45,7 @@ class PendingRoundNarration:
     base_update: dict[str, Any]  # round state to persist, without narration/messages/telemetry
     round_event: dict[str, Any]  # combat_round_event kwargs, except the stage timings
     stage_ms: dict[str, int]  # stages measured before narration
+    engine_narration: str = ""  # resolver lines in initiative order, including saves and PC spells
 
     @property
     def profile(self) -> str:
@@ -60,6 +61,12 @@ def _roster_problem_labels(problems: list[str], combatants: list[dict]) -> list[
     """
     names = {display_name(c).lower() for c in combatants if not c.get("is_player")}
     return [p if p.lower() in names else "unnamed_attacker" for p in problems[:4]]
+
+
+def has_authoritative_spell_events(state: dict[str, Any]) -> bool:
+    """Spell rounds need the complete engine chronology before any prose is shown."""
+    events = (state.get("combat_state") or {}).get("round_events") or []
+    return any(event.get("kind") == "enemy_spell" for event in events)
 
 
 def finalize_round_narration(
@@ -85,7 +92,16 @@ def finalize_round_narration(
             actions_for_state(pending.narr_state),
             applied=engine_applied_for_state(pending.narr_state),
         )
-    messages = [*(pending.narr_state.get("messages") or []), AIMessage(content=text)]
+    events = (pending.narr_state.get("combat_state") or {}).get("round_events") or []
+    if has_authoritative_spell_events(pending.narr_state):
+        # Each sentence is authored by the resolver at the moment the action
+        # occurs. Free prose cannot omit incoming spell damage or reverse turns.
+        # Keep this bounded combat account independent of source/adventure names.
+        text = pending.engine_narration or pending.adjudication.mechanical_summary or "\n\n".join(
+            event["text"] for event in events if event.get("text")
+        )
+        if pending.outcome is None:
+            text += "\n\nWhat do you do next?"
     problems = roster_violations(text, pending.combatants)
     if problems:
         # Prose that revives an inactive foe or invents an attacker is replaced by the engine's log.
@@ -94,7 +110,6 @@ def finalize_round_narration(
             extra={"problems": _roster_problem_labels(problems, pending.combatants)},
         )
         text = pending.adjudication.mechanical_summary or ""
-        messages = [*messages[:-1], AIMessage(content=text)]
     party = sum(1 for c in pending.combatants if c.get("is_player")) >= 2
     if pending.outcome == "victory":
         text += "\n\n**Victory!** The way forward is clear."
@@ -111,6 +126,8 @@ def finalize_round_narration(
     elif pending.outcome == "fled":
         text += "\n\n*(You have left the fight.)*"
 
+    # History must reopen with the same completed outcome the live turn showed.
+    messages = [*(pending.narr_state.get("messages") or []), AIMessage(content=text)]
     stage_ms = {**pending.stage_ms, "narrating_ms": int(narrating_ms)}
     round_event = combat_round_event(**pending.round_event, stage_ms=stage_ms)
     return {

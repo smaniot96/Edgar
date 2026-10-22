@@ -18,7 +18,19 @@ from edgar_core.campaign_semantics import SCHEMA_VERSION, Bundles, Entity, Recor
 from edgar_core.identifiers import Identifier
 
 from .compile import chapter_source_pages, validate_semantics
+from .profile_references import (
+    PROFILE_REFERENCE_POLICY,
+    ProfileCorrectionRejected,
+    profile_reference_defects,
+    reconcile_profile_pages,
+)
 from .provider import EFFORT, MODEL, OutputExhausted, instructions, response_format, response_text
+from .secret_references import (
+    SECRET_REFERENCE_POLICY,
+    SecretCorrectionRejected,
+    chapter_reference_defects,
+    reconcile_secret_chapters,
+)
 from .source import evidence_pages
 from .store import NeedsAttention, digest
 
@@ -866,8 +878,10 @@ async def repair_structure(workflow):
     spine, bundles, source = store.get("spine"), store.get("bundles"), store.get("source")
     issues, permissions, missing = structural_defects(spine, bundles)
     refs, _, _ = reference_defects(spine, bundles)
+    secret_refs = chapter_reference_defects(spine, bundles)
+    profile_refs = profile_reference_defects(bundles, source)
     _, _, labels = _normalize_origins(spine, bundles, source)
-    if not issues and not refs and not labels:
+    if not issues and not refs and not labels and not secret_refs and not profile_refs:
         return False
     signature = digest({"spine": spine, "bundles": bundles, "issues": issues})
     history_key = "structural-repair-" + signature
@@ -879,6 +893,8 @@ async def repair_structure(workflow):
             prior.get("reference_candidate") is not None
             and prior.get("reference_residual_policy") != REFERENCE_RESIDUAL_POLICY
         )
+        and not (secret_refs and prior.get("secret_reference_policy") != SECRET_REFERENCE_POLICY)
+        and not (profile_refs and prior.get("profile_reference_policy") != PROFILE_REFERENCE_POLICY)
     ):
         raise NeedsAttention(
             "Retained structural repair needs attention; unchanged defects were not resubmitted: "
@@ -897,6 +913,8 @@ async def repair_structure(workflow):
         "original_spine": spine,
         "defects": issues,
         "reference_residual_policy": REFERENCE_RESIDUAL_POLICY,
+        "secret_reference_policy": SECRET_REFERENCE_POLICY,
+        "profile_reference_policy": PROFILE_REFERENCE_POLICY,
         "reference_residuals": deepcopy(prior.get("reference_residuals", [])),
     }
     store.put(history_key, history)
@@ -1014,6 +1032,20 @@ async def repair_structure(workflow):
             normalized_spine, candidate, source
         )
         history["origin_normalizations"].extend(new_labels)
+        awaiting_response = True
+        try:
+            normalized_spine, candidate = await reconcile_secret_chapters(
+                workflow, normalized_spine, candidate
+            )
+        except SecretCorrectionRejected:
+            awaiting_response = False
+            raise
+        try:
+            candidate = await reconcile_profile_pages(workflow, normalized_spine, candidate)
+        except ProfileCorrectionRejected:
+            awaiting_response = False
+            raise
+        awaiting_response = False
         validate_semantics(normalized_spine, candidate, source)
         if digest(candidate) == digest(bundles) and digest(normalized_spine) == digest(spine):
             raise NeedsAttention("Structural repair made no progress.")

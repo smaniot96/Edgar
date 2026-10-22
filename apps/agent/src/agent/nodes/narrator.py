@@ -25,8 +25,13 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from agent.action_economy import economy_text
 from agent.combatants import narrator_roster
-from agent.history import fit_continuity, public_earned_facts
+from agent.history import (
+    earned_observation_context,
+    fit_continuity,
+    public_earned_facts,
+)
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
+from agent.object_effects import acquisition_destination
 from agent.prompts import NARRATOR, wrap_player_action, wrap_retrieved_excerpt
 from agent.provider_trace import traced_call
 from agent.state import AgentState
@@ -222,6 +227,8 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
     earned = [_live_consequence(fact) for fact in public_earned_facts(state)]
     if earned:
         context_parts.append(f"Committed player-known story facts: {earned}")
+    if observations := earned_observation_context(state):
+        context_parts.append(observations)
     if adjudication:
         if adjudication.accepted_observations:
             context_parts.append(
@@ -247,7 +254,8 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
                         and accepted_effect.target == effect.target
                         and accepted_effect.operation == effect.operation
                         and (accepted_effect.destination == effect.destination
-                             or (effect.kind == "acquire" and effect.destination is None))
+                             or (effect.kind == "acquire" and accepted_effect.destination
+                                 == acquisition_destination(effect.destination, state)))
                         for accepted_effect in adjudication.accepted_story_effects)
         ]
         if unaccepted:

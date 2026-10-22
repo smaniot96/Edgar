@@ -44,6 +44,48 @@ _summary_slots = asyncio.Semaphore(MEMORY_SUMMARY_CONCURRENCY)
 _waiting_sessions: set[int] = set()
 
 
+async def load_earned_observations(db: AsyncSession, session_id: int) -> list[dict]:
+    """Keep validated answers independently of prose and summary coverage.
+
+    Only committed adjudication receipts count. Proposed/rejected observations and
+    later narrator paraphrases never become earned knowledge through this reader.
+    """
+    from agent.scene_guidance import player_safe_observation
+
+    narration = aliased(EventLog)
+    rows = await db.execute(
+        select(
+            EventLog.id, EventLog.payload["scene_id"].astext,
+            EventLog.payload["turn_id"].astext, EventLog.payload["accepted_observations"],
+            narration.payload["player_input"].astext,
+        )
+        .outerjoin(narration, and_(
+            narration.session_id == EventLog.session_id,
+            narration.event_type == "narration",
+            narration.payload["turn_id"].astext == EventLog.payload["turn_id"].astext,
+        ))
+        .where(EventLog.session_id == session_id, EventLog.event_type == "adjudication")
+        .order_by(EventLog.id)
+    )
+    result = []
+    for event_id, scene_id, turn_id, observations, action in rows:
+        if not isinstance(observations, list):
+            continue
+        texts = list(dict.fromkeys(
+            text for text in observations
+            if isinstance(text, str) and text.strip() and player_safe_observation(text)
+        ))
+        if texts:
+            result.append({
+                "event_id": event_id,
+                "turn_id": turn_id,
+                "scene_id": scene_id,
+                "action": action,
+                "texts": texts,
+            })
+    return result
+
+
 def _events_to_messages(events: list[EventLog]) -> list[HumanMessage | AIMessage]:
     messages: list[HumanMessage | AIMessage] = []
     for e in events:

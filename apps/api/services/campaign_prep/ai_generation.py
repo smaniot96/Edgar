@@ -141,6 +141,43 @@ class AiPremise(Record):
     dm_guidance: str
 
 
+class AiContractEvidence(Record):
+    source: Literal[
+        "theme", "preferences", "premise", "level_recommendation", "dm_guidance", "ending"
+    ]
+    quote: str = Field(min_length=1)
+
+
+class AiContentContract(Record):
+    combat: Literal["requested", "unpromised", "excluded"] = Field(
+        description="Requested includes optional combat choices or authored encounter promises; excluded only for an explicit user prohibition."
+    )
+    evidence: list[AiContractEvidence]
+    rationale: str = Field(min_length=1)
+
+
+def check_content_contract(value, request, premise):
+    sources = {
+        **{
+            k: premise.get(k) or ""
+            for k in ("premise", "level_recommendation", "dm_guidance", "ending")
+        },
+        "theme": request["generation"].get("theme") or "",
+        "preferences": request.get("preferences") or "",
+    }
+    problems = []
+    if value["combat"] != "unpromised" and not value["evidence"]:
+        problems.append("Combat requirement/prohibition needs exact request or premise evidence.")
+    for evidence in value["evidence"]:
+        if evidence["quote"] not in sources[evidence["source"]]:
+            problems.append("Content contract quote is absent from its exact source.")
+    if value["combat"] == "excluded" and not any(
+        e["source"] in ("theme", "preferences") for e in value["evidence"]
+    ):
+        problems.append("Only an explicit user request can exclude combat payload.")
+    return value, problems
+
+
 class AiEntity(Record):
     id: Identifier
     kind: Literal["npc", "place", "faction", "clue"]
@@ -222,6 +259,19 @@ class AiEncounter(Record):
     creature: str = Field(description="Exact name from verified_creatures.")
     quantity: int = Field(ge=1)
     tactics: str
+    morale: str = Field(
+        default="", description="Concrete surrender, flight or last-stand condition."
+    )
+    alternatives: str = Field(
+        default="", description="Credible nonviolent avoidance/end and its consequence."
+    )
+
+
+class AiResolution(Record):
+    condition: str
+    approach: str
+    outcome: str
+    failure_or_cost: str
 
 
 class AiEvent(Record):
@@ -287,6 +337,10 @@ class AiChapterDraft(Record):
     running_notes: str
     continuity_summary: str = Field(
         description="DM-facing: what this chapter establishes, possible outcomes and open threads."
+    )
+    resolution_options: list[AiResolution] = Field(
+        default_factory=list,
+        description="Final chapter: at least two distinct conditional endings, achievable by supported methods. Earlier chapters may leave empty.",
     )
 
 
@@ -454,7 +508,7 @@ def check_cast(value, premise, profile):
     return value, problems
 
 
-def check_outline(value, cast, profile):
+def check_outline(value, cast, profile, content_contract=None):
     problems = []
     plans = value["chapters"]
     low, high = profile.chapters
@@ -477,6 +531,11 @@ def check_outline(value, cast, profile):
             )
     planned = sum(len(p["combat_encounters"]) for p in plans)
     low, high = profile.combat_encounters
+    combat = (content_contract or {}).get("combat")
+    if combat == "requested":
+        low = max(1, low)
+    elif combat == "excluded":
+        low, high = 0, 0
     if not low <= planned <= high:
         problems.append(f"Plan {low}-{high} combat encounters in total; {planned} were planned.")
     for secret in cast["secrets"]:
@@ -607,7 +666,18 @@ def chapter_bundle(chapter_id, draft):
                     "actor_id": encounter["actor_id"],
                     "profile_id": pid,
                     "quantity": encounter["quantity"],
-                    "adaptation": encounter["tactics"],
+                    "adaptation": "\n\n".join(
+                        filter(
+                            None,
+                            [
+                                encounter["tactics"],
+                                "Morale: " + encounter["morale"] if encounter.get("morale") else "",
+                                "Nonviolent outcome: " + encounter["alternatives"]
+                                if encounter.get("alternatives")
+                                else "",
+                            ],
+                        )
+                    ),
                 }
             )
         events.append(
@@ -626,7 +696,17 @@ def chapter_bundle(chapter_id, draft):
         "new_secrets": [to_secret(s, [chapter_id], [chapter_id]) for s in draft["new_secrets"]],
         "dm_guidance": draft["dm_guidance"],
         "source_pages": [],
-        "source_notes": draft["running_notes"],
+        "source_notes": draft["running_notes"]
+        + (
+            "\n\nConditional resolutions:\n"
+            + "\n".join(
+                f"If {r['condition']}: {r['approach']} → {r['outcome']}. "
+                f"Failure/cost: {r['failure_or_cost']}"
+                for r in draft["resolution_options"]
+            )
+            if draft.get("resolution_options")
+            else ""
+        ),
         "items": [{**item, "origin": authored()} for item in draft["items"]],
         "checks": [
             {
@@ -745,6 +825,9 @@ def check_chapter(
             if kinds.get(reveal["entity_id"]) not in entity_kinds:
                 problems.append(f"Event {eid}: reveal entity_id {reveal['entity_id']} is unknown.")
         for encounter in event["encounters"]:
+            for key in ("tactics", "morale", "alternatives"):
+                if not encounter.get(key, "").strip():
+                    problems.append(f"Event {eid}: encounter needs concrete {key} guidance.")
             if kinds.get(encounter["actor_id"]) != "npc":
                 problems.append(
                     f"Event {eid}: encounter actor {encounter['actor_id']} must be an NPC entity."
@@ -802,6 +885,22 @@ def check_chapter(
             "encounters; give each planned fight an event encounter with an NPC actor and a "
             "verified creature."
         )
+    if final:
+        resolutions = draft.get("resolution_options", [])
+        if len(resolutions) < 2 or len({r["outcome"].strip().casefold() for r in resolutions}) < 2:
+            problems.append(
+                "The final chapter needs at least two distinct conditional resolution outcomes."
+            )
+        if any(
+            not all(
+                r.get(k, "").strip()
+                for k in ("condition", "approach", "outcome", "failure_or_cost")
+            )
+            for r in resolutions
+        ):
+            problems.append(
+                "Each resolution needs a condition, supported approach, outcome and failure/cost."
+            )
     present = {i for e in draft["events"] for i in e["secret_ids"]}
     for field, verb in (("sets_up_secret_ids", "set up"), ("reveals_secret_ids", "reveal")):
         missing = sorted(set(plan[field]) - present)
@@ -1178,18 +1277,38 @@ class AiGeneration:
     async def outline(self):
         self.store.enter("ai_outline")
         cast = self.accepted("cast")
+        while self.accepted("content-contract") is None:
+            await self.author(
+                "content-contract",
+                "ai-content-contract",
+                AiContentContract,
+                {
+                    **self.basis(),
+                    "premise": self.accepted("premise"),
+                },
+            )
+            self.check(
+                "content-contract",
+                lambda value: check_content_contract(
+                    value, self.workflow.request(), self.accepted("premise")
+                ),
+            )
         evidence = {
             **self.basis(),
             "premise": self.accepted("premise"),
             "cast": cast,
             "archetypes": list(ARCHETYPES),
+            "content_contract": self.accepted("content-contract"),
         }
         await self.author("outline", "ai-outline", outline_schema(cast), evidence)
 
     def outline_check(self):
         _, profile = size_profile(self.workflow.request())
         cast = self.accepted("cast")
-        return self.check("outline", lambda value: check_outline(value, cast, profile))
+        return self.check(
+            "outline",
+            lambda value: check_outline(value, cast, profile, self.accepted("content-contract")),
+        )
 
     async def chapter(self):
         self.store.enter("ai_chapter")

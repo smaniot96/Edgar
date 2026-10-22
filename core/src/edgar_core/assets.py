@@ -239,6 +239,7 @@ def project_player_map(
             topology = "unavailable"
 
     routes: list[PlayerMapRoute] = []
+    geographic_connections: set[tuple[str, str]] = set()
     for scene in canonical.scenes:
         for link in scene.links:
             if not _matches(link.requires, world_flags):
@@ -262,8 +263,13 @@ def project_player_map(
             if start == end and scene.scene_id != link.scene_id:
                 continue
             projected = PlayerMapRoute(from_scene_id=start, to_scene_id=end)
-            if projected not in routes:
+            # This unscaled schematic draws geographic connections, not action permissions.
+            # Opposite event links between the same places are one visible connection;
+            # directional traversal predicates above remain authoritative for eligibility.
+            connection = tuple(sorted((start, end)))
+            if connection not in geographic_connections:
                 routes.append(projected)
+                geographic_connections.add(connection)
     current = current_scene_id if current_scene_id in known else None
     return PlayerMapProjection(
         session_id=session_id,

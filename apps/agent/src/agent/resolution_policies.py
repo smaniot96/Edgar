@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from agent.committed_facts import committed_prepared_facts
 from agent.models.parsed_input import ParsedInput
@@ -27,7 +28,9 @@ def policy_effect_key(effect: StoryEffect) -> str:
     return proposal.model_dump_json(exclude={"player_text"})
 
 
-def describe_policy_result(success: bool, effects: list, existing: list) -> str:
+def describe_policy_result(
+    success: bool, effects: list, existing: list, observations: Sequence[str] = (),
+) -> str:
     """Describe committed outcomes without quoting obstacle setup as an accomplishment."""
     lines = ["Your approach succeeds." if success else "The check fails."]
     verbs = {
@@ -66,6 +69,7 @@ def describe_policy_result(success: bool, effects: list, existing: list) -> str:
     for effect in existing:
         if effect.kind == "discover":
             lines.append(f"You already know:\n{effect.player_text}")
+    lines.extend(observations)
     if len(lines) == 1:
         lines.append("That approach produces no further change. You can try another approach.")
     return "\n\n".join(dict.fromkeys(lines))
@@ -439,6 +443,24 @@ def explicit_recall_request(text: str) -> bool:
 
 
 def exact_recall_fact(state: dict, parsed: ParsedInput | None) -> dict | None:
+    # An explicit recovery question about an already resolved search must not
+    # regenerate its source/action proof. Only committed accepted answers qualify.
+    if re.search(
+        r"\bwhat\s+(?:did\s+(?:I|my\s+search|the\s+search|that\s+search)\s+(?:find|reveal|uncover)"
+        r"|(?:was|were)\s+(?:the\s+)?(?:clue|clues|signs|results?)\s+(?:I\s+found|of\s+(?:my|the)\s+search))\b",
+        state.get("player_input", ""), re.I,
+    ):
+        from agent.scene_guidance import player_safe_observation
+
+        rows = [
+            row for row in state.get("earned_observations") or []
+            if row.get("scene_id") == state.get("current_scene_id")
+            and re.search(r"\b(?:search|inspect|examine|investigate|look\s+for)\b", row.get("action") or "", re.I)
+        ]
+        if rows:
+            texts = [text for text in rows[-1].get("texts", []) if player_safe_observation(text)]
+            if texts:
+                return {"text": "\n\n".join(texts), "source": "your earlier discovery"}
     if parsed is None or not explicit_recall_request(state.get("player_input", "")):
         return None
     facts = StoryState.model_validate(state.get("story_state") or {}).facts

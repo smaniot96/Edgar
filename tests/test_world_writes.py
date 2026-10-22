@@ -120,6 +120,39 @@ async def _setup(db_session, *, inventory=None, scene="cave_entrance"):
 
 
 @pytest.mark.asyncio
+async def test_exact_accepted_similar_scene_persists_and_drives_next_context(db_session, monkeypatch):
+    from agent.scene_guidance import preload_scene_context
+    from edgar_core.story import StoryEffect, StoryRef, accept_story_effect
+
+    _, _, sess = await _setup(db_session, scene="ch1_island_approach")
+    move = accept_story_effect(
+        StoryEffect(kind="move", status="visited", target=StoryRef(
+            collection="generated", source_sha256="a" * 64, manifest_sha256="b" * 64,
+            kind="scene", canonical_id="ch2_island_approach",
+        )), turn_id="entry", source_refs=[], display_name="Island landing",
+    )
+    await apply_adjudication(db_session, sess, AdjudicationResult(
+        success=True, scene_id="ch2_island_approach", accepted_story_effects=[move],
+    ))
+    await db_session.commit()
+    await db_session.refresh(sess)
+    assert sess.current_scene_id == "ch2_island_approach"
+    seen = []
+
+    def retrieve(_manifests, scene, _flags, **_kw):
+        seen.append(scene)
+        return {"allowed_scene_ids": [scene], "adventure_context": [{"text": "Interior entry is available."}]}
+
+    monkeypatch.setattr("db.vector.retrieval.retrieve_active_scene", retrieve)
+    cache = await preload_scene_context({
+        "source_mode": "module", "current_scene_id": sess.current_scene_id,
+        "adventure_manifests": {"generated": {"reviewed_sha256": "b" * 64}},
+    })
+    assert seen == ["ch2_island_approach"]
+    assert cache["context"]["adventure_context"][0]["text"] == "Interior entry is available."
+
+
+@pytest.mark.asyncio
 async def test_apply_adjudication_rejects_junk_scene_and_unknown_flag_clears(db_session) -> None:
     camp, _ass, sess = await _setup(db_session)
     adj = AdjudicationResult(

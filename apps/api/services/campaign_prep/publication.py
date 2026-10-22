@@ -12,6 +12,7 @@ from ingestion.readiness import report_summary
 from ingestion.semantic import prepare_reviewed_manifest_records
 
 from .. import adventures_meta
+from .ai_payload import require_ai_payload
 from .compile import make_extraction
 from .playability import require_compatibility_review
 from .source import file_hash
@@ -48,6 +49,7 @@ def retained_embeddings(store, texts):
 def publish(store: Store):
     store.check()
     compiled = store.get("compiled")
+    require_ai_payload(store)
     require_compatibility_review(store, compiled)
     extraction = make_extraction(compiled)
     manifest = AdventureManifest.model_validate(compiled["manifest"])

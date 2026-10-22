@@ -78,6 +78,34 @@ async def _selected(factory, sid):
         return await memory.load_memory_summary(db, sid)
 
 
+async def test_earned_answers_load_independently_of_narration_and_session(memory_db):
+    _, factory, (sid, other_sid) = memory_db
+    clue = "Fresh scuffs and bent reeds point toward open water."
+    async with factory() as db, db.begin():
+        db.add_all([
+            EventLog(session_id=sid, event_type="adjudication", payload={
+                "scene_id": "cove", "turn_id": "search", "accepted_observations": [clue],
+                "source_observations": [{"text": "REJECTED SECRET"}],
+            }),
+            EventLog(session_id=sid, event_type="narration", payload={
+                "turn_id": "search", "player_input": "I search the reeds.",
+                "narration": "Your approach succeeds. No further change.",
+                "accepted_observations": ["NARRATOR INVENTION"],
+            }),
+            EventLog(session_id=other_sid, event_type="adjudication", payload={
+                "scene_id": "cove", "accepted_observations": ["FOREIGN SESSION"],
+            }),
+            EventLog(session_id=sid, event_type="adjudication", payload={
+                "accepted_observations": ["The available engine does not execute the wand procedure."],
+            }),
+        ])
+    async with factory() as db:
+        rows = await memory.load_earned_observations(db, sid)
+    assert len(rows) == 1
+    assert rows[0]["texts"] == [clue] and rows[0]["scene_id"] == "cove"
+    assert rows[0]["action"] == "I search the reeds."
+
+
 async def _assert_context(factory, sid, through, stop):
     async with factory() as db:
         summary, messages = await memory.load_session_context(db, sid)

@@ -249,6 +249,10 @@ def build_adjudicator_prompt(
         parts.append("Current world flags: (none)")
 
     continuity_slot = len(parts)
+    from agent.history import earned_observation_context
+
+    if earned := earned_observation_context(state):
+        parts.append(earned)
     from agent.scene_guidance import observation_excerpt, observation_span_catalog
 
     answer_spans = (
@@ -674,7 +678,8 @@ async def adjudicate(
             )
         else:
             state["policy_narration"] = describe_policy_result(
-                result.success, policy_accepted, selected.get("existing_effects", [])
+                result.success, policy_accepted, selected.get("existing_effects", []),
+                result.accepted_observations,
             )
             goal_texts = [
                 public["text"]
@@ -688,7 +693,7 @@ async def adjudicate(
                     effect.kind == "discover" for effect in selected.get("existing_effects", [])
                 ):
                     state["policy_narration"] = (
-                        "Your approach succeeds." if result.success else "The check fails."
+                        describe_policy_result(result.success, [], [], result.accepted_observations)
                     )
                 state["policy_narration"] += "\n\n" + "\n\n".join(dict.fromkeys(goal_texts))
     if selected is None and (state.get("manifest_status") == "reviewed" or result.story_effects):

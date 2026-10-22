@@ -169,6 +169,7 @@ def _intro(
             ]
         ),
         add=Mock(),
+        flush=AsyncMock(),
         commit=AsyncMock(),
         scalar=AsyncMock(return_value=2),
         scalars=AsyncMock(return_value=[]),
@@ -187,6 +188,9 @@ def _intro(
         ainvoke=AsyncMock(return_value=AIMessage(content="The ferry arrives. What do you do?"))
     )
     monkeypatch.setattr(session_intro, "make_chat_model", lambda **kw: model)
+    # Opening-prompt unit tests use a DB double. Real seed persistence is covered
+    # by the endpoint test below with disposable PostgreSQL.
+    monkeypatch.setattr(session_intro, "persist_story_effects", AsyncMock())
     return db, session, model
 
 
@@ -455,3 +459,46 @@ async def test_saved_version_conflict_blocks_intro_before_model_or_writes(
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
     assert session.current_scene_id is None
+
+
+@pytest.mark.parametrize("reply,conflict", [
+    ("Hazel, a fluffy white sheep, bounds toward you.", True),
+    ("Juniper is a sheep carrying a scroll.", True),
+    ("Hazel, you see an unnamed sheep approach.", False),
+    ("A sheep approaches you, Hazel.", False),
+])
+def test_opening_role_binding_distinguishes_address_from_npc_identity(reply, conflict):
+    name = "Juniper" if reply.startswith("Juniper") else "Hazel"
+    assert session_intro._opening_role_conflict(
+        reply, {"name": name + " Preparation Replay L4"},
+        [{"text": "A fluffy white sheep bounds toward the group with a scroll."}],
+    ) is conflict
+
+
+async def test_role_confused_opening_falls_back_to_reviewed_text_before_persistence(
+    api_client, reviewed_sources, db_session, monkeypatch,
+):
+    from db.postgres.models import Campaign, Character
+
+    seed = (await api_client.post("/api/seed")).json()
+    campaign = await db_session.get(Campaign, seed["campaign_id"])
+    campaign.adventure_collections = [PRIMARY]
+    session = await db_session.get(Session, seed["session_id"])
+    character = await db_session.get(Character, session.active_character_id)
+    character.name = "Hazel Preparation Replay Peace L4"
+    await db_session.commit()
+    monkeypatch.setattr(campaign_sources, "source_reads", AsyncMock(return_value=[
+        SourceRead(slug=PRIMARY, title=PRIMARY, status="ready"),
+    ]))
+    model = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(
+        content="Hazel, a ferryman, approaches you at the steps.",
+    )))
+    monkeypatch.setattr(session_intro, "make_chat_model", lambda **kw: model)
+    result = await api_client.post(f"/api/sessions/{seed['session_id']}/intro")
+    assert result.status_code == 200, result.text
+    narration = result.json()["narration"]
+    assert "Hazel" not in narration
+    assert "What do you do?" in narration
+    assert model.ainvoke.await_count == 1
+    saved = (await api_client.get(f"/api/sessions/{seed['session_id']}/messages")).json()
+    assert saved[-1]["content"] == narration

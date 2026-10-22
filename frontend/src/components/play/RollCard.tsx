@@ -6,11 +6,14 @@ const CONTAINER =
   "inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-strong/80 bg-surface/80 px-2.5 py-1 text-xs text-ink";
 
 function healingSummary(roll: HealingRoll) {
+  if (typeof roll.applied === "number") {
+    return `${roll.label} · ${roll.expression}${roll.rolls.length ? ` [${roll.rolls.join(", ")}]` : ""} = ${roll.total} rolled · ${roll.applied} HP restored`;
+  }
   return `${roll.label} · ${roll.expression}${roll.rolls.length ? ` [${roll.rolls.join(", ")}]` : ""} = ${roll.total}${roll.total < 0 ? ", heals 0" : " healing"}`;
 }
 
 /**
- * A healing dice roll: the dice and total only; applied HP is shown by the sheet, not claimed here.
+ * Preserve raw dice and distinguish recorded applied healing after the HP cap.
  * A total below zero is the roll's arithmetic and heals nothing, so it never reads as negative healing.
  */
 function HealingPill({ roll }: { roll: HealingRoll }) {

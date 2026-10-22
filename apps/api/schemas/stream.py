@@ -72,6 +72,10 @@ class CombatRoundEventPublic(_Frame):
     text: str
     actor_id: str | None = None
     target_id: str | None = None
+    spell: str | None = None
+    damage: int | None = Field(default=None, ge=0)
+    healing: int | None = Field(default=None, ge=0)
+    hit: bool | None = None
 
 
 class CombatStatePublic(_Frame):

@@ -239,6 +239,9 @@ async def _load_turn_initial_state(
     )
 
     memory_summary, prior_messages = await load_session_context(db, session_id)
+    from ..services.session_messages import load_earned_observations
+
+    earned_observations = await load_earned_observations(db, session_id)
     character = None
     if session.active_character_id:
         character = await character_play_state(db, session.active_character_id, session.campaign_id)
@@ -272,6 +275,7 @@ async def _load_turn_initial_state(
         "session_id": session_id,
         "campaign_id": session.campaign_id,
         "messages": prior_messages,
+        "earned_observations": earned_observations,
         "adventure_collections": (
             [] if campaign.source_mode == "homebrew" else list(campaign.adventure_collections or [])
         ),

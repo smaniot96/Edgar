@@ -102,4 +102,23 @@ describe("reloaded roll cards", () => {
     expect(container.textContent!.indexOf("Second Wind")).toBeLessThan(container.textContent!.indexOf("Attack 1"));
     await act(() => root.unmount());
   });
+
+  it("shows capped Second Wind as 14 rolled and 10 restored after reload", async () => {
+    const capped: RollRecord = { ...stored, check: "attack", against: "AC", dc: 13,
+      dice_result: 9, natural_roll: 3, modifier: 6, roll_expression: "1d20+6", success: false,
+      healing: 10, dice_log: [
+        { expression: "1d20+6", rolls: [10, 15], modifier: 6, total: 16, purpose: "Ray of Frost spell attack", roll_mode: "disadvantage", kept: 10 },
+        { expression: "1d10+4", rolls: [10], modifier: 4, total: 14, applied: 10, purpose: "second wind" },
+        { expression: "1d20+6", rolls: [3], modifier: 6, total: 9, purpose: "attack check" },
+      ],
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(() => root.render(<MessageList messages={linesFromHistory([dm({ roll_status: "captured", roll: capped })])} pending={null} />));
+    expect(container.textContent).toContain("Second Wind · 1d10+4 [10] = 14 rolled · 10 HP restored");
+    expect(container.textContent).not.toContain("[10, 15]");
+    expect(container.textContent!.indexOf("Second Wind")).toBeLessThan(container.textContent!.indexOf("Failure"));
+    await act(() => root.unmount());
+  });
 });

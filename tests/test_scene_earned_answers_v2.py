@@ -122,6 +122,33 @@ async def test_current_private_answer_reaches_narrator_without_private_dossier(s
 
 
 @pytest.mark.asyncio
+async def test_earned_answers_feed_all_three_stages_even_when_prose_omitted_them(scene_state):
+    state = await prepared(scene_state)
+    signs = "Fresh scuffs and bent reeds point toward open water."
+    state["earned_observations"] = [{"event_id": 12, "scene_id": state["current_scene_id"], "texts": [signs]}]
+    state["adjudication_result"] = AdjudicationResult(success=False)
+    parser = input_parser._parser_context(state)
+    planner = str(build_adjudicator_prompt(state, None))
+    narrator = str(build_narrator_prompt(state))
+    assert all(signs in prompt for prompt in [parser, planner, narrator])
+    assert all("never deny these discoveries" in prompt for prompt in [parser, planner, narrator])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scene_state,text", [
+    ("The available engine does not execute the wand procedure.", "The available engine does not execute the wand procedure."),
+    ("Guz may offer a bribe if intimidation fails.", "Guz may offer a bribe if intimidation fails."),
+], indirect=["scene_state"])
+async def test_exact_private_source_cannot_publish_engine_diagnostics_or_unspoken_tactics(scene_state, text):
+    state = await prepared(scene_state)
+    result = validate_story_effects(AdjudicationResult(
+        success=True, source_observations=[proposal(state, text=text, source_quote=text)],
+    ), state)
+    assert result.accepted_observations == []
+    assert result.observation_diagnostics["rejected"][0]["reason"] == "private_guidance_not_player_answer"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("unsupported", [
     "The rooms open into a library and laboratory; the nearby wizard is no longer present.",
     "The rune-banded wand is in Willow's possession.",

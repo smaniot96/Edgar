@@ -318,9 +318,10 @@ async def test_supported_second_wind_uses_and_rest_recovery(
     out = await combat_round_node(spent_state)
     adj = out["adjudication_result"]
     assert not _second_wind_hits(adj.dice_log)
-    assert "has already used Second Wind" in adj.mechanical_summary
-    assert adj.character_update.second_wind_uses_remaining is None  # nothing new to persist
-    assert out["combat_state"]["second_wind_uses_remaining"] == 0
+    assert "Second Wind has no uses left until a short or long rest" in adj.mechanical_summary
+    assert out["combat_state"]["round"] == 1 and not adj.dice_log
+    assert adj.character_update is None  # nothing new to persist
+    assert out["combat_state"].get("second_wind_uses_remaining") == spent_state["combat_state"].get("second_wind_uses_remaining")
 
     # Out of combat the same use is an engine effect, and a refused one rolls nothing.
     adj = AdjudicationResult(success=True)

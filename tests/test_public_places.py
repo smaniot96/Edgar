@@ -54,3 +54,16 @@ def test_private_names_prose_prefixes_and_event_titles_do_not_become_places(text
 ])
 def test_long_arrival_prefix_is_replaced_by_its_public_physical_noun(text, name, expected):
     assert public_place_label(text, name) == expected
+
+
+@pytest.mark.parametrize('name', ['', 'Sharp-tongued former ferry'])
+def test_actor_role_is_skipped_while_later_public_geography_can_label_the_place(name):
+    text = (
+        'A sharp-tongued former ferry tender watches you from the town landing. '
+        'She insists the crossing is unsafe.'
+    )
+    assert public_place_label(text, name) == 'Town landing'
+
+
+def test_actor_role_alone_does_not_earn_a_map_location():
+    assert public_place_label('A town guard waves you over.', 'Town') == 'Unidentified place'

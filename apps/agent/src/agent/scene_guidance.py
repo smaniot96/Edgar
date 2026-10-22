@@ -438,6 +438,25 @@ _OBSERVATION_STATE_CHANGE = re.compile(
 )
 
 
+_PRIVATE_OBSERVATION = re.compile(
+    r"\b(?:available\s+engine|retrieved\s+(?:scene\s+)?evidence|"
+    r"engine\s+(?:does\s+not|cannot|can['’]t)\s+(?:execute|support)|"
+    r"runtime|manifest|dm[- ]only|private\s+(?:guidance|notes))\b"
+    r"|\b(?:he|she|they|\w+)\s+(?:may|might|could)\s+offer\s+(?:a\s+)?(?:bribe|magical\s+favor)\b"
+    r"|\bis\s+inclined\s+toward\s+(?:intimidation|violence)\b",
+    re.IGNORECASE,
+)
+
+
+def player_safe_observation(text: str) -> bool:
+    """Exclude implementation diagnostics and unspoken conditional NPC tactics.
+
+    This is a narrow presentation boundary, not a general semantic secrecy test.
+    Concrete in-scene offers and ordinary authored answers remain eligible.
+    """
+    return bool(text.strip()) and not _PRIVATE_OBSERVATION.search(text)
+
+
 def validate_source_observations(adjudication, state):
     """Seal exact grounded answers chosen by the existing live DM judgment stage.
 
@@ -485,6 +504,8 @@ def validate_source_observations(adjudication, state):
             reason = "action_quote_not_exact"
         elif not proposal.text.strip():
             reason = "source_quote_not_exact"
+        elif not player_safe_observation(proposal.text):
+            reason = "private_guidance_not_player_answer"
         elif selected_span:
             matched_reference = selected_span["reference_id"]
             match = selected_span

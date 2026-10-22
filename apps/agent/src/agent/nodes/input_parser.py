@@ -19,7 +19,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from agent.action_economy import has_attack_words
 from agent.combat_confirmation import control_word, pending_of
 from agent.combatants import is_standing
-from agent.history import fit_continuity, public_earned_facts
+from agent.history import earned_observation_context, fit_continuity, public_earned_facts
 from agent.llm import make_chat_model
 from agent.models.parsed_input import ParsedInput
 from agent.prompts import INPUT_PARSER, wrap_player_action
@@ -89,6 +89,8 @@ def _parser_context(state: AgentState) -> str:
             + str(clues)
         )
     continuity_slot = len(parts)
+    if earned := earned_observation_context(state):
+        parts.append(earned)
     facts = public_earned_facts(state)
     if facts:
         parts.append(

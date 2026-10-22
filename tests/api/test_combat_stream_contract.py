@@ -213,6 +213,25 @@ async def test_declared_unsupported_mechanic_is_bounded_before_any_token(
 
 
 @pytest.mark.asyncio
+async def test_enemy_spell_chronology_is_bounded_before_any_provisional_token(narrator, committed, fake_llm_schema):
+    from tests.agent.test_combat_feedback import _state as spell_state
+    from tests.agent.test_spells import ScriptedDice
+
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="combat", check="attack", target="Priest")
+    scripted = narrator(ScriptedNarrator(["Eda attacks first. ", "The priest answers but Eda is unharmed."]))
+    state = spell_state("I attack the priest with my longsword.")
+    state["turn_id"] = "spell-turn"
+    with use_rng(ScriptedDice([17, 18, 6, 8, 3])):
+        events = await stream_events(state)
+    text = tokens_of(events)
+    assert scripted.calls == ["ainvoke"]
+    assert text == done_of(events)["narration"]
+    assert "unharmed" not in text and "6 fire damage" in text
+    assert text.index("Priest casts") < text.index("Eda hits")
+    assert len(committed) == 1
+
+
+@pytest.mark.asyncio
 async def test_sync_and_stream_finalise_the_same_round(narrator, committed):
     text = ["The goblin ", "lunges at you."]
     # A foe that survives the round keeps the scripted text unchanged, so both paths are compared
@@ -295,6 +314,7 @@ async def test_outcome_suffix_reaches_done_and_not_the_provisional_tokens(
     assert suffix in done["narration"], label
     assert suffix not in tokens_of(events)
     assert committed[-1]["combat_state"]["outcome"] == outcome
+    assert committed[-1]["messages"][-1].content == done["narration"]
 
 
 @pytest.mark.asyncio

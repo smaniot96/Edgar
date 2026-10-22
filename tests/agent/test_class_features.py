@@ -296,9 +296,9 @@ async def test_action_surge_adds_one_attack_and_recharges(fake_llm_schema, fake_
     with use_rng(random.Random(5)):
         out = await confirm_turn(await combat_round_node(state), state)
     adj = out["adjudication_result"]
-    assert len(_attack_checks(adj.dice_log)) == 1
+    assert len(_attack_checks(adj.dice_log)) == 0
     assert "Action Surge has no uses left" in adj.mechanical_summary
-    assert adj.character_update.class_feature_uses is None
+    assert adj.character_update is None
 
     # Level 1 fighters have no Action Surge at all, and the wording gets a ruling, not a roll.
     state = _state(
@@ -833,7 +833,8 @@ async def test_exhausted_action_surge_cannot_authorize_two_attacks(fake_llm_sche
         {"kind": "action_surge", "text": "Action Surge"}, {"kind": "attack", "target": "Guz"},
     ])
     out = await combat_round_node(state)
-    assert "requested 2 attacks" in out["narration"]
+    assert "Action Surge has no uses left until a short or long rest" in out["narration"]
+    assert "Choose one attack" in out["narration"]
     assert not out["adjudication_result"].dice_log
     assert out["combat_state"]["round"] == 1
 

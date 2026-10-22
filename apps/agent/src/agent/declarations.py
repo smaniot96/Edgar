@@ -135,6 +135,12 @@ def agreement_question(
             missing.append(kind)
     if not missing:
         return None
+    if DISENGAGE.kind in missing:
+        return (
+            "Do you want to use your action to Disengage, then withdraw without opportunity attacks, "
+            "or move away while keeping your action and risking opportunity attacks? "
+            "Say which you choose. No roll is made and no turn is spent."
+        )
     if CONTINGENCY.kind in missing:
         # The engine cannot run an if-then clause yet, so it is asked with the nearest supported
         # alternatives rather than dropped or guessed (EDG-182 contract point 7).

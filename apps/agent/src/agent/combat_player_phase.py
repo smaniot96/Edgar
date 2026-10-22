@@ -296,11 +296,15 @@ def _bonus_actions(t: _Turn) -> None:
             t.bonus_record = {"action": "second_wind", "result": "already_used"}
             t.declared = [d for d in t.declared if d is not SECOND_WIND]
         else:
-            dice_log.append(sw.dice.to_log("second wind"))
+            hp_before_healing = rec.hp
             rec.hp = min(inp.hp_max, rec.hp + sw.amount)
+            restored = rec.hp - hp_before_healing
+            dice_log.append({**sw.dice.to_log("second wind"), "applied": restored})
             rec.sw_left -= 1
-            t.bonus_text = f"{hero} uses Second Wind and regains {sw.amount} HP."
-            t.bonus_record = {"action": "second_wind", "result": "used", "recovered": sw.amount}
+            t.bonus_text = f"{hero} uses Second Wind and regains {restored} HP."
+            if restored != sw.amount:
+                t.bonus_text += f" The healing roll was {sw.amount}; maximum HP limits recovery."
+            t.bonus_record = {"action": "second_wind", "result": "used", "recovered": restored, "rolled": sw.amount}
             rec.round_effects.append("bonus_action")
             rec.events.append({
                 "kind": "second_wind", "text": t.bonus_text,

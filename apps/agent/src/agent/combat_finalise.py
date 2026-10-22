@@ -289,4 +289,5 @@ def build_pending_narration(
             "dice_log": adj.dice_log,
         },
         stage_ms=dict(stage_ms),
+        engine_narration="\n\n".join(line for line in rec.log_lines if line),
     )

@@ -18,10 +18,18 @@ export interface RollParts {
 
 /** The engine's advantage/disadvantage d20 entry for the check, when one was rolled. */
 function modeEntry(adj: AdjudicationResult): DiceLogEntry | null {
-  const entry = (adj.dice_log ?? []).find(
-    (d) => (d.roll_mode === "advantage" || d.roll_mode === "disadvantage") && d.rolls.length === 2,
+  const check = adj.check?.toLowerCase().trim();
+  const log = adj.dice_log ?? [];
+  const named = log.filter((d) => d.purpose?.toLowerCase() === check || d.purpose?.toLowerCase() === `${check} check`);
+  // Weapon checks have an engine-owned purpose. Never borrow a caster's roll,
+  // even when its expression, bonus or total happens to match the hero's.
+  const normalExpression = (value?: string | null) => value?.toLowerCase().replace(/k[hl]1/g, "").replace(/\s/g, "");
+  const candidates = named.length || check === "attack" ? named : log.filter((d) =>
+    normalExpression(d.expression) === normalExpression(adj.roll_expression) && d.total === adj.dice_result &&
+    (adj.natural_roll == null || (d.kept ?? d.rolls[0]) === adj.natural_roll),
   );
-  return entry ?? null;
+  const entry = candidates.length === 1 ? candidates[0] : null;
+  return entry && (entry.roll_mode === "advantage" || entry.roll_mode === "disadvantage") && entry.rolls.length === 2 ? entry : null;
 }
 
 /** Extract what the roll card shows; null when no dice were rolled this turn. */
@@ -85,6 +93,7 @@ export interface HealingRoll {
   expression: string;
   rolls: number[];
   total: number;
+  applied?: number;
 }
 
 /** Dice-log purposes that are healing rolls: Second Wind, "<spell> healing", "healing (<item>)", hit dice. */
@@ -101,6 +110,7 @@ export function healingRolls(adj: AdjudicationResult | null | undefined): Healin
       expression: d.expression,
       rolls: Array.isArray(d.rolls) ? d.rolls : [],
       total: d.total,
+      ...(typeof d.applied === "number" ? { applied: d.applied } : {}),
     });
   }
   return out;

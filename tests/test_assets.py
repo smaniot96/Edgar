@@ -123,6 +123,33 @@ def test_player_map_uses_session_owned_source_binding_and_known_place_statuses()
     assert "Sentinel" not in render_player_map_svg(projection).decode()
 
 
+def test_opposite_event_links_form_one_geographic_connection_without_bypassing_conditions():
+    from edgar_core.manifests import Link
+
+    manifest = _fixture()
+    manifest.scenes[1].links = [Link(scene_id='harbor', requires={'return_allowed': 'yes'})]
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    facts = [_fact(manifest, 'harbor', 'visit'), _fact(manifest, 'tower', 'visit')]
+    for flags in [{}, {'return_allowed': 'yes'}]:
+        projection = project_player_map(
+            session_id=7, collection='synthetic-map', manifest=manifest,
+            facts=facts, world_flags=flags, current_scene_id='tower',
+        )
+        assert [(r.from_scene_id, r.to_scene_id) for r in projection.routes] == [('harbor', 'tower')]
+        assert render_player_map_svg(projection).count(b'<line ') == 1
+
+    # If only the conditional link remains, its geographic connection is still hidden
+    # until its conditions hold. Deduplication cannot create a travel permission.
+    manifest.scenes[0].links = []
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    facts = [_fact(manifest, 'harbor', 'visit'), _fact(manifest, 'tower', 'visit')]
+    hidden = project_player_map(
+        session_id=7, collection='synthetic-map', manifest=manifest,
+        facts=facts, world_flags={}, current_scene_id='tower',
+    )
+    assert hidden.routes == []
+
+
 def test_prepared_map_requires_reviewed_route_and_current_link_predicates():
     from tests.test_prepared_campaign import _fixture as prepared_fixture
 

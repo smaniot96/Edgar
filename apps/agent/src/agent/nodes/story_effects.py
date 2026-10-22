@@ -569,6 +569,26 @@ def _earned_actor_name(candidate: dict, candidates: dict, text: str) -> str | No
     return None
 
 
+def _public_object_label(candidate: dict, public: list[dict]) -> str | None:
+    """Use an exact visible noun phrase without disclosing a private item title."""
+    words = re.findall(r"[\w'-]+", candidate["title"])
+    stopwords = {"the", "of", "with", "and", "for", "from", "true", "modified", "greater"}
+    for word in words:
+        if len(word) < 3 or word.casefold() in stopwords:
+            continue
+        matches = {
+            match.group(1).strip()
+            for chunk in public
+            for match in re.finditer(
+                r"\b(?:a|an|the)\s+((?:[\w'-]+[, ]+){0,5}" + re.escape(word) + r")\b",
+                chunk.get("text", ""), re.I,
+            )
+        }
+        if len(matches) == 1:
+            return next(iter(matches))
+    return None
+
+
 def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> AdjudicationResult:
     """Reject ungrounded proposals and stamp only server-owned accepted context.
 
@@ -873,7 +893,9 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                         for entry in entries
                     )
                 )
-                else proposal.target.kind.capitalize()
+                else (_public_object_label(candidate, public)
+                      if proposal.target.kind == "object" else None)
+                or proposal.target.kind.capitalize()
             ),
             knowledge_kind="hint"
             if proposal.kind == "discover" and candidate.get("entity_kind") == "hint"

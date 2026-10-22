@@ -102,6 +102,7 @@ class AgentState(TypedDict, total=False):
     story_reveal_context: list  # Exact reviewed self-gated player spans; validator-only
     story_arrival_context: list  # Exact reviewed player arrival spans of a move's destination; validator-only
     story_state: dict  # Serialized edgar_core.story.StoryState; committed session facts only
+    earned_observations: list[dict]  # Committed accepted-answer receipts, separate from narration
     prepared_campaign_overlays: dict[
         str, dict
     ]  # Retained historical additions; live play does not author prepared amendments

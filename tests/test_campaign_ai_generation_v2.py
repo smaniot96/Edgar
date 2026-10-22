@@ -186,6 +186,8 @@ def chapter(cid, plan, *, bad=False):
                         "creature": "Kraken" if bad else "bandit",
                         "quantity": 1 if bad else 3,
                         "tactics": "Ambush, then flee into the water",
+                        "morale": "Surrender when Kell is wounded.",
+                        "alternatives": "Show the ledger and offer amnesty; the divers stand aside.",
                     }
                 ]
                 if i == 3
@@ -227,6 +229,20 @@ def chapter(cid, plan, *, bad=False):
         "dm_guidance": "Run it briskly.",
         "running_notes": "The tide turns every six hours.",
         "continuity_summary": f"{cid} establishes the salt problem.",
+        "resolution_options": [
+            {
+                "condition": "The heroes expose the ledger to the town.",
+                "approach": "Negotiate public control of the engine.",
+                "outcome": "The town controls the engine and Vex faces trial.",
+                "failure_or_cost": "Vex demands exile and the town must fund repairs.",
+            },
+            {
+                "condition": "The heroes reach the sluice control.",
+                "approach": "Close the ordinary sluice gate with the brass key.",
+                "outcome": "The stopped engine restores the wells but the reef loses power.",
+                "failure_or_cost": "The causeway floods, delaying evacuation until low tide.",
+            },
+        ],
     }
 
 
@@ -284,6 +300,12 @@ class AiResponses:
             value = premise()
         elif name == "AiCast":
             value = cast()
+        elif name == "AiContentContract":
+            value = {
+                "combat": "unpromised",
+                "evidence": [],
+                "rationale": "No explicit combat promise in this fixture's brief or premise.",
+            }
         elif name == "AiOutline":
             value = outline(reveal_first=self.bad_outline and not revising)
         elif name == "AiChapterDraft":
@@ -366,15 +388,16 @@ async def test_medium_request_runs_sequential_steps_into_the_shared_tail(ai_stor
     await workflow(ai_store, responses).run()
     assert ai_store.state()["status"] == "ready"
     assert len(ai_store.published) == 1
-    assert responses.calls[:6] == [
+    assert responses.calls[:7] == [
         "AiPremise",
         "AiCast",
+        "AiContentContract",
         "AiOutline",
         "AiChapterDraft",
         "AiChapterDraft",
         "AiChapterDraft",
     ]
-    assert set(responses.calls[7:]) == {"Review", "CompatibilityReview"}
+    assert set(responses.calls[8:]) == {"Review", "CompatibilityReview"}
     assert ai_store.get("compatibility-review")["decisions"]
     # Chapters are written in play order, each seeing the accepted ones before it.
     drafts = [e for name, e in responses.evidence if name == "AiChapterDraft"]
@@ -406,7 +429,7 @@ async def test_medium_request_runs_sequential_steps_into_the_shared_tail(ai_stor
     assert bundles["chapters"][0]["checks"][0]["check"] == "survival"
     assert "Vex Marrow" in spine["dm_guidance"]
     # The regional sketch is prepared from every place and bound to the scenes there.
-    assert responses.calls.index("AiWorldMap") == 6
+    assert responses.calls.index("AiWorldMap") == 7
     prepared = ai_store.get("world-map")
     assert {p["place_id"] for p in prepared["places"]} >= {"greywake", "outer_reef", "tide_engine"}
     assert prepared["scene_places"]["ch1_arrival_event_0"] == "greywake"
@@ -487,6 +510,8 @@ def test_chapter_encounters_become_shared_catalogue_profiles():
             "creature": "bandit",
             "quantity": 2,
             "tactics": "Flee at half HP",
+            "morale": "Flee at half HP",
+            "alternatives": "Offer amnesty to pass peacefully.",
         }
     ]
     known = {e["id"]: e["kind"] for e in cast()["entities"]}
@@ -508,7 +533,7 @@ def test_chapter_encounters_become_shared_catalogue_profiles():
             "actor_id": "diver_kell",
             "profile_id": "profile_bandit",
             "quantity": 2,
-            "adaptation": "Flee at half HP",
+            "adaptation": "Flee at half HP\n\nMorale: Flee at half HP\n\nNonviolent outcome: Offer amnesty to pass peacefully.",
         }
     ]
     assert bundle["mechanical_profiles"] == [

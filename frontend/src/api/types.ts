@@ -546,6 +546,8 @@ export interface DiceLogEntry {
   /** Set on advantage/disadvantage d20 rolls: both faces are in `rolls`, `kept` is used. */
   roll_mode?: "advantage" | "disadvantage" | null;
   kept?: number | null;
+  /** Actual HP restored by this healing roll after the HP cap, when recorded. */
+  applied?: number | null;
 }
 
 export interface AdjudicationResult {
@@ -666,7 +668,7 @@ export interface CombatState {
     [key: string]: unknown;
   } | null;
   /** Last committed round's public resolution sequence; absent for older saves. */
-  round_events?: { kind: string; text: string; actor_id?: string; target_id?: string }[] | null;
+  round_events?: { kind: string; text: string; actor_id?: string; target_id?: string; spell?: string | null; damage?: number | null; healing?: number | null; hit?: boolean | null }[] | null;
   /** Player-visible scene participants; some have no turn in this encounter's initiative. */
   participants?: { id: string; name: string; participation: "active" | "visible_nonparticipant"; reason: string }[] | null;
   second_wind_used?: boolean;

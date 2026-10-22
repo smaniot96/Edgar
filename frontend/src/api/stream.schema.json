@@ -495,9 +495,59 @@
               "default": null,
               "title": "Actor Id"
             },
+            "damage": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Damage"
+            },
+            "healing": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Healing"
+            },
+            "hit": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Hit"
+            },
             "kind": {
               "title": "Kind",
               "type": "string"
+            },
+            "spell": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Spell"
             },
             "target_id": {
               "anyOf": [
@@ -1527,9 +1577,59 @@
               "default": null,
               "title": "Actor Id"
             },
+            "damage": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Damage"
+            },
+            "healing": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Healing"
+            },
+            "hit": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Hit"
+            },
             "kind": {
               "title": "Kind",
               "type": "string"
+            },
+            "spell": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Spell"
             },
             "target_id": {
               "anyOf": [

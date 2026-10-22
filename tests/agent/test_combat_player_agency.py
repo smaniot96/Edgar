@@ -141,13 +141,64 @@ async def test_source_bound_offer_cannot_accept_for_another_actor(fake_llm_schem
 async def test_supported_offer_refusal_spends_action_and_enemy_turn(fake_llm_schema, fake_retrieval, monkeypatch):
     monkeypatch.setattr("agent.combat_offers.observation_span_catalog", lambda s: {"span": {"text": "Guz refuses surrender unless the sheep is handed over.", "reference_id": "source"}})
     async def response(*a, **k):
-        return AdjudicationResult(success=True, combat_offer=CombatOffer(decision="rejected", actor_name="Guz", source_span_id="span", action_quote="I surrender", achievement_basis="The sheep has not been offered."))
+        return AdjudicationResult(success=True, combat_offer=CombatOffer(decision="rejected", actor_name="Guz", source_span_id="span", action_quote="I surrender", achievement_basis="The sheep has not been offered.", public_response="Hand over the sheep. I will not accept a promise to talk."))
     monkeypatch.setattr("agent.graph_combat.adjudicate", response)
     asked = await _say(fake_llm_schema, _guz(), "I surrender", parsed=ParsedInput(intent="combat", target="Guz"))
     final = await _say(fake_llm_schema, asked["combat_state"], "yes", parsed=ParsedInput(intent="combat"))
     assert final["combat_state"]["round"] == 2 and not final["combat_state"]["ended"]
     assert any(e["kind"] == "enemy_attack" for e in final["combat_state"]["round_events"])
     assert all(d["purpose"] != "attack check" for d in _rolled(final))
+    assert "Hand over the sheep" in final["adjudication_result"].mechanical_summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["accepted", "uncertain"])
+async def test_offer_pronoun_condition_uses_bounded_actor_sentence_and_actionable_reply(fake_llm_schema, fake_retrieval, monkeypatch, decision):
+    spans = {
+        "actor": {"text": "Guz demands the sheep. ", "reference_id": "source", "start": 0, "end": 23},
+        "terms": {"text": "He will stop fighting if it is handed over.", "reference_id": "source", "start": 23, "end": 65},
+    }
+    monkeypatch.setattr("agent.combat_offers.observation_span_catalog", lambda s: spans)
+    reply = "Agreed. Lower your sword and we stop fighting." if decision == "accepted" else "Give me the sheep and lower your sword. Are those your terms?"
+    async def response(*a, **k):
+        return AdjudicationResult(success=True, combat_offer=CombatOffer(
+            decision=decision, actor_name="Guz", source_span_id="terms", actor_source_span_id="actor",
+            action_quote="I surrender", achievement_basis="The nearby actor sentence binds these terms to Guz.", public_response=reply,
+        ))
+    monkeypatch.setattr("agent.graph_combat.adjudicate", response)
+    asked = await _say(fake_llm_schema, _guz(), "I surrender and offer the sheep", parsed=ParsedInput(intent="combat", target="Guz"))
+    final = await _say(fake_llm_schema, asked["combat_state"], "yes", parsed=ParsedInput(intent="combat"))
+    assert reply in final["narration"]
+    assert final["combat_state"]["ended"] is (decision == "accepted")
+    assert final["combat_state"]["round"] == 1 and _rolled(final) == []
+    assert "captured" not in final["combat_state"]["combatants"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["different_reference", "distant", "intervening_foe"])
+async def test_offer_pronoun_cannot_borrow_another_passage_or_foe(fake_llm_schema, fake_retrieval, monkeypatch, mutation):
+    from agent.combat_offers import _actor_span
+    guz, noke = {"name": "Guz"}, {"name": "Noke"}
+    spans = {"actor": {"text": "Guz demands payment.", "reference_id": "source", "start": 0, "end": 20},
+             "terms": {"text": "He accepts surrender.", "reference_id": "source", "start": 20, "end": 41}}
+    if mutation == "different_reference":
+        spans["terms"]["reference_id"] = "another-source"
+    elif mutation == "distant":
+        spans["terms"]["start"] = 999
+    else:
+        spans["other"] = {"text": "Noke now speaks.", "reference_id": "source", "start": 20, "end": 36}
+        spans["terms"]["start"] = 36
+    offer = CombatOffer(decision="accepted", actor_name="Guz", source_span_id="terms", actor_source_span_id="actor", action_quote="I surrender", achievement_basis="Claimed condition.")
+    assert not _actor_span(offer, guz, spans, [guz, noke])
+
+
+@pytest.mark.asyncio
+async def test_careful_withdrawal_clarifies_action_and_risk_without_spending_turn(fake_llm_schema, fake_retrieval):
+    parsed = ParsedInput(intent="combat", actions=[{"kind": "disengage"}, {"kind": "move", "destination": "away"}])
+    out = await _say(fake_llm_schema, _guz(), "I withdraw carefully without attacking.", parsed=parsed)
+    assert "use your action to Disengage" in out["narration"]
+    assert "risking opportunity attacks" in out["narration"]
+    assert out["combat_state"]["round"] == 1 and _rolled(out) == []
 
 
 def test_visible_participants_require_public_current_scene_evidence():

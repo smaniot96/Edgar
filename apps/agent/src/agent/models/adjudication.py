@@ -151,8 +151,10 @@ class CombatOffer(BaseModel):
     decision: Literal["accepted", "rejected", "uncertain"]
     actor_name: str = Field(max_length=100)
     source_span_id: str = Field(max_length=80)
+    actor_source_span_id: str | None = Field(default=None, max_length=80, description="When the condition sentence uses a pronoun, the nearby preceding sentence in the same source passage that explicitly names this foe.")
     action_quote: str = Field(max_length=500)
     achievement_basis: str = Field(max_length=800)
+    public_response: str = Field(default="", max_length=800, description="Brief player-facing NPC reply grounded in the selected source: acceptance, the reason for refusal, or the specific unmet/unknown condition to clarify. Reveal only what this present foe would say, never private motives, future events or implementation evidence.")
 
 
 class AdjudicationResult(BaseModel):

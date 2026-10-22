@@ -11,6 +11,7 @@ Idempotent: if the session already has any narration, this is a no-op (returns N
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -40,6 +41,24 @@ from .session_party import session_party
 from .story_state import persist_story_effects
 
 _INTRO_TEMPERATURE = 0.7
+
+
+def _opening_role_conflict(narration: str, character: dict | None, passages: list[dict]) -> bool:
+    """Catch a hero name attached to a newly invented third-person source role."""
+    name = str((character or {}).get("name") or "").strip()
+    if not name:
+        return False
+    source = "\n".join(chunk.get("text", "") for chunk in passages)
+    aliases = {name, name.split()[0]}
+    return any(
+        not re.search(r"\b" + re.escape(alias) + r"\b", source, re.I)
+        and re.search(
+            r"\b" + re.escape(alias)
+            + r"\b(?:\s*,\s*(?:a|an|the)\s+|\s+(?:is|was|bounds|approaches|carries|holds)\b)",
+            narration, re.I,
+        )
+        for alias in aliases
+    )
 
 
 def _reviewed_opening(primary: str, edition: str) -> tuple[str, list[dict], list]:
@@ -141,7 +160,8 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     if character:
         context_parts.append(
             f"The player's character: {character['name']}, a level {character['level']} "
-            f"{character['class']}."
+            f"{character['class']}. This is the player addressed as 'you', separate from every "
+            "source NPC. Keep unnamed source creatures unnamed; never give them this name."
         )
     if len(party) > 1:
         # Party-wide opening (EDG-046): names and classes only; the opening stays on the spotlight PC.
@@ -176,6 +196,10 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     narration = message_text(response)
     if not narration.strip():
         return None
+    if not homebrew and _opening_role_conflict(narration, character, passages):
+        # Use the already reviewed public opening instead of persisting a known
+        # role substitution or making another provider call. Nothing is renamed.
+        narration = "\n\n".join(chunk["text"] for chunk in passages) + "\n\nWhat do you do?"
 
     if not homebrew:
         # Preparation may have been replaced while the provider was running. Never attach

@@ -46,6 +46,7 @@ from sqlalchemy import select
 
 import db.postgres.session as db_session_module
 from agent.combat_confirmation import public_pending, public_standing_orders
+from agent.combat_narration import has_authoritative_spell_events
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
 from agent.combatants import can_act, concentration_of, disposition_of, stable_id, view_fields
 from agent.graph import app, prepare_app, route_after_input_parser
@@ -759,6 +760,13 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         for field in ("actor_id", "target_id"):
             if event.get(field) in roster_ids:
                 entry[field] = event[field]
+        for field in ("damage", "healing"):
+            if type(event.get(field)) is int and event[field] >= 0:
+                entry[field] = event[field]
+        if isinstance(event.get("spell"), str):
+            entry["spell"] = event["spell"][:100]
+        if type(event.get("hit")) is bool:
+            entry["hit"] = event["hit"]
         events.append(entry)
     if events:
         public["round_events"] = events
@@ -1128,10 +1136,13 @@ async def _stream_session_turn(
     # Combat with a model narration: the mechanics are final. Stream the one narrator call, then
     # finalise the round with the same function the sync node uses. Only `done` after the commit
     # is authoritative. Its narrating and mechanics stages come from the round's own row.
-    if pending is not None and actions_for_state(pending.narr_state):
+    if pending is not None and (
+        actions_for_state(pending.narr_state)
+        or has_authoritative_spell_events(pending.narr_state)
+    ):
         llm, prompt = narrator_request(pending.narr_state, pending.profile)
-        # A declared unsupported mechanic must not reach the player unchecked (as on the
-        # normal path): wait for the complete text, finalise, then stream only the bounded text.
+        # Unsupported effects and spell action order must not reach the player unchecked:
+        # finalise the complete narration, then stream only the bounded text.
         try:
             response = await traced_call(
                 lambda: llm.ainvoke(prompt), kind="narrate", profile=pending.profile

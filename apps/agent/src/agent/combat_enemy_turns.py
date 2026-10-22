@@ -128,10 +128,10 @@ class EnemyTurns:
         if self.rec.second_wind_auto_at_zero_hp and self.rec.hp <= 0 and not self.rec.fled:
             sw = spend_second_wind(self.rec.character, remaining=self.rec.sw_left)
             if sw is not None:
-                self.rec.dice_log.append(sw.dice.to_log("second wind"))
-                self.rec.hp = sw.amount
+                self.rec.hp = min(int(self.rec.character.get("hp_max") or self.rec.player.get("hp_max") or sw.amount), sw.amount)
+                self.rec.dice_log.append({**sw.dice.to_log("second wind"), "applied": self.rec.hp})
                 self.rec.sw_left -= 1
-                self.rec.log_lines.append(f"{self.rec.hero} digs deep and uses Second Wind, recovering {sw.amount} HP to stay in the fight!")
+                self.rec.log_lines.append(f"{self.rec.hero} digs deep and uses Second Wind, recovering {self.rec.hp} HP to stay in the fight!")
 
     def _damage_hero_with_death_saves(self, amount: int, *, critical: bool) -> None:
         """Damage to the hero under the death rules (EDG-045, agent.death; PHB, PDF p.198)."""
@@ -453,6 +453,8 @@ class EnemyTurns:
         casting = None if stats is None else stats.spellcasting
         if casting is None:
             return
+        hp_before = self.rec.hp
+        caster_hp_before = int(e.get("hp_current") or 0)
         self.note_actor(e)
         source = spec.name
         source_id = f"{stable_id(e)}:{spec.name.casefold()}"
@@ -489,6 +491,8 @@ class EnemyTurns:
             consume_mark(self.rec.player)  # the spell attack roll spends a mark against its target
         self.rec.dice_log.extend(result.dice_log)
         self.rec.log_lines.extend(spec.declared)
+        spell_log_start = len(self.rec.log_lines)
+        damage = 0
         if result.healing:
             before_hp = int(e.get("hp_current") or 0)
             e["hp_current"] = min(int(e.get("hp_max") or before_hp), before_hp + result.healing)
@@ -537,7 +541,7 @@ class EnemyTurns:
                 if result.attack.success:
                     self.rec.log_lines.append(
                         f"{_display(e)} casts {spec.name}: the spell attack hits {self.rec.hero} for "
-                        f"{result.damage} {spec.damage_type} damage."
+                        f"{damage} {spec.damage_type} damage."
                     )
                     if result.condition and self.rec.hp > 0:
                         applied = apply_spell_condition(
@@ -554,7 +558,7 @@ class EnemyTurns:
                 else:
                     self.rec.log_lines.append(f"{_display(e)} casts {spec.name}, but the spell attack misses {self.rec.hero}.")
             elif result.damage:
-                self.rec.log_lines.append(f"{_display(e)} casts {spec.name} at {self.rec.hero} for {result.damage} damage.")
+                self.rec.log_lines.append(f"{_display(e)} casts {spec.name} at {self.rec.hero} for {damage} damage.")
         elif spec.kind in {"save", "condition"}:
             outcome = "succeeds" if result.save_success else "fails"
             rolled = (
@@ -567,14 +571,24 @@ class EnemyTurns:
                 f"({rolled})."
             )
             if result.damage:
-                self.rec.log_lines.append(f"{self.rec.hero} takes {result.damage} {spec.damage_type} damage.")
+                self.rec.log_lines.append(f"{self.rec.hero} takes {damage} {spec.damage_type} damage.")
         elif result.damage:
             self.rec.log_lines.append(
-                f"{_display(e)} casts {spec.name} at {self.rec.hero} for {result.damage} "
+                f"{_display(e)} casts {spec.name} at {self.rec.hero} for {damage} "
                 f"{spec.damage_type or 'damage'}."
             )
         else:
             self.rec.log_lines.append(f"{_display(e)} casts {spec.name}.")
+        self.rec.events.append({
+            "kind": "enemy_spell",
+            "text": " ".join([*self.rec.log_lines[spell_log_start:], *spec.declared]),
+            "actor_id": stable_id(e),
+            "target_id": stable_id(e) if spec.kind == "heal" else stable_id(self.rec.player),
+            "spell": spec.name,
+            "damage": max(0, min(hp_before, damage)),
+            "healing": max(0, int(e.get("hp_current") or 0) - caster_hp_before),
+            "hit": result.attack.success if result.attack is not None else None,
+        })
 
     def monster_spell_action(self, e: dict) -> bool:
         """Use an action spell, with a legal bonus spell where the catalog allows both."""

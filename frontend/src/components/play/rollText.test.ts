@@ -23,6 +23,19 @@ const disadvantage: RollRecord = {
 };
 
 describe("adjudicationFromRoll", () => {
+  it("never borrows enemy spell disadvantage faces for a single hero attack, even on equal totals", () => {
+    for (const enemyFaces of [[10, 15], [3, 15]]) {
+      const adj = adjudicationFromRoll({ ...disadvantage, check: "attack", against: "AC", dc: 13,
+        dice_result: 9, natural_roll: 3, modifier: 6, roll_expression: "1d20+6", damage: null,
+        dice_log: [
+          { expression: "1d20+6", rolls: enemyFaces, modifier: 6, total: Math.min(...enemyFaces) + 6, purpose: "Ray of Frost spell attack", roll_mode: "disadvantage", kept: Math.min(...enemyFaces) },
+          { expression: "1d20+6", rolls: [3], modifier: 6, total: 9, purpose: "attack check" },
+        ],
+      });
+      expect(rollParts(adj)).toMatchObject({ check: "attack", total: 9, faces: null, mode: null });
+      expect(rollSummary(rollParts(adj)!)).toBe("attack · 1d20+6 = 9 vs AC 13 → Failure");
+    }
+  });
   it("separates Action Surge rolls without attaching aggregate damage to the miss", () => {
     const adj = adjudicationFromRoll({ ...disadvantage, check: "attack", dc: 14, against: "AC", damage: 7,
       dice_log: [

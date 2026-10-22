@@ -28,7 +28,7 @@ from agent.action_economy import (
     off_hand_refusal,
     refusal_for,
 )
-from agent.class_features import ACTION_SURGE, RAGE
+from agent.class_features import ACTION_SURGE, RAGE, max_uses
 from agent.combat_identity import unique_roster_target
 from agent.combat_intent import _RANGED_HINT, _STAND_UP, _is_attack_action, _name_matches
 from agent.combat_plan import attack_count_question, operation_order, sequence_question
@@ -72,6 +72,7 @@ from agent.resolution import (
     mentions_item_use,
     normalise_check,
     off_hand_weapon,
+    second_wind_remaining,
 )
 from agent.spells import CastPlan, cast_request, target_count
 from agent.state import AgentState
@@ -170,6 +171,14 @@ def declare_action(
     wants_second_wind = (
         not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
     )
+    if not fled and ACTION_SURGE in cf_requested and max_uses(character, ACTION_SURGE) > 0 and cf_left.get(ACTION_SURGE, 0) <= 0:
+        return _ask_player(state, "Action Surge has no uses left until a short or long rest. "
+                           "Choose one attack or another available action. No roll is made and no turn is spent.",
+                           combat_state=combat_state)
+    if wants_second_wind and second_wind_remaining(character) <= 0:
+        return _ask_player(state, "Second Wind has no uses left until a short or long rest. "
+                           "Choose an available action or healing item. No roll is made and no turn is spent.",
+                           combat_state=combat_state)
     rage_declared = (
         not fled
         and RAGE in cf_requested

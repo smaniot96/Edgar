@@ -60,6 +60,31 @@ def object_state(target: StoryRef, state: dict, accepted_so_far=()) -> dict:
     return current
 
 
+def acquisition_destination(destination: str | None, state: dict) -> str | None:
+    """Normalize only an unambiguous name for the active hero to their owner ID."""
+    character = state.get("character") or {}
+    owner = f"character:{character.get('id')}" if character.get("id") else None
+    if destination is None:
+        return owner
+    name = str(character.get("name") or "").strip()
+    aliases = {name.casefold(), name.split()[0].casefold()} if name else set()
+    other_names = [
+        str(actor.get("name") or "").strip()
+        for actor in [
+            *(actor for actor in state.get("party") or []
+              if actor.get("id") != character.get("id")),
+            *(state.get("npcs") or []),
+        ]
+    ]
+    ambiguous = any(
+        destination.casefold() in {other.casefold(), other.split()[0].casefold()}
+        for other in other_names if other
+    )
+    if destination.casefold() in aliases and not ambiguous:
+        return owner
+    return destination
+
+
 def validate_object_effect(
     effect: StoryEffect, state: dict, accepted_so_far=()
 ) -> StoryEffect | None:
@@ -91,7 +116,10 @@ def validate_object_effect(
         location = current["owner"] or definition.initial_owner
         if location and location != state.get("current_scene_id"):
             return None
-        if effect.destination not in (None, owner) or effect.operation is not None:
+        # The planner sometimes names the hero instead of copying the owner ID.
+        # Normalize only that unambiguous binding, never another actor's custody.
+        destination = acquisition_destination(effect.destination, state)
+        if destination not in (None, owner) or effect.operation is not None:
             return None
         return effect.model_copy(update={"status": "acquired", "destination": owner, "quantity": 1})
     if effect.kind == "consume":

@@ -27,6 +27,7 @@ from edgar_core.campaign_semantics import (
 )
 
 from .ai_generation import AI_WORKFLOW, AiGeneration
+from .ai_payload import ai_payload_findings, ai_request_evidence, require_ai_payload
 from .chapter_parts import author_chapter
 from .compile import (
     assemble,
@@ -52,6 +53,7 @@ from .playability import (
 )
 from .profiles import canonical_profiles
 from .provider import SemanticClient, request_context
+from .secret_references import reconcile_secret_chapters
 from .source import (
     VISUAL_CANDIDATE_VERSION,
     acquire_pdf,
@@ -443,6 +445,9 @@ class Workflow:
             for page in sorted({page for values in pages.values() for page in values})
         }
         campaign_context = {k: spine[k] for k in ("premise", "setting", "hook", "ending")}
+        ai_brief = ai_request_evidence(self.store)
+        if ai_brief is not None and ai_brief["content_contract"] is not None:
+            campaign_context["ai_brief"] = ai_brief
         result = {}
         for key in chapter_context:
             needed, pending = set(), list(deps[key])
@@ -656,7 +661,8 @@ class Workflow:
                     "Chapter plan must account for every physical page, including shared appendices: "
                     + str(sorted(known_pages - assigned))
                 )
-        self.store.put("spine", value.model_dump(), digest(evidence))
+        corrected, _ = await reconcile_secret_chapters(self, value.model_dump())
+        self.store.put("spine", corrected, digest(evidence))
         self.retain_visual_selection(value.important_visual_pages)
         return address
 
@@ -940,7 +946,11 @@ class Workflow:
             "mechanical-registry", bundles.get("mechanical_profiles", []), digest(bundles)
         )
         validate_semantics(spine, bundles, self.store.get("source"))
-        local_findings = mechanical_findings(bundles, mechanics) + topology_findings(spine, bundles)
+        local_findings = (
+            mechanical_findings(bundles, mechanics)
+            + topology_findings(spine, bundles)
+            + ai_payload_findings(self.store, spine, bundles)
+        )
         self.store.put("assembly-findings", local_findings)
         findings = [f for f in self.store.get("findings") or [] if f["owner"] != "assembly"]
         self.store.put(
@@ -1097,6 +1107,7 @@ class Workflow:
                     if key in set(ids) | context_ids
                 },
                 "source_evidence": evidence_pages(source, relevant_pages),
+                "ai_request": ai_request_evidence(self.store),
                 "image_pages": sorted(
                     relevant_pages & set(self.store.get("visual-candidates") or [])
                 ),
@@ -1632,6 +1643,7 @@ class Workflow:
         from .publication import publish
 
         registry = self.registry()
+        require_ai_payload(self.store)
         require_compatibility_review(self.store, self.store.get("compiled"))
         coverage = self.store.get("review-coverage") or {}
         if any(
