@@ -491,7 +491,11 @@ async def persist_turn(
                     EventLog(
                         session_id=session_id,
                         event_type=event["event_type"],
-                        payload=event["payload"],
+                        payload=(
+                            {**event["payload"], "turn_id": turn_id}
+                            if event["event_type"] == "adjudication"
+                            else event["payload"]
+                        ),
                     )
                 )
             narration_event = EventLog(

@@ -459,7 +459,9 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         if proposal.kind == "move" and proposal.status == "moved":
             proposal = proposal.model_copy(update={"status": "visited"})
         policy_key = policy_effect_key(proposal)
-        dm_goal = is_dm_goal_candidate(candidate)
+        # An explicit public announcement is source-backed knowledge. It does not
+        # adjudicate achievement and needs neither a player action nor a private basis.
+        dm_goal = is_dm_goal_candidate(candidate) and proposal.status != "announced"
         dm_transition = proposal.kind == "move" and any(
             row.get("scene_id") == proposal.target.canonical_id
             for row in (state.get("parser_scene_context") or {}).get("event_transitions", [])

@@ -36,16 +36,16 @@ async def _read_session_journal(session_id: int, db: AsyncSession, auth: Auth) -
     )
     events = result.scalars().all()
     adjudications = await db.execute(
-        select(EventLog.id, EventLog.payload["accepted_observations"])
+        select(EventLog.id, EventLog.payload["turn_id"], EventLog.payload["accepted_observations"])
         .where(EventLog.session_id == session_id, EventLog.event_type == "adjudication")
         .order_by(EventLog.id.asc())
     )
     # Only the validated earned answers leave an adjudication row; its private basis,
     # proposals and diagnostics are never selected.
     observations = [
-        (event_id, [text for text in texts if isinstance(text, str)])
-        for event_id, texts in adjudications.all()
-        if isinstance(texts, list) and texts
+        (event_id, turn_id, [text for text in texts if isinstance(text, str)])
+        for event_id, turn_id, texts in adjudications.all()
+        if isinstance(turn_id, str) and isinstance(texts, list) and texts
     ]
     campaign = await db.get(Campaign, session.campaign_id)
     collections = (

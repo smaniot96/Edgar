@@ -193,12 +193,17 @@ async def test_missing_session_turn_releases_lock(api_client, redis_client) -> N
 
 
 @pytest.mark.asyncio
-async def test_turn_writes_telemetry_and_narration_together(fake_llm_turn, fake_retrieval, api_client) -> None:
+async def test_turn_writes_telemetry_and_narration_together(fake_llm_turn, fake_retrieval, api_client, db_session) -> None:
     sid = (await _seed(api_client))["session_id"]
     r = await api_client.post(f"/api/sessions/{sid}/turn", json={"message": "I look around."})
     assert r.status_code == 200
     assert await _count_events(sid, "narration") == 1
     assert await _count_events(sid, "adjudication") == 1
+    rows = (await db_session.execute(select(EventLog).where(
+        EventLog.session_id == sid, EventLog.event_type.in_(["adjudication", "narration"]),
+    ))).scalars().all()
+    assert rows[0].payload["turn_id"]
+    assert rows[0].payload["turn_id"] == rows[1].payload["turn_id"]
 
 
 @pytest.mark.asyncio

@@ -78,9 +78,9 @@ _ALLOWED_STATUS = {
 }
 # A prepared label is only a placeholder when the validator could not earn the real name.
 _PLACEHOLDER_NAMES = {"", "entity", "scene", "objective", "milestone", "object", "clock", "promise"}
-# Earned DM-adjudicated goals may carry their prepared title once the outcome is settled:
-# the player achieved (or lost) exactly that, so the title cannot pre-empt a hidden truth.
-_TITLED_GOAL_OUTCOMES = {"completed", "failed"}
+# Option B: only completion earns a private prepared goal title. Failure can still leave
+# the underlying truth undiscovered, so it cannot disclose that title.
+_TITLED_GOAL_OUTCOMES = {"completed"}
 # Honorifics and articles never count as an earned personal name on their own.
 _NAME_STOPWORDS = {
     "a", "an", "the", "old", "young", "lord", "lady", "sir", "dame", "captain", "councilor",
@@ -215,7 +215,7 @@ def project_player_journal(
     *,
     active_character_id: int | None = None,
     prepared: JournalPreparedLabels | None = None,
-    observations: Iterable[tuple[int, list[str]]] = (),
+    observations: Iterable[tuple[int, str, list[str]]] = (),
 ) -> JournalRead:
     """Build the complete safe projection for one selected session.
 
@@ -223,8 +223,8 @@ def project_player_journal(
     here ensures history links are emitted only for rows that are actually that session's
     narration events. Unknown/private facts never influence the output list or its counts.
 
-    `observations` are `(adjudication_event_id, accepted_observations)` pairs from the same
-    session: validated earned answers the narration of that turn delivered to the player.
+    `observations` are `(adjudication_event_id, turn_id, accepted_observations)` tuples
+    from the same session. Only a matching committed narration delivers those answers.
     """
     prepared = prepared or JournalPreparedLabels()
     events = sorted(
@@ -246,10 +246,9 @@ def project_player_journal(
     # text, the narration delivered to them and the earned answers it conveyed.
     notes: list[tuple[int, str]] = []
     seen_notes: set[str] = set()
-    for adjudication_event_id, texts in sorted(observations, key=lambda item: item[0]):
-        # An adjudication row precedes the narration row that delivered it in the same turn.
-        delivered = next((eid for eid in sorted(event_order) if eid > adjudication_event_id), None)
-        if delivered is None:
+    for adjudication_event_id, turn_id, texts in sorted(observations, key=lambda item: item[0]):
+        delivered = turn_events.get(turn_id)
+        if delivered is None or delivered <= adjudication_event_id:
             continue
         for text in texts:
             if not isinstance(text, str) or not text.strip():
@@ -272,7 +271,11 @@ def project_player_journal(
         public_fact = player_story_effect(fact)
         if public_fact is None:
             outcome = adjudicated_goal_outcome(fact)
-            if outcome not in _TITLED_GOAL_OUTCOMES:
+            already_public = any(
+                previous.fact_id == fact.fact_id and category in {"goal", "milestone"}
+                for previous, _, category, _ in safe_records
+            )
+            if outcome not in _TITLED_GOAL_OUTCOMES and not (outcome == "failed" and already_public):
                 continue
             # A settled goal the DM adjudicated from play, with no public wording of its own.
             public_fact = {"name": "", "text": None, "origins": [], "adjudicated": True}
@@ -627,9 +630,15 @@ def project_player_journal(
         (entry for _, entry in built if entry.category == "goal" and entry.status == "active"),
         None,
     )
-    current_lead = next(
+    # Prefer the actual answer over the scene passage used to ground a discovery on
+    # that same turn. A newer clue still takes precedence over an older answer.
+    current_lead = max(
         (entry for entry in entries if entry.category in {"clue", "hint", "note"}),
-        None,
+        key=lambda entry: (
+            max((change.turn_number or 0 for change in entry.history), default=0),
+            entry.category == "note",
+        ),
+        default=None,
     )
     first_payload = (events[0].payload or {}) if events else {}
     # Entries keep journal-era sessions available; the marker only rescues new sessions that
@@ -671,7 +680,9 @@ def _note_entries(
     for delivered, text in notes:
         turn = event_order[delivered]
         related = [place_at_event[delivered]] if place_at_event.get(delivered) else []
-        related += clues_by_event.get(delivered, [])
+        # Sharing a turn does not establish which of several clues an answer concerns.
+        clues = clues_by_event.get(delivered, [])
+        related += clues if len(clues) == 1 else []
         related += [
             entry_id
             for entry_id, aliases in people
@@ -705,7 +716,8 @@ def _merge_repeated(
     built: list[tuple[tuple[int, int], JournalEntry]],
 ) -> list[tuple[tuple[int, int], JournalEntry]]:
     """One card per piece of knowledge: identical earned clues/notes collapse into the first."""
-    kept: dict[tuple[str, str, str], int] = {}
+    kept: dict[tuple[str, str, str, str | None], int] = {}
+    merged_ids: dict[str, str] = {}
     result: list[tuple[tuple[int, int], JournalEntry]] = []
     for key, entry in sorted(built, key=lambda item: item[0]):
         if entry.category not in {"clue", "hint", "note"}:
@@ -715,6 +727,7 @@ def _merge_repeated(
             entry.category,
             entry.title.casefold(),
             " ".join((entry.text or "").split()).casefold(),
+            entry.ownership,
         )
         if identity not in kept:
             kept[identity] = len(result)
@@ -722,6 +735,7 @@ def _merge_repeated(
             continue
         index = kept[identity]
         first_key, first = result[index]
+        merged_ids[entry.id] = first.id
         history = list(first.history)
         for change in entry.history:
             if change not in history:
@@ -737,7 +751,15 @@ def _merge_repeated(
                 }
             ),
         )
-    return result
+    return [
+        (key, entry.model_copy(update={
+            "related_entry_ids": list(dict.fromkeys(
+                merged_ids.get(entry_id, entry_id) for entry_id in entry.related_entry_ids
+            )),
+            "related_entry_id": merged_ids.get(entry.related_entry_id, entry.related_entry_id),
+        }))
+        for key, entry in result
+    ]
 
 
 def filter_player_journal(
@@ -763,6 +785,11 @@ def filter_player_journal(
                         entry.title,
                         entry.text,
                         entry.status,
+                        {"announced": "announced for later", "known": "heard of, not visited"}.get(
+                            entry.status, entry.status.replace("_", " ")
+                        ),
+                        entry.category,
+                        "Place" if entry.category == "place" else _TITLE[entry.category],
                         entry.origin.place,
                         entry.origin.actor,
                         entry.origin.citation,

@@ -123,10 +123,10 @@ def test_a_playthrough_reads_as_places_people_clues_goals_and_notes() -> None:
         _fact("discover", _ref("entity", "slips"), 40, text=TOWPATH, page=3),
     ]
     observations = [
-        (19, ["Tavi says a strange current pulled the boat inward."]),
-        (39, ["The slips point toward checking the East Sluice House."]),
+        (19, "turn-20", ["Tavi says a strange current pulled the boat inward."]),
+        (39, "turn-40", ["The slips point toward checking the East Sluice House."]),
         # The same earned answer repeated on a later turn is one note.
-        (45, ["The slips point toward checking the East Sluice House."]),
+        (45, "turn-46", ["The slips point toward checking the East Sluice House."]),
     ]
     journal = _project(facts, events + [_narration(46, 4)], observations)
     by_category = {}
@@ -216,3 +216,77 @@ def test_a_name_is_earned_only_as_a_capitalised_name_the_player_was_shown() -> N
     [person] = journal.entries
     assert person.title == "Person encountered on turn 1"
     assert "Orin" not in journal.model_dump_json()
+
+
+def test_failed_private_goal_does_not_disclose_its_title() -> None:
+    journal = _project([_goal(10, "failed", "secret_goal")], [_narration(10, 0)])
+    assert journal.entries == []
+    assert "Marr" not in journal.model_dump_json()
+
+
+def test_only_the_matching_committed_turn_delivers_an_answer() -> None:
+    events = [_narration(20, 0), _narration(40, 1)]
+    journal = _project([], events, [
+        (19, "abandoned-turn", ["UNDISPATCHED ANSWER"]),
+        (30, "turn-20", ["ANSWER AFTER ITS NARRATION"]),
+        (35, "turn-40", ["The East Sluice is worth investigating."]),
+    ])
+    assert [entry.text for entry in journal.entries] == ["The East Sluice is worth investigating."]
+    assert journal.entries[0].origin.history_event_id == 40
+
+
+def test_current_lead_prefers_the_answer_delivered_with_a_clue() -> None:
+    clue = _fact("discover", _ref("entity", "slips"), 20, text=TOWPATH)
+    journal = _project([clue], [_narration(20, 0)], [
+        (19, "turn-20", ["The sluice keeper can explain the missing dispatches."]),
+    ])
+    assert journal.current_lead is not None
+    assert journal.current_lead.category == "note"
+    assert journal.current_lead.text == "The sluice keeper can explain the missing dispatches."
+
+
+def test_ambiguous_same_turn_answers_stay_separate_from_clues() -> None:
+    facts = [
+        _fact("discover", _ref("entity", "slips"), 20, text=TOWPATH),
+        _fact("discover", _ref("entity", "other"), 20, text=QUAY),
+    ]
+    journal = _project(facts, [_narration(20, 0)], [(19, "turn-20", ["The boat is damaged."])])
+    note = next(entry for entry in journal.entries if entry.category == "note")
+    assert not note.related_entry_ids
+
+
+def test_merging_duplicate_clues_preserves_note_links() -> None:
+    facts = [
+        _fact("discover", _ref("entity", "slips"), 10, text=TOWPATH),
+        _fact("discover", _ref("entity", "other_slips"), 20, text=TOWPATH),
+    ]
+    # Two notes keep the clue heading grounded in its source passage on both turns.
+    journal = _project(facts, [_narration(10, 0), _narration(20, 1)], [
+        (19, "turn-20", ["The ink has faded.", "There is a second date."]),
+    ])
+    clues = [entry for entry in journal.entries if entry.category == "clue"]
+    assert len(clues) == 1
+    for note in (entry for entry in journal.entries if entry.category == "note"):
+        assert note.related_entry_ids == [clues[0].id]
+
+
+def test_failed_goal_already_known_to_the_player_leaves_the_active_list() -> None:
+    active = _fact(
+        "objective", _ref("objective", "find_crew"), 10, status="active",
+        text="Find the Missing Crew", display="Find the Missing Crew",
+    )
+    journal = _project([active, _goal(20, "failed")], [_narration(10, 0), _narration(20, 1)])
+    [goal] = journal.entries
+    assert goal.status == "failed"
+    assert goal.title == "Find the Missing Crew"
+    assert journal.active_goal is None
+
+
+def test_export_search_matches_the_journals_readable_status_labels() -> None:
+    from apps.api.services.journal import filter_player_journal
+
+    journal = _project([
+        _fact("learn_place", _ref("scene", "towpath"), 10, status="known", text=TOWPATH),
+    ], [_narration(10, 0)])
+    assert len(filter_player_journal(journal, query="heard of, not visited").entries) == 1
+    assert len(filter_player_journal(journal, query="place").entries) == 1
