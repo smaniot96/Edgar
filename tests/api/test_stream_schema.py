@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
@@ -198,3 +199,34 @@ def test_character_resource_views_conform_to_the_public_model() -> None:
               "hp_max": 12, "stats": {"int": 16}, "inventory": []}
     for character in (fighter, wizard):
         CharacterPublic.model_validate({**character, **resource_view(character)})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("milestones_pending", [0, 1])
+async def test_actual_assignment_character_milestones_conform_on_done(
+    monkeypatch: pytest.MonkeyPatch, milestones_pending: int,
+) -> None:
+    """Fresh and advancement-ready heroes use the real projection sent by persisted turns."""
+    from apps.api.services import character_assignments
+
+    assignment = SimpleNamespace(
+        character=SimpleNamespace(id=28, name="Playtest hero", character_class="Fighter"),
+        level=3, hp_current=20, hp_max=24, milestones_pending=milestones_pending,
+        stats={"STR": 16, "DEX": 12, "CON": 14}, inventory={},
+    )
+
+    async def load_assignment(*args):
+        return assignment
+
+    monkeypatch.setattr(character_assignments, "load_active_assignment", load_assignment)
+    character = await character_assignments.character_play_state(None, 28, 1)
+    assert character["milestones_pending"] == milestones_pending
+    _event, done = representative_frames()["done_non_combat"]
+    done["character"] = character
+    assert frame_violations("done", done) == []
+    recorder = _RecordingLog()
+    monkeypatch.setattr(turn_runner, "log", recorder)
+    wire = sse_event("done", done)
+    payload = json.loads(wire.split("data: ", 1)[1])
+    assert payload["character"]["milestones_pending"] == milestones_pending
+    assert recorder.entries == []

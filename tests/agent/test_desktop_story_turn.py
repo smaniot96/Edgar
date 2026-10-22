@@ -16,6 +16,7 @@ from agent.story_turn import resolved_scene
 from agent.supported_rules import actions_for_state, engine_applied_for_state
 from apps.api.services.journal import project_player_journal
 from apps.api.services.opening_journal import opening_journal_effects
+from edgar_core.artifacts import text_digest
 from edgar_core.assets import project_player_map
 from edgar_core.manifests import AdventureManifest, manifest_digest
 from edgar_core.story import StoryEffect, StoryFact, story_target_id
@@ -68,7 +69,7 @@ def test_narration_uses_the_same_one_hop_move_that_will_be_committed(play):
     prompt = "\n".join(str(m.content) for m in build_narrator_prompt(state))
     assert TOWPATH_PUBLIC in prompt and QUAY_PUBLIC not in prompt
     assert QUAY_DM not in prompt and TOWPATH_DM not in prompt
-    assert "place=The towpath is slick with fresh silt" in prompt
+    assert "place=Unidentified place" in prompt
     assert "Only an accepted transition changes the location" in prompt
     assert state["current_scene_id"] == "quay"
 
@@ -93,6 +94,80 @@ def test_failed_hidden_search_keeps_the_already_public_surroundings(play):
     assert QUAY_PUBLIC in prompt
     assert "Already public surroundings, available even when an optional check fails" in prompt
     assert QUAY_DM not in prompt
+
+
+def _public_text(manifest, chunks, state, passage_id, text):
+    passage = next(p for p in manifest.passages if p.passage_id == passage_id)
+    passage.text_sha256 = text_digest(text)
+    passage.end = len(text)
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    chunks[passage_id]["text"] = text
+    for chunk in chunks.values():
+        chunk["manifest_sha256"] = manifest.reviewed_sha256
+    state["adventure_manifests"] = {"ai_campaign": manifest.model_dump()}
+
+
+@pytest.mark.parametrize("action", [
+    'I stay in plain view and call, "Come outside." I wait for an answer.',
+    'We remain outside and ask the ferryman to answer.',
+    'I wait here and call to the people inside.',
+])
+def test_stationary_dialogue_cannot_accept_an_interior_arrival(play, action):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "quay_public", "You stand outside the cabin. Two sailors wave.")
+    _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin, books line the walls.")
+    state["player_input"] = action
+    result = _move(manifest, chunks, state)
+    assert result.accepted_story_effects == []
+    state["adjudication_result"] = result
+    assert resolved_scene(state)["scene_id"] == "quay"
+    # The persistence pass must reject the same proposal.
+    rechecked = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=result.story_effects), state,
+    )
+    assert rechecked.accepted_story_effects == []
+
+
+def test_stationary_wait_can_still_advance_an_outdoor_event(play):
+    manifest, chunks, state = play
+    state["player_input"] = "I stay here and wait for the approaching crew."
+    result = _move(manifest, chunks, state)
+    assert len(result.accepted_story_effects) == 1
+
+
+def test_stationary_interior_wait_is_not_mistaken_for_exterior(play):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "quay_public", "The cabin kitchen is warm, with a copper kettle steaming on the hearth.")
+    _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin kitchen, the crew arrives to speak with you.")
+    state["player_input"] = "I stay here and wait for the approaching crew."
+    assert len(_move(manifest, chunks, state).accepted_story_effects) == 1
+
+
+def test_outdoor_approach_cannot_become_interior_stationary_dialogue(play):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "quay_public", "Through the treetops, a strange cabin comes into view. Sailors stand on its lawn.")
+    _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin, books line the walls.")
+    state["player_input"] = 'I stay in plain view and call, "Come outside." I wait for an answer.'
+    assert _move(manifest, chunks, state).accepted_story_effects == []
+
+
+def test_explicit_entry_after_wait_can_accept_an_interior_arrival(play):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "towpath_public", "Inside the cabin, books line the walls.")
+    state["player_input"] = "I wait here for a reply, then I enter the cabin."
+    result = _move(manifest, chunks, state)
+    assert len(result.accepted_story_effects) == 1
+
+
+def test_narrator_treats_actor_staging_as_conditional_not_live_state(play):
+    manifest, chunks, state = play
+    _public_text(manifest, chunks, state, "towpath_public", "The sheep stays close, holding its scroll.")
+    state["player_input"] = "I hand the sheep to the guard and accompany them."
+    state["adjudication_result"] = _move(manifest, chunks, state)
+    prompt = "\n".join(str(m.content) for m in build_narrator_prompt(state))
+    assert "authored opening conditions, not a live snapshot" in prompt
+    assert "never restore a departed actor" in prompt
+    assert "preserve an explicitly stationary position" in prompt
 
 
 def test_opening_and_map_share_a_public_label_without_a_private_place_title(play):
@@ -121,10 +196,31 @@ def test_opening_and_map_share_a_public_label_without_a_private_place_title(play
         current_scene_id="quay",
     )
     [place] = map_.places
-    assert place.title == journal.current_place.title == "Festival boats bump against the quay"
+    assert place.title == journal.current_place.title == "Unidentified place"
     assert place.detail == QUAY_PUBLIC
     assert "The Waterline Falls" not in map_.model_dump_json() + journal.model_dump_json()
     assert QUAY_DM not in str(place)
+
+
+def test_opening_journal_and_map_preserve_an_explicitly_earned_place_name(play):
+    manifest, chunks, _ = play
+    text = "You stand outside the Red Lion Inn. The front door is open."
+    manifest.scenes[0].title = "Red Lion Inn"
+    public = next(p for p in manifest.passages if p.passage_id == "quay_public")
+    public.text_sha256 = text_digest(text)
+    public.end = len(text)
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    chunks["quay_public"].update(text=text, manifest_sha256=manifest.reviewed_sha256)
+    [effect] = opening_journal_effects("ai_campaign", manifest, [chunks["quay_public"]], "2014")
+    fact = StoryFact(**effect.model_dump(), fact_id=story_target_id(effect.target), event_id=1)
+    journal = project_player_journal(
+        session_id=2, state={"facts": [fact.model_dump()]}, narration_events=[], current_scene_id="quay",
+    )
+    map_ = project_player_map(
+        session_id=2, collection="ai_campaign", manifest=manifest, facts=[fact],
+        world_flags={}, current_scene_id="quay",
+    )
+    assert map_.places[0].title == journal.current_place.title == "Red Lion Inn"
 
 
 @pytest.fixture

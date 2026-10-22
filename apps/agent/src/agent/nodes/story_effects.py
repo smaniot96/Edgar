@@ -59,6 +59,55 @@ def committed_facts(state: AgentState) -> list:
     return StoryState.model_validate(state.get("story_state") or {}).facts
 
 
+def _stationary_interior_arrival(target: StoryRef, state: AgentState) -> bool:
+    """Do not turn an explicit stationary action into an authored interior arrival.
+
+    Event nodes can advance without travel, so waiting alone cannot reject a move.
+    This guard covers only a visible mismatch: the player stays put, the current
+    public opening affirmatively places the viewpoint outside, and the proposed
+    arrival explicitly starts inside. An unlabelled current opening proves neither.
+    """
+    action = re.sub(r'"[^"\n]*"|“[^”\n]*”', "", state.get("player_input", ""))
+    stationary = re.search(
+        r"\b(?:I|we)\s+(?:(?:stay|remain)\s+(?:here|where|in|at|on|outside|still|put)"
+        r"|wait\s+(?:here|in\s+place|where))\b",
+        action,
+        re.IGNORECASE,
+    )
+    if not stationary or re.search(
+        r"\b(?:I|we)\s+(?:then\s+)?(?:enter|walk|go|approach|follow|climb|step|move|leave)\b",
+        action,
+        re.IGNORECASE,
+    ):
+        return False
+    interior = re.compile(r"^\s*(?:Inside|Within)\b", re.IGNORECASE)
+    current = [
+        c for c in state.get("adventure_context", [])
+        if c.get("audience") == "player"
+        and state.get("current_scene_id") in c.get("scene_ids", [c.get("scene_id")])
+        and _reviewed_chunk(c, state)
+    ]
+    if any(interior.search(c.get("text", "")) for c in current):
+        return False
+    exterior = re.compile(
+        r"\byou\s+(?:(?:stand|are|remain|wait)\s+)?(?:outside|outdoors)\b"
+        r"|^\s*Through\s+(?:the\s+)?(?:trees|treetops|woods|woodland|forest)\b"
+        r"[^.!?]{0,200}\bcomes?\s+into\s+view\b",
+        re.IGNORECASE,
+    )
+    explicit_outside = re.search(
+        r"\b(?:I|we)\s+(?:stay|remain|wait)\s+(?:here\s+)?(?:outside|outdoors)\b",
+        action,
+        re.IGNORECASE,
+    )
+    if not explicit_outside and not any(exterior.search(c.get("text", "")) for c in current):
+        return False
+    return any(
+        interior.search(c.get("text", ""))
+        for c in _arrival_chunks(target, state.get("story_arrival_context") or [], state)
+    )
+
+
 def story_candidates(state: AgentState) -> list[dict]:
     """Canonical identities in the active scene, respecting persisted prerequisites."""
     candidates = []
@@ -485,6 +534,8 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         if proposal.kind == "move" and any(effect.kind == "move" for effect in accepted):
             continue
         if proposal.kind == "move" and not candidate.get("can_move"):
+            continue
+        if proposal.kind == "move" and _stationary_interior_arrival(proposal.target, state):
             continue
         if dm_transition and not (proposal.achievement_basis or "").strip():
             continue  # Same-location event progress needs actual trigger evidence, not an available link.

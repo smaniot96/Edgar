@@ -21,9 +21,11 @@ const DISPOSITION_LABEL: Record<string, string> = {
 export function CombatDeclaration({ combat, onReply }: { combat: CombatState; onReply?: (text: string) => void }) {
   const pending = combat.ended ? null : combat.pending_declaration;
   if (!pending) return null;
-  return <div role="group" aria-label="Confirm declaration" className="mx-auto max-h-44 w-full max-w-3xl overflow-y-auto rounded-md border border-ember-300/60 bg-surface px-3 py-2 text-sm">
-    <p className="mb-2 whitespace-pre-wrap break-words text-ink">{pending.summary}</p>
-    <div className="flex gap-2">
+  return <div role="group" aria-label="Confirm declaration" className="mx-auto flex max-h-44 w-full max-w-3xl flex-col overflow-hidden rounded-md border border-ember-300/60 bg-surface text-sm">
+    <div role="region" aria-label="Declaration summary" tabIndex={0} className="min-h-0 overflow-y-auto px-3 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ember-400">
+      <p className="whitespace-pre-wrap break-words text-ink">{pending.summary}</p>
+    </div>
+    <div className="flex shrink-0 gap-2 border-t border-line px-3 py-2">
       <button type="button" onClick={() => onReply?.("yes")} disabled={!onReply} className="min-h-9 rounded border border-ember-300 px-3 py-1 text-xs font-semibold text-ember-300 disabled:opacity-50">Confirm</button>
       <button type="button" onClick={() => onReply?.("no")} disabled={!onReply} className="min-h-9 rounded border border-ink-muted/40 px-3 py-1 text-xs text-ink-muted disabled:opacity-50">Cancel and change</button>
     </div>

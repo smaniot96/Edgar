@@ -232,6 +232,11 @@ async def test_readied_attack_fires_when_the_foe_closes_in_before_its_own_attack
     purposes = _purposes(out)
     assert purposes.count("attack check") == 1
     assert purposes.index("attack check") < purposes.index("Goblin Club attack")
+    events = out["combat_state"]["round_events"]
+    kinds = [event["kind"] for event in events]
+    assert kinds.count("readied_attack") == 1
+    assert "player_attack" not in kinds
+    assert kinds.index("enemy_close") < kinds.index("readied_attack") < kinds.index("enemy_attack")
 
 
 @pytest.mark.asyncio

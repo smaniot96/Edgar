@@ -117,6 +117,7 @@ from agent.combat_setup import (
 )
 from agent.combat_targeting import select_target as select_target  # re-exported (tests)
 from agent.combat_view import _ask_player, _display, initiative_view, sort_by_initiative
+from agent.combat_visibility import refresh_visible_participants
 from agent.combatants import (
     classify_combat_maneuver,
     disposition_of,
@@ -786,6 +787,7 @@ async def combat_round_node(state: AgentState) -> dict:
     player["hp_max"] = player_hp_max
     player_ac = int(player.get("ac") or combat_state.get("player_ac") or _player_ac(character))
     player["ac"] = player_ac
+    refresh_visible_participants(state, combat_state, player)
     # EDG-182: cancel a standing order (no roll, no turn spent); a reply to a pending confirmation; or the
     # "always confirm" option. No die is rolled here.
     confirmed = False

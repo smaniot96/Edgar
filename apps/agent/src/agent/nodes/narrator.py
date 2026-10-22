@@ -163,14 +163,21 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
             "Only an accepted transition changes the location. Stop at this location even if "
             "the player's intended journey goes farther; describe a concrete next approach. "
             "Do not narrate arrival, entry, an accompanying actor, or a later destination "
-            "that the validated outcome has not established."
+            "that the validated outcome has not established. An event transition is not itself "
+            "permission to move the player physically: preserve an explicitly stationary "
+            "position, and describe contact across a doorway or at a distance when appropriate."
         )
         if scene["visible_description"]:
             context_parts.append(
                 "Already public surroundings, available even when an optional check fails: "
                 + str(scene["visible_description"])
                 + ". Give the visible information needed for the next decision. A failed search "
-                "only withholds the hidden detail it tested; it does not erase these surroundings."
+                "only withholds the hidden detail it tested; it does not erase these surroundings. "
+                "These excerpts are authored opening conditions, not a live snapshot. Reuse only "
+                "details compatible with the resolved action and established continuity. Do not "
+                "replay default actor presence, possession or behavior after this exchange has "
+                "changed it; never restore a departed actor to satisfy opening prose. Do not "
+                "claim interior details are visible from an exterior position."
             )
     elif current_scene_id:
         context_parts.append(
@@ -221,6 +228,15 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
             f"Recorded outcomes of combats already fought (never reopen or contradict): {resolved}"
         )
     combat = state.get("combat_state") or {}
+    if combat.get("round_events"):
+        context_parts.append(
+            "Chronological engine events this resolved round (preserve this order; enemy_attack "
+            "is the foe's ordinary turn, and only opportunity_attack is an opportunity attack):\n"
+            + "\n".join(
+                f"{index}. [{event.get('kind')}] {event.get('text')}"
+                for index, event in enumerate(combat["round_events"], 1)
+            )
+        )
     if combat.get("initiative"):
         order = ", ".join(
             f"{c.get('name')}{' ' + c['disposition'] if c.get('disposition') not in (None, 'active') else ''}"

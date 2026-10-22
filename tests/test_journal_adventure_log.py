@@ -137,18 +137,18 @@ def test_a_playthrough_reads_as_places_people_clues_goals_and_notes() -> None:
     assert (tavi.title, tavi.status) == ("Tavi", "encountered")
     assert "clue" not in {entry.category for entry in journal.entries if entry.id == tavi.id}
 
-    places = {entry.title: entry for entry in by_category["place"]}
-    # Unearned prepared titles stay private; the arrival text heads the entry instead.
-    assert set(places) == {
-        "Festival boats bump against the quay",
-        "The towpath is slick with fresh silt",
-    }
+    places = by_category["place"]
+    # Distinct unnamed places keep their identities and descriptions, never prose titles.
+    assert len({entry.id for entry in places}) == 2
+    assert {entry.title for entry in places} == {"Unidentified place"}
+    assert {entry.text for entry in places} == {QUAY, TOWPATH}
     assert journal.current_place is not None
-    assert journal.current_place.title == "The towpath is slick with fresh silt"
+    assert journal.current_place.title == "Unidentified place"
+    assert journal.current_place.text == TOWPATH
 
     [clue] = by_category["clue"]
     assert clue.title == "The slips point toward checking the East Sluice House"
-    assert clue.origin.place == "The towpath is slick with fresh silt"
+    assert clue.origin.place == "Unidentified place"
     assert clue.origin.place_id == journal.current_place.id
     assert clue.origin.citation is None  # assembled adventures have no book pages
 
@@ -163,7 +163,8 @@ def test_a_playthrough_reads_as_places_people_clues_goals_and_notes() -> None:
     tavi_note = notes[1]
     assert tavi.id in tavi_note.related_entry_ids
     assert tavi_note.origin.turn_number == 2
-    assert tavi_note.origin.place == "Festival boats bump against the quay"
+    assert tavi_note.origin.place == "Unidentified place"
+    assert tavi_note.origin.place_id != journal.current_place.id
     assert clue.id in notes[0].related_entry_ids
     assert journal.current_lead is not None and journal.current_lead.category in {"note", "clue"}
 

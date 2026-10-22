@@ -302,6 +302,10 @@ def _bonus_actions(t: _Turn) -> None:
             t.bonus_text = f"{hero} uses Second Wind and regains {sw.amount} HP."
             t.bonus_record = {"action": "second_wind", "result": "used", "recovered": sw.amount}
             rec.round_effects.append("bonus_action")
+            rec.events.append({
+                "kind": "second_wind", "text": t.bonus_text,
+                "actor_id": stable_id(player),
+            })
         log_lines.append(t.bonus_text)
     if t.player_acted and decl.bonus_spell is not None:
         heal_result = resolve_spell(character, decl.bonus_spell)
@@ -857,7 +861,7 @@ def fire_readied(rec: RoundRecord, turns: EnemyTurns, foe: dict) -> None:
         turns=turns,
     )
     swing = _Turn(rec=rec, inp=inp)
-    _attack(swing, foe)
+    _attack(swing, foe, readied=True)
 
 
 def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
@@ -916,7 +920,7 @@ def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
     t.extra_outcome = extra_outcome
 
 
-def _attack(t: _Turn, target: dict) -> None:
+def _attack(t: _Turn, target: dict, *, readied: bool = False) -> None:
     """One swing, or two with Action Surge (EDG-145), then the off-hand attack's bonus action (EDG-044).
     Each swing rolls its own engine d20."""
     rec, inp = t.rec, t.inp
@@ -998,6 +1002,11 @@ def _attack(t: _Turn, target: dict) -> None:
             swing_text = f"{hero} misses {target['name']}{with_text}."
         mode_text = "" if mode == "normal" else f" (at {mode})"
         log_lines.append(f"{attack.describe()}{mode_text}. {swing_text}")
+        rec.events.append({
+            "kind": "readied_attack" if readied else "player_attack",
+            "text": ("Readied reaction: " if readied else "") + swing_text,
+            "actor_id": stable_id(player), "target_id": stable_id(target),
+        })
         t.extra_outcome = " ".join(part for part in (t.extra_outcome, swing_text) if part)
     t.player_action = {
         "action": "spell" if is_spell else "attack",

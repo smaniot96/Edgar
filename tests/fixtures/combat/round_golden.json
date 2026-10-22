@@ -939,6 +939,14 @@
           "init_bonus": 1,
           "is_player": true,
           "name": "player",
+          "round_events": [
+            {
+              "actor_id": "player",
+              "kind": "player_attack",
+              "target_id": "Goblin",
+              "text": "Eda hits Goblin for 10 damage and it falls!"
+            }
+          ],
           "second_wind_used": false,
           "surprised": false
         },
@@ -1010,6 +1018,14 @@
       "raging": false,
       "round": 1,
       "round_actors": [],
+      "round_events": [
+        {
+          "actor_id": "player",
+          "kind": "player_attack",
+          "target_id": "Goblin",
+          "text": "Eda hits Goblin for 10 damage and it falls!"
+        }
+      ],
       "second_wind_used": false,
       "second_wind_uses_remaining": 1
     },
@@ -1244,6 +1260,12 @@
               "text": "Wolf attacks on its turn against Eda."
             },
             {
+              "actor_id": "player",
+              "kind": "player_attack",
+              "target_id": "Ogre",
+              "text": "Eda hits Ogre for 5 damage (25/30 HP left)"
+            },
+            {
               "actor_id": "Ogre",
               "kind": "enemy_attack",
               "target_id": "player",
@@ -1346,6 +1368,12 @@
           "kind": "enemy_attack",
           "target_id": "player",
           "text": "Wolf attacks on its turn against Eda."
+        },
+        {
+          "actor_id": "player",
+          "kind": "player_attack",
+          "target_id": "Ogre",
+          "text": "Eda hits Ogre for 5 damage (25/30 HP left)"
         },
         {
           "actor_id": "Ogre",
@@ -1818,6 +1846,12 @@
           "name": "player",
           "round_events": [
             {
+              "actor_id": "player",
+              "kind": "player_attack",
+              "target_id": "Goblin",
+              "text": "Eda hits Goblin for 6 damage (3/9 HP left)"
+            },
+            {
               "actor_id": "Goblin",
               "kind": "enemy_attack",
               "target_id": "player",
@@ -1898,6 +1932,12 @@
         "Goblin"
       ],
       "round_events": [
+        {
+          "actor_id": "player",
+          "kind": "player_attack",
+          "target_id": "Goblin",
+          "text": "Eda hits Goblin for 6 damage (3/9 HP left)"
+        },
         {
           "actor_id": "Goblin",
           "kind": "enemy_attack",
@@ -2410,6 +2450,11 @@
           "name": "player",
           "round_events": [
             {
+              "actor_id": "player",
+              "kind": "second_wind",
+              "text": "Eda uses Second Wind and regains 5 HP."
+            },
+            {
               "actor_id": "Ogre",
               "kind": "enemy_attack",
               "target_id": "player",
@@ -2490,6 +2535,11 @@
         "Ogre"
       ],
       "round_events": [
+        {
+          "actor_id": "player",
+          "kind": "second_wind",
+          "text": "Eda uses Second Wind and regains 5 HP."
+        },
         {
           "actor_id": "Ogre",
           "kind": "enemy_attack",

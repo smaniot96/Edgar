@@ -201,6 +201,26 @@ describe("healing rolls", () => {
     );
   });
 
+  it("shows Second Wind before or after the attack according to the recorded dice sequence", () => {
+    const heal = { expression: "1d10+4", rolls: [2], modifier: 4, total: 6, purpose: "second wind" };
+    const attack = { expression: "1d20+6", rolls: [18], modifier: 6, total: 24, purpose: "attack check" };
+    const ruling: AdjudicationResult = { ...second, check: "attack", roll_expression: "1d20+6", dice_result: 24, damage: 11 };
+    const before = renderToStaticMarkup(<RollCard adj={{ ...ruling, dice_log: [heal, attack] }} />);
+    expect(before.indexOf(">Second Wind ·")).toBeLessThan(before.indexOf('>attack</span>'));
+    const after = renderToStaticMarkup(<RollCard adj={{ ...ruling, dice_log: [attack, heal] }} />);
+    expect(after.indexOf(">Second Wind ·")).toBeGreaterThan(after.indexOf('>attack</span>'));
+  });
+
+  it("preserves the legacy healing-after-check layout when the main dice match is absent or ambiguous", () => {
+    const heal = { expression: "1d10+4", rolls: [2], modifier: 4, total: 6, purpose: "second wind" };
+    const attack = { expression: "1d20+6", rolls: [18], modifier: 6, total: 24, purpose: "attack check" };
+    const ruling: AdjudicationResult = { ...second, check: "attack", roll_expression: "1d20+6", dice_result: 24 };
+    for (const dice_log of [[heal], [heal, attack, attack]]) {
+      const html = renderToStaticMarkup(<RollCard adj={{ ...ruling, dice_log }} />);
+      expect(html.indexOf(">Second Wind ·")).toBeGreaterThan(html.indexOf('>attack</span>'));
+    }
+  });
+
   it("renders nothing for a turn with no dice", () => {
     expect(renderToStaticMarkup(<RollCard adj={null} />)).toBe("");
   });

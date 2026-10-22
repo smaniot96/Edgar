@@ -887,6 +887,8 @@ export interface TurnCharacter {
   hp_current?: number;
   hp_max?: number;
   level?: number;
+  /** Earned campaign milestones waiting to be spent on advancement. */
+  milestones_pending?: number;
   class?: string;
   character_class?: string;
   stats?: Record<string, unknown> | null;

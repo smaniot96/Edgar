@@ -72,6 +72,9 @@ async def test_confirmation_and_dice_follow_requested_order(fake_llm_schema, fak
     final = await _say(fake_llm_schema, asked["combat_state"], "yes", parsed=ParsedInput(intent="combat"))
     purposes = [d["purpose"] for d in _rolled(final)]
     assert purposes.index("second wind") < purposes.index("attack check") if first == "Second Wind" else purposes.index("attack check") < purposes.index("second wind")
+    kinds = [e["kind"] for e in final["combat_state"]["round_events"]]
+    expected = ["second_wind", "player_attack"] if first == "Second Wind" else ["player_attack", "second_wind"]
+    assert kinds == expected + ["enemy_attack"]
 
 
 @pytest.mark.asyncio
@@ -94,6 +97,11 @@ async def test_disengage_withdraw_and_regular_enemy_turn_are_distinct(fake_llm_s
     kinds = [e["kind"] for e in final["combat_state"]["round_events"]]
     assert kinds == ["disengage", "withdraw", "enemy_close", "enemy_attack"]
     assert final["combat_state"]["combatants"][1]["distance_ft"] == 5
+    from agent.nodes.narrator import build_narrator_prompt
+    prompt = build_narrator_prompt({**_state([], "yes"), **final}, "play.combat_narrator")
+    context = str(prompt[-1].content)
+    assert "withdrawal succeeds" in str(prompt[0].content)
+    assert context.index("[disengage]") < context.index("[withdraw]") < context.index("[enemy_close]") < context.index("[enemy_attack]")
 
 
 @pytest.mark.asyncio

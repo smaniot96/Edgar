@@ -630,3 +630,47 @@ async def test_normalized_move_still_requires_exact_eligible_source(scene_state)
     result = validate_story_effects(AdjudicationResult(success=True, story_effects=[move]), state)
     assert result.scene_id == "event_square"
     assert result.accepted_story_effects == []
+
+
+_VISIBILITY_NOTES = (
+    "An Emerald Drake is in the shed.\n\n"
+    "Two sailors are on the quay.\n\n"
+    "The Emerald Drake is in the shed; it may be detected by sound or smell, "
+    "but is not automatically visible."
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scene_state", [_VISIBILITY_NOTES], indirect=True)
+@pytest.mark.parametrize("action,check,roll,allowed", [
+    ("I continue along the path to the quay.", None, None, False),
+    ("I describe the visible surroundings without approaching.", None, None, False),
+    ("I inspect the shed for concealed occupants.", "investigation", 18, True),
+    ("I listen for sounds from the shed.", None, None, True),
+    ("I sniff for smells from the shed.", None, None, True),
+])
+async def test_explicit_visibility_gate_applies_to_duplicate_private_source_spans(
+    scene_state, action, check, roll, allowed,
+):
+    state = await prepared(scene_state)
+    state["player_input"] = action
+    spans = observation_span_catalog(state)
+    hidden = next(s for s in spans.values() if s["text"].strip() == "An Emerald Drake is in the shed.")
+    visible = next(s for s in spans.values() if s["text"].strip() == "Two sailors are on the quay.")
+    result = AdjudicationResult(
+        success=True, check=check, dice_result=roll,
+        source_observations=[
+            {
+                "source_span_id": s["source_span_id"], "text": s["text"].strip(),
+                "action_quote": action, "achievement_basis": "The current action earns this observation.",
+            }
+            for s in [visible, hidden]
+        ],
+    )
+    validate_story_effects(result, state)
+    assert "Two sailors are on the quay." in result.accepted_observations
+    assert ("An Emerald Drake is in the shed." in result.accepted_observations) is allowed
+    if not allowed:
+        assert result.observation_diagnostics["rejected"] == [
+            {"index": 1, "reason": "source_visibility_condition_not_met"}
+        ]

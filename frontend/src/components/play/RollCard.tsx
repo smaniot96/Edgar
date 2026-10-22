@@ -5,6 +5,10 @@ import { healingRolls, restSummary, rollParts, rollSummary, type HealingRoll } f
 const CONTAINER =
   "inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line-strong/80 bg-surface/80 px-2.5 py-1 text-xs text-ink";
 
+function healingSummary(roll: HealingRoll) {
+  return `${roll.label} · ${roll.expression}${roll.rolls.length ? ` [${roll.rolls.join(", ")}]` : ""} = ${roll.total}${roll.total < 0 ? ", heals 0" : " healing"}`;
+}
+
 /**
  * A healing dice roll: the dice and total only; applied HP is shown by the sheet, not claimed here.
  * A total below zero is the roll's arithmetic and heals nothing, so it never reads as negative healing.
@@ -12,17 +16,15 @@ const CONTAINER =
 function HealingPill({ roll }: { roll: HealingRoll }) {
   return (
     <span className="rounded border border-success/40 px-1.5 py-px font-mono text-success">
-      {roll.label} · {roll.expression}
-      {roll.rolls.length ? ` [${roll.rolls.join(", ")}]` : ""} = {roll.total}
-      {roll.total < 0 ? ", heals 0" : " healing"}
+      {healingSummary(roll)}
     </span>
   );
 }
 
 /**
  * Compact dice card shown above the narration it explains:
- * "Athletics · d20+3 = 17 vs DC 15 → Success · 6 dmg". Healing dice (Second Wind, spell or item
- * healing) follow as their own pills. Renders nothing when no dice were rolled.
+ * "Athletics · d20+3 = 17 vs DC 15 → Success · 6 dmg". Healing dice appear around the check in
+ * recorded order when the main check has a unique dice-log match; legacy cards keep their order.
  */
 export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }) {
   const p = rollParts(adj);
@@ -49,13 +51,19 @@ export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }
       </div>
     );
   }
+  const log = adj?.dice_log ?? [];
+  const matchingChecks = log.flatMap((entry, index) => entry.total === p.total && entry.expression === p.expression && !/second wind|healing|hit die/i.test(entry.purpose ?? "") ? [index] : []);
+  const checkIndex = matchingChecks.length === 1 ? matchingChecks[0] : -1;
+  const before = adj && checkIndex >= 0 ? healingRolls({ ...adj, dice_log: log.slice(0, checkIndex) }) : [];
+  const after = adj && checkIndex >= 0 ? healingRolls({ ...adj, dice_log: log.slice(checkIndex + 1) }) : heals;
   const conditions = (adj?.conditions ?? []).filter(Boolean);
   return (
     <div
       className={CONTAINER}
-      aria-label={rollSummary(p)}
+      aria-label={[...before.map(healingSummary), rollSummary(p), ...after.map(healingSummary)].join(" · ")}
       title={adj?.mechanical_summary || undefined}
     >
+      {before.map((roll, index) => <HealingPill key={`before-${index}`} roll={roll} />)}
       <span aria-hidden className="text-ember-400">
         ⚄
       </span>
@@ -103,7 +111,7 @@ export function RollCard({ adj }: { adj: AdjudicationResult | null | undefined }
           {c}
         </span>
       ))}
-      {healPills}
+      {after.map((roll, index) => <HealingPill key={`after-${index}`} roll={roll} />)}
     </div>
   );
 }

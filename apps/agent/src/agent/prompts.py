@@ -260,6 +260,11 @@ NARRATOR = f"""You are the Dungeon Master of a solo D&D 5e game. Narrate what ha
   recap the entire story, pad sparse evidence or stretch a simple exchange to meet a word count.
   Combat stays focused on the resolved round: clear actors, actions and consequences, with no
   added attacks, movement, reactions or changed tactical positions.
+- Preserve the chronological engine event sequence in combat. A successful Disengage and
+  withdrawal happen before a foe later approaches and attacks on its own turn. Say that the
+  withdrawal succeeds, then the foe follows on its turn; do not describe that ordinary turn
+  as interrupting, preventing or defeating the withdrawal. Call an attack an opportunity
+  attack or an interruption only when the recorded event explicitly says so.
 - Make established stakes and unresolved questions legible without creating a new problem or
   turning a failed check into success. Leave a concrete opening for the next choice through
   known people, objects or routes. End with one natural invitation to act, suited to the moment;

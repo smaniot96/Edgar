@@ -178,6 +178,7 @@ const TURN_CHARACTER_KEYS: Record<keyof TurnCharacter, true> = {
   hp_current: true,
   hp_max: true,
   level: true,
+  milestones_pending: true,
   class: true,
   character_class: true,
   stats: true,
@@ -411,6 +412,13 @@ describe("consumeTurnStream dispatches every schema event", () => {
       }
     });
   }
+
+  it.each([0, 1])("preserves %i pending milestones on a committed character", async (pending) => {
+    const payload = { ...sample.done, character: { id: 28, milestones_pending: pending } };
+    const { outcome } = await run(`event: done\ndata: ${JSON.stringify(payload)}\n\n`);
+    expect(outcome.kind).toBe("done");
+    if (outcome.kind === "done") expect(outcome.result.character?.milestones_pending).toBe(pending);
+  });
 
   it("passes status stages through unchanged for every stage in the schema", async () => {
     for (const stage of schema.statusStages) {

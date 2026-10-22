@@ -147,6 +147,7 @@ class CharacterPublic(_Frame):
     level: int
     hp_current: int
     hp_max: int
+    milestones_pending: int = Field(default=0, ge=0)
     stats: dict[str, Any] | None
     inventory: list[Any] | dict[str, Any] | None
     second_wind: UsesPublic | None = None

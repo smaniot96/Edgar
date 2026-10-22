@@ -317,6 +317,57 @@ def match_source_quote(text, quote):
     }
 
 
+def _unearned_visibility_gated_answer(
+    proposal, adjudication, state, evidence, match, selected_chunk
+):
+    """Apply explicit source visibility qualifiers across duplicate source spans.
+
+    This covers only the authored phrase 'not automatically visible' and a simple
+    named subject in the same sentence. It does not infer hidden actors or apply a
+    general secrecy classifier to ordinary private-source answers.
+    """
+    action = state.get("player_input", "")
+    checked_search = (
+        adjudication.check in {"perception", "investigation"}
+        and adjudication.dice_result is not None
+        and adjudication.success
+        and re.search(r"\b(?:search|investigate|inspect|examine|look\s+inside)\b", action, re.I)
+    )
+    if checked_search:
+        return False
+    answer = (proposal.text + " " + match["text"]).casefold()
+    for chunk in evidence.values():
+        if chunk.get("audience") != "planner" or any(
+            chunk.get(key) != selected_chunk.get(key)
+            for key in ("collection", "source_sha256", "manifest_sha256")
+        ):
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+|\n{2,}", chunk.get("text", "")):
+            if "not automatically visible" not in sentence.casefold():
+                continue
+            subject = re.match(
+                r"\s*(?:(?:The|A|An)\s+)?([\w'-]+(?:\s+[\w'-]+){0,5}?)\s+(?:is|are)\b",
+                sentence,
+                re.I,
+            )
+            if not subject or not re.search(
+                r"\b" + re.escape(subject[1].casefold()) + r"\b", answer
+            ):
+                continue
+            # A source-supported sensory procedure can be routine; no invented
+            # roll is required merely to listen or smell when the source permits it.
+            if (
+                re.search(r"\bsound\b", sentence, re.I)
+                and re.search(r"\b(?:listen|listening)\b", action, re.I)
+            ) or (
+                re.search(r"\bsmell\b", sentence, re.I)
+                and re.search(r"\b(?:smell|sniff)\b", action, re.I)
+            ):
+                continue
+            return True
+    return False
+
+
 def validate_source_observations(adjudication, state):
     """Seal exact grounded answers chosen by the existing live DM judgment stage.
 
@@ -389,6 +440,10 @@ def validate_source_observations(adjudication, state):
                     matched_reference, match = relocated[0]
             if match is None:
                 reason = "source_quote_not_exact"
+        if not reason and _unearned_visibility_gated_answer(
+            proposal, adjudication, state, evidence, match, evidence[matched_reference]
+        ):
+            reason = "source_visibility_condition_not_met"
         if reason:
             diagnostics["rejected"].append({"index": index, "reason": reason})
             continue

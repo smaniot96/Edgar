@@ -338,7 +338,7 @@ def test_allowed_transition_requires_canonical_justified_move():
         AdjudicationResult(success=True, story_effects=[effect]), state
     )
     assert validated.scene_id == "vault"
-    assert validated.accepted_story_effects[0].display_name == "The password is copper dawn"
+    assert validated.accepted_story_effects[0].display_name == "Unidentified place"
 
 
 def test_visit_is_current_only_and_a_turn_accepts_one_move():

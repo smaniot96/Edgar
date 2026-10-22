@@ -42,6 +42,23 @@ it("shows a waiting declaration and sends yes or no as the reply", async () => {
   unmount();
 });
 
+it("lets keyboard users read a long declaration without placing its actions inside the scrollable summary", async () => {
+  const summary = "This exact encounter is above deadly. ".repeat(40);
+  const onReply = vi.fn();
+  const { host, unmount } = render(<CombatHud combat={{ ...combat, pending_declaration: { summary } }} onReply={onReply} />);
+  const details = host.querySelector<HTMLElement>('[aria-label="Declaration summary"]')!;
+  expect(details.textContent).toBe(summary);
+  expect(details.tabIndex).toBe(0);
+  details.focus();
+  expect(document.activeElement).toBe(details);
+  const actions = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Confirm declaration"] button')];
+  expect(actions.map((button) => button.textContent)).toEqual(["Confirm", "Cancel and change"]);
+  expect(actions.every((button) => !details.contains(button))).toBe(true);
+  await act(() => actions[1].click());
+  expect(onReply).toHaveBeenCalledExactlyOnceWith("no");
+  unmount();
+});
+
 it("lists standing orders and cancels one by naming its foe", async () => {
   const onReply = vi.fn();
   const withOrder = { ...combat, pending_declaration: null, standing_orders: [{ foe: "Goblin", summary: "Attack Goblin each time it closes in" }] } as unknown as CombatState;
