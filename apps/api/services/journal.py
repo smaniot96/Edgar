@@ -458,7 +458,9 @@ def project_player_journal(
                 if category in {"clue", "hint", "place"}
                 else ""
             ) or _TITLE[category]
-        if category == "place":
+        # Homebrew names are already validated public identities; they have no
+        # private prepared-scene title to screen against arrival prose.
+        if category == "place" and first_public.get("provenance") != "homebrew":
             title = public_place_label(first_public["text"], title) or "Known location"
         origin_turn = event_order.get(origin_event_id) if origin_event_id is not None else None
         origin_place_entry_id = (

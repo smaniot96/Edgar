@@ -106,6 +106,16 @@ def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
     )
 
 
+def _live_consequence(public: dict) -> dict:
+    """A validated visit proves position, not every actor assumption in arrival prose."""
+    if public.get("provenance") != "module" or public.get("kind") not in {"move", "visit"}:
+        return public
+    return {
+        **{key: value for key, value in public.items() if key != "text"},
+        "scope": "Place visit only; authored arrival staging is conditional reference context.",
+    }
+
+
 def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> list[BaseMessage]:
     player_input = state.get("player_input", "")
     adjudication = state.get("adjudication_result")
@@ -185,7 +195,7 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
         )
     if world_flags and state.get("manifest_status") != "reviewed":
         context_parts.append(f"World flags (persisted state): {world_flags}")
-    earned = public_earned_facts(state)
+    earned = [_live_consequence(fact) for fact in public_earned_facts(state)]
     if earned:
         context_parts.append(f"Committed player-known story facts: {earned}")
     if adjudication:
@@ -197,7 +207,7 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
                 + str(adjudication.accepted_observations)
             )
         accepted = [
-            public
+            _live_consequence(public)
             for effect in adjudication.accepted_story_effects
             if (public := player_story_effect(effect)) is not None
         ]
@@ -255,11 +265,26 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
     if rules_context:
         block = "\n".join(wrap_retrieved_excerpt(cited_excerpt(c, edition)) for c in rules_context)
         context_parts.append(f"Official rules context:\n{block}")
-    if adventure_context:
+    # Exact-scene opening excerpts already appear once in the conditional baseline
+    # above. Repeating them as module evidence gives stale staging undue weight.
+    remaining_adventure_context = [
+        chunk for chunk in adventure_context
+        if not scene or chunk not in scene["public_context"]
+    ]
+    if remaining_adventure_context:
         block = "\n".join(
-            wrap_retrieved_excerpt(cited_excerpt(c, edition)) for c in adventure_context
+            wrap_retrieved_excerpt(cited_excerpt(c, edition))
+            for c in remaining_adventure_context
         )
         context_parts.append(f"Adventure module context (story/locations/NPCs):\n{block}")
+    if any(getattr(message, "type", None) == "ai" for message in state.get("messages") or []):
+        context_parts.append(
+            "Most recent established public scene continuity: use the newest DM narration "
+            "retained in the budgeted conversation above. Preserve its resolved actor presence, "
+            "departures and custody unless newer engine "
+            "outcomes or validated live consequences change them. A place visit and its authored "
+            "opening excerpt do not reset these facts. Resolve the current action from here."
+        )
 
     if continuity := fit_continuity(state, profile, [NARRATOR, *context_parts]):
         context_parts.insert(continuity_slot, continuity)

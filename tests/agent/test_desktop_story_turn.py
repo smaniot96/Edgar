@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
@@ -168,6 +169,34 @@ def test_narrator_treats_actor_staging_as_conditional_not_live_state(play):
     assert "authored opening conditions, not a live snapshot" in prompt
     assert "never restore a departed actor" in prompt
     assert "preserve an explicitly stationary position" in prompt
+
+
+def test_arrival_staging_is_not_promoted_to_live_current_or_committed_consequences(play):
+    manifest, chunks, state = play
+    staging = "The animal stays close, holding its scroll."
+    _public_text(manifest, chunks, state, "towpath_public", staging)
+    state["player_input"] = "I continue openly along the route taken by the guard."
+    result = _move(manifest, chunks, state)
+    [move] = result.accepted_story_effects
+    prior = "The guard takes the animal into his custody and leads it away. You walk beside them."
+    state.update(
+        adjudication_result=result,
+        messages=[AIMessage(content=prior), HumanMessage(content=state["player_input"])],
+        story_state={"facts": [StoryFact(**move.model_dump(), fact_id=story_target_id(move.target)).model_dump()]},
+    )
+    prompt = "\n".join(str(m.content) for m in build_narrator_prompt(state))
+    consequences = prompt.split("Validated canonical story consequences this turn", 1)[1].split("Engine outcome", 1)[0]
+    assert staging not in consequences
+    assert "Place visit only" in consequences
+    # The same source prose must not be repeated as a current fact, historical
+    # fact, and module excerpt. It remains once in conditional reference context.
+    assert prompt.count(staging) == 1
+    assert prior in prompt
+    assert "use the newest DM narration retained in the budgeted conversation above" in prompt
+    assert "A place visit and its authored opening excerpt do not reset these facts" in prompt
+    # Projection changes no saved receipt, fact, or public journal description.
+    assert move.player_text == staging
+    assert state["story_state"]["facts"][0]["player_text"] == staging
 
 
 def test_opening_and_map_share_a_public_label_without_a_private_place_title(play):
