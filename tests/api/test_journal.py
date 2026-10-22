@@ -103,7 +103,8 @@ async def test_journal_routes_are_safe_and_session_scoped(api_client, db_session
     assert len(first_json["entries"]) == 1
     first_entry = first_json["entries"][0]
     assert first_entry["text"] == "The lens tracks reflections, not the sky."
-    assert first_entry["origin"]["citation"] == "Page 5"
+    # The fixture collection is not a directly extracted book: no page number is claimed.
+    assert first_entry["origin"]["citation"] is None
     assert first_entry["origin"]["history_event_id"] is not None
     assert "PRIVATE FUTURE VILLAIN TRUE NAME" not in first.text
     assert "private_file" not in first.text

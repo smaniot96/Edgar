@@ -14,6 +14,8 @@ JournalCategory = Literal[
     "promise",
     "clock",
     "consequence",
+    # What the player was told: a validated earned answer delivered by the DM's narration.
+    "note",
 ]
 JournalStatus = Literal[
     "discovered",
@@ -35,6 +37,7 @@ JournalStatus = Literal[
     "released",
     "dead",
     "defeated",
+    "learned",
 ]
 JournalOwnership = Literal[
     "carried",
@@ -61,6 +64,8 @@ class JournalOrigin(JournalRecord):
     turn_number: int | None
     history_event_id: int | None
     place: str | None
+    # The journal entry of that place, when the place itself is an earned entry.
+    place_id: str | None = None
     actor: str | None
     actor_id: str | None = None
     citation: str | None
@@ -93,3 +98,5 @@ class JournalRead(JournalRecord):
     entries: list[JournalEntry]
     current_place: JournalEntry | None
     active_goal: JournalEntry | None
+    # The freshest earned clue or note: what to follow when no goal is named.
+    current_lead: JournalEntry | None = None
