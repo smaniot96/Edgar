@@ -148,6 +148,7 @@ function SessionMapPanelContent({
       title: entry.title,
       status: "known" as const,
       detail: entry.text,
+      current_area: null,
     }));
   const selected = listPlaces.find((place) => place.scene_id === view.sceneId) ?? null;
   const current = places.find((place) => place.scene_id === map?.current_scene_id) ?? null;
@@ -265,10 +266,11 @@ function SessionMapPanelContent({
                     >
                       <span className="block font-medium">{place.title}</span>
                       <span className="block text-xs text-ink-muted">{placeStatus(place.status)}</span>
+                      {place.current_area && place.current_area !== place.title ? <span className="block text-xs text-ink-muted">Current area: {place.current_area}</span> : null}
                     </button>
                     {active ? (
                       <div className="mt-2 flex flex-wrap gap-2 pl-2">
-                        {place.detail ? <p className="w-full text-sm text-ink-muted">{place.detail}</p> : null}
+                        {place.detail ? <div className="w-full"><p className="text-xs text-ink-subtle">Recorded on arrival; people and conditions may have changed.</p><p className="text-sm text-ink-muted">{place.detail}</p></div> : null}
                         {journalId ? <Button className="min-h-11" variant="secondary" size="sm" onClick={() => onOpenJournal(journalId)}>Open journal entry</Button> : null}
                         <Button className="min-h-11" variant="secondary" size="sm" onClick={() => onPrepareTravel(place.title)}>Add travel idea to draft</Button>
                       </div>

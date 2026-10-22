@@ -135,6 +135,7 @@ async def test_no_cancels_the_pending_declaration_without_a_roll(fake_llm_schema
     first = await _say(fake_llm_schema, _start(COMBATANTS()), "I close in on the goblin and attack it", parsed=MOVE_AND_ATTACK)
     out = await _say(fake_llm_schema, first["combat_state"], "no", parsed=ParsedInput(intent="combat"))
     assert "Cancelled" in out["narration"] and _rolled(out) == []
+    assert out["combat_state"]["ended"] is False
     assert out["combat_state"]["round"] == 1
     assert PENDING_KEY not in _hero(out["combat_state"])
 

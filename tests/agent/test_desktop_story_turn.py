@@ -76,7 +76,7 @@ def test_narration_uses_the_same_one_hop_move_that_will_be_committed(play):
     prompt = "\n".join(str(m.content) for m in build_narrator_prompt(state))
     assert TOWPATH_PUBLIC in prompt and QUAY_PUBLIC not in prompt
     assert QUAY_DM not in prompt and TOWPATH_DM not in prompt
-    assert "place=Unidentified place" in prompt
+    assert "place=Towpath" in prompt
     assert "Only an accepted transition changes the location" in prompt
     assert state["current_scene_id"] == "quay"
 
@@ -346,7 +346,7 @@ def test_opening_and_map_share_a_public_label_without_a_private_place_title(play
         current_scene_id="quay",
     )
     [place] = map_.places
-    assert place.title == journal.current_place.title == "Unidentified place"
+    assert place.title == journal.current_place.title == "Quay"
     assert place.detail == QUAY_PUBLIC
     assert "The Waterline Falls" not in map_.model_dump_json() + journal.model_dump_json()
     assert QUAY_DM not in str(place)

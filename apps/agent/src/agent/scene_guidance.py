@@ -84,6 +84,59 @@ async def preload_scene_context(state):
     }
 
 
+def linked_transition_choices(state):
+    """Bind one-hop opportunities to exact current evidence, without deciding their triggers.
+
+    The live DM still judges whether play earns a move. Normal validation retains source,
+    trigger, one-hop and stationary-position boundaries. Destination secrets stay private.
+    """
+    from agent.nodes.story_effects import story_candidates
+    from edgar_core.sources import eligible_context, source_citation
+
+    edition = state.get("rules_edition", "2014")
+    evidence = eligible_context(
+        state.get("adventure_context", []) + state.get("planner_context", []), edition
+    )
+    candidates = {
+        candidate["target"]["canonical_id"]: candidate
+        for candidate in story_candidates(state)
+        if candidate["target"]["kind"] == "scene" and candidate.get("can_move")
+    }
+    choices = []
+    for transition in (state.get("parser_scene_context") or {}).get("event_transitions", []):
+        candidate = candidates.get(transition["scene_id"])
+        if not candidate:
+            continue
+        target = candidate["target"]
+        supporting = [
+            chunk for chunk in evidence
+            if chunk.get("passage_id") in candidate["passage_ids"]
+            and all(
+                chunk.get(key) == target[key]
+                for key in ("collection", "source_sha256", "manifest_sha256")
+            )
+        ]
+        supporting.sort(key=lambda chunk: (
+            0 if chunk.get("scene_ids") == [state.get("current_scene_id")]
+            and chunk.get("passage_id", "").endswith("_dm")
+            else 1 if chunk.get("audience") == "player" else 2
+        ))
+        references = [
+            source_citation(chunk, edition)["reference_id"]
+            for chunk in supporting[:1]
+        ]
+        if references:
+            choices.append({
+                "trigger": transition["trigger"],
+                "timing": transition.get("timing", ""),
+                "proposal": {
+                    "kind": "move", "target": target, "status": "visited",
+                    "source_reference_ids": references,
+                },
+            })
+    return choices
+
+
 def parser_guidance(state):
     """Bound parser context to current event notes and chapter running guidance."""
     context = cached_scene_context(state)
@@ -372,8 +425,8 @@ def validate_source_observations(adjudication, state):
     """Seal exact grounded answers chosen by the existing live DM judgment stage.
 
     Narrative appropriateness is the DM's semantic judgment, as for goal completion.
-    Code enforces its boundaries: current source, exact quote/action, successful
-    attempt, no future/global dossier and no mechanical or persistent state writes.
+    Code enforces its boundaries: current source, exact quote/action, successful checked
+    inference (or independent public observation), no future/global dossier or state writes.
     """
     from edgar_core.sources import source_citation
 
@@ -389,7 +442,6 @@ def validate_source_observations(adjudication, state):
     if (
         state.get("manifest_status") != "reviewed"
         or not state.get("turn_id")
-        or not adjudication.success
     ):
         diagnostics["blocked"] = "turn_not_eligible"
         return
@@ -440,6 +492,13 @@ def validate_source_observations(adjudication, state):
                     matched_reference, match = relocated[0]
             if match is None:
                 reason = "source_quote_not_exact"
+        if not reason and not adjudication.success:
+            # A failed inference does not erase a mixed request's plainly public facts.
+            # Private evidence stays fail-closed even if the model marks it independent.
+            if proposal.requires_check_success:
+                reason = "failed_check"
+            elif evidence[matched_reference].get("audience") != "player":
+                reason = "failed_check_private_evidence"
         if not reason and _unearned_visibility_gated_answer(
             proposal, adjudication, state, evidence, match, evidence[matched_reference]
         ):

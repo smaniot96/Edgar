@@ -9,6 +9,7 @@ import {
   mergeTurnCharacter,
   orderCombatants,
   parseSecondWind,
+  parseClassFeatures,
   parseSpellSlots,
   sheetForCampaign,
   sheetFromLibrary,
@@ -59,6 +60,27 @@ describe("resource derivations", () => {
     const sheet = sheetForCampaign(eda, [fighterAssignment], 3);
     expect(sheet.secondWind).toEqual({ uses_remaining: 1, uses_max: 1 });
     expect(sheet.spellSlots).toBeNull();
+  });
+
+  it("shows engine Action Surge uses after a turn and after reopening the campaign", () => {
+    const available = { action_surge: { uses_remaining: 1, uses_max: 1 } };
+    const exhausted = { action_surge: { uses_remaining: 0, uses_max: 1 } };
+    const sheet = sheetForCampaign(eda, [{ ...fighterAssignment, class_features: available }], 3);
+    expect(sheet.classFeatures).toEqual([
+      { key: "action_surge", label: "Action Surge", uses_remaining: 1, uses_max: 1 },
+    ]);
+    const spent = mergeTurnCharacter(sheet, { class_features: exhausted });
+    const html = renderToStaticMarkup(
+      <ResourceCounters secondWind={null} classFeatures={spent.classFeatures} spellSlots={null} />,
+    );
+    expect(html).toContain("Action Surge");
+    expect(html).toContain("0 of 1 use left");
+    expect(mergeTurnCharacter(spent, { hp_current: 4 }).classFeatures).toEqual(spent.classFeatures);
+    const reopened = sheetForCampaign(eda, [{ ...fighterAssignment, class_features: exhausted }], 3);
+    expect(reopened.classFeatures).toEqual(spent.classFeatures);
+    expect(mergeTurnCharacter(spent, { class_features: available }).classFeatures).toEqual(sheet.classFeatures);
+    expect(parseClassFeatures({ invented_power: { uses_remaining: 9, uses_max: 9 } })).toBeNull();
+    expect(parseClassFeatures({ action_surge: { uses_remaining: "unknown", uses_max: 1 } })).toBeNull();
   });
 
   it("shows nothing for legacy assignments that carry no resource fields", () => {

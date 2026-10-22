@@ -55,6 +55,18 @@ def deterministic_narration(state: AgentState) -> str | None:
         return f"From {recall['source']}{page}:\n\n{recall['text']}"
     if state.get("policy_rejection"):
         return "That approach is not available in the current circumstances."
+    adjudication = state.get("adjudication_result")
+    if (
+        state.get("policy_narration")
+        and adjudication is not None
+        and not adjudication.success
+        and not adjudication.accepted_story_effects
+    ):
+        # An empty failed inference has no authored consequence to quote. Let the
+        # normal public-context narrator distinguish failure from visible facts,
+        # previously earned knowledge and independent questions in a mixed action.
+        # The engine outcome remains final; private evidence never reaches it.
+        return None
     return state.get("policy_narration")
 
 
@@ -147,7 +159,11 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
             f"{character.get('class')}, HP {character.get('hp_current')}/{character.get('hp_max')}, "
             f"inventory {character.get('inventory')}. Use HP only to calibrate wounds and fatigue "
             f"(do not describe the PC as unhurt if HP is low, or dying if HP is still moderate); "
-            f"never print the numbers, and do not invent status conditions."
+            "never print the numbers, and do not invent status conditions. "
+            "This inventory is authoritative for carried possessions. A spoken claim of "
+            "being unarmed does not remove carried equipment. Do not narrate loss, transfer, "
+            "consumption or expiry from a new scene's default staging; only a recorded "
+            "outcome can establish that change, and make any established change explicit."
         )
     party = [m for m in (state.get("party") or []) if isinstance(m, dict) and m.get("name")]
     if len(party) > 1:

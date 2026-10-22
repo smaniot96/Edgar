@@ -182,6 +182,8 @@ async def test_severe_encounter_requires_confirmation_before_initiative(fake_llm
     assert not calls and _rolled(asked) == [] and "Severe danger" in asked["narration"]
     cancelled = await _say(fake_llm_schema, asked["combat_state"], "no", parsed=ParsedInput(intent="combat"))
     assert not calls and _rolled(cancelled) == []
+    assert cancelled["combat_state"]["ended"]
+    assert cancelled["combat_state"]["outcome"] == "cancelled"
     asked = await _say(fake_llm_schema, json.loads(json.dumps(cancelled["combat_state"])), "I attack Guz", parsed=ParsedInput(intent="combat", check="attack", target="Guz"))
     final = await _say(fake_llm_schema, asked["combat_state"], "yes", parsed=ParsedInput(intent="combat"))
     assert calls == [True] and _rolled(final)
@@ -198,3 +200,70 @@ async def test_changed_normalized_plan_is_reconfirmed_after_reload(fake_llm_sche
     out = await _say(fake_llm_schema, asked["combat_state"], "yes", parsed=ParsedInput(intent="combat"))
     assert "encounter changed" in out["narration"]
     assert _rolled(out) == [] and out["combat_state"]["round"] == 1
+
+
+@pytest.mark.parametrize("text", [
+    "I speak to Noke: I have changed my mind about attacking. I want to leave peacefully.",
+    "I decide against attacking Noke and lower my sword.",
+    "I abandon the plan to attack the guard.",
+    "I discuss attacking Guz with Noke.",
+    "I remember attacking the guard yesterday.",
+    "I no longer attack Guz.",
+    "I have stopped attacking Guz.",
+])
+def test_referenced_or_revoked_action_is_not_authorization(text):
+    assert not has_attack_words(text)
+
+
+@pytest.mark.parametrize("text", [
+    "I changed my mind about attacking. I attack Guz now.",
+    "I will attack Guz.",
+    "I attack Guz, then use Second Wind.",
+])
+def test_new_explicit_attack_clause_still_authorizes_attack(text):
+    assert has_attack_words(text)
+
+
+@pytest.mark.asyncio
+async def test_revoked_attack_cannot_create_confirmation(fake_llm_schema, fake_retrieval):
+    text = "I speak to Noke: I have changed my mind about attacking. I want to leave peacefully."
+    out = await _say(fake_llm_schema, _guz(), text, parsed=ParsedInput(
+        intent="combat", check="attack", target="Guz", actions=[{"kind": "attack", "target": "Guz"}]
+    ))
+    assert _rolled(out) == []
+    assert PENDING_KEY not in _hero(out["combat_state"])
+    assert out["combat_state"]["round"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_legacy_unstarted_shell_without_pending_order(fake_llm_schema, fake_retrieval):
+    combat = _guz()
+    for row in combat["combatants"]:
+        row.pop("init", None)
+    _hero(combat)["initiative_pending"] = True
+    out = await _say(fake_llm_schema, combat, "cancel", parsed=ParsedInput(intent="combat"))
+    assert out["combat_state"]["ended"]
+    assert out["combat_state"]["outcome"] == "cancelled"
+    assert _rolled(out) == []
+    assert out["combat_state"]["round"] == 1
+    from agent.graph import route_after_input_parser
+    assert route_after_input_parser({**out, "parsed_input": ParsedInput(intent="exploration")}) == "normal"
+
+
+@pytest.mark.asyncio
+async def test_back_into_melee_is_move_before_attack(fake_llm_schema, fake_retrieval):
+    combat = _guz()
+    foe = next(row for row in combat["combatants"] if not row.get("is_player"))
+    foe.update(band="ranged", distance_ft=30)
+    text = "I move back into melee with Guz and attack him with my longsword."
+    parsed = ParsedInput(intent="combat", check="attack", target="Guz", actions=[
+        {"kind": "move", "destination": "melee with Guz"},
+        {"kind": "attack", "target": "Guz"},
+    ])
+    asked = await _say(fake_llm_schema, combat, text, parsed=parsed)
+    assert "move then attack Guz" in asked["narration"]
+    assert _rolled(asked) == []
+    final = await _say(fake_llm_schema, asked["combat_state"], "yes", parsed=ParsedInput(intent="combat"))
+    assert any(d["purpose"] == "attack check" for d in _rolled(final))
+    events = [event["kind"] for event in final["combat_state"]["round_events"]]
+    assert events.index("close") < events.index("player_attack")

@@ -29,6 +29,7 @@ from agent.action_economy import (
     refusal_for,
 )
 from agent.class_features import ACTION_SURGE, RAGE
+from agent.combat_identity import unique_roster_target
 from agent.combat_intent import _RANGED_HINT, _STAND_UP, _is_attack_action, _name_matches
 from agent.combat_plan import attack_count_question, operation_order, sequence_question
 from agent.combat_targeting import _release_target, additional_spell_targets, select_target
@@ -259,6 +260,8 @@ def declare_action(
     # action. A disagreement is one question, asked before any target, roll or turn spend.
     if not fled:
         detected = {d.kind for d in declared}
+        if ACTION_SURGE in cf_requested:
+            detected.add(ACTION_SURGE)
         if moving:
             detected.add(MOVE.kind)
         if combat_action is not None:
@@ -335,9 +338,7 @@ def declare_action(
         None if fled else moves_text,
         named,
         [e for e in enemies if can_act(e)],
-        pick=lambda n: next(
-            (e for e in enemies if can_act(e) and _name_matches(n, e["name"])), None
-        ),
+        pick=lambda n: unique_roster_target([e for e in enemies if can_act(e)], n),
     )
     if moves.question:
         return _ask_player(state, moves.question, combat_state=combat_state)
@@ -350,9 +351,7 @@ def declare_action(
             contingency.branch,
             named,
             [e for e in enemies if can_act(e)],
-            pick=lambda n: next(
-                (e for e in enemies if can_act(e) and _name_matches(n, e["name"])), None
-            ),
+            pick=lambda n: unique_roster_target([e for e in enemies if can_act(e)], n),
         )
         if branch_plan.question:
             return _ask_player(state, branch_plan.question, combat_state=combat_state)

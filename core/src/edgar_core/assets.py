@@ -55,9 +55,13 @@ class IndependentVisualReviewArtifact(AssetRecord):
 
 class PlayerMapPlace(AssetRecord):
     scene_id: Identifier
+    # Several story events can happen at one physical place. Only earned scenes occur here.
+    scene_ids: list[Identifier] = Field(default_factory=list)
+    visited_scene_ids: list[Identifier] = Field(default_factory=list)
     title: str = Field(min_length=1, max_length=200)
     status: Literal["current", "visited", "known"]
     detail: str | None = Field(default=None, max_length=12000)
+    current_area: str | None = None
 
 
 class PlayerMapRoute(AssetRecord):
@@ -142,6 +146,8 @@ def project_player_map(
     facts: list[StoryFact | dict],
     world_flags: dict[str, str],
     current_scene_id: str | None,
+    scene_places: dict[str, dict] | None = None,
+    earned_place_names: dict[str, str] | None = None,
 ) -> PlayerMapProjection:
     """Create a known-only map projection before rendering any image bytes.
 
@@ -183,23 +189,34 @@ def project_player_map(
             note="No places have been committed to this session yet.",
         )
 
-    places = [
-        PlayerMapPlace(
-            scene_id=scene_id,
-            title=details.get(
-                scene_id, "Current location" if scene_id == current_scene_id else "Known location"
-            ),
-            detail=public_text.get(scene_id),
-            status=(
-                "current"
-                if scene_id == current_scene_id
-                else "visited"
-                if scene_id in visited
-                else "known"
-            ),
-        )
-        for scene_id in sorted(known & scene_by_id.keys())
-    ]
+    scene_places = scene_places or {}
+    earned_place_names = earned_place_names or {}
+    groups: dict[str, list[str]] = {}
+    for scene_id in sorted(known & scene_by_id.keys()):
+        identity = scene_places.get(scene_id, {}).get("place_id", scene_id)
+        groups.setdefault(identity, []).append(scene_id)
+    places = []
+    projected_scene: dict[str, str] = {}
+    for scenes in groups.values():
+        representative = current_scene_id if current_scene_id in scenes else scenes[0]
+        for scene_id in scenes:
+            projected_scene[scene_id] = representative
+        text = "\n".join(public_text.get(scene_id, "") for scene_id in scenes)
+        names = [name for scene_id in scenes for name in scene_places.get(scene_id, {}).get("names", [])]
+        label = next((earned_place_names[s] for s in scenes if earned_place_names.get(s) not in {None, "Unidentified place"}), None) or next(
+            (label for name in names if (label := public_place_label(text, name)) == name),
+            None,
+        ) or next((details[s] for s in [representative, *scenes] if details.get(s) != "Unidentified place" and details.get(s)), None)
+        places.append(PlayerMapPlace(
+            scene_id=representative,
+            scene_ids=scenes,
+            visited_scene_ids=[scene for scene in scenes if scene in visited],
+            title=label or ("Starting location" if canonical.opening_scene_id in scenes else "Known location"),
+            # Arrival staging is immutable evidence, not a claim about actors still present.
+            detail=public_text.get(representative),
+            status="current" if current_scene_id in scenes else "visited" if set(scenes) & visited else "known",
+            current_area=details.get(current_scene_id) if current_scene_id in scenes and details.get(current_scene_id) != "Unidentified place" else None,
+        ))
     # Reviewed links may describe topology for unprepared manifests. Once a prepared
     # campaign exists, its route inventory is authoritative; missing or invalid prepared
     # topology must never fall back to every canonical link.
@@ -240,7 +257,11 @@ def project_player_map(
                     continue
                 if route.visibility == "private" and not route.reveal_requires:
                     continue
-            projected = PlayerMapRoute(from_scene_id=scene.scene_id, to_scene_id=link.scene_id)
+            start, end = projected_scene[scene.scene_id], projected_scene[link.scene_id]
+            # Event transitions at the same physical location are not geographic routes.
+            if start == end and scene.scene_id != link.scene_id:
+                continue
+            projected = PlayerMapRoute(from_scene_id=start, to_scene_id=end)
             if projected not in routes:
                 routes.append(projected)
     current = current_scene_id if current_scene_id in known else None
@@ -251,7 +272,7 @@ def project_player_map(
         current_scene_id=current,
         places=places,
         routes=routes,
-        note="Schematic map; it shows learned connections and does not establish distance or scale.",
+        note="Schematic map; a location may include several nearby areas. Current area shows your position within it. Routes do not establish distance or scale.",
     )
 
 

@@ -14,7 +14,12 @@ MEMORY_SUMMARY_PROMPT = (
     'Update the "story so far" for a solo D&D adventure. You get the previous summary (may be '
     "empty) and the turns that happened after it. Return a single updated summary of at most "
     "6 sentences. Preserve key events, NPCs, places, items, and the player's decisions; drop "
-    "moment-to-moment detail."
+    "moment-to-moment detail. Prioritize the latest resolved actor positions, departures, "
+    "custody, negotiated agreements and object possession changes so later scenes cannot "
+    "reset them. Distinguish attempted or proposed actions from their narrated outcomes. "
+    "Keep important questions already answered and the concrete obstacle still unresolved; "
+    "do not turn unanswered questions into permanent NPC ignorance. Never infer an item "
+    "transfer, consumption or spell expiry that no recorded outcome established."
 )
 
 

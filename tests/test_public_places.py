@@ -40,14 +40,17 @@ def test_a_short_explicitly_earned_place_name_is_preserved(text, name):
     ("text", "name"),
     [
         ("A sheep runs toward you.", "Secret Wizard Tower"),
-        (
-            "Festival boats bump against the quay. Orin waves you over.",
-            "Festival boats bump against the quay",
-        ),
-        ("The towpath is slick with fresh silt.", "The towpath is slick with fresh silt"),
         ("A Sheep Arrives and offers you a scroll.", "A Sheep Arrives"),
         ("A Winterhall resident offers a greeting.", "Hall"),
     ],
 )
 def test_private_names_prose_prefixes_and_event_titles_do_not_become_places(text, name):
     assert public_place_label(text, name) == "Unidentified place"
+
+
+@pytest.mark.parametrize(("text", "name", "expected"), [
+    ("Festival boats bump against the quay. Orin waves you over.", "Festival boats bump against the quay", "Quay"),
+    ("The towpath is slick with fresh silt.", "The towpath is slick with fresh silt", "Towpath"),
+])
+def test_long_arrival_prefix_is_replaced_by_its_public_physical_noun(text, name, expected):
+    assert public_place_label(text, name) == expected

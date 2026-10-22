@@ -110,6 +110,10 @@ class SourceObservation(BaseModel):
         max_length=80,
         description="Required: copy the inline source_span ID of the eligible current-scene evidence supporting this earned answer. Select its ID instead of retyping or paraphrasing a source quote. Private evidence binding, never player text.",
     )
+    requires_check_success: bool = Field(
+        default=True,
+        description="True for information tested by this turn's check. False only for an independent ordinary observation supported by player-visible current-scene evidence; a failed check never unlocks private evidence.",
+    )
     source_quote: SkipJsonSchema[str] = Field(
         default="",
         min_length=1,

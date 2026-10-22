@@ -83,6 +83,7 @@ from agent.combat_finalise import (
     settle_adjudication,
     settle_round,
 )
+from agent.combat_identity import canonical_actor_name, public_actor_name, scene_actor_aliases
 from agent.combat_intent import (
     _name_matches,
     _named_targets,
@@ -235,7 +236,8 @@ _MONSTER_LOOKUP_TIMEOUT_S = 8.0
 async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
     """Full exact records per named foe. An outage or unresolved identity blocks setup."""
     out = []
-    for name in dict.fromkeys(names[:6]):
+    aliases = scene_actor_aliases(state)
+    for name in dict.fromkeys(canonical_actor_name(value, aliases) for value in names[:6]):
         try:
             record = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -259,7 +261,20 @@ async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
             raise CreatureResolutionError(
                 f"Creature source unavailable for {name!r}. Retry once the source is available."
             ) from exc
-        out.append({**record, "encounter_name": record.get("actor_name") or record.get("creature_name") or name})
+        canonical_name = record.get("actor_name") or record.get("creature_name") or name
+        encounter_name = public_actor_name(canonical_name, aliases)
+        if encounter_name is None:
+            raise CreatureResolutionError(
+                "This actor cannot be uniquely identified from the visible names. "
+                "Describe which visible foe you mean."
+            )
+        public_aliases = [
+            alias for alias in aliases.get(canonical_name, [])
+            if canonical_actor_name(alias, aliases) == canonical_name
+        ]
+        out.append({**record, "encounter_name": encounter_name,
+                    **({"target_aliases": public_aliases} if public_aliases else {}),
+                    **({"canonical_name": canonical_name} if canonical_name != encounter_name else {})})
     return out
 
 
@@ -289,6 +304,8 @@ async def _build_enemy_roster(
     """
     adv_ctx = state.get("adventure_context", []) or []
     player_input = state.get("player_input", "")
+    aliases = scene_actor_aliases(state)
+    targets = [canonical_actor_name(name, aliases) for name in targets]
     levels = [
         clamp_level(sheet.get("level")) for sheet in party_roster(state)
     ] if party_size > 1 else []
@@ -312,7 +329,10 @@ async def _build_enemy_roster(
     if not candidate_names:
         return []
     monster_ctx = await _monster_context(state, candidate_names)
-    identities = {normalize_reference(c["encounter_name"]): c for c in monster_ctx}
+    identities = {
+        normalize_reference(name): record for record in monster_ctx
+        for name in (record["encounter_name"], record.get("canonical_name") or record["encounter_name"])
+    }
 
     ctx_lines = [
         f"Player's action this turn: {wrap_player_action(player_input)}",
@@ -358,19 +378,26 @@ async def _build_enemy_roster(
             if any(_name_matches(e.name, a) for a in allies):
                 log.info("dropped_ally_from_roster", extra={"ally_name": e.name})
                 continue
-            identity = identities.get(normalize_reference(e.name))
+            identity = identities.get(normalize_reference(canonical_actor_name(e.name, aliases)))
             if identity is None:
                 raise CreatureResolutionError(
                     "Encounter builder proposed an unverified creature identity. Review the exact foe names."
                 )
-            enemies.append(_exact_enemy(identity, is_boss=e.is_boss))
+            enemies.append({**_exact_enemy(identity, is_boss=e.is_boss),
+                            **({"target_aliases": identity["target_aliases"]}
+                               if identity.get("target_aliases") else {}),
+                            **({"canonical_name": identity["canonical_name"]}
+                               if identity.get("canonical_name") else {})})
     except CreatureResolutionError:
         raise
     except Exception as e:
         log.warning("encounter_builder_failed", extra={"error": error_summary(e)})
         # Builder unavailable: every resolved foe still fights with its own exact record. A builder
         # that answers with no foe present starts no fight (EDG-126).
-        enemies = [_exact_enemy(c) for c in monster_ctx]
+        enemies = [{**_exact_enemy(c),
+                    **({"target_aliases": c["target_aliases"]} if c.get("target_aliases") else {}),
+                    **({"canonical_name": c["canonical_name"]} if c.get("canonical_name") else {})}
+                   for c in monster_ctx]
     # Unique names so targeting and initiative stay unambiguous.
     counts: dict[str, int] = {}
     for e in enemies:
@@ -678,6 +705,9 @@ def _party_pause(
 async def combat_round_node(state: AgentState) -> dict:
     """Initialise the encounter if needed, then resolve exactly one round."""
     combat_state = dict(state.get("combat_state") or {})
+    if combat_state.get("ended") and combat_state.get("outcome") == "cancelled":
+        # A new proposal must not reopen or overwrite the closed proposal row.
+        combat_state = {}
     character = state.get("character") or {}
     player_input = state.get("player_input", "")
     parsed = state.get("parsed_input")
@@ -820,6 +850,26 @@ async def combat_round_node(state: AgentState) -> dict:
         return _ask_player(
             state,
             f"Always confirm is {state_word} for {hero}. No roll is made and no turn is spent.",
+            combat_state=combat_state,
+        )
+    # A dangerous encounter is a proposal until the first initiative roll. Its stored row
+    # must be closed on cancellation as well as its pending declaration, or the next turn
+    # reloads an active combat shell and traps ordinary exploration in combat routing.
+    if (
+        word == "cancel"
+        and player.get("initiative_pending")
+        and round_num == 1
+        and all("init" not in row for row in hero_rows(combatants))
+        and not combat_state.get("round_events")
+    ):
+        for row in hero_rows(combatants):
+            row.pop(PENDING_KEY, None)
+            row.pop("initiative_pending", None)
+        combat_state.update(ended=True, outcome="cancelled", current_turn=None)
+        return _ask_player(
+            state,
+            f"Cancelled before combat began: nothing was rolled and no turn was spent. "
+            f"{hero} can continue exploring or choose another approach.",
             combat_state=combat_state,
         )
     if (pending := pending_of(player)) is not None:

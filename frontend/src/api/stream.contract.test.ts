@@ -184,6 +184,7 @@ const TURN_CHARACTER_KEYS: Record<keyof TurnCharacter, true> = {
   stats: true,
   inventory: true,
   second_wind: true,
+  class_features: true,
   spell_slots: true,
   hit_dice: true,
 };
@@ -291,9 +292,6 @@ describe("stream schema and TypeScript consumers", () => {
   it("matches done.character to TurnCharacter, including the resource views", () => {
     expect(
       compareKeys("done.character", nestedKeys("done", "character"), clientKeys(TURN_CHARACTER_KEYS), {
-        backendOnly: {
-          class_features: "per-feature uses (EDG-145); the client does not render them yet",
-        },
         clientOnly: {
           character_class: "legacy alias of class; the client still accepts it for older payloads",
         },

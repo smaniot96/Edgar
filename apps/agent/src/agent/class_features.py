@@ -23,6 +23,7 @@ from __future__ import annotations
 import random
 import re
 
+from agent.action_economy import affirmative_matches
 from agent.resolution import (
     CLASS_FEATURES_KEY,
     CheckResult,
@@ -126,8 +127,10 @@ def requested_features(text: str | None, entity: str | None = None) -> tuple[str
 
     Stable order (IMPLEMENTED_FEATURES). Pure: it names what was asked, never what applies.
     """
-    body = f"{text or ''}\nuse {entity or ''}"
-    return tuple(f for f in IMPLEMENTED_FEATURES if DECLARED_TEXT[f].search(body))
+    # An entity proposed by the parser cannot re-authorize a feature the player negated.
+    # Keep entity-only compatibility for callers that have no original text.
+    body = str(text or "").strip() or f"use {entity or ''}"
+    return tuple(f for f in IMPLEMENTED_FEATURES if affirmative_matches(DECLARED_TEXT[f], body))
 
 
 def spend_use(character: dict | None, feature: str, left: int | None = None) -> int | None:

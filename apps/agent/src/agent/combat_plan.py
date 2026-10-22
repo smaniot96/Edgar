@@ -70,6 +70,9 @@ def attack_count_question(text: str, parsed, *, available: int, hero: str) -> st
         return "Separate attacks against different targets need separate declarations. Choose one target; no roll is made and no turn is spent."
     if len(attack_matches) > 1:
         between = text[attack_matches[0].end():attack_matches[-1].start()]
+        # Activating the extra-attack feature between attacks is not an item operation.
+        # The resulting attacks remain one validated same-target block.
+        between = re.sub(r"\b(?:(?:use|activate|spend)\s+(?:my\s+)?)?action\s+surge\b", " ", between, flags=re.I)
         if movement_steps(between) or any(re.search(pattern, between, re.I) for kind, pattern in _WORDS.items() if kind not in ("attack", "off_hand_attack")):
             return "Attacks with another operation between them need separate declarations. Group your attacks before or after that operation; no roll is made and no turn is spent."
     if re.search(r"\b(?:twice|two\s+(?:times|attacks)|2\s+(?:times|attacks))\b", text, re.I):

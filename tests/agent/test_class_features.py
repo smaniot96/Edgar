@@ -791,3 +791,57 @@ def test_scope_payload_lists_the_implemented_features_and_narrows_the_rest() -> 
     boundary = not_supported["class_features"]["boundary"]
     assert "Divine Smite" in boundary and "Lay on Hands" in boundary
     assert "Action Surge" not in boundary and "Sneak Attack" not in boundary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    "I attack Guz with my longsword, then use Action Surge to attack Guz once more.",
+    "I use Action Surge, then attack Guz twice with my longsword.",
+    "I attack Guz twice with my longsword using Action Surge.",
+])
+async def test_fighter_four_action_surge_phrasings_confirm_and_spend_once(
+    fake_llm_schema, fake_retrieval, text,
+):
+    from agent.combat_confirmation import PENDING_KEY
+    from agent.graph_combat import combat_round_node
+
+    fighter = _sheet("Fighter", 4)
+    state = _state(fighter, [_enemy("Guz", hp=200, ac=1, init=1)], text)
+    state["parsed_input"] = ParsedInput(intent="combat", check="attack", target="Guz", actions=[
+        {"kind": "action_surge", "text": "Action Surge"},
+        {"kind": "attack", "target": "Guz"},
+        {"kind": "attack", "target": "Guz"},
+    ])
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
+    asked = await combat_round_node(state)
+    assert "2 times using Action Surge" in asked["narration"]
+    assert not asked["adjudication_result"].dice_log
+    hero = next(c for c in asked["combat_state"]["combatants"] if c.get("is_player"))
+    assert hero[PENDING_KEY]["execution_plan"]["main_attack_count"] == 2
+    final = await confirm_turn(asked, state)
+    assert len(_attack_checks(final["adjudication_result"].dice_log)) == 2
+    assert final["adjudication_result"].character_update.class_feature_uses == {ACTION_SURGE: 0}
+
+
+@pytest.mark.asyncio
+async def test_exhausted_action_surge_cannot_authorize_two_attacks(fake_llm_schema, fake_retrieval):
+    from agent.graph_combat import combat_round_node
+    fighter = _sheet("Fighter", 4, features={ACTION_SURGE: {"uses_remaining": 0}})
+    text = "I use Action Surge, then attack Guz twice with my longsword."
+    state = _state(fighter, [_enemy("Guz", hp=200, ac=1, init=1)], text)
+    state["parsed_input"] = ParsedInput(intent="combat", check="attack", target="Guz", actions=[
+        {"kind": "action_surge", "text": "Action Surge"}, {"kind": "attack", "target": "Guz"},
+    ])
+    out = await combat_round_node(state)
+    assert "requested 2 attacks" in out["narration"]
+    assert not out["adjudication_result"].dice_log
+    assert out["combat_state"]["round"] == 1
+
+
+@pytest.mark.parametrize("text", [
+    "I do not use Action Surge. I attack Guz once.",
+    "I have changed my mind about using Action Surge.",
+    'I say "use Action Surge" to the fighter.',
+])
+def test_negated_or_quoted_feature_does_not_spend_parser_entity(text):
+    assert requested_features(text, "Action Surge") == ()

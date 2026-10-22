@@ -40,6 +40,7 @@ DISENGAGE = ActionType("disengage", ACTION, "Disengage")
 READY = ActionType("ready", ACTION, "Ready", ("trigger", "target"))
 SECOND_WIND = ActionType("second_wind", BONUS_ACTION, "Second Wind")
 RAGE = ActionType("rage", BONUS_ACTION, "Rage")
+ACTION_SURGE = ActionType("action_surge", FREE, "Action Surge")
 MOVE = ActionType("move", FREE, "move", ("destination",))
 SURRENDER = ActionType("surrender", FREE, "offer surrender")
 DIALOGUE = ActionType("dialogue", FREE, "speak")
@@ -60,6 +61,7 @@ REGISTRY: dict[str, ActionType] = {
         READY,
         SECOND_WIND,
         RAGE,
+        ACTION_SURGE,
         MOVE,
         SURRENDER,
         DIALOGUE,
@@ -124,7 +126,7 @@ def agreement_question(
         return (
             f"I could not tell which action {hero} means by \"{unknown[0] or 'that'}\". Say it as one "
             "action this turn: attack, off-hand attack, a maneuver, an item, a spell, Dodge, Dash, "
-            "Disengage, Ready, Second Wind, Rage, a move, or an if-then condition. No roll is made "
+            "Disengage, Ready, Second Wind, Action Surge, Rage, a move, or an if-then condition. No roll is made "
             "and no turn is spent."
         )
     missing = []

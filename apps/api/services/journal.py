@@ -102,6 +102,26 @@ class JournalPreparedLabels:
     actor_ids: frozenset[tuple[str, str]] = frozenset()
     # Collections whose page numbers are real book pages. None keeps every page citation.
     paged_collections: frozenset[str] | None = None
+    scene_places: dict[tuple[str, str], dict] = field(default_factory=dict)
+
+
+def _scene_place(fact: StoryFact, prepared: JournalPreparedLabels) -> dict:
+    place = prepared.scene_places.get((fact.target.collection, fact.target.canonical_id), {})
+    if any(place.get(field, getattr(fact.target, field)) != getattr(fact.target, field)
+           for field in ("source_sha256", "manifest_sha256")):
+        return {}
+    return place
+
+
+def place_fact_identity(fact: StoryFact, prepared: JournalPreparedLabels) -> str:
+    place = _scene_place(fact, prepared)
+    if not place:
+        return fact.fact_id
+    return story_target_id(fact.target.model_copy(update={"canonical_id": place["place_id"]}))
+
+
+def place_entry_id(session_id: int, fact: StoryFact, prepared: JournalPreparedLabels) -> str:
+    return journal_entry_id(session_id, "place", place_fact_identity(fact, prepared))
 
 
 def _title_key(fact: StoryFact) -> tuple[str, str, str]:
@@ -189,11 +209,13 @@ def _safe_status(fact: StoryFact) -> str | None:
     return fact.status if fact.status in _ALLOWED_STATUS else None
 
 
-def _group_key(fact: StoryFact, category: str, session_id: int) -> tuple[str, str]:
+def _group_key(fact: StoryFact, category: str, session_id: int, prepared: JournalPreparedLabels) -> tuple[str, str]:
     # Actor references retain one session identity across source/manifest revisions. Their
     # individual facts still pass source validation above before they enter this projection.
     if category == "person" and fact.target.kind == "entity":
         return category, actor_identity_id(session_id, fact.target)
+    if category == "place":
+        return category, place_fact_identity(fact, prepared)
     # Each committed environment change is its own earned event. Other mutable records share
     # one canonical player-facing entry whose history retains its status transitions.
     identity = fact.effect_id if fact.kind == "environment" else fact.fact_id
@@ -356,14 +378,14 @@ def project_player_journal(
     for event_id in sorted(fact_events | set(event_order), key=lambda eid: event_order.get(eid, 0)):
         for fact, _, category, record_event in safe_records:
             if record_event == event_id and category == "place" and fact.kind in {"visit", "move"}:
-                latest_place_entry_id = journal_entry_id(session_id, "place", fact.fact_id)
+                latest_place_entry_id = place_entry_id(session_id, fact, prepared)
         # If one narration commits more than one location-related fact, origins from that
         # turn resolve to the location after all of its committed facts. Later turns with
         # no movement (and their earned answers) stay where the party last arrived.
         place_at_event[event_id] = latest_place_entry_id
     latest_place_entry_id = next(
         (
-            journal_entry_id(session_id, "place", fact.fact_id)
+            place_entry_id(session_id, fact, prepared)
             for fact, _, category, _ in reversed(safe_records)
             if category == "place" and fact.kind in {"visit", "move"}
         ),
@@ -375,7 +397,7 @@ def project_player_journal(
     # For example, an initial visit followed by a move must orient to the destination.
     fact_order = {fact.effect_id: index for index, (fact, _, _, _) in enumerate(safe_records)}
     for fact, public_fact, category, event_id in safe_records:
-        grouped[_group_key(fact, category, session_id)].append((fact, public_fact, event_id))
+        grouped[_group_key(fact, category, session_id, prepared)].append((fact, public_fact, event_id))
 
     # Resolve promise actors only to a person already present in this same earned projection.
     # These event links power adjacent, immutable narration references in the player UI.
@@ -461,7 +483,23 @@ def project_player_journal(
         # Homebrew names are already validated public identities; they have no
         # private prepared-scene title to screen against arrival prose.
         if category == "place" and first_public.get("provenance") != "homebrew":
-            title = public_place_label(first_public["text"], title) or "Known location"
+            group_id = journal_entry_id(session_id, "place", stable_id)
+            earned_text = "\n".join(
+                [record[1]["text"] or "" for record in records]
+                + [str((event.payload or {}).get("narration") or "") for event in events
+                   if place_at_event.get(event.id) == group_id]
+            )
+            candidates = [
+                name for fact, _, _ in records
+                for name in _scene_place(fact, prepared).get("names", [])
+            ]
+            title = next(
+                (name for name in candidates if public_place_label(earned_text, name) == name),
+                None,
+            ) or public_place_label(records[-1][1]["text"], title) or "Known location"
+            if title == "Unidentified place":
+                first_place = next((fact for fact, _, kind, _ in safe_records if kind == "place"), None)
+                title = "Starting location" if first_place and place_fact_identity(first_place, prepared) == stable_id else "Visited location"
         origin_turn = event_order.get(origin_event_id) if origin_event_id is not None else None
         origin_place_entry_id = (
             place_at_event.get(origin_event_id) if origin_event_id is not None else None
@@ -634,7 +672,7 @@ def project_player_journal(
     )
     if current_scene_id is not None:
         current_ids = {
-            journal_entry_id(session_id, "place", fact.fact_id)
+            place_entry_id(session_id, fact, prepared)
             for fact, _, category, _ in safe_records
             if category == "place"
             and fact.kind in {"visit", "move"}
@@ -647,8 +685,13 @@ def project_player_journal(
     )
     # Prefer the actual answer over the scene passage used to ground a discovery on
     # that same turn. A newer clue still takes precedence over an older answer.
+    arrival_turn = max(
+        (event_order.get(event_id, 0) for fact, _, category, event_id in safe_records
+         if category == "place" and fact.kind in {"visit", "move"}), default=0
+    )
     current_lead = max(
-        (entry for entry in entries if entry.category in {"clue", "hint", "note"}),
+        (entry for entry in entries if entry.category in {"clue", "hint", "note"}
+         and max((change.turn_number or 0 for change in entry.history), default=0) >= arrival_turn),
         key=lambda entry: (
             max((change.turn_number or 0 for change in entry.history), default=0),
             entry.category == "note",

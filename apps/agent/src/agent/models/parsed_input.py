@@ -51,7 +51,7 @@ class ProposedAction(BaseModel):
         default="unknown",
         description=(
             "One of: attack, off_hand_attack, maneuver, item, spell, dodge, dash, disengage, ready, "
-            "second_wind, rage, move, contingency."
+            "second_wind, action_surge, rage, move, surrender, dialogue, contingency."
         ),
     )
     text: str | None = Field(
@@ -152,7 +152,7 @@ class ParsedInput(BaseModel):
         description=(
             "Combat only: the ordered declared actions this turn, one entry per action the player's "
             "words state (movement, attacks, off-hand attack, item, spell, Dodge, Dash, Disengage, "
-            "Ready, Second Wind, Rage, and any if-then condition). Empty when the turn declares none."
+            "Ready, Second Wind, Action Surge, Rage, and any if-then condition). Empty when the turn declares none."
         ),
     )
     dice_expression: str | None = None  # legacy; e.g. "1d20+3". Engine prefers `check`.

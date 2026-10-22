@@ -6,6 +6,7 @@ import pytest
 
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate, FlagUpdate
 from agent.models.parsed_input import ParsedInput
+from agent.nodes.narrator import deterministic_narration
 from agent.nodes.rules_adjudicator import rules_adjudicator_node
 from agent.resolution_policies import exact_recall_fact
 from edgar_core.artifacts import text_digest
@@ -13,6 +14,21 @@ from edgar_core.manifests import AdventureManifest, manifest_digest
 from edgar_core.sources import source_citation
 from edgar_core.story import StoryEffect, StoryFact, StoryRef, accept_story_effect
 from tools.dice import use_rng
+
+
+def test_failed_empty_policy_keeps_public_scene_narration_available():
+    state = {
+        "policy_narration": "The check fails. That approach produces no further change.",
+        "adjudication_result": AdjudicationResult(success=False),
+    }
+    assert deterministic_narration(state) is None
+    # A rejected unavailable policy still has its exact refusal, and success keeps
+    # the existing authored-result path rather than inventing another outcome.
+    state["policy_rejection"] = True
+    assert deterministic_narration(state) == "That approach is not available in the current circumstances."
+    state.pop("policy_rejection")
+    state["adjudication_result"] = AdjudicationResult(success=True)
+    assert deterministic_narration(state) == state["policy_narration"]
 
 
 def _policy_state(parsed: ParsedInput | None = None) -> dict:

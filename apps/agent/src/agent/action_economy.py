@@ -120,9 +120,19 @@ def affirmative_matches(pattern: re.Pattern, text: str | None) -> list[re.Match]
             prefix = prefix[subjects[-1].start():]
         elif re.match(r"\s*(?:the\s+)?(?:he|she|they|it|enemy|foe|goblin|wolf|guard)\b", prefix, re.I):
             continue
+        # A verb mentioned as a topic, memory, question or discarded plan is not a
+        # present action. Keep direct clauses (including a later new "I attack")
+        # separate from subordinate mentions such as "changed my mind about attacking".
+        if re.search(
+            r"\b(?:about|against|discuss(?:ing)?|mention(?:ing)?|remember(?:ing)?|"
+            r"consider(?:ing)?|reconsider(?:ing)?|regret(?:ting)?|avoid(?:ing)?|"
+            r"cancel(?:ling)?|abandon(?:ing)?|gave\s+up|give\s+up)\b[^,;]*$",
+            prefix, re.I,
+        ):
+            continue
         if re.search(r"\b(?:if|unless|would|might|could|whether|instead\s+of)\b", prefix, re.I):
             continue
-        if re.search(r"\b(?:not|never|don't|won't|cannot|can't|refuse\s+to|stop|without)\b[^,;]*$", prefix, re.I):
+        if re.search(r"\b(?:not|never|no\s+longer|don't|won't|cannot|can't|refuse\s+to|stop(?:ped|ping)?|ceas(?:e|ed|ing)|without)\b[^,;]*$", prefix, re.I):
             continue
         result.append(match)
     return result

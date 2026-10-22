@@ -25,7 +25,7 @@ const map: SessionMapRead = {
   scale: null,
   current_scene_id: "harbor",
   places: [
-    { scene_id: "harbor", title: "The harbor", status: "current", detail: null },
+    { scene_id: "harbor", title: "The harbor", status: "current", detail: null, current_area: "Quayside" },
     { scene_id: "watchtower", title: "The watchtower", status: "known", detail: "A narrow stair climbs above the pier." },
   ],
   routes: [{ from_scene_id: "harbor", to_scene_id: "watchtower" }],
@@ -64,6 +64,7 @@ it("fits and returns to the current place, and travel only calls the draft callb
       expect(button?.className).toContain("min-h-11");
     }
     expect(container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.className).toContain("min-w-11");
+    expect(container.textContent).toContain("Current area: Quayside");
 
     await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Zoom in"]')!.click());
     expect(container.querySelector("figure > div")?.getAttribute("style")).toContain("125%");
@@ -72,6 +73,7 @@ it("fits and returns to the current place, and travel only calls the draft callb
 
     await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("The watchtower"))!.click());
     expect(container.textContent).toContain("A narrow stair climbs above the pier.");
+    expect(container.textContent).toContain("Recorded on arrival; people and conditions may have changed.");
     await act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Add travel idea to draft")!.click());
     expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Add travel idea to draft")?.className).toContain("min-h-11");
     expect(onPrepareTravel).toHaveBeenCalledExactlyOnceWith("The watchtower");

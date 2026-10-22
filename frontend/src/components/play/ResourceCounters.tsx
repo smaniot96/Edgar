@@ -1,5 +1,5 @@
 import type { SecondWindState } from "../../api/types";
-import type { SpellSlotRow } from "./gameState";
+import type { ClassFeatureRow, SpellSlotRow } from "./gameState";
 
 /** Filled and empty pips for a count; decorative only, the text carries the number. */
 function Pips({ filled, total }: { filled: number; total: number }) {
@@ -13,16 +13,18 @@ function Pips({ filled, total }: { filled: number; total: number }) {
 
 /**
  * Engine-owned resource counters for the character sheet. Renders nothing when the character has
- * neither resource (legacy payloads, non-fighters, non-casters). Hit Dice are not shown: not tracked yet.
+ * no tracked resources. Hit Dice have their own section in the sheet.
  */
 export function ResourceCounters({
   secondWind,
+  classFeatures,
   spellSlots,
 }: {
   secondWind: SecondWindState | null;
+  classFeatures?: ClassFeatureRow[] | null;
   spellSlots: SpellSlotRow[] | null;
 }) {
-  if (!secondWind && !spellSlots?.length) return null;
+  if (!secondWind && !classFeatures?.length && !spellSlots?.length) return null;
   return (
     <div className="space-y-2.5">
       {secondWind ? (
@@ -37,6 +39,18 @@ export function ResourceCounters({
           </span>
         </div>
       ) : null}
+      {classFeatures?.map((feature) => (
+        <div key={feature.key} className="flex items-center justify-between gap-2 text-sm">
+          <span className="text-ink">{feature.label}</span>
+          <span className="flex items-center gap-2 text-xs text-ink-muted">
+            <Pips filled={feature.uses_remaining} total={feature.uses_max} />
+            <span>
+              {feature.uses_remaining} of {feature.uses_max}{" "}
+              {feature.uses_max === 1 ? "use" : "uses"} left
+            </span>
+          </span>
+        </div>
+      ))}
       {spellSlots?.length ? (
         <ul aria-label="Spell slots" className="space-y-1.5 text-sm">
           {spellSlots.map((slot) => (

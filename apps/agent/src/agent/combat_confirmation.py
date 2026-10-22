@@ -64,7 +64,13 @@ def needs_confirmation(decl: Declaration, *, always: bool) -> bool:
         return bool(decl.declared) or decl.moving or decl.is_attack or decl.is_spell
     parts = len({d.kind for d in decl.declared}) + (1 if decl.moving else 0)
     standing = decl.ready is not None and decl.ready.standing
-    return parts >= 2 or (decl.moving and decl.is_attack) or decl.contingency is not None or standing
+    return (
+        parts >= 2
+        or getattr(decl, "main_attack_count", 1) > 1
+        or (decl.moving and decl.is_attack)
+        or decl.contingency is not None
+        or standing
+    )
 
 
 def summary_of(hero: str, decl: Declaration) -> str:

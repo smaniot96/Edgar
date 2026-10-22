@@ -73,6 +73,7 @@ def prepared_journal_labels(collections: list[str]) -> JournalPreparedLabels:
     titles: dict[tuple[str, str, str], str] = {}
     actor_ids: set[tuple[str, str]] = set()
     paged: set[str] = set()
+    scene_places: dict[tuple[str, str], dict] = {}
     for collection in collections:
         try:
             meta = adventures_meta.load_meta(collection)
@@ -88,6 +89,12 @@ def prepared_journal_labels(collections: list[str]) -> JournalPreparedLabels:
             paged.add(collection)
         for scene in manifest.scenes:
             titles[(collection, "scene", scene.scene_id)] = scene.title
+        from ..services.campaign_prep.runtime import published_scene_places
+
+        scene_places.update({
+            (collection, scene_id): place
+            for scene_id, place in published_scene_places(collection, manifest).items()
+        })
         for entity in manifest.entities:
             titles[(collection, "entity", entity.entity_id)] = entity.title
             if entity.kind == "actor":
@@ -99,7 +106,8 @@ def prepared_journal_labels(collections: list[str]) -> JournalPreparedLabels:
             for definition in definitions:
                 titles[(collection, kind, definition.canonical_id)] = definition.title
     return JournalPreparedLabels(
-        titles=titles, actor_ids=frozenset(actor_ids), paged_collections=frozenset(paged)
+        titles=titles, actor_ids=frozenset(actor_ids), paged_collections=frozenset(paged),
+        scene_places=scene_places,
     )
 
 

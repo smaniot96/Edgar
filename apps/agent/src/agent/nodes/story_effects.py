@@ -778,6 +778,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             else (
                 candidate["title"]
                 if any(candidate["title"] in c["text"] for c in public)
+                or any(candidate["title"] in answer for answer in adj.accepted_observations)
                 or (
                     proposal.kind in _OBJECT_KINDS
                     and any(

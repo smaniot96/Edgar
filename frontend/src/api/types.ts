@@ -264,6 +264,7 @@ export interface SessionMapPlace {
   title: string;
   status: "current" | "visited" | "known";
   detail: string | null;
+  current_area?: string | null;
 }
 
 export interface SessionMapRoute {
@@ -493,6 +494,8 @@ export interface CharacterAssignmentHistoryRead {
   status: string;
   /** Derived Second Wind resource (EDG-034); absent for non-fighters and legacy payloads. */
   second_wind?: SecondWindState | null;
+  /** Engine-owned uses for supported class features, e.g. Action Surge. */
+  class_features?: Record<string, SecondWindState> | null;
   /** Derived spell slots per level, keyed by level as a string (casters only). */
   spell_slots?: Record<string, SpellSlotState> | null;
   /** Engine armour class (EDG-173); absent on older servers. */
@@ -895,6 +898,8 @@ export interface TurnCharacter {
   inventory?: Record<string, unknown> | null;
   /** Fighter Second Wind resource (additive; present for fighters). */
   second_wind?: SecondWindState | null;
+  /** Engine-owned uses for supported class features, e.g. Action Surge. */
+  class_features?: Record<string, SecondWindState> | null;
   /** Derived spell slots per level (casters only; additive). */
   spell_slots?: Record<string, SpellSlotState> | null;
   /** Hit Dice resource (EDG-026; additive, present for every class). */

@@ -22,6 +22,11 @@ export interface SpellSlotRow extends SpellSlotState {
   level: number;
 }
 
+export interface ClassFeatureRow extends SecondWindState {
+  key: string;
+  label: string;
+}
+
 /** A hero's death-save record while dying, stable or dead (EDG-045, agent.death); null when conscious. */
 export interface DeathSaveView {
   state: "dying" | "stable" | "dead";
@@ -44,6 +49,8 @@ export interface SheetCharacter {
   hitDice: HitDiceStatus | null;
   /** Engine Second Wind counter; null for non-fighters and legacy payloads. */
   secondWind: SecondWindState | null;
+  /** Engine class-feature counters; absent on older servers. */
+  classFeatures?: ClassFeatureRow[] | null;
   /** Engine spell slots by level; null for non-casters and legacy payloads. */
   spellSlots: SpellSlotRow[] | null;
   /** Catalog spells the hero can cast (EDG-173); null when none or on legacy payloads. */
@@ -169,6 +176,18 @@ export function parseSecondWind(v: unknown): SecondWindState | null {
   return { uses_remaining: Math.max(0, Math.min(max, left)), uses_max: max };
 }
 
+/** Public feature counters only; labels are the supported engine feature names. */
+export function parseClassFeatures(v: unknown): ClassFeatureRow[] | null {
+  if (!v || typeof v !== "object") return null;
+  const labels: Record<string, string> = { action_surge: "Action Surge", rage: "Rage" };
+  const rows: ClassFeatureRow[] = [];
+  for (const [key, label] of Object.entries(labels)) {
+    const uses = parseSecondWind((v as Record<string, unknown>)[key]);
+    if (uses) rows.push({ key, label, ...uses });
+  }
+  return rows.length ? rows : null;
+}
+
 /** Spell slot rows sorted by level; null when absent, empty or malformed. */
 export function parseSpellSlots(v: unknown): SpellSlotRow[] | null {
   if (!v || typeof v !== "object") return null;
@@ -260,6 +279,7 @@ export function sheetFromLibrary(
     inventory: parseInventory(assignment?.inventory ?? c.base_inventory),
     hitDice: hitDiceFrom(assignment?.hit_dice),
     secondWind: parseSecondWind(assignment?.second_wind),
+    classFeatures: parseClassFeatures(assignment?.class_features),
     spellSlots: parseSpellSlots(assignment?.spell_slots),
     spells: parseCastableSpells(assignment?.spells),
     proficiencies: parseProficiencies(assignment?.proficiencies),
@@ -297,6 +317,7 @@ export function mergeTurnCharacter(
     inventory: [],
     hitDice: null,
     secondWind: null,
+    classFeatures: null,
     spellSlots: null,
   };
   const next: SheetCharacter = { ...base };
@@ -320,6 +341,7 @@ export function mergeTurnCharacter(
   if (hitDice) next.hitDice = hitDice;
   // Resources are replaced by every payload that carries them (a spend or recharge shows at once).
   if ("second_wind" in c) next.secondWind = parseSecondWind(c.second_wind);
+  if ("class_features" in c) next.classFeatures = parseClassFeatures(c.class_features);
   if ("spell_slots" in c) next.spellSlots = parseSpellSlots(c.spell_slots);
   return next;
 }

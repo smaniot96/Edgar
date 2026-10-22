@@ -146,10 +146,10 @@ export function CharacterSheet({
             </section>
           ) : null}
 
-          {c.secondWind || c.spellSlots?.length ? (
+          {c.secondWind || c.classFeatures?.length || c.spellSlots?.length ? (
             <section aria-label="Resources">
               <SectionTitle>Resources</SectionTitle>
-              <ResourceCounters secondWind={c.secondWind} spellSlots={c.spellSlots} />
+              <ResourceCounters secondWind={c.secondWind} classFeatures={c.classFeatures} spellSlots={c.spellSlots} />
             </section>
           ) : null}
 

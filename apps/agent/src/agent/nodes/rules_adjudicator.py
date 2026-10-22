@@ -22,7 +22,7 @@ import json
 import logging
 from dataclasses import replace
 
-from agent.history import fit_continuity
+from agent.history import continuity_context, fit_continuity
 from agent.llm import make_chat_model
 from agent.models.adjudication import AdjudicationResult, CharacterUpdate
 from agent.nodes.manifest_effects import enforce_manifest_effects
@@ -63,13 +63,67 @@ from agent.supported_rules import (
 )
 from db.vector.retrieval import rule_policy
 from edgar_core.log_safety import error_summary
+from edgar_core.model_profiles import effective_profile
 from edgar_core.sources import citations_for, cited_excerpt, eligible_context
 from edgar_core.story import StoryRef, player_story_effect
+from edgar_core.token_budget import estimate_tokens
 
 log = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS = 2
 _MAX_FLAGS_IN_PROMPT = 40
+
+
+def _planner_evidence_blocks(state, parts, spans):
+    """Preserve current event evidence and conversation before duplicate background pages.
+
+    Retrieval remains complete and exact. Only redundant private prompt blocks can be
+    omitted, as whole passages: first the global registry, then original source pages,
+    then shared chapter prose. Never clip a quotation or discard current event guidance.
+    """
+    from agent.scene_guidance import observation_excerpt
+
+    blocks = [
+        (chunk, wrap_retrieved_excerpt(
+            observation_excerpt(chunk, spans, state.get("rules_edition", "2014"))
+        ))
+        for chunk in state.get("planner_context") or []
+    ]
+    budget = effective_profile("play.consequence_planner").max_input_tokens
+    if budget is None:
+        return [block for _, block in blocks]
+    # The newest resolved actions must remain available even when a chapter binds
+    # every original PDF page and the global registry into its retrieval context.
+    reserve = min(estimate_tokens(continuity_context(state)), budget // 3)
+    fixed = estimate_tokens(RULES_ADJUDICATOR + "\n".join(parts)) + 200
+    size = sum(estimate_tokens(block) for _, block in blocks)
+    removable = sorted(
+        range(len(blocks)),
+        key=lambda index: (
+            0 if blocks[index][0].get("passage_id") in {"campaign_registry", "campaign_spine"}
+            else 1 if blocks[index][0].get("passage_id", "").startswith("source_page_")
+            else 2,
+            -index,
+        ),
+    )
+    omitted = set()
+    for index in removable:
+        if fixed + size + reserve <= budget:
+            break
+        chunk, block = blocks[index]
+        passage_id = chunk.get("passage_id", "")
+        if not (
+            passage_id in {"campaign_registry", "campaign_spine"}
+            or passage_id.startswith("source_page_")
+            or (
+                passage_id.endswith("_content")
+                and chunk.get("scene_ids") != [state.get("current_scene_id")]
+            )
+        ):
+            continue
+        omitted.add(index)
+        size -= estimate_tokens(block)
+    return [block for index, (_, block) in enumerate(blocks) if index not in omitted]
 
 
 def _rules_context(state: AgentState) -> list:
@@ -231,10 +285,13 @@ def build_adjudicator_prompt(
             "Eligible current-scene evidence references (source_observations select their inline source_span IDs): "
             + json.dumps(observation_refs)
         )
-        transitions = (state.get("parser_scene_context") or {}).get("event_transitions", [])
+        from agent.scene_guidance import linked_transition_choices
+
+        transitions = linked_transition_choices(state)
         if transitions:
             parts.append(
-                "Linked prepared event opportunities (available is not triggered; judge the actual action): "
+                "Linked prepared event opportunities with exact proposal templates "
+                "(available is not triggered; judge the actual action): "
                 + json.dumps(transitions)
             )
 
@@ -260,23 +317,41 @@ def build_adjudicator_prompt(
                 state["adventure_context"], state.get("rules_edition", "2014")
             )
         )
+    planner_slot = None
     if state.get("planner_context"):
         parts.append(
             "Private current-scene planner evidence (never disclose secrets in summaries):"
         )
-        parts.extend(
-            wrap_retrieved_excerpt(
-                observation_excerpt(c, answer_spans, state.get("rules_edition", "2014"))
-            )
-            for c in state["planner_context"]
-        )
+        planner_slot = len(parts)
     if state.get("discovery_entities"):
         parts.append(
             f"Canonical discoveries: {state['discovery_entities']}. Set only their exact discovery_flag to discovered after a justified successful discovery."
         )
+    if state.get("manifest_status") == "reviewed":
+        parts.append(
+            "Resolve the actual action before writing the response: (1) answer each ordinary "
+            "question with earned current evidence or a concrete source-supported reason it "
+            "cannot be answered; (2) if the action or established resolution now meets one "
+            "linked trigger, copy its exact move template into story_effects and add the "
+            "actual achievement_basis, stopping at that one scene; (3) propose encounter "
+            "effects for current actors directly met or addressed, without revealing their "
+            "private knowledge; (4) when the player actually takes an available portable "
+            "object, propose its acquire effect, separately from reading/discovering it. "
+            "A promise to guide is not travel, but actually following that agreed plan is "
+            "an action to resolve. Do not repeatedly describe an obstacle-free journey "
+            "starting while omitting its earned linked transition. Preserve prior departures, "
+            "custody and answered questions when judging source opening conditions. "
+            "Keep checks scoped to their specific uncertain task; independent player-visible "
+            "observations may set requires_check_success=false even after that check fails."
+        )
     parts.append(
         "Return citation_ids only for the exact supplied references supporting the ruling. Do not cite unrelated excerpts."
     )
+
+    if planner_slot is not None:
+        # Budget against every fixed block, including candidates, obligations and
+        # discovery metadata appended after the private-evidence insertion point.
+        parts[planner_slot:planner_slot] = _planner_evidence_blocks(state, parts, answer_spans)
 
     # Budget the rendered separators too, including the one introduced by continuity insertion.
     # Many fixed blocks (such as the supported-mechanics contract) can otherwise overrun the cap.

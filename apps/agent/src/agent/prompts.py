@@ -41,7 +41,7 @@ Return:
 - confirms_ending: true ONLY if the player explicitly agrees to end the adventure/campaign now (typically answering a question about concluding the story). Otherwise false.
 - resolution_policy_id: an exact collection-qualified key from the reviewed current-scene action choices only when the player's stated approach matches that choice; otherwise null. Never invent or expose a key.
 - recall_fact_id: an exact fact_id from the session-earned public clues only when the player explicitly asks to reread/quote/recall that clue; otherwise null. Never select a clue merely because it is the only one.
-- actions: in combat, the ordered list of actions the player's words affirmatively state, one entry each: kind (attack, off_hand_attack, maneuver, item, spell, dodge, dash, disengage, ready, second_wind, rage, move, surrender, dialogue or contingency), text (the player's words), and target, weapon, spell or destination when named. List only what the player states; never add an action they did not say. A drawn weapon, named enemy, negated attack or hypothetical attack is not an attack declaration. Surrender/yield/laying down weapons is surrender, never attack or flight. Speech and negotiation are dialogue. Use unknown for unclear actions rather than inventing an attack. Empty outside combat.
+- actions: in combat, the ordered list of actions the player's words affirmatively state, one entry each: kind (attack, off_hand_attack, maneuver, item, spell, dodge, dash, disengage, ready, second_wind, action_surge, rage, move, surrender, dialogue or contingency), text (the player's words), and target, weapon, spell or destination when named. List only what the player states; never add an action they did not say. A drawn weapon, named enemy, negated attack, hypothetical attack, past attack or revoked plan to attack is not an attack declaration. A change of mind about attacking followed by peaceful speech is dialogue. Action Surge is action_surge, a class feature authorizing an extra attack, never a maneuver or item use. Surrender/yield/laying down weapons is surrender, never attack or flight. Speech and negotiation are dialogue. Use unknown for unclear actions rather than inventing an attack. Empty outside combat.
 - entities: optional extra details (e.g. {{"weapon": "longsword"}}). When the player explicitly names a spell or class feature, include "spell" or "feature" with its canonical English rulebook name; preserve qualifiers and do not infer an unmentioned spell or feature.
 
 Do NOT invent dice expressions, modifiers or DCs; the engine computes them from the character sheet."""
@@ -63,7 +63,10 @@ acceptable. Private original pages support compatible missing detail rather than
 replacing the prepared version during narration. When references conflict, preserve the
 version already established in this adventure and play; do not alternate between incompatible
 facts. Committed play and earned knowledge take precedence over all prepared/source prose:
-never undo the hero's choices, reset HP or revive a resolved foe from a book. Do not expose
+never undo the hero's choices, reset HP or revive a resolved foe from a book.
+The supplied inventory and committed object ledger govern possessions. A spoken claim such
+as being unarmed is not an equipment transfer. Do not lose, consume, give away or restore
+an object from scene staging; an actual validated object consequence must establish it. Do not expose
 private source pages to the player. This flexibility does not authorize invented verified
 statistics, unsupported mechanics or overrides of the engine's executable definitions.
 
@@ -135,8 +138,11 @@ Fill out:
   do not reveal unobserved motives, culprits, future chapter truths or whole private paragraphs
   when the player only looks around. Select only the earned answer, excluding private reasons
   and future consequences. Do not invent facts, use global campaign registry references,
-  propose observations on a failed check, or claim item/state/mechanical changes through this
-  channel. Existing canonical discoveries/goals still use story_effects.
+  reveal the tested information on a failed check, or claim item/state/mechanical changes
+  through this channel. Set requires_check_success=true for information whose discovery the
+  check tests. Independent routine observations already supported by current player-visible
+  evidence may set requires_check_success=false; do not erase those facts when another part
+  of a mixed request fails. Private evidence cannot use this exception. Existing canonical discoveries/goals still use story_effects.
   Review each selected answer before returning it: does this actual action earn every fact
   in text? Same-scene relevance and an exact source match alone do not make a fact
   observable. For NPC dialogue, the present speaker must know the information and have a
@@ -161,7 +167,12 @@ Fill out:
   response may naturally follow from that evidence. Keep their private knowledge private.
   Ordinary dialogue does not itself execute the plan, commit an object change, complete
   an objective or end the campaign; those consequences still need the actual action and
-  the normal story-effect validation. Leave the protagonist's next choice to the player.
+  the normal story-effect validation. When the player actually carries out an agreed plan,
+  resolve that action and its supported consequences now. A prior handover or departure
+  remains established; do not answer from a demand already satisfied in play. Distinguish
+  what the NPC knows, what they refuse to share and what they readily explain. After a
+  repeated question, supply the earned concrete answer, a new decision or the specific
+  continuing obstacle; never repeat an introductory plea as if the exchange had reset. Leave the protagonist's next choice to the player.
 - scene_id: if the player clearly moves to a new location with a clear snake_case scene id in the
   adventure context (or a known one), set it; otherwise null. Never invent ids.
   Prepared event scenes may share one location. If the actual action meets a supplied linked

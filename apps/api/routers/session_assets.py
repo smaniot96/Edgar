@@ -21,8 +21,7 @@ from ..auth import Auth, member_session
 from ..dependencies import get_session
 from ..services import adventure_assets
 from ..services.adventure_manifests import campaign_manifests
-from ..services.journal import project_player_journal
-from ..services.journal_identity import journal_entry_id
+from ..services.journal import place_entry_id, project_player_journal
 from ..services.story_state import load_story_state, session_story_flags
 from ..services.world_flags import load_world_flags
 from ._common import get_or_404
@@ -41,12 +40,19 @@ async def _session_map_context(session_id: int, db: AsyncSession, auth: Auth) ->
         .where(EventLog.session_id == session_id, EventLog.event_type == "narration")
         .order_by(EventLog.created_at.asc(), EventLog.id.asc())
     )
+    from .journal import prepared_journal_labels
+
+    labels = await run_in_threadpool(
+        prepared_journal_labels,
+        list(campaign.adventure_collections or []) if campaign.source_mode != "homebrew" else [],
+    )
     journal = project_player_journal(
         session_id,
         state,
         event_result.scalars().all(),
         active_character_id=session.active_character_id,
         current_scene_id=session.current_scene_id,
+        prepared=labels,
     )
     manifests: dict[str, AdventureManifest] = {}
     if campaign.source_mode != "homebrew" and campaign.adventure_collections:
@@ -67,6 +73,7 @@ async def _session_map_context(session_id: int, db: AsyncSession, auth: Auth) ->
         "journal": journal,
         "manifests": manifests,
         "state": state,
+        "labels": labels,
     }
 
 
@@ -111,9 +118,9 @@ async def _player_world_map(
         return None
     return project_world_map(
         prepared,
-        known_scene_ids={place.scene_id for place in projection.places},
+        known_scene_ids={scene_id for place in projection.places for scene_id in (place.scene_ids or [place.scene_id])},
         visited_scene_ids={
-            place.scene_id for place in projection.places if place.status != "known"
+            scene_id for place in projection.places for scene_id in place.visited_scene_ids
         },
         current_scene_id=projection.current_scene_id,
     )
@@ -131,6 +138,22 @@ def _known_place_entries(journal: Any) -> list[dict[str, Any]]:
         for entry in journal.entries
         if entry.category == "place"
     ]
+
+
+def _geography(context: dict[str, Any], collection: str) -> dict[str, Any]:
+    labels = context["labels"]
+    entries = {entry.id: entry for entry in context["journal"].entries if entry.category == "place"}
+    names = {}
+    for fact in context["facts"]:
+        if fact.target.collection != collection or fact.target.kind != "scene":
+            continue
+        entry = entries.get(place_entry_id(context["session"].id, fact, labels))
+        if entry is not None:
+            names[fact.target.canonical_id] = entry.title
+    return {
+        "scene_places": {scene: value for (name, scene), value in labels.scene_places.items() if name == collection},
+        "earned_place_names": names,
+    }
 
 
 @router.get("/sessions/{session_id}/map")
@@ -182,6 +205,7 @@ async def get_session_map(
         facts=facts,
         world_flags=flags,
         current_scene_id=session.current_scene_id,
+        **_geography(context, collection),
     )
     entries_by_id = {entry.id: entry for entry in journal.entries if entry.category == "place"}
     journal_ids: dict[str, str] = {}
@@ -193,7 +217,7 @@ async def get_session_map(
             and fact.target.manifest_sha256 == manifest.reviewed_sha256
             and fact.kind in {"learn_place", "visit", "move"}
         ):
-            entry_id = journal_entry_id(session_id, "place", fact.fact_id)
+            entry_id = place_entry_id(session_id, fact, context["labels"])
             if entry_id in entries_by_id:
                 journal_ids[fact.target.canonical_id] = entry_id
     world = await _player_world_map(collection, projection)
@@ -251,6 +275,7 @@ async def get_session_map_svg(
             facts=context["facts"],
             world_flags=flags,
             current_scene_id=context["session"].current_scene_id,
+            **_geography(context, collection),
         )
     if v is not None and v != projection.source_version:
         raise HTTPException(status_code=409, detail="Map changed. Refresh this session's map.")
@@ -287,6 +312,7 @@ async def get_session_world_map_svg(
         facts=context["facts"],
         world_flags=flags,
         current_scene_id=context["session"].current_scene_id,
+        **_geography(context, collection),
     )
     world = await _player_world_map(collection, projection)
     if world is None:

@@ -37,7 +37,7 @@ _CLOSE_IN = re.compile(
     r"charg(?:e|es|ed|ing)\b(?!\s+(?:my|your|his|her|its|their|the\s+(?:spell|sword|blade|weapon|"
     r"staff|bow|axe|mace|shield|rope)s?)\b)|"
     r"advance\s+(?:on|toward|towards)|step\s+(?:in\s+)?(?:up\s+)?to|"
-    r"get\s+(?:in\s+)?(?:close|next)\s+to|move\s+(?:in\s+)?(?:next\s+to|into\s+(?:melee|reach)))\b"
+    r"get\s+(?:in\s+)?(?:close|next)\s+to|move\s+(?:back\s+)?(?:in\s+)?(?:next\s+to|into\s+(?:melee|reach)))\b"
     r"|\bdash\s+(?:in\s+)?(?:toward|towards|to|at|into)\b",
     re.IGNORECASE,
 )

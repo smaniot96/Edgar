@@ -310,6 +310,47 @@ def published_world_map(slug):
         return None
 
 
+def published_scene_places(slug, manifest):
+    """Private geographic identities from the exact published semantic assembly.
+
+    These names are recognition candidates, never disclosures. Callers must earn
+    their wording from player text before displaying it. Reading this retained
+    registry does not recompile or alter a published campaign.
+    """
+    try:
+        if not (meta_store.adventure_path(slug, "preparation-v2") / "graph.sqlite3").exists():
+            return {}
+        store = Store(slug)
+        compiled, publication = store.get("compiled"), store.get("publication")
+        if (
+            store.state().get("status") != "ready"
+            or not publication
+            or digest(compiled) != publication.get("compiled_sha256")
+            or compiled["manifest"]["source_sha256"] != manifest.source_sha256
+            or compiled["manifest_sha256"] != manifest.reviewed_sha256
+        ):
+            return {}
+        registry = compiled["registry"]
+        places = {}
+        for identity, record in registry.items():
+            if record["kind"] != "event":
+                continue
+            location_id = record["value"]["location_id"]
+            location = registry.get(location_id, {})
+            if location.get("kind") != "entity" or location["value"].get("kind") != "place":
+                continue
+            value = location["value"]
+            places[identity] = {
+                "place_id": location_id,
+                "names": [value["name"], *value.get("aliases", [])],
+                "source_sha256": manifest.source_sha256,
+                "manifest_sha256": manifest.reviewed_sha256,
+            }
+        return places
+    except (KeyError, TypeError, ValueError, OSError):
+        return {}
+
+
 def preparation_job_spend(slug):
     from ...limits import JobSpend
 

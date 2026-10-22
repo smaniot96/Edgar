@@ -12,7 +12,7 @@ id flows through unchanged.
 import copy
 import hashlib
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.combatants import NPC_DISPOSITION, disposition_of
@@ -85,7 +85,11 @@ async def load_resolved_combat_outcomes(db: AsyncSession, session_id: int) -> li
     """
     rows = await db.scalars(
         select(CombatState)
-        .where(CombatState.session_id == session_id, CombatState.ended.is_(True))
+        .where(
+            CombatState.session_id == session_id,
+            CombatState.ended.is_(True),
+            or_(CombatState.outcome != "cancelled", CombatState.outcome.is_(None)),
+        )
         .order_by(CombatState.id)
     )
     fields = {
@@ -128,6 +132,7 @@ def resolved_combat_outcomes_public(outcomes: list[dict]) -> list[dict]:
             ],
         }
         for outcome in outcomes
+        if outcome.get("outcome") != "cancelled"
     ]
 
 

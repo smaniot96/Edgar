@@ -17,6 +17,7 @@ from agent.nodes.story_effects import story_candidates, validate_story_effects
 from agent.scene_guidance import (
     active_observation_chunks,
     cached_scene_context,
+    linked_transition_choices,
     match_source_quote,
     observation_excerpt,
     observation_span_catalog,
@@ -118,6 +119,100 @@ async def test_current_private_answer_reaches_narrator_without_private_dossier(s
     assert "source_observations" not in serialized
     assert serialized["accepted_observations"] == [ANSWER]
     assert result.flags_set == [] and result.character_update is None
+
+
+@pytest.mark.asyncio
+async def test_linked_transition_template_binds_current_sources_without_disclosing_destination(
+    scene_state,
+):
+    state = await prepared(scene_state)
+    choices = linked_transition_choices(state)
+    assert len(choices) == 1
+    choice = choices[0]
+    assert choice["proposal"]["target"]["canonical_id"] == "event_leads"
+    assert "PRIVATE_FUTURE_ROOM" not in str(choice)
+    assert choice["proposal"]["source_reference_ids"]
+    # A template alone earns no movement. The live DM must judge this actual trigger.
+    bare = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[choice["proposal"]]), state
+    )
+    assert bare.accepted_story_effects == []
+    move = {
+        **choice["proposal"],
+        "achievement_basis": "The player asks the ferryman about the delay, matching this link.",
+    }
+    result = validate_story_effects(
+        AdjudicationResult(success=True, story_effects=[move]), state
+    )
+    assert result.scene_id == "event_leads"
+    assert [effect.kind for effect in result.accepted_story_effects] == ["move"]
+    assert not any(effect.kind == "objective" for effect in result.accepted_story_effects)
+
+
+@pytest.mark.asyncio
+async def test_failed_inference_preserves_only_independent_public_observation(scene_state):
+    state = await prepared(scene_state)
+    state["player_input"] = "I inspect the bell's magic and describe what is plainly visible."
+    public_span = next(
+        span for span in observation_span_catalog(state).values()
+        if "bell hangs motionless" in span["text"]
+    )
+    private_span = next(
+        span for span in observation_span_catalog(state).values() if ANSWER in span["text"]
+    )
+    common = {
+        "action_quote": "describe what is plainly visible",
+        "achievement_basis": "This is independent of the failed magical inference.",
+        "requires_check_success": False,
+    }
+    result = AdjudicationResult(
+        success=False,
+        check="arcana",
+        source_observations=[
+            {**common, "source_span_id": public_span["source_span_id"],
+             "text": public_span["text"].strip()},
+            {**common, "source_span_id": private_span["source_span_id"], "text": ANSWER},
+        ],
+    )
+    validate_story_effects(result, state)
+    assert result.accepted_observations == [public_span["text"].strip()]
+    assert result.observation_diagnostics["rejected"] == [
+        {"index": 1, "reason": "failed_check_private_evidence"}
+    ]
+    assert result.success is False and result.accepted_story_effects == []
+
+
+@pytest.mark.asyncio
+async def test_large_background_evidence_cannot_crowd_out_recent_resolved_continuity(scene_state):
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from edgar_core.model_profiles import effective_profile
+    from edgar_core.token_budget import estimate_tokens
+
+    state = await prepared(scene_state)
+    answer_span = next(
+        span["source_span_id"] for span in observation_span_catalog(state).values()
+        if ANSWER in span["text"]
+    )
+    state["messages"] = [
+        HumanMessage(content="I hand the key to the ferryman and follow him."),
+        AIMessage(content="The ferryman takes the key and leads you away from the tower."),
+    ]
+    # Simulate a complete-source registry/PDF binding larger than the prompt budget.
+    # Retrieval keeps it, while whole redundant prompt passages can be omitted.
+    state["planner_context"].append({
+        **state["planner_context"][0],
+        "passage_id": "source_page_9999",
+        "text": "PRIVATE_BACKGROUND_DUPLICATE " * 10000,
+    })
+    prompt = build_adjudicator_prompt(state, None)
+    rendered = "\n".join(message["content"] for message in prompt)
+    assert "The ferryman takes the key and leads you away from the tower." in rendered
+    assert ANSWER in rendered
+    assert f"[source_span {answer_span}]" in rendered
+    assert "PRIVATE_BACKGROUND_DUPLICATE" not in rendered
+    assert estimate_tokens(rendered) < effective_profile("play.consequence_planner").max_input_tokens
+    assert state["planner_context"][-1]["text"].startswith("PRIVATE_BACKGROUND_DUPLICATE")
 
 
 @pytest.mark.asyncio

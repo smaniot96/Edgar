@@ -6,7 +6,7 @@ becomes a question to the player in `agent.graph_combat`; nothing here rolls a d
 
 from __future__ import annotations
 
-from agent.combat_intent import _name_matches
+from agent.combat_identity import matching_roster_targets, roster_name_matches
 from agent.combatants import has_effect, is_standing
 from agent.conditions import humanoid_refusal
 from agent.spells import SpellSpec
@@ -18,9 +18,11 @@ def select_target(enemies_in_order: list[dict], named: list[str]) -> tuple[dict 
     if not living:
         return None, None
     for n in named:
-        for e in living:
-            if _name_matches(n, e["name"]):
-                return e, None
+        matches = matching_roster_targets(living, n)
+        if len(matches) == 1:
+            return matches[0], None
+        if len(matches) > 1:
+            return None, f"Which {n} do you mean? ({', '.join(e['name'] for e in matches)})"
     if not named:
         return living[0], None
     foes = ", ".join(e["name"] for e in living)
@@ -43,7 +45,7 @@ def additional_spell_targets(
         and not (spec.humanoid_only and humanoid_refusal(spec.name, e))
     ]
     # The sort is stable: named foes come first, the rest keep their roster order.
-    eligible.sort(key=lambda e: not any(_name_matches(n, e["name"]) for n in named))
+    eligible.sort(key=lambda e: not any(roster_name_matches(e, n) for n in named))
     return eligible[:count]
 
 
@@ -53,7 +55,7 @@ def _release_target(enemies_in_order: list[dict], named: list[str]) -> dict | No
         e for e in enemies_in_order if has_effect(e, "grappled") or has_effect(e, "restrained")
     ]
     for n in named:
-        for e in bound:
-            if _name_matches(n, e["name"]):
-                return e
+        matches = matching_roster_targets(bound, n)
+        if len(matches) == 1:
+            return matches[0]
     return bound[0] if bound and not named else None
