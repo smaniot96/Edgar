@@ -380,6 +380,26 @@ def player_story_effect(effect: AcceptedStoryEffect) -> dict | None:
     }
 
 
+def adjudicated_goal_outcome(effect: AcceptedStoryEffect) -> str | None:
+    """Status of a verified DM-adjudicated goal transition that earned no public wording.
+
+    Only the receipt-bound status leaves this function: no criteria, basis or source text.
+    Consumers decide separately whether a prepared title may accompany it.
+    """
+    if (
+        effect.evidence_kind != "dm_adjudication"
+        or effect.kind not in {"objective", "milestone"}
+        or effect.player_text
+    ):
+        return None
+    if not any(
+        ref.get("provenance") == "dm_adjudication" and _public_origin(ref, effect)
+        for ref in effect.source_refs
+    ):
+        return None
+    return effect.status
+
+
 def player_known_story(state: dict) -> dict:
     """EDG-041 contract: committed earned facts, without prepared definitions or object bookkeeping."""
     facts = []

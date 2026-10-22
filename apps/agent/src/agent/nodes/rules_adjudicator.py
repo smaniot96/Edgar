@@ -566,6 +566,7 @@ async def adjudicate(
             result.scene_id = state.get("current_scene_id")
             result.success = check_result.success if check_result else False
             state["story_reveal_context"] = []
+            state["story_arrival_context"] = []
             state["authorized_policy_effect_keys"] = []
             state["policy_reveal_authorizations"] = []
             state["policy_rejection"] = True
@@ -627,6 +628,7 @@ async def rules_adjudicator_node(state: AgentState) -> dict:
     return {
         "adjudication_result": result,
         "story_reveal_context": state.get("story_reveal_context", []),
+        "story_arrival_context": state.get("story_arrival_context", []),
         "exact_recall": state.get("exact_recall"),
         "policy_rejection": state.get("policy_rejection", False),
         "policy_narration": state.get("policy_narration"),

@@ -42,6 +42,40 @@ def opening_journal_effects(
                 ],
             )
         )
+    opening = reviewed.opening_scene_id
+    declared = len(proposals)
+    if not any(
+        proposal.kind in {"visit", "move"} and proposal.target.canonical_id == opening
+        for proposal in proposals
+    ):
+        # The party starts in the opening scene. Its own reviewed arrival passage orients the
+        # journal exactly as a declared "visited opening" seed would; without one, nothing.
+        arrival_ids = {
+            p.passage_id
+            for p in reviewed.passages
+            if p.audience == "player"
+            and not p.requires
+            and opening in p.scene_ids
+            and opening in p.known_scene_ids
+        }
+        arrival = [p for p in passages if p.get("passage_id") in arrival_ids]
+        if arrival:
+            proposals.append(
+                StoryEffect(
+                    kind="visit",
+                    target=StoryRef(
+                        collection=collection,
+                        source_sha256=reviewed.source_sha256,
+                        manifest_sha256=reviewed.reviewed_sha256,
+                        kind="scene",
+                        canonical_id=opening,
+                    ),
+                    status="visited",
+                    source_reference_ids=[
+                        source_citation(p, edition)["reference_id"] for p in arrival
+                    ],
+                )
+            )
     result = validate_story_effects(
         AdjudicationResult(success=True, story_effects=proposals),
         {
@@ -55,6 +89,14 @@ def opening_journal_effects(
             "rules_edition": edition,
         },
     )
-    if len(result.accepted_story_effects) != len(proposals):
+    accepted = result.accepted_story_effects
+    # Only declared seeds must validate; the engine's own arrival default is optional.
+    declared_accepted = [
+        effect
+        for effect in accepted
+        if len(proposals) == declared
+        or not (effect.kind == "visit" and effect.target.canonical_id == opening)
+    ]
+    if len(declared_accepted) != declared:
         raise ManifestError("Opening journal seeds require matching reviewed player evidence.")
-    return result.accepted_story_effects
+    return accepted

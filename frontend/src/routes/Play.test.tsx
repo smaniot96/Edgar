@@ -83,12 +83,11 @@ it("preserves journal filters across tool switches and keeps tools available dur
   const button = (name: string) => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === name) ?? null;
   await click(button("Journal"));
   expect(container.querySelector('[aria-label="Journal tool"]')).not.toBeNull();
+  await click(container.querySelector<HTMLButtonElement>("#journal-tab-clues"));
   const search = container.querySelector<HTMLInputElement>('input[type="search"]')!;
   const setInput = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   await act(() => { setInput?.call(search, "seal"); search.dispatchEvent(new Event("input", { bubbles: true })); });
-  const category = container.querySelector<HTMLSelectElement>("#journal-category")!;
-  const setSelect = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-  await act(() => { setSelect?.call(category, "clue"); category.dispatchEvent(new Event("change", { bubbles: true })); });
+
   expect(container.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(false);
   await click(button("Close journal"));
   await click(button("Map"));
@@ -96,7 +95,8 @@ it("preserves journal filters across tool switches and keeps tools available dur
   await click(button("Close map"));
   await click(button("Journal"));
   expect(container.querySelector<HTMLInputElement>('input[type="search"]')?.value).toBe("seal");
-  expect(container.querySelector<HTMLSelectElement>("#journal-category")?.value).toBe("clue");
+  expect(container.textContent).toContain("entry matches");
+  expect(JSON.parse(localStorage.getItem("edgar_play_workspace:v1:1")!).view).toBe("clues");
 });
 
 it("opens verified journal history and reports only a newly committed journal delta", async () => {
@@ -106,12 +106,12 @@ it("opens verified journal history and reports only a newly committed journal de
   await act(render);
   const button = (name: string) => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === name) ?? null;
   await act(() => button("Journal")?.click());
-  const selectEntry = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Select");
+  const selectEntry = container.querySelector<HTMLButtonElement>('button[aria-label="Open clue: Red seal"]');
   await act(() => selectEntry?.click());
   expect(container.querySelector("#journal-entry-clue-1")?.getAttribute("aria-current")).toBe("true");
   await act(() => button("Journal")?.click());
   await act(() => button("Journal")?.click());
-  await act(() => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "View narration")?.click());
+  await act(() => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Read the moment")?.click());
   expect(container.querySelector("[data-open-event-id]")?.getAttribute("data-open-event-id")).toBe("41");
 
   const options = harness.turnOptions!;
@@ -487,4 +487,30 @@ it("shows an access-ended screen once the membership is revoked", async () => {
   await renderPlayScreen();
   expect(container.textContent).toContain("You no longer have access to this table");
   expect(container.querySelector("textarea")).toBeNull();
+});
+
+it("shows the earned lead in the header and recap and opens it in the journal", async () => {
+  const data = journalFixture();
+  const lead = { ...data.entries[0], id: "earned-answer", category: "note" as const, status: "learned" as const,
+    title: "Follow the red seal", text: "The red seal belongs to the harbor keeper." };
+  harness.journal = { ...harness.journal, data: { ...data, entries: [...data.entries, lead], current_lead: lead } };
+  harness.game = gameFixture();
+  await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+  const context = container.querySelector('[aria-label="Current adventure context"]')!;
+  expect(context.textContent).toContain("Latest lead: Follow the red seal");
+  expect(container.textContent).not.toContain("No active goal recorded");
+  await act(() => context.querySelector<HTMLButtonElement>("button")?.click());
+  expect(container.querySelector("#journal-entry-earned-answer")?.getAttribute("aria-current")).toBe("true");
+  expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Clues");
+});
+
+it("migrates a saved journal category into its matching section", async () => {
+  localStorage.setItem("edgar_play_workspace:v1:1", JSON.stringify({
+    activeTool: "journal", category: "promise", query: "", selectedEntryId: null,
+  }));
+  harness.journal = { ...harness.journal, data: journalFixture() };
+  harness.game = gameFixture();
+  await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+  expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Goals");
+  expect(JSON.parse(localStorage.getItem("edgar_play_workspace:v1:1")!).view).toBe("goals");
 });

@@ -344,6 +344,60 @@ def _reviewed_chunk(chunk: dict, state: AgentState) -> bool:
     )
 
 
+def _arrival_chunks(target: StoryRef, chunks: list[dict], state: AgentState) -> list[dict]:
+    """Unconditional-to-this-session player arrival text of one scene, exactly as reviewed.
+
+    Being in a scene is engine state. Its own player passage naming it as a known place is
+    what the player sees on arrival, so it may orient the journal without any private text.
+    """
+    value = (state.get("adventure_manifests") or {}).get(target.collection)
+    if value is None:
+        return []
+    manifest = require_published(value)
+    flags = state.get("world_flags") or {}
+    arrival_ids = {
+        p.passage_id
+        for p in manifest.passages
+        if p.audience == "player"
+        and target.canonical_id in p.scene_ids
+        and target.canonical_id in p.known_scene_ids
+        and all(flags.get(k) == v for k, v in p.requires.items())
+    }
+    return [
+        c
+        for c in chunks
+        if c.get("passage_id") in arrival_ids
+        and c.get("audience") == "player"
+        and c.get("collection") == target.collection
+        and c.get("manifest_sha256") == target.manifest_sha256
+        and c.get("source_sha256") == target.source_sha256
+        and _reviewed_chunk(c, state)
+    ]
+
+
+def _entity_scene_chunks(
+    proposal: StoryEffect, candidate: dict, chunks: list[dict], state: AgentState
+) -> list[dict]:
+    """Current-scene player text that already presents an entity the DM judged earned.
+
+    The live DM often cites the private paragraph that justifies a discovery. That evidence
+    stays private; the journal may quote only the reviewed player passage of this scene that
+    lists the same entity. Self-gated reveals keep their own exact reveal passages.
+    """
+    if candidate.get("discovery_flag"):
+        return []
+    return [
+        c
+        for c in chunks
+        if c.get("audience") == "player"
+        and c.get("passage_id") in candidate["passage_ids"]
+        and c.get("collection") == proposal.target.collection
+        and c.get("manifest_sha256") == proposal.target.manifest_sha256
+        and c.get("source_sha256") == proposal.target.source_sha256
+        and _reviewed_chunk(c, state)
+    ]
+
+
 def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> AdjudicationResult:
     """Reject ungrounded proposals and stamp only server-owned accepted context.
 
@@ -390,6 +444,13 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 )
             continue
         candidate = candidates.get(proposal.target.model_dump_json())
+        if (
+            candidate is not None
+            and proposal.kind == "discover"
+            and candidate.get("entity_kind") == "actor"
+        ):
+            # A person is met, never filed as a clue: the same earned evidence is an encounter.
+            proposal = proposal.model_copy(update={"kind": "encounter", "status": "encountered"})
         if candidate is None or not _kind_matches(proposal, candidate):
             continue
         # A move and an object transfer share the schema's "moved" literal. For a
@@ -398,7 +459,9 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         if proposal.kind == "move" and proposal.status == "moved":
             proposal = proposal.model_copy(update={"status": "visited"})
         policy_key = policy_effect_key(proposal)
-        dm_goal = is_dm_goal_candidate(candidate)
+        # An explicit public announcement is source-backed knowledge. It does not
+        # adjudicate achievement and needs neither a player action nor a private basis.
+        dm_goal = is_dm_goal_candidate(candidate) and proposal.status != "announced"
         dm_transition = proposal.kind == "move" and any(
             row.get("scene_id") == proposal.target.canonical_id
             for row in (state.get("parser_scene_context") or {}).get("event_transitions", [])
@@ -487,6 +550,18 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                 public = [c for c in public if c.get("passage_id") in policy_reveals[policy_key]]
                 if not policy_reveals[policy_key] <= {c.get("passage_id") for c in public}:
                     continue
+        if (
+            not public
+            and proposal.kind in {"discover", "encounter", "relationship"}
+            and policy_key not in policy_reveals
+        ):
+            public = _entity_scene_chunks(proposal, candidate, chunks, state)
+        if not public and proposal.kind == "visit":
+            public = _arrival_chunks(proposal.target, chunks, state)
+        if not public and dm_transition:
+            public = _arrival_chunks(
+                proposal.target, state.get("story_arrival_context") or [], state
+            )
         if not public and not dm_goal and not dm_transition:
             continue
         if (
@@ -503,6 +578,10 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         ):
             continue
         previous = [f for f in facts if f.kind == proposal.kind and f.target == proposal.target]
+        if proposal.kind == "discover" and previous:
+            # Already earned: its quotation is immutable, so a re-citation cannot add to it
+            # and would otherwise fail the whole turn at the persistence boundary.
+            continue
         if (
             proposal.kind != "clock"
             and previous
@@ -734,6 +813,42 @@ def safe_story_summary(adj: AdjudicationResult, engine_summary: str) -> None:
         adj.mechanical_summary += " Ask the player whether they want to conclude the adventure."
 
 
+async def _prepare_arrival_context(
+    adj: AdjudicationResult, state: AgentState, candidates: dict, flags: dict, edition: str
+) -> None:
+    """Load the destination's reviewed player arrival text for this turn's one linked move.
+
+    An event transition may cite only private trigger evidence. The player still arrives
+    somewhere, and that scene's own player passage is what they see there.
+    """
+    import asyncio
+
+    from db.vector.retrieval import retrieve_active_scene
+
+    state["story_arrival_context"] = []
+    move = next((effect for effect in adj.story_effects[:20] if effect.kind == "move"), None)
+    if move is None or move.target.canonical_id == state.get("current_scene_id"):
+        return
+    candidate = candidates.get(move.target.model_dump_json())
+    if not candidate or not candidate.get("can_move"):
+        return
+    try:
+        arrival = await asyncio.to_thread(
+            retrieve_active_scene,
+            state.get("adventure_manifests") or {},
+            move.target.canonical_id,
+            flags,
+            client=state.get("qdrant_client"),
+            rules_edition=edition,
+        )
+    except Exception:
+        # No exact arrival text, no quotation. Never substitute model prose on read failure.
+        return
+    state["story_arrival_context"] = [
+        chunk for chunk in arrival["adventure_context"] if chunk.get("audience") == "player"
+    ]
+
+
 async def prepare_story_validation_state(adj: AdjudicationResult, state: AgentState) -> None:
     """Load exact self-gated player reveals through the existing reviewed retrieval path.
 
@@ -755,6 +870,7 @@ async def prepare_story_validation_state(adj: AdjudicationResult, state: AgentSt
     )
     evidence = {source_citation(c, edition)["reference_id"]: c for c in chunks}
     flags = dict(state.get("world_flags") or {})
+    await _prepare_arrival_context(adj, state, candidates, flags, edition)
     changed = False
     for effect in adj.story_effects[:20]:
         candidate = candidates.get(effect.target.model_dump_json())

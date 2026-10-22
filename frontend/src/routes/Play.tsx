@@ -17,6 +17,7 @@ import { ReadOnlyComposer, TurnBanner } from "../components/lobby/TurnBanner";
 import { useSessionLobby } from "../components/lobby/useSessionLobby";
 import { PlayToolBar, PlayToolPanel } from "../components/play/PlayTools";
 import { linesFromHistory } from "../components/play/turnState";
+import { currentThread, viewFor } from "../components/journal/model";
 import { useJournal } from "../components/journal/api";
 import { usePlaySession } from "../components/play/usePlaySession";
 import { useSessionDraft } from "../components/play/useSessionDraft";
@@ -100,6 +101,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const journal = useJournal(sessionId);
   const { data: sessionMapData, loading: sessionMapLoading, error: sessionMapError, refresh: refreshSessionMap } = useSessionMap(sessionId, activeTool === "map");
   const { data: journalData, refresh: refreshJournal, settledRevision: journalSettledRevision } = journal;
+  const thread = currentThread(journalData);
   const [introPending, setIntroPending] = useState(false);
   const [openEventId, setOpenEventId] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -123,7 +125,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
       ...current,
       activeTool: "journal",
       query: "",
-      category: "all",
+      view: "overview",
       selectedEntryId: entryId,
     }));
   }, [searchParams, sessionId, setWorkspace]);
@@ -150,8 +152,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const closeTool = useCallback(() => setActiveTool(null), [setActiveTool]);
   const openJournalEntry = useCallback((entryId: string) => {
     setActiveTool("journal");
-    setWorkspace((current) => ({ ...current, activeTool: "journal", query: "", category: "all", selectedEntryId: entryId }));
-  }, [setActiveTool, setWorkspace]);
+    setWorkspace((current) => ({ ...current, activeTool: "journal", query: "", view: viewFor(journalData?.entries.find((entry) => entry.id === entryId)?.category ?? "note"), selectedEntryId: entryId }));
+  }, [setActiveTool, setWorkspace, journalData]);
   const resumeAdventure = useCallback(() => {
     closeTool();
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -400,7 +402,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           />
           <div role="group" aria-label="Current adventure context" className="mx-3 mb-2 flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-control bg-surface/60 px-3 py-2 text-xs [overflow-wrap:anywhere] sm:mx-4">
             <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">Place: </span>{journal.data?.current_place ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(journal.data!.current_place!.id)}>{journal.data.current_place.title}</button> : <span className="text-ink-muted">Unknown</span>}</p>
-            <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">Goal: </span>{journal.data?.active_goal ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(journal.data!.active_goal!.id)}>{journal.data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}</p>
+            <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">{journal.data?.active_goal ? "Goal" : "Latest lead"}: </span>{thread ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(thread.id)}>{thread.title}</button> : <span className="text-ink-muted">No lead recorded yet</span>}</p>
           </div>
           {canAct ? <PlayIdeas
             data={journal.data}
@@ -490,8 +492,8 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           journal={{ data: journal.data, loading: journal.loading, error: journal.error, stale: journal.stale }}
           query={workspace.query}
           onQueryChange={(query) => setWorkspace((current) => ({ ...current, query }))}
-          category={workspace.category}
-          onCategoryChange={(category) => setWorkspace((current) => ({ ...current, category }))}
+          view={workspace.view}
+          onViewChange={(view) => setWorkspace((current) => ({ ...current, view }))}
           selectedEntryId={workspace.selectedEntryId}
           onSelectedEntryChange={(selectedEntryId) => setWorkspace((current) => ({ ...current, selectedEntryId }))}
           onRefresh={journal.refresh}

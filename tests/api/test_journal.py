@@ -103,7 +103,8 @@ async def test_journal_routes_are_safe_and_session_scoped(api_client, db_session
     assert len(first_json["entries"]) == 1
     first_entry = first_json["entries"][0]
     assert first_entry["text"] == "The lens tracks reflections, not the sky."
-    assert first_entry["origin"]["citation"] == "Page 5"
+    # The fixture collection is not a directly extracted book: no page number is claimed.
+    assert first_entry["origin"]["citation"] is None
     assert first_entry["origin"]["history_event_id"] is not None
     assert "PRIVATE FUTURE VILLAIN TRUE NAME" not in first.text
     assert "private_file" not in first.text
@@ -163,3 +164,29 @@ async def test_new_session_is_tracked_and_pre_journal_session_is_legacy_in_journ
         map_response = await api_client.get(f"/api/sessions/{session_id}/map")
         assert map_response.status_code == 200
         assert map_response.json()["tracking"] == expected
+
+
+async def test_answers_require_matching_session_and_committed_turn(api_client, db_session, fake_retrieval):
+    session_id = (await api_client.post("/api/seed")).json()["session_id"]
+    db_session.add_all([
+        EventLog(session_id=session_id, event_type="adjudication", payload={
+            "turn_id": "abandoned", "accepted_observations": ["UNDISPATCHED SECRET"],
+        }),
+        EventLog(session_id=session_id, event_type="adjudication", payload={
+            "turn_id": "delivered", "accepted_observations": ["The keeper knows the route."],
+            "achievement_basis": "PRIVATE BASIS",
+        }),
+        EventLog(session_id=session_id, event_type="narration", payload={
+            "turn_id": "delivered", "narration": "The keeper offers directions.",
+            **journal_tracking_marker(),
+        }),
+    ])
+    await db_session.commit()
+    response = await api_client.get(f"/api/sessions/{session_id}/journal")
+    assert response.status_code == 200
+    assert [entry["text"] for entry in response.json()["entries"]] == ["The keeper knows the route."]
+    assert response.json()["current_lead"]["category"] == "note"
+    assert "UNDISPATCHED" not in response.text and "PRIVATE BASIS" not in response.text
+    exported = await api_client.get(f"/api/sessions/{session_id}/journal/export")
+    assert "The keeper knows the route." in exported.text
+    assert "UNDISPATCHED" not in exported.text

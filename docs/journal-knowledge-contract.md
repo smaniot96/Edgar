@@ -5,7 +5,8 @@ producer integration: EDG-140. EDG-142 and EDG-137 are outside this batch.
 
 Prepared definitions remain private in the existing version-bound, explicitly reviewed
 manifest. Session facts remain in the existing atomic story ledger. Reading a journal
-never creates knowledge, loads a private plan, or calls a model.
+never creates knowledge or calls a model. Prepared labels can be consulted only under
+the recognition and completion rules described below.
 
 | Concept | Prepared representation | Committed player knowledge |
 | --- | --- | --- |
@@ -35,3 +36,34 @@ This consumer contract does not itself complete EDG-140's full PDF/AI backbone g
 branch validation, manuscript grounding and publication acceptance. Those requirements
 remain in its full brief. Integration must retain source/version identity and existing
 explicit review/publication gates.
+
+## Adventure log projection and display (22 October 2026)
+
+The Journal groups earned knowledge into Overview, People, Places, Clues, Goals and
+Log. The overview orients the player with their current visited place, their latest
+earned lead, and still-open public threads. Search spans all sections. Each quotation
+retains its original provenance and links back to the committed narration.
+
+Prepared names are recognition aids, not disclosure permission. A person's name is
+shown only as far as the player has heard it; unnamed places and clues use their earned
+words. Generated assembly page numbers are withheld. Public source-backed goals and
+announcements retain their existing behavior.
+
+For goals adjudicated without public wording, option B is the current contract: a
+prepared goal title becomes visible only on completion. An active or failed private
+goal does not reveal its title. Failure of an already public goal updates its existing
+entry and removes it from the active list. Until a public goal exists, the play header,
+recap and saved-playthrough context show the latest earned lead. Switching to titles
+when a private goal activates remains deferred until player-safe generator titles are
+guaranteed and that design is explicitly selected.
+
+Validated answers become notes only when the adjudication and committed narration share
+the same turn ID. The turn writer stamps that ID in the adjudication event. Historical
+adjudication rows without it are omitted from notes because their delivery cannot be
+verified; existing ledger entries remain readable. The Journal does not infer answers
+from narration or reconstruct private source content.
+
+Notes can reference earned people and the place where they were heard. A note is nested
+under a same-turn clue only when that clue association is unambiguous. Duplicate clue
+merges retain working note links and keep different ownership states separate. The log
+orders entries by their latest earned status update while preserving first provenance.
