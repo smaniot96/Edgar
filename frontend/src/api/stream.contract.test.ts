@@ -132,6 +132,9 @@ const COMBAT_STATE_KEYS: Record<keyof CombatState, true> = {
   round: true,
   ended: true,
   outcome: true,
+  solo_budget: true,
+  round_events: true,
+  participants: true,
   second_wind_used: true,
   economy: true,
   pending_declaration: true,
@@ -258,7 +261,6 @@ describe("stream schema and TypeScript consumers", () => {
     expect(
       compareKeys("done.combat_state", nestedKeys("done", "combat_state"), clientKeys(COMBAT_STATE_KEYS), {
         backendOnly: {
-          solo_budget: "encounter budget view; the HUD does not render it yet",
           raging: "barbarian rage flag; not declared on the client type yet",
           concentration: "concentrated spell name; not declared on the client type yet",
         },

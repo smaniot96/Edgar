@@ -150,6 +150,18 @@ def build_adjudicator_prompt(
         )
     if parsed is not None and getattr(parsed, "target", None):
         parts.append(f"Target: {parsed.target}")
+    from agent.scene_guidance import selected_source_object
+
+    if source_object := selected_source_object(state):
+        parts.append(
+            "Grounded source-object interaction: "
+            + json.dumps(source_object)
+            + ". Resolve the source's actual story procedure using the current evidence and "
+            "the player's ordinary intent. Do not require a magic phrase or invent a new "
+            "prerequisite. Convey its earned story result through source_observations and "
+            "any supported object changes through story_effects. This authorizes no spell "
+            "damage, conditions, slots or other unsupported mechanical effects."
+        )
 
     character = state.get("character")
     if character:
@@ -195,7 +207,12 @@ def build_adjudicator_prompt(
             + json.dumps(state["resolved_combat_outcomes"])
         )
     if state.get("manifest_status") == "reviewed":
-        facts = [fact.model_dump() for fact in committed_facts(state)]
+        # Keep every earned fact and provenance while omitting repeated empty/default
+        # fields; long campaigns should spend their prompt budget on actual information.
+        facts = [
+            fact.model_dump(exclude_none=True, exclude_defaults=True)
+            for fact in committed_facts(state)
+        ]
         parts.append(
             "Committed session story facts (only these are already earned): " + json.dumps(facts)
         )
@@ -350,6 +367,9 @@ async def adjudicate(
         )
 
     selected = selected_policy(state, parsed)
+    from agent.scene_guidance import selected_source_object
+
+    source_object = selected_source_object(state)
     policy_requested = bool(getattr(parsed, "resolution_policy_id", None))
     if policy_requested:
         if (
@@ -368,7 +388,7 @@ async def adjudicate(
     # A declared catalog spell is resolved by the same helper the combat round uses (agent.spells).
     spell_outcome: SpellResult | None = None
     request = None
-    if not in_combat and selected is None:
+    if not in_combat and selected is None and source_object is None:
         request = cast_request(player_input, parsed, character)
     if request is not None:
         _spell, plan, refusal = request

@@ -29,7 +29,7 @@ Design (solo-playable, finishable, engine-decided):
   * NPC dispositions are respected: friendly NPCs are never statted as enemies unless the
     player explicitly attacks them by name.
   * Combat ends deterministically: all enemies at 0 HP -> victory; player at 0 HP -> defeat;
-    the player flees/surrenders -> fled; `MAX_COMBAT_ROUNDS` exceeded -> fled (stalemate).
+    the player flees -> fled; source-accepted surrender -> surrendered; `MAX_COMBAT_ROUNDS` exceeded -> fled (stalemate).
   * Campaign completion is decided by `agent.resolution.decide_completion`: only a victory
     over an enemy flagged `is_boss` can accept/queue it; a non-killing swing never completes.
 
@@ -58,6 +58,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent.action_economy import has_attack_words
 from agent.class_features import (
     requested_features,
     resource_uses,
@@ -67,6 +68,7 @@ from agent.combat_confirmation import (
     ALWAYS_KEY,
     PENDING_KEY,
     control_word,
+    execution_plan,
     needs_confirmation,
     pending_of,
     stored_declaration,
@@ -85,12 +87,14 @@ from agent.combat_intent import (
     _name_matches,
     _named_targets,
     is_flee,
+    is_surrender,
 )
 from agent.combat_narration import (
     PENDING_ROUND_NARRATION_KEY,
     PendingRoundNarration,
     finalize_round_narration,
 )
+from agent.combat_offers import resolve_offer
 from agent.combat_player_phase import (
     PlayerTurnInput,
     cancel_standing_orders,
@@ -258,6 +262,19 @@ async def _monster_context(state: AgentState, names: list[str]) -> list[dict]:
     return out
 
 
+def visible_scene_actors(state: AgentState) -> list[str]:
+    """Public actor titles must already occur in the current player-facing scene evidence."""
+    current = state.get("current_scene_id")
+    passages = [c for c in state.get("adventure_context", []) or []
+                if c.get("audience", "player") == "player"
+                and (not current or current in c.get("scene_ids", [current]))]
+    text = "\n".join(str(c.get("text") or "") for c in passages)
+    candidates = [str(n.get("name") or "") for n in state.get("npcs", []) or [] if isinstance(n, dict)]
+    candidates += [str(e.get("title") or "") for e in state.get("discovery_entities", []) or []
+                   if isinstance(e, dict) and e.get("kind") in ("npc", "creature", "monster", "actor")]
+    return list(dict.fromkeys(name for name in candidates if name and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I)))
+
+
 async def _build_enemy_roster(
     state: AgentState,
     targets: list[str],
@@ -282,9 +299,12 @@ async def _build_enemy_roster(
     # Allies the player explicitly attacks by name become fair game (player's choice).
     allies = [a for a in allies if not any(_name_matches(a, t) for t in targets)]
 
+    visible = visible_scene_actors(state)
+    present_hostiles = [n for n in hostiles if state.get("manifest_status") != "reviewed" or any(_name_matches(n, v) for v in visible)]
+    candidates = list(dict.fromkeys([*targets, *present_hostiles]))
     candidate_names = [
         n
-        for n in (targets or hostiles)
+        for n in candidates
         if not any(_name_matches(n, a) for a in allies)
         and not any(_name_matches(n, i) for i in inert)
     ]
@@ -364,8 +384,14 @@ async def _build_enemy_roster(
         enemies, summary = apply_solo_budget(enemies, budget.level)
     if summary["adapted"]:
         log.info("solo_budget_adapted", extra={"level": budget.level, "notes": summary["notes"]})
+    active_names = {e["name"] for e in enemies}
+    participants = [{"id": e["name"], "name": str(e.get("display_name") or e["name"]), "participation": "active", "reason": "Acts in the initiative order."} for e in enemies]
+    for name in visible:
+        if not any(_name_matches(name, active) for active in active_names):
+            participants.append({"id": name, "name": name, "participation": "visible_nonparticipant", "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."})
     if budget_summary is not None:
         budget_summary.update(summary)
+        budget_summary["encounter_participants"] = participants
     return enemies
 
 
@@ -453,12 +479,13 @@ async def _open_encounter(
             {
                 **hero_row(sheet, ac=_player_ac(sheet), surprised=surprised),
                 "solo_budget": budget_summary,
+                "encounter_participants": budget_summary.get("encounter_participants", []),
             }
             for sheet in roster
         ]
-        ordered = roll_initiative(
-            heroes + enemies, character, {int(sheet["id"]): sheet for sheet in roster}
-        )
+        ordered = heroes + enemies
+        if not budget_summary.get("warning"):
+            ordered = roll_initiative(ordered, character, {int(sheet["id"]): sheet for sheet in roster})
     else:
         player_combatant = {
             "name": "player",
@@ -471,9 +498,16 @@ async def _open_encounter(
             "alive": player_hp > 0,
             # Per-encounter facts live on the player combatant: the table has no column for them.
             "solo_budget": budget_summary,
+            "encounter_participants": budget_summary.get("encounter_participants", []),
             "surprised": surprised,
         }
-        ordered = roll_initiative([player_combatant] + enemies, character)
+        ordered = [player_combatant] + enemies
+        if not budget_summary.get("warning"):
+            ordered = roll_initiative(ordered, character)
+    if budget_summary.get("warning"):
+        for row in ordered:
+            if row.get("is_player"):
+                row["initiative_pending"] = True
     combat_state.update(
         {
             "combatants": ordered,
@@ -483,13 +517,15 @@ async def _open_encounter(
             "ended": False,
             "outcome": None,
             "solo_budget": budget_summary,
+            "participants": budget_summary.get("encounter_participants", []),
         }
     )
-    log_lines.append(
-        "Combat begins! Initiative: "
-        + ", ".join(f"{_display(c)} {c['init']}" for c in ordered)
-        + "."
-    )
+    if not budget_summary.get("warning"):
+        log_lines.append(
+            "Combat begins! Initiative: "
+            + ", ".join(f"{_display(c)} {c['init']}" for c in ordered)
+            + "."
+        )
     if adaptation := adaptation_sentence(budget_summary):
         log_lines.append(adaptation)
     # What each exact record declares but the engine does not run is stated, never implied.
@@ -574,6 +610,9 @@ def _finish_party_request(
     if not ended and holder is not None:
         log_lines.append(f"{_display(holder.row)} is up next.")
     party.bind(acting)
+    if rec.events or "round_events" in row:
+        row["round_events"] = rec.events[-40:]
+        rec.combat_state["round_events"] = rec.events[-40:]
     sw_used = bool(second_wind_status(acting.character)) and rec.sw_left <= 0
     settle_party_state(
         party,
@@ -670,6 +709,9 @@ async def combat_round_node(state: AgentState) -> dict:
     # --- Initialise on first entry ---
     # EDG-049: two or more heroes at the table fight one shared encounter (agent.party_combat).
     roster = party_roster(state)
+    if combat_state.get("ended") and combat_state.get("outcome") == "surrendered" and has_attack_words(player_input):
+        combat_state.update(ended=False, outcome=None)
+        log_lines.append("You renew hostilities; the ceasefire ends.")
     opening = not combat_state.get("combatants")
     party_fight = (
         not opening and not combat_state.get("ended") and is_party(combat_state.get("combatants"))
@@ -689,7 +731,9 @@ async def combat_round_node(state: AgentState) -> dict:
         )
         if opened is not None:
             return opened
-    elif any("init" not in c for c in combat_state["combatants"]):
+    elif any("init" not in c for c in combat_state["combatants"]) and not any(
+        c.get("initiative_pending") for c in combat_state["combatants"] if c.get("is_player")
+    ):
         # Encounter persisted before initiative was tracked: roll it now.
         combat_state["combatants"] = roll_initiative(list(combat_state["combatants"]), character)
 
@@ -745,6 +789,7 @@ async def combat_round_node(state: AgentState) -> dict:
     # EDG-182: cancel a standing order (no roll, no turn spent); a reply to a pending confirmation; or the
     # "always confirm" option. No die is rolled here.
     confirmed = False
+    expected_plan = None
     if CANCEL_ORDER.search(player_input) and not fled:
         orders = standing_order_foes(player)
         named = [f for f in orders if re.search(rf"\b{re.escape(f)}\b", player_input, re.IGNORECASE)]
@@ -784,6 +829,7 @@ async def combat_round_node(state: AgentState) -> dict:
             named = _named_targets({**state, "parsed_input": parsed})
             fled = is_flee(player_input)
             confirmed = True
+            expected_plan = pending.get("execution_plan")
             player.pop(PENDING_KEY, None)
         elif word == "cancel":
             player.pop(PENDING_KEY, None)
@@ -797,6 +843,23 @@ async def combat_round_node(state: AgentState) -> dict:
     # EDG-182 contingencies: the turn's action is read without its "if" clause; the clause is run after
     # the action. The raw turn is what a pending confirmation stores and replays.
     raw_input = player_input
+    if is_surrender(player_input) and has_attack_words(player_input):
+        return _ask_player(
+            state, "Do you offer surrender, or do you attack? Those are different intentions. "
+            "No roll is made and no turn is spent.", combat_state=combat_state,
+        )
+    if is_surrender(player_input):
+        offered = await resolve_offer(
+            state, combat_state, player, enemies, text=player_input, parsed=parsed,
+            confirmed=confirmed, adjudicate=adjudicate,
+        )
+        if "_offer_rejected" not in offered:
+            return offered
+        log_lines.append(offered["_offer_rejected"])
+        player_input = "I wait"
+        raw_input = player_input
+        parsed = ParsedInput(intent="combat")
+        named = []
     split = split_contingency(raw_input) if not fled else SplitTurn(main=raw_input, contingency=None, unreadable_if=None)
     if split.unreadable_if:
         clause = split.unreadable_if
@@ -886,13 +949,40 @@ async def combat_round_node(state: AgentState) -> dict:
     if isinstance(decl, dict):
         return decl  # a refused declaration: no roll, no round, no state change
     # EDG-182: a multi-part turn is repeated back before any die; the stored copy is what runs.
+    plan_changed = expected_plan is not None and expected_plan != execution_plan(decl)
+    if plan_changed:
+        confirmed = False
     always = bool(player.get(ALWAYS_KEY)) or bool(state.get("combat_always_confirm"))
-    if not confirmed and not fled and needs_confirmation(decl, always=always):
+    danger = (combat_state.get("solo_budget") or player.get("solo_budget") or {}).get("warning")
+    danger_pending = bool(player.get("initiative_pending") and danger)
+    if not confirmed and not fled and (plan_changed or danger_pending or needs_confirmation(decl, always=always)):
         summary = summary_of(hero, decl)
+        if plan_changed:
+            summary = "The encounter changed since that proposal. Review the updated plan. " + summary
+        if danger_pending:
+            notes = [line.replace(danger["text"], "").strip() for line in log_lines]
+            summary = "\n".join([danger["text"], *(line for line in notes if line), summary, "You can cancel and choose another approach."])
         stored_declaration(
-            player, player_input=raw_input, parsed=parsed, summary=summary, round_num=round_num
+            player, player_input=raw_input, parsed=parsed, summary=summary, round_num=round_num, declaration=decl
         )
         return _ask_player(state, summary, combat_state=combat_state)
+
+    if player.get("initiative_pending"):
+        # A dangerous first declaration has now been approved. Initiative and every action die wait
+        # until this point; cancelling/clarifying never rolls or spends a round.
+        for row in combatants:
+            row.pop("initiative_pending", None)
+        combatants = roll_initiative(
+            combatants, character,
+            {int(sheet["id"]): sheet for sheet in roster} if party_fight else None,
+        )
+        combat_state["combatants"] = combatants
+        combat_state["initiative_order"] = [c["name"] for c in combatants]
+        if not party_fight:
+            player_index = combatants.index(player)
+            before = [c for c in combatants[:player_index] if not c.get("is_player")]
+            after = [c for c in combatants[player_index + 1:] if not c.get("is_player")]
+        log_lines.append("Combat begins! Initiative: " + ", ".join(f"{_display(c)} {c['init']}" for c in combatants) + ".")
 
     # EDG-045: the death mode of the campaign and the hero's death record (agent.death). The record
     # lives on the hero's combatant row for the encounter; a new encounter takes it from the sheet.

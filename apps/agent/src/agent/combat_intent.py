@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from agent.action_economy import affirmative_matches, has_attack_words
 from agent.resolution import normalise_check
 from agent.state import AgentState
 from db.vector.references import reference_matches
@@ -24,7 +25,7 @@ _FLEE_PATTERNS = (
     re.compile(
         # Disengage (EDG-044) and a retreat to range or away are moves, not leaving the fight.
         r"\b(?:i|we)\s+(?:try\s+to\s+|attempt\s+to\s+|decide\s+to\s+)?"
-        r"(?:flee|surrender|give\s+up|yield|retreat(?!\s+(?:to\s+range|from|away|out\s+of\s+reach))"
+        r"(?:flee|retreat(?!\s+(?:to\s+range|from|away|out\s+of\s+reach))"
         r")\b",
         re.IGNORECASE,
     ),
@@ -57,6 +58,14 @@ def is_flee(text: str | None) -> bool:
     return any(p.search(text) for p in _FLEE_PATTERNS)
 
 
+_SURRENDER = re.compile(r"\b(?:surrender|yield|give\s+up|lay\s+down\s+my\s+(?:arms|weapons))\b", re.I)
+
+
+def is_surrender(text: str | None) -> bool:
+    """A nonviolent offer is distinct from escape, including a later clause of the player's turn."""
+    return bool(affirmative_matches(_SURRENDER, text))
+
+
 def _named_targets(state: AgentState) -> list[str]:
     parsed = state.get("parsed_input")
     names: list[str] = []
@@ -87,11 +96,13 @@ _STAND_UP = re.compile(
 )
 
 
-def _is_attack_action(parsed: Any, named: list[str]) -> tuple[bool, bool]:
+def _is_attack_action(parsed: Any, named: list[str], player_input: str = "") -> tuple[bool, bool]:
     """(is_attack, is_spell)."""
     norm = normalise_check(getattr(parsed, "check", None)) if parsed is not None else None
+    # A name, combat context or an absent parser result never gives permission to attack.
+    # Spells are separately validated by cast_request; the proposal cannot invent a weapon attack.
+    if not has_attack_words(player_input):
+        return False, False
     if norm is not None:
         return norm[1] in ("attack", "spell_attack"), norm[1] == "spell_attack"
-    if parsed is None:
-        return True, False
-    return (getattr(parsed, "intent", "combat") == "combat" or bool(named)), False
+    return True, False

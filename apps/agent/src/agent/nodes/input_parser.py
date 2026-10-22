@@ -17,6 +17,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.action_economy import has_attack_words
+from agent.combat_confirmation import control_word, pending_of
 from agent.combatants import is_standing
 from agent.history import fit_continuity, public_earned_facts
 from agent.llm import make_chat_model
@@ -47,6 +48,15 @@ def _parser_context(state: AgentState) -> str:
     parts: list[str] = []
     if guidance := parser_guidance(state):
         parts.append(guidance)
+    from agent.scene_guidance import source_object_choices
+
+    if objects := source_object_choices(state):
+        parts.append(
+            "Known current-scene source objects (select only for an actual interaction): "
+            + str(objects)
+            + ". A source object's story procedure is distinct from casting a character spell. "
+            "Reading or activating that object does not imply the hero named or cast a spell."
+        )
     scene = state.get("current_scene_id")
     if scene:
         parts.append(f"Current scene id: {scene}")
@@ -106,6 +116,26 @@ async def input_parser_node(state: AgentState) -> dict:
     player_input = state.get("player_input")
     if not player_input:
         return {"error": "The action text is missing.", "error_code": "validation_failed"}
+    combat = state.get("combat_state") or {}
+    heroes = [row for row in combat.get("combatants", []) if row.get("is_player")]
+    character_id = (state.get("character") or {}).get("id")
+    player = next(
+        (
+            row
+            for row in heroes
+            if character_id is not None and row.get("character_id") == character_id
+        ),
+        heroes[0] if len(heroes) == 1 and heroes[0].get("character_id") is None else None,
+    )
+    if (
+        combat
+        and not combat.get("ended")
+        and control_word(player_input) in {"confirm", "cancel"}
+        and pending_of(player or {}) is not None
+    ):
+        # The combat graph restores the entire stored declaration. Parsing an exact reply
+        # again adds latency and cannot add information about the action being confirmed.
+        return {"parsed_input": ParsedInput(intent="combat"), "parser_scene_context": {}}
     if not OPENAI_API_KEY:
         return {
             "error": "The Dungeon Master service needs configuration before it can continue.",

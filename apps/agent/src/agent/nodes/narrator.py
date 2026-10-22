@@ -30,6 +30,7 @@ from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.prompts import NARRATOR, wrap_player_action, wrap_retrieved_excerpt
 from agent.provider_trace import traced_call
 from agent.state import AgentState
+from agent.story_turn import resolved_scene
 from agent.supported_rules import (
     actions_for_state,
     apply_narration_boundary,
@@ -94,6 +95,10 @@ def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
     adventure_context = eligible_context(adventure_context, edition)
     if state.get("manifest_status") == "reviewed":
         adventure_context = [c for c in adventure_context if c.get("audience") == "player"]
+        scene = resolved_scene(state)
+        if scene and scene["moved"]:
+            # The old scene's opening cannot reset an arrival or repeat an interruption.
+            adventure_context = scene["public_context"]
     return rules_context[:_RAG_BLOCK_TOP_K], (
         adventure_context
         if state.get("manifest_status") == "reviewed"
@@ -149,7 +154,25 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
             "Known NPCs (name: disposition toward the player): "
             + "; ".join(f"{n['name']}: {n.get('disposition') or 'unknown'}" for n in npcs[:15])
         )
-    if current_scene_id and state.get("manifest_status") != "reviewed":
+    scene = resolved_scene(state)
+    if scene:
+        context_parts.append(
+            "Resolved campaign position (authoritative for this response): "
+            f"place={scene['label']}; "
+            f"accepted transition={'yes' if scene['moved'] else 'none'}. "
+            "Only an accepted transition changes the location. Stop at this location even if "
+            "the player's intended journey goes farther; describe a concrete next approach. "
+            "Do not narrate arrival, entry, an accompanying actor, or a later destination "
+            "that the validated outcome has not established."
+        )
+        if scene["visible_description"]:
+            context_parts.append(
+                "Already public surroundings, available even when an optional check fails: "
+                + str(scene["visible_description"])
+                + ". Give the visible information needed for the next decision. A failed search "
+                "only withholds the hidden detail it tested; it does not erase these surroundings."
+            )
+    elif current_scene_id:
         context_parts.append(
             f"Authoritative campaign position (do not contradict or skip ahead): scene={current_scene_id}"
         )

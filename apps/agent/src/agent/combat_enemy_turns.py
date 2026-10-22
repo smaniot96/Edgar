@@ -217,6 +217,11 @@ class EnemyTurns:
         marks an opportunity attack, which spends the foe's reaction (see `opportunity_attack`).
         """
         self.note_actor(e)
+        self.rec.events.append({
+            "kind": "opportunity_attack" if reaction else "enemy_attack",
+            "text": f"{_display(e)} {'makes an opportunity attack against' if reaction else 'attacks on its turn against'} {self.rec.hero}.",
+            "actor_id": stable_id(e), "target_id": stable_id(self.rec.player),
+        })
         mode = attack_roll_mode(e, self.rec.player, ranged=ranged, within_five_feet=within_five_feet)
         self.rec.round_modes.append(mode)
         atk, draws = _roll_with_mode(f"1d20{bonus:+d}", mode)
@@ -596,6 +601,7 @@ class EnemyTurns:
                 if "distance_ft" in e:
                     e["distance_ft"] = MELEE_FEET
                 self.rec.log_lines.append(f"{e['name']} closes to melee range.")
+                self._record_close(e)
                 self._foe_closed(e)
             self.enemy_attack(
                 e,
@@ -615,6 +621,7 @@ class EnemyTurns:
             if "distance_ft" in e:
                 e["distance_ft"] = MELEE_FEET
             self.rec.log_lines.append(f"{e['name']} closes to melee range.")
+            self._record_close(e)
             self._foe_closed(e)
         plan = attacks_from_band(plan, band)
         if not plan:
@@ -624,6 +631,12 @@ class EnemyTurns:
                 break
             self.exact_attack(e, attack, band)
             spend_recharge(e, attack)  # a recharge attack waits for its d6 (no-op for the others)
+
+    def _record_close(self, e: dict) -> None:
+        self.rec.events.append({
+            "kind": "enemy_close", "text": f"{_display(e)} closes to melee on its turn.",
+            "actor_id": stable_id(e), "target_id": stable_id(self.rec.player),
+        })
 
     def _retarget(self, e: dict) -> bool:
         """EDG-049: the hero a foe was attacking is down; the rest of its attacks go to another standing hero."""

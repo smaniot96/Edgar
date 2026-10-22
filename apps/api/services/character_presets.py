@@ -1,10 +1,14 @@
-"""Predefined level-1 character class templates for the new-adventure wizard.
+"""Supported character templates, advanced with the same rules as campaign characters.
 
 The presets are the only supported starting kits. A character's class, ability scores and base
 inventory must be exactly one preset's (see `kit_error`), so a class cannot be saved with another
 class's kit. `engine_support` states what the engine executes for the class; it is a label, not a
 gate, so a preset with no class features is still playable.
 """
+
+from copy import deepcopy
+
+from agent.progression import MAX_ADVANCED_LEVEL, apply_asi_to_stats, level_features, plan_level_up
 
 CHARACTER_PRESETS: list[dict] = [
     {
@@ -49,7 +53,7 @@ CHARACTER_PRESETS: list[dict] = [
         "hp_current": 8,
         "stats": {"STR": 13, "DEX": 10, "CON": 14, "INT": 10, "WIS": 16, "CHA": 12},
         "inventory": {"weapons": ["mace"], "armor": "scale mail", "holy_symbol": True},
-        "engine_support": "Engine: no class features yet; kit and HP only",
+        "engine_support": "Engine: catalog spells; other class features are not automated",
     },
     {
         "key": "ranger_l1",
@@ -60,26 +64,59 @@ CHARACTER_PRESETS: list[dict] = [
         "hp_current": 10,
         "stats": {"STR": 12, "DEX": 16, "CON": 13, "INT": 10, "WIS": 14, "CHA": 10},
         "inventory": {"weapons": ["longbow", "shortsword"], "armor": "leather", "arrows": 20},
-        "engine_support": "Engine: no class features yet; kit and HP only",
+        "engine_support": "Engine: catalog spells from level 2; other class features are not automated",
     },
 ]
 
 
-def preset_for_class(character_class: str) -> dict | None:
+_PRIMARY_ABILITY = {
+    "Fighter": "STR", "Wizard": "INT", "Rogue": "DEX", "Cleric": "WIS", "Ranger": "DEX",
+}
+
+
+def preset_for_class(character_class: str, level: int = 1) -> dict | None:
     """The supported preset for a class name (case and surrounding spaces ignored), or None."""
     wanted = character_class.strip().casefold()
-    return next((p for p in CHARACTER_PRESETS if p["character_class"].casefold() == wanted), None)
+    base = next((p for p in CHARACTER_PRESETS if p["character_class"].casefold() == wanted), None)
+    if base is None or not 1 <= level <= MAX_ADVANCED_LEVEL:
+        return None
+    preset = deepcopy(base)
+    while preset["level"] < level:
+        character = {"class": preset["character_class"], "level": preset["level"], "stats": preset["stats"]}
+        plan = plan_level_up(
+            character, from_level=preset["level"], milestones_pending=1,
+            asi={_PRIMARY_ABILITY[preset["character_class"]]: 2} if preset["level"] == 3 else None,
+        )
+        preset["stats"] = apply_asi_to_stats(preset["stats"], plan.asi)
+        preset["hp_max"] += plan.hit_points.amount
+        preset["hp_current"] = preset["hp_max"]
+        preset["level"] = plan.to_level
+    preset["key"] = f"{wanted}_l{level}"
+    preset["label"] = f"{preset['character_class']} (level {level})"
+    limitations = [
+        f["name"] for gained_level in range(2, level + 1)
+        for f in level_features(wanted, gained_level) if not f["executed"]
+    ]
+    if limitations:
+        preset["engine_support"] += "; not automated: " + ", ".join(limitations)
+    return preset
 
 
-def kit_error(character_class: str, base_stats: dict, base_inventory: dict) -> str | None:
+def presets_at_level(level: int = 1) -> list[dict]:
+    return [preset_for_class(p["character_class"], level) for p in CHARACTER_PRESETS]
+
+
+def kit_error(character_class: str, base_stats: dict, base_inventory: dict, level: int = 1) -> str | None:
     """Why a class and its kit are not a supported preset's, or None when they are coherent.
 
     The messages name the supported classes and never echo the submitted values.
     """
-    preset = preset_for_class(character_class)
+    if not 1 <= level <= MAX_ADVANCED_LEVEL:
+        return f"Starting level must be between 1 and {MAX_ADVANCED_LEVEL}."
+    preset = preset_for_class(character_class, level)
     if preset is None:
         supported = ", ".join(p["character_class"] for p in CHARACTER_PRESETS)
         return f"Class is not supported. Choose one of: {supported}."
     if base_stats != preset["stats"] or base_inventory != preset["inventory"]:
-        return f"Ability scores and inventory must match the {preset['character_class']} starting preset."
+        return f"Ability scores and inventory must match the level {level} {preset['character_class']} starting preset."
     return None

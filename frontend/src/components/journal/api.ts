@@ -12,6 +12,7 @@ interface JournalState {
   error: unknown;
   stale: boolean;
   settledRevision: number;
+  settledRequestRevision: number;
 }
 
 const EMPTY: JournalState = {
@@ -21,12 +22,14 @@ const EMPTY: JournalState = {
   error: null,
   stale: false,
   settledRevision: 0,
+  settledRequestRevision: -1,
 };
 
 /** Loads the selected session journal and retains its last good snapshot during refresh failures. */
 export function useJournal(sessionId: number | null) {
   const [state, setState] = useState<JournalState>(EMPTY);
   const [attempt, setAttempt] = useState(0);
+  const requestRevision = useRef(0);
   const activeSessionId = useRef<number | null>(null);
   const lastGood = useRef<JournalRead | null>(null);
   const settledRevision = useRef(0);
@@ -53,19 +56,20 @@ export function useJournal(sessionId: number | null) {
       error: null,
       stale: retainedData !== null,
       settledRevision: settledRevision.current,
+      settledRequestRevision: -1,
     });
 
     void apiFetch(`/api/sessions/${sessionId}/journal`, { signal: controller.signal })
       .then((response) => response.json() as Promise<JournalRead>)
       .then(
         (data) => {
-          if (controller.signal.aborted || activeSessionId.current !== sessionId) return;
+          if (controller.signal.aborted || activeSessionId.current !== sessionId || requestRevision.current !== attempt) return;
           lastGood.current = data;
           settledRevision.current += 1;
-          setState({ sessionId, data, loading: false, error: null, stale: false, settledRevision: settledRevision.current });
+          setState({ sessionId, data, loading: false, error: null, stale: false, settledRevision: settledRevision.current, settledRequestRevision: attempt });
         },
         (error: unknown) => {
-          if (controller.signal.aborted || activeSessionId.current !== sessionId) return;
+          if (controller.signal.aborted || activeSessionId.current !== sessionId || requestRevision.current !== attempt) return;
           settledRevision.current += 1;
           setState({
             sessionId,
@@ -74,13 +78,18 @@ export function useJournal(sessionId: number | null) {
             error,
             stale: retainedData !== null,
             settledRevision: settledRevision.current,
+            settledRequestRevision: attempt,
           });
         },
       );
     return () => controller.abort();
   }, [sessionId, attempt]);
 
-  const refresh = useCallback(() => setAttempt((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    const next = ++requestRevision.current;
+    setAttempt(next);
+    return next;
+  }, []);
   const currentSession = sessionId !== null && state.sessionId === sessionId;
   return {
     data: currentSession ? state.data : null,
@@ -88,6 +97,7 @@ export function useJournal(sessionId: number | null) {
     error: currentSession ? state.error : null,
     stale: currentSession && state.stale,
     settledRevision: currentSession ? state.settledRevision : 0,
+    settledRequestRevision: currentSession ? state.settledRequestRevision : -1,
     refresh,
   };
 }

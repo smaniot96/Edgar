@@ -5,6 +5,7 @@ import { authorizedFetch } from "../../api/auth";
 import type { TurnResult } from "../../api/types";
 import { consumeTurnStream, parseTurnError, type TurnError } from "../../api/turnStream";
 import { initialTurnState, turnReducer } from "./turnState";
+import { afterBrowserPaint, beginBrowserTurn, markBrowserTurn } from "../../dev/browserTurnTimeline";
 
 /** Abort the turn if the server sends nothing (not even a keep-alive) for this long. */
 export const TURN_WATCHDOG_MS = 90_000;
@@ -128,6 +129,13 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
   const activeRef = useRef<ActiveTurn | null>(null);
   const checkRef = useRef(false);
   const checkCtrlRef = useRef<AbortController | null>(null);
+  const browserRequestRef = useRef<string | null>(null);
+  const browserPendingId = state.pending?.requestId;
+  useEffect(() => {
+    const requestId = browserRequestRef.current;
+    if (!requestId) return;
+    if (browserPendingId) return afterBrowserPaint(() => markBrowserTurn(requestId, "busy_paint"));
+  }, [browserPendingId]);
 
   useEffect(() => {
     return () => {
@@ -212,6 +220,8 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
     if (uncertain && (uncertain.role !== "error" || uncertain.retryRequestId !== existingRequestId)) return;
 
     const requestId = existingRequestId ?? newRequestId();
+    beginBrowserTurn(sessionId, requestId);
+    browserRequestRef.current = requestId;
     const turnId = newTurnId();
     const active: ActiveTurn = { ctrl: new AbortController(), reason: null, requestId };
     activeRef.current = active;
@@ -230,6 +240,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
     kick();
 
     const fail = (message: string, code?: string, reason: "error" | "stopped" = "error", uncertain = false, retryable = false) => {
+      markBrowserTurn(requestId, "failed");
       dispatch({ type: "fail", turnId, reason, message, code, uncertain, retryable });
       optsRef.current.onFailed?.(input, draftRevision);
       if (code === "campaign_sources_unavailable") optsRef.current.onSourcesUnavailable?.();
@@ -244,6 +255,7 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
         signal: active.ctrl.signal,
       });
       if (active.ctrl.signal.aborted) throw new DOMException("Turn aborted", "AbortError");
+      markBrowserTurn(requestId, "headers");
       kick();
 
       if (!res.ok) {
@@ -269,13 +281,14 @@ export function useTurn(sessionId: number, options: UseTurnOptions) {
         onStatus: (next) => {
           dispatch({ type: "status", turnId, stage: next });
         },
-        onToken: (text) => dispatch({ type: "token", turnId, text }),
+        onToken: (text) => { markBrowserTurn(requestId, "first_token"); dispatch({ type: "token", turnId, text }); },
         onAdjudication: (result) => dispatch({ type: "adjudication", turnId, result }),
         onDebug: (payload) => dispatch({ type: "debug", turnId, payload }),
       });
 
       if (active.ctrl.signal.aborted) throw new DOMException("Turn aborted", "AbortError");
       if (outcome.kind === "done") {
+        markBrowserTurn(requestId, "done");
         dispatch({ type: "done", turnId, result: outcome.result });
         notifyCommitted(outcome.result, requestId, draftRevision);
       } else if (outcome.kind === "error") {

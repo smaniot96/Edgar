@@ -32,14 +32,16 @@ as a new uncertain discovery or reopen a resolved combat.
 Return:
 - intent: "combat" (attacking or fighting), "rp" (talking, social interaction) or "exploration" (anything else).
 - check: the single ability/skill the attempted action tests, or null if the action is trivial or certain (walking, talking casually, looking at something in plain sight). Propose a check only when failure has a meaningful cost. Use null for routine actions: asking a willing or cooperative character a question they can answer, and routine movement such as walking or going down or up stairs with no hazard. Keep the check for picking locks, disarming traps, deceiving or sneaking past someone, climbing or jumping over a hazard, and any attempt that can really go wrong. Use: an ability (str, dex, con, int, wis, cha); a skill (athletics, acrobatics, stealth, sleight_of_hand, perception, investigation, insight, survival, medicine, arcana, history, nature, religion, animal_handling, persuasion, deception, intimidation, performance); a saving throw like "dex_save"; "thieves_tools" for locks/traps; "attack" for a weapon attack; "spell_attack" for an attack spell.
+- check_reason: the concrete uncertainty and meaningful consequence of failure that require this check, otherwise null. Unknown information is not by itself a reason to roll. Describing visible buildings, doors, terrain and inhabitants is routine, including declarative requests such as "describe the surroundings". A mixed request can inspect hidden details with a check while its plainly visible part remains available.
 - difficulty: easy | medium | hard | very_hard for the task (ignored for attacks). Use medium when unsure.
 - target: the creature/object acted on, if any (e.g. "goblin"), else null.
 - retrieval_query: a short mechanics query (<= 15 words) naming the relevant rule, skill, spell or feature. Keep NPC names, rooms and story clues out of this rules query; reviewed scene state supplies adventure context.
 - uses_item: the inventory item the player consumes/uses this turn (e.g. "potion of healing"), else null.
+- source_object_id: an exact supplied known current-scene source object ID only when the player actually interacts with that object, otherwise null. Ordinary reading, taking or activating a source object is distinct from independently casting a character spell. Do not infer a cast or a spell entity from the object's magical story procedure. Follow source prerequisites without requiring a particular wording; taking an offered object can be implicit in an ordinary use when nothing prevents it.
 - confirms_ending: true ONLY if the player explicitly agrees to end the adventure/campaign now (typically answering a question about concluding the story). Otherwise false.
 - resolution_policy_id: an exact collection-qualified key from the reviewed current-scene action choices only when the player's stated approach matches that choice; otherwise null. Never invent or expose a key.
 - recall_fact_id: an exact fact_id from the session-earned public clues only when the player explicitly asks to reread/quote/recall that clue; otherwise null. Never select a clue merely because it is the only one.
-- actions: in combat, the ordered list of actions the player's words state, one entry each: kind (attack, off_hand_attack, maneuver, item, spell, dodge, dash, disengage, ready, second_wind, rage, move or contingency), text (the player's words), and target, weapon, spell or destination when named. List only what the player states; never add an action they did not say. Empty outside combat.
+- actions: in combat, the ordered list of actions the player's words affirmatively state, one entry each: kind (attack, off_hand_attack, maneuver, item, spell, dodge, dash, disengage, ready, second_wind, rage, move, surrender, dialogue or contingency), text (the player's words), and target, weapon, spell or destination when named. List only what the player states; never add an action they did not say. A drawn weapon, named enemy, negated attack or hypothetical attack is not an attack declaration. Surrender/yield/laying down weapons is surrender, never attack or flight. Speech and negotiation are dialogue. Use unknown for unclear actions rather than inventing an attack. Empty outside combat.
 - entities: optional extra details (e.g. {{"weapon": "longsword"}}). When the player explicitly names a spell or class feature, include "spell" or "feature" with its canonical English rulebook name; preserve qualifiers and do not infer an unmentioned spell or feature.
 
 Do NOT invent dice expressions, modifiers or DCs; the engine computes them from the character sheet."""
@@ -168,6 +170,14 @@ Fill out:
   matched trigger. Physical relocation is unnecessary. An available link, a greeting unrelated
   to its trigger, or a player's statement of future intent does not itself advance an event.
   Do not advance merely to make progress, and never complete a goal because a scene changed.
+  Resolve an explicit wait until a supplied event arrives in this turn when its trigger is met;
+  do not repeatedly describe it approaching. If a source interruption prevents an answer,
+  advance that actual interruption or provide a concrete current obstacle instead of repeating
+  the same introduction. Address each question with available information or a specific reason
+  it cannot be answered now. Never disclose later exposition just to avoid a pause.
+  Only one linked scene transition can be accepted this turn. When a journey spans several
+  scenes, establish its next meaningful stop and leave onward travel for the next decision;
+  never claim arrival at a farther destination than that accepted stop.
 
 Campaign completion: if the action resolves the adventure's climax — the final antagonist is
 defeated and the story reaches its definitive conclusion — set a flag "campaign_complete" =

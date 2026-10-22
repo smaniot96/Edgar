@@ -28,6 +28,7 @@ from agent.class_features import (
 from agent.combat_declaration import Declaration
 from agent.combat_dice import _contest, _mode_log
 from agent.combat_enemy_turns import EnemyTurns
+from agent.combat_plan import phase_for
 from agent.combat_round_record import RoundRecord
 from agent.combatants import (
     CombatManeuver,
@@ -142,6 +143,7 @@ class _Turn:
     sneak_used: bool = False
     runtime_fear_blocked: bool = False
     surge_swing: bool = False
+    disengaged: bool = False
 
 
 def _strike(
@@ -178,10 +180,28 @@ def run_player_turn(rec: RoundRecord, inp: PlayerTurnInput) -> PlayerTurnResult:
     """Resolve the hero's declared slot for this round and return what it produced."""
     t = _Turn(rec=rec, inp=inp, declared=inp.decl.declared)
     _start_slot(t)
-    _bonus_actions(t)
     _action_surge(t)
-    _declared_moves(t)
-    _resolve_action(t)
+    phases = []
+    for kind in inp.decl.execution_order:
+        # An off-hand strike is resolved after the main attack by _attack, never twice.
+        if kind == "off_hand_attack":
+            continue
+        phase = phase_for(kind, inp.decl.declared)
+        if phase not in phases:
+            phases.append(phase)
+    if not phases:
+        phases = ["bonus", "move", "action"]  # legacy/readied declarations
+    for phase in phases:
+        if rec.hp <= 0 or has_effect(rec.player, "stunned") or has_effect(rec.player, "paralyzed"):
+            t.player_acted = False
+        if phase == "bonus":
+            _bonus_actions(t)
+        elif phase == "move":
+            _declared_moves(t)
+        else:
+            _resolve_action(t)
+    if "action" not in phases:
+        _resolve_action(t)  # records a move/bonus-only turn, without inventing another action
     _contingency(t)
     return PlayerTurnResult(
         player_acted=t.player_acted,
@@ -262,7 +282,7 @@ def _start_slot(t: _Turn) -> None:
 
 
 def _bonus_actions(t: _Turn) -> None:
-    """Bonus actions first (Second Wind, Healing Word, Rage): they sit beside the turn's action."""
+    """The declared bonus action, in its validated position beside the turn's action."""
     rec, inp = t.rec, t.inp
     player, character, hero = rec.player, rec.character, rec.hero
     combat_state = rec.combat_state
@@ -335,7 +355,7 @@ def _declared_moves(t: _Turn) -> None:
     decl = t.inp.decl
     if not (t.player_acted and not t.rec.fled):
         return
-    _apply_moves(t, decl.moves, disengage=decl.disengage, dash=decl.dash)
+    _apply_moves(t, decl.moves, disengage=t.disengaged, dash=decl.dash)
     if decl.dash:
         t.rec.round_effects.append("dash")
     if decl.disengage:
@@ -380,6 +400,12 @@ def _apply_moves(t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool) -> N
             moves.bands[id(foe)] = band
         if allowed:
             actual_steps.append((band, allowed))
+            for foe in allowed:
+                rec.events.append({
+                    "kind": "withdraw" if band == RANGED else "close",
+                    "text": f"{hero} {'withdraws from' if band == RANGED else 'closes with'} {foe['name']}.",
+                    "actor_id": stable_id(player), "target_id": stable_id(foe),
+                })
     moves.steps = actual_steps
     for row, distance in moves.distances:
         if id(row) not in blocked:
@@ -415,7 +441,7 @@ def _contingency(t: _Turn) -> None:
         return
     rec.log_lines.append(f"{clause.describe()} holds, so {rec.hero} carries on: {clause.branch}.")
     rec.round_effects.append("contingency")
-    _apply_moves(t, plan, disengage=decl.disengage, dash=decl.dash)
+    _apply_moves(t, plan, disengage=t.disengaged, dash=decl.dash)
 
 
 def _resolve_action(t: _Turn) -> None:
@@ -466,8 +492,7 @@ def _resolve_action(t: _Turn) -> None:
     elif decl.combat_action is not None and decl.combat_action.kind == "release":
         _release(t)
     elif (
-        t.runtime_fear_blocked
-        and decl.target is not None
+        decl.target is not None
         and not decl.is_spell
         and not decl.attack_ranged
         and (decl.is_attack or decl.combat_action is not None)
@@ -503,6 +528,12 @@ def _resolve_action(t: _Turn) -> None:
         # roll): the action is that, not a parsed check.
         if decl.dash or decl.disengage:
             t.player_action = {"action": "dash" if decl.dash else "disengage", "result": "taken"}
+            if decl.disengage:
+                t.disengaged = True
+                rec.events.append({
+                    "kind": "disengage", "text": f"{hero} takes Disengage; withdrawal this turn does not provoke opportunity attacks.",
+                    "actor_id": stable_id(player),
+                })
         elif decl.moving:
             t.player_action = {
                 "action": "move",
@@ -827,9 +858,6 @@ def fire_readied(rec: RoundRecord, turns: EnemyTurns, foe: dict) -> None:
     )
     swing = _Turn(rec=rec, inp=inp)
     _attack(swing, foe)
-    if swing.check_result is not None:
-        # The readied swing is made in the foe phase, after the adjudication that logs the hero's dice.
-        rec.dice_log.extend(swing.check_result.dice_log)
 
 
 def _maneuver(t: _Turn, combat_action: CombatManeuver, target: dict) -> None:
@@ -931,7 +959,8 @@ def _attack(t: _Turn, target: dict) -> None:
                 attack.critical = True  # PHB Appendix A: a paralyzed foe's hit from 5 feet is a crit
         if t.check_result is None:
             t.check_result = attack
-        swing_log = dice_log if swing == 0 else t.later_swing_dice
+        dice_log.extend(attack.dice_log)
+        swing_log = dice_log
         if swing:
             t.later_swing_dice.extend(attack.dice_log)
         with_text = f" with the off-hand {off_weapon.name}" if off_hand_swing else ""

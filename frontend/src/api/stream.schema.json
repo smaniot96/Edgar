@@ -473,6 +473,50 @@
           "title": "CharacterPublic",
           "type": "object"
         },
+        "CombatRoundEventPublic": {
+          "additionalProperties": false,
+          "description": "An ordered, engine-written public event from the last resolved round.",
+          "properties": {
+            "actor_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor Id"
+            },
+            "kind": {
+              "title": "Kind",
+              "type": "string"
+            },
+            "target_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Target Id"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "title": "CombatRoundEventPublic",
+          "type": "object"
+        },
         "CombatStatePublic": {
           "additionalProperties": false,
           "description": "The encounter view attached to `done` (`combat_state_public`).",
@@ -570,7 +614,8 @@
                   "enum": [
                     "victory",
                     "defeat",
-                    "fled"
+                    "fled",
+                    "surrendered"
                   ],
                   "type": "string"
                 },
@@ -579,6 +624,21 @@
                 }
               ],
               "title": "Outcome"
+            },
+            "participants": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/EncounterParticipantPublic"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Participants"
             },
             "party": {
               "anyOf": [
@@ -632,6 +692,21 @@
                 }
               ],
               "title": "Round"
+            },
+            "round_events": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/CombatRoundEventPublic"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Round Events"
             },
             "second_wind_used": {
               "title": "Second Wind Used",
@@ -834,6 +909,39 @@
             "reaction_used"
           ],
           "title": "CombatantPublic",
+          "type": "object"
+        },
+        "EncounterParticipantPublic": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "participation": {
+              "enum": [
+                "active",
+                "visible_nonparticipant"
+              ],
+              "title": "Participation",
+              "type": "string"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "participation",
+            "reason"
+          ],
+          "title": "EncounterParticipantPublic",
           "type": "object"
         },
         "HitDicePublic": {
@@ -1357,7 +1465,8 @@
               "enum": [
                 "victory",
                 "defeat",
-                "fled"
+                "fled",
+                "surrendered"
               ],
               "type": "string"
             },
@@ -1390,6 +1499,50 @@
     },
     "CombatStatePublic": {
       "$defs": {
+        "CombatRoundEventPublic": {
+          "additionalProperties": false,
+          "description": "An ordered, engine-written public event from the last resolved round.",
+          "properties": {
+            "actor_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor Id"
+            },
+            "kind": {
+              "title": "Kind",
+              "type": "string"
+            },
+            "target_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Target Id"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "title": "CombatRoundEventPublic",
+          "type": "object"
+        },
         "CombatantPublic": {
           "additionalProperties": false,
           "description": "One roster entry as the HUD and narrator may see it (`combat_state_public`).",
@@ -1526,6 +1679,39 @@
           ],
           "title": "CombatantPublic",
           "type": "object"
+        },
+        "EncounterParticipantPublic": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "participation": {
+              "enum": [
+                "active",
+                "visible_nonparticipant"
+              ],
+              "title": "Participation",
+              "type": "string"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "participation",
+            "reason"
+          ],
+          "title": "EncounterParticipantPublic",
+          "type": "object"
         }
       },
       "additionalProperties": false,
@@ -1624,7 +1810,8 @@
               "enum": [
                 "victory",
                 "defeat",
-                "fled"
+                "fled",
+                "surrendered"
               ],
               "type": "string"
             },
@@ -1633,6 +1820,21 @@
             }
           ],
           "title": "Outcome"
+        },
+        "participants": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EncounterParticipantPublic"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participants"
         },
         "party": {
           "anyOf": [
@@ -1686,6 +1888,21 @@
             }
           ],
           "title": "Round"
+        },
+        "round_events": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CombatRoundEventPublic"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Round Events"
         },
         "second_wind_used": {
           "title": "Second Wind Used",

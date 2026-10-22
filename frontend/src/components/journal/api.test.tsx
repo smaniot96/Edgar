@@ -18,7 +18,7 @@ function payload(sessionId: number) {
   };
 }
 
-function Probe({ sessionId, onRefresh }: { sessionId: number | null; onRefresh: (refresh: () => void) => void }) {
+function Probe({ sessionId, onRefresh }: { sessionId: number | null; onRefresh: (refresh: () => number) => void }) {
   const state = useJournal(sessionId);
   useEffect(() => onRefresh(state.refresh), [onRefresh, state.refresh]);
   return (
@@ -28,6 +28,7 @@ function Probe({ sessionId, onRefresh }: { sessionId: number | null; onRefresh: 
         loading: state.loading,
         stale: state.stale,
         error: Boolean(state.error),
+        settledRequestRevision: state.settledRequestRevision,
       })}
     </output>
   );
@@ -99,4 +100,23 @@ it("ignores an older session response even when its JSON resolves after a sessio
   await act(async () => { resolveOld(payload(1)); });
   expect(container.textContent).toContain('"sessionId":2');
   expect(container.textContent).not.toContain('"sessionId":1');
+});
+
+it("identifies the requested refresh and never credits an older response to it", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const pending: Array<(value: ReturnType<typeof payload>) => void> = [];
+  apiFetchMock.mockImplementation(() => Promise.resolve({ json: () => new Promise((resolve) => pending.push(resolve)) }));
+  container = document.createElement("div"); document.body.append(container);
+  root = createRoot(container);
+  let refresh!: () => number;
+  const updateRefresh = (next: () => number) => { refresh = next; };
+  await act(() => root!.render(<Probe sessionId={1} onRefresh={updateRefresh} />));
+  let revision!: number;
+  await act(async () => { revision = refresh(); pending[0](payload(1)); });
+  expect(revision).toBe(1);
+  expect(container.textContent).toContain('"loading":true');
+  expect(container.textContent).toContain('"settledRequestRevision":-1');
+  await act(async () => pending[1](payload(1)));
+  expect(container.textContent).toContain('"loading":false');
+  expect(container.textContent).toContain(`"settledRequestRevision":${revision}`);
 });

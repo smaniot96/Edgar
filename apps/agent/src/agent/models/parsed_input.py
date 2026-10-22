@@ -77,6 +77,14 @@ class ProposedAction(BaseModel):
 
 
 class ParsedInput(BaseModel):
+    source_object_id: str | None = Field(
+        default=None, max_length=128,
+        description="Exact supplied current-scene object/entity ID only when player actually interacts with it; null for questions, hypothetical actions or independent casting. Narrative source interaction is separate from character spellcasting.",
+    )
+    check_reason: str | None = Field(
+        default=None, max_length=300,
+        description="Concrete uncertainty and meaningful consequence of failure requiring the proposed check; null for routine questions/visible details/ordinary movement.",
+    )
     intent: Intent = "exploration"
     entities: dict = {}  # free-form, e.g. {"target": "goblin", "skill": "perception"}
     check: str | None = Field(

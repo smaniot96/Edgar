@@ -10,6 +10,7 @@ import {
   startAdventureCampaign,
 } from "../api/client";
 import { AdventureCover } from "../components/campaign/AdventureCover";
+import { LevelRecommendation } from "../components/campaign/LevelRecommendation";
 import {
   AdventurePreparation,
   AdventureStatusBadge,
@@ -22,7 +23,7 @@ import { ArrowLeftIcon } from "../components/ui/icons";
 import { Page } from "../components/ui/Page";
 import { linkClasses } from "../components/ui/styles";
 import { isJobActive } from "../lib/adventureJob";
-import { stripGenerationPlaceholder } from "../lib/campaign";
+import { recommendedLevels, stripGenerationPlaceholder } from "../lib/campaign";
 import { useQuery } from "../lib/useQuery";
 
 type CampaignIntent = {
@@ -317,8 +318,9 @@ function AdventureScreen({ slug }: { slug: string }) {
                 </div>
               )}
             </fieldset>
+            <LevelRecommendation range={a.level_range} heroes={characters.data?.filter((character) => selectedIds.includes(character.id))} />
             <Link
-              to="/characters"
+              to={`/characters?level=${Math.min(5, recommendedLevels(a.level_range)?.min ?? 1)}`}
               className={`inline-flex min-h-11 items-center text-sm ${linkClasses}`}
             >
               Create or manage characters

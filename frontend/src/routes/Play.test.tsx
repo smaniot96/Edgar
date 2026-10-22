@@ -11,6 +11,7 @@ import Play from "./Play";
 const harness = vi.hoisted(() => ({
   game: null as unknown,
   dispatch: vi.fn(),
+  send: vi.fn(),
   busy: false,
   historyReady: true,
   announcement: "",
@@ -18,11 +19,11 @@ const harness = vi.hoisted(() => ({
   turnOptions: null as null | { onResult?: (result: unknown) => void; onAcknowledged?: (revision: number, requestId: string) => void; onReadinessRejected?: () => void },
   lobby: null as unknown as Record<string, unknown>,
   lobbyOptions: null as null | { onTurnFinished?: (info: { own: boolean; outcome: string }) => void },
-  journal: { data: null as unknown, loading: false, error: null as unknown, stale: false, settledRevision: 0, refresh: vi.fn() },
+  journal: { data: null as unknown, loading: false, error: null as unknown, stale: false, settledRevision: 0, settledRequestRevision: -1, refresh: vi.fn().mockReturnValue(1) },
 }));
 vi.mock("../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
 vi.mock("../components/play/usePlaySession", () => ({ usePlaySession: () => harness.game }));
-vi.mock("../components/play/useTurn", () => ({ useTurn: (_sessionId: number, options: typeof harness.turnOptions) => { harness.turnOptions = options; return { dispatch: harness.dispatch, send: vi.fn(), stop: vi.fn(), retry: vi.fn(), recover: harness.recover, checkReceipt: vi.fn(), busy: harness.busy, state: { historyReady: harness.historyReady, lines: [{ id: "live", role: "dm", content: "A recently saved turn" }], pending: null, announcement: harness.announcement } }; } }));
+vi.mock("../components/play/useTurn", () => ({ useTurn: (_sessionId: number, options: typeof harness.turnOptions) => { harness.turnOptions = options; return { dispatch: harness.dispatch, send: harness.send, stop: vi.fn(), retry: vi.fn(), recover: harness.recover, checkReceipt: vi.fn(), busy: harness.busy, state: { historyReady: harness.historyReady, lines: [{ id: "live", role: "dm", content: "A recently saved turn" }], pending: null, announcement: harness.announcement } }; } }));
 vi.mock("../components/lobby/useSessionLobby", () => ({ useSessionLobby: (_id: number, options: typeof harness.lobbyOptions) => { harness.lobbyOptions = options; return harness.lobby; } }));
 vi.mock("../components/journal/api", () => ({ useJournal: () => harness.journal }));
 vi.mock("../components/MessageList", () => ({ MessageList: (props: { openEventId?: number | null }) => <p data-open-event-id={props.openEventId ?? "none"}>A recently saved turn</p> }));
@@ -35,7 +36,7 @@ function lobbyState(viewer?: Parameters<typeof lobbyFixture>[0], spotlight = spo
 }
 let container: HTMLDivElement;
 let root: Root;
-beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); localStorage.clear(); harness.busy = false; harness.historyReady = true; harness.announcement = ""; harness.turnOptions = null; harness.lobbyOptions = null; harness.lobby = lobbyState(); harness.journal = { data: null, loading: false, error: null, stale: false, settledRevision: 0, refresh: vi.fn() }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.clearAllMocks(); localStorage.clear(); harness.busy = false; harness.historyReady = true; harness.announcement = ""; harness.turnOptions = null; harness.lobbyOptions = null; harness.lobby = lobbyState(); harness.journal = { data: null, loading: false, error: null, stale: false, settledRevision: 0, settledRequestRevision: -1, refresh: vi.fn().mockReturnValue(1) }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(() => root.unmount()); container.remove(); window.history.replaceState({}, "", "/"); vi.unstubAllGlobals(); });
 it("preserves live transcript when readiness changes and disables module actions", async () => {
   const boot = { history: [{ role: "dm" as const, content: "Older boot history", created_at: "2026-10-14" }], campaignEnded: false };
@@ -121,7 +122,7 @@ it("opens verified journal history and reports only a newly committed journal de
   expect(harness.journal.refresh).toHaveBeenCalledOnce();
   const updated = journalFixture();
   updated.entries.push({ ...updated.entries[0], id: "clue-2", title: "Moon mark", history: [], origin: { ...updated.entries[0].origin, turn_number: 3 } });
-  harness.journal = { ...harness.journal, data: updated, settledRevision: 1 };
+  harness.journal = { ...harness.journal, data: updated, settledRevision: 1, settledRequestRevision: 1 };
   await act(render);
   expect(container.textContent).toContain("Journal updated: Moon mark.");
 });
@@ -384,6 +385,19 @@ it("closes a desktop tool from inside it and returns focus, but leaves Escape to
   await act(() => container.querySelector<HTMLButtonElement>('button[aria-label="Close journal"]')!.click());
   expect(panel()).toBeNull();
   expect(document.activeElement).toBe(toolbar("Journal"));
+
+  await open();
+  key(toolbar("Journal"), { key: "Escape" });
+  expect(panel()).toBeNull();
+
+  await open();
+  toolbar("Map").focus();
+  await act(() => toolbar("Map").click());
+  const closeMap = container.querySelector<HTMLButtonElement>('[aria-label="Close map"]')!;
+  closeMap.focus();
+  key(closeMap, { key: "Escape" });
+  expect(container.querySelector('[aria-label="Map tool"]')).toBeNull();
+  expect(document.activeElement).toBe(toolbar("Map"));
 });
 
 it("keeps the single polite announcement region outside the inert background while a tool is open", async () => {
@@ -513,4 +527,39 @@ it("migrates a saved journal category into its matching section", async () => {
   await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
   expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Goals");
   expect(JSON.parse(localStorage.getItem("edgar_play_workspace:v1:1")!).view).toBe("goals");
+});
+
+it("keeps desktop consultation optional, confirms beside the composer, and appends inspected targets without sending", async () => {
+  stubViewport(false);
+  harness.game = { ...gameFixture(), combat: { round: 2, ended: false, outcome: null, pending_declaration: { summary: "Disengage, then withdraw. No dice rolled yet." }, combatants: [
+    { id: "hero:1", name: "Mira", is_player: true, hp_current: 11, hp_max: 44, alive: true },
+    { id: "actor:guz", name: "Guz", is_player: false, hp_current: 67, hp_max: 67, alive: true, band: "melee" },
+  ] } };
+  harness.journal = { ...harness.journal, data: journalFixture() };
+  await act(() => root.render(<MemoryRouter initialEntries={["/play/1"]}><Routes><Route path="/play/:sessionId" element={<Play />} /></Routes></MemoryRouter>));
+  const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(() => { setter.call(textarea, "I ask"); textarea.dispatchEvent(new Event("input", { bubbles: true })); });
+  expect(container.querySelector('[aria-label="Adventure orientation and tools"]')?.textContent).not.toContain("Session recap");
+  const confirmation = container.querySelector('[aria-label="Confirm declaration"]')!;
+  expect(confirmation.closest("main")?.contains(textarea)).toBe(true);
+  expect(confirmation.closest('[aria-label="Combat"]')).toBeNull();
+  const encounterButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Encounter view")!;
+  await act(() => encounterButton.click());
+  expect(container.querySelector('[aria-label="Encounter schematic"]')).not.toBeNull();
+  await act(() => container.querySelector<HTMLButtonElement>('[aria-label="Inspect Guz"]')!.click());
+  expect(textarea.value).toBe("I ask");
+  await act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Full view")!.click());
+  await frame();
+  expect(container.querySelector('[aria-label="Map tool"]')?.getAttribute("aria-modal")).toBe("true");
+  await act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Add target to draft")!.click());
+  await frame();
+  expect(textarea.value).toBe("I ask Guz");
+  expect(container.querySelector('[aria-label="Map tool"]')?.getAttribute("aria-modal")).toBeNull();
+  expect(document.activeElement).toBe(textarea);
+  expect(harness.send).not.toHaveBeenCalled();
+  await act(() => container.querySelector<HTMLButtonElement>('[data-play-tool-trigger="recap"]')!.click());
+  expect(container.querySelector('aside[aria-label^="Recap"]')?.textContent).toContain("Session recap");
+  expect(container.querySelector('aside[aria-label^="Recap"]')?.textContent).toContain("Ideas");
+  expect(textarea.value).toBe("I ask Guz");
 });

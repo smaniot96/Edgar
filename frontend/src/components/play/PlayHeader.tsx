@@ -39,12 +39,12 @@ export function PlayHeader({
             {campaignId != null ? (
               <Link
                 to={`/campaigns/${campaignId}`}
-                className="line-clamp-2 whitespace-normal break-words [overflow-wrap:anywhere] font-display text-lg font-semibold leading-tight text-ink hover:text-ember-200"
+                className="line-clamp-2 lg:line-clamp-1 whitespace-normal break-words [overflow-wrap:anywhere] font-display text-lg font-semibold leading-tight text-ink hover:text-ember-200"
               >
                 {title}
               </Link>
             ) : (
-              <span className="line-clamp-2 whitespace-normal break-words [overflow-wrap:anywhere] font-display text-lg font-semibold leading-tight text-ink">{title}</span>
+              <span className="line-clamp-2 lg:line-clamp-1 whitespace-normal break-words [overflow-wrap:anywhere] font-display text-lg font-semibold leading-tight text-ink">{title}</span>
             )}
           </h1>
           <details className="group relative z-20 shrink-0">
@@ -82,7 +82,7 @@ export function PlayHeader({
           aria-controls="character-sheet"
           aria-label={`${sheetOpen ? "Hide" : "Show"} character sheet for ${character.name || "Adventurer"}`}
           className={cn(
-            "flex min-h-11 w-full min-w-0 shrink-0 flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors sm:w-44 sm:py-1 sm:px-2.5 md:w-56",
+            "flex min-h-11 w-full min-w-0 shrink-0 flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors sm:w-44 sm:py-1 sm:px-2.5 md:w-56 lg:gap-0 lg:py-1",
             "focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400",
             sheetOpen
               ? "border-ember-700/70 bg-ember-950/30"

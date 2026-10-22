@@ -452,8 +452,8 @@ export function listCharacterAssignments(
   return getJson(`/api/characters/${id}/assignments`, signal);
 }
 
-export function listCharacterPresets(signal?: AbortSignal): Promise<CharacterPreset[]> {
-  return getJson("/api/character-presets", signal);
+export function listCharacterPresets(signal?: AbortSignal, level = 1): Promise<CharacterPreset[]> {
+  return getJson(`/api/character-presets?level=${level}`, signal);
 }
 
 export interface CharacterCreateBody {

@@ -15,7 +15,7 @@ function focusableWithin(container: HTMLElement): HTMLElement[] {
   });
 }
 
-/** Escape closes a tool and focus returns to its opener; narrow-screen dialogs also contain focus. */
+/** Escape closes a tool and focus returns to its opener; modal tools also contain focus. */
 export function useModalFocus(
   open: boolean,
   modal: boolean,
@@ -29,9 +29,10 @@ export function useModalFocus(
       openerRef.current = null;
       return;
     }
-    // Expanding a side panel into a modal must preserve its original toolbar opener.
-    if (!openerRef.current?.isConnected) {
-      openerRef.current = findOpener?.() ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    // A tool switch gets its own toolbar opener. Expanding the same tool keeps that opener.
+    const resolvedOpener = findOpener?.();
+    if (resolvedOpener || !openerRef.current?.isConnected) {
+      openerRef.current = resolvedOpener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     }
     const previous = openerRef.current;
     const container = containerRef.current;
@@ -45,7 +46,8 @@ export function useModalFocus(
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         // Escape cancels an IME composition, and the composer beside a nonmodal sidebar keeps its own Escape.
-        if (event.isComposing || (!modal && !container?.contains(event.target as Node))) return;
+        const fromToolBar = event.target instanceof Element && !!event.target.closest("[data-play-tool-trigger]");
+        if (event.isComposing || (!modal && !container?.contains(event.target as Node) && !fromToolBar)) return;
         event.preventDefault();
         onClose();
         return;

@@ -8,7 +8,7 @@ import { ComposerBar } from "../components/ComposerBar";
 import { MessageList } from "../components/MessageList";
 import { CampaignEndPanel } from "../components/play/CampaignEndPanel";
 import { CharacterSheet } from "../components/play/CharacterSheet";
-import { CombatHud } from "../components/play/CombatHud";
+import { CombatDeclaration, CombatHud } from "../components/play/CombatHud";
 import { DevPipeline } from "../components/play/DevPipeline";
 import { PlayRecap } from "../components/play/PlayRecap";
 import { PlayIdeas } from "../components/play/PlayIdeas";
@@ -30,6 +30,8 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { OfflineState } from "../components/ui/ErrorNotice";
 import { useMode } from "../dev/ModeContext";
 import { useDeveloperTraces } from "../components/play/useDeveloperTraces";
+import { BrowserTurnTimings } from "../dev/BrowserTurnTimings";
+import { afterBrowserPaint, markBrowserTurn } from "../dev/browserTurnTimeline";
 
 function journalSnapshot(data: import("../components/journal/types").JournalRead) {
   return new Map(data.entries.map((entry) => [
@@ -99,10 +101,11 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const activeTool = workspace.activeTool;
   const narrow = useNarrowViewport();
   const journal = useJournal(sessionId);
-  const { data: sessionMapData, loading: sessionMapLoading, error: sessionMapError, refresh: refreshSessionMap } = useSessionMap(sessionId, activeTool === "map");
-  const { data: journalData, refresh: refreshJournal, settledRevision: journalSettledRevision } = journal;
+  const { data: sessionMapData, loading: sessionMapLoading, error: sessionMapError, refresh: refreshSessionMap, settledRequestRevision: mapSettledRequestRevision } = useSessionMap(sessionId, activeTool === "map");
+  const { data: journalData, refresh: refreshJournal, settledRequestRevision: journalSettledRequestRevision } = journal;
   const thread = currentThread(journalData);
   const [introPending, setIntroPending] = useState(false);
+  const [encounterViewRevision, setEncounterViewRevision] = useState(0);
   const [openEventId, setOpenEventId] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -111,6 +114,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   const knownRequestRef = useRef<string | null>(null);
   const recoveredRequestRef = useRef<string | null>(null);
   const pendingJournalFeedbackRef = useRef<{ before: Map<string, string>; afterRevision: number } | null>(null);
+  const pendingBrowserRefreshRef = useRef<{ requestId: string; journalRevision: number; mapRevision: number | null } | null>(null);
   const [journalFeedback, setJournalFeedback] = useState("");
   const [journalFeedbackEntryId, setJournalFeedbackEntryId] = useState<string | null>(null);
 
@@ -188,15 +192,22 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     historyOverlayRef.current = true;
   }, [activeTool]);
   const handleCommittedResult = useCallback((result: import("../api/types").TurnResult) => {
+    const journalRevision = refreshJournal();
+    const mapRevision = refreshSessionMap();
+    if (knownRequestRef.current) pendingBrowserRefreshRef.current = { requestId: knownRequestRef.current, journalRevision, mapRevision: activeTool === "map" ? mapRevision : null };
     applyTurnResult(result);
     pendingJournalFeedbackRef.current = journalData
-      ? { before: journalSnapshot(journalData), afterRevision: journalSettledRevision + 1 }
+      ? { before: journalSnapshot(journalData), afterRevision: journalRevision }
       : null;
     setJournalFeedback("");
     setJournalFeedbackEntryId(null);
-    refreshJournal();
-    refreshSessionMap();
-  }, [applyTurnResult, journalData, refreshJournal, journalSettledRevision, refreshSessionMap]);
+  }, [activeTool, applyTurnResult, journalData, refreshJournal, refreshSessionMap]);
+  useEffect(() => {
+    const expected = pendingBrowserRefreshRef.current;
+    if (!expected) return;
+    if (!journal.loading && journalSettledRequestRevision === expected.journalRevision) markBrowserTurn(expected.requestId, "journal_settled");
+    if (expected.mapRevision !== null && !sessionMapLoading && mapSettledRequestRevision === expected.mapRevision) markBrowserTurn(expected.requestId, "map_settled");
+  }, [journal.loading, journalSettledRequestRevision, mapSettledRequestRevision, sessionMapLoading]);
   const turn = useTurn(sessionId, {
     debug: isDev,
     onResult: handleCommittedResult,
@@ -246,11 +257,17 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
   // Only someone who can act starts the story. Until the roster settles nobody does; a failed roster
   // read falls back to the solo behaviour so a lobby outage never blocks play.
   const introAllowed = lobby.loaded && (viewer === null || viewer.user_id === null || viewer.role === "owner" || viewer.character_id !== null);
+  useEffect(() => {
+    const requestId = knownRequestRef.current;
+    if (!requestId || busy || hasUncertainAction || campaignComplete || game.loading || introPending || !lobby.loaded || !canAct || game.readiness?.play_allowed !== true) return;
+    return afterBrowserPaint(() => markBrowserTurn(requestId, "composer_ready"));
+  }, [busy, canAct, campaignComplete, game.loading, game.readiness?.play_allowed, hasUncertainAction, introPending, lobby.loaded]);
 
   useEffect(() => {
     const pendingFeedback = pendingJournalFeedbackRef.current;
-    if (!pendingFeedback || journal.loading || journal.settledRevision < pendingFeedback.afterRevision) return;
+    if (!pendingFeedback || journal.loading || journal.settledRequestRevision < pendingFeedback.afterRevision) return;
     pendingJournalFeedbackRef.current = null;
+    if (journal.settledRequestRevision !== pendingFeedback.afterRevision) return;
     if (journal.error || !journal.data) return;
     const changed = journal.data.entries.filter((entry) => {
       const after = JSON.stringify([entry.status, entry.history.map((change) => [change.status, change.turn_number])]);
@@ -262,7 +279,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
     const suffix = changed.length + removed.length > titles.length ? ` and ${changed.length + removed.length - titles.length} more` : "";
     setJournalFeedbackEntryId(changed[0]?.id ?? null);
     setJournalFeedback(`Journal updated: ${titles.join(", ")}${suffix}.`);
-  }, [journal.data, journal.error, journal.loading, journal.settledRevision]);
+  }, [journal.data, journal.error, journal.loading, journal.settledRequestRevision]);
 
   // History seeding depends only on boot, so changing source readiness preserves live chat.
   useEffect(() => {
@@ -375,7 +392,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           inert={narrow && activeTool !== null}
           aria-hidden={narrow && activeTool !== null ? true : undefined}
         >
-          <div role="region" aria-label="Adventure orientation and tools" className="min-h-0 max-h-[45%] shrink overflow-y-auto overscroll-contain">
+          <div role="region" aria-label="Adventure orientation and tools" className="min-h-0 max-h-[30%] shrink overflow-y-auto overscroll-contain">
           <PlayHeader
             title={game.title}
             campaignId={game.campaignId}
@@ -393,22 +410,10 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
             void game.refreshReadiness();
           }} /> : null}
           {isDev ? <DevPipeline stage={pending?.stage ?? null} /> : null}
-          <PlayRecap
-            data={journal.data}
-            loading={journal.loading}
-            error={journal.error}
-            onOpenEntry={openJournalEntry}
-            onResume={resumeAdventure}
-          />
-          <div role="group" aria-label="Current adventure context" className="mx-3 mb-2 flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-control bg-surface/60 px-3 py-2 text-xs [overflow-wrap:anywhere] sm:mx-4">
+          <div role="group" aria-label="Current adventure context" className="mx-3 flex shrink-0 flex-wrap gap-x-4 gap-y-1 px-1 py-1 text-xs [overflow-wrap:anywhere] sm:mx-4 [&_button]:min-h-7">
             <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">Place: </span>{journal.data?.current_place ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(journal.data!.current_place!.id)}>{journal.data.current_place.title}</button> : <span className="text-ink-muted">Unknown</span>}</p>
             <p className="min-w-0 whitespace-normal break-words"><span className="font-semibold text-ink-subtle">{journal.data?.active_goal ? "Goal" : "Latest lead"}: </span>{thread ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => openJournalEntry(thread.id)}>{thread.title}</button> : <span className="text-ink-muted">No lead recorded yet</span>}</p>
           </div>
-          {canAct ? <PlayIdeas
-            data={journal.data}
-            hasDraft={draft.trim().length > 0}
-            onAppend={(idea) => editDraft(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${idea}`)}
-          /> : null}
           {journalFeedback ? (
             <p role="status" className="mx-3 my-2 flex shrink-0 items-center justify-between gap-3 rounded-control bg-success-soft px-3 py-2 text-sm text-success sm:mx-4">
               <span>{journalFeedback}</span>
@@ -418,9 +423,9 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
 
           </div>
           <PlayToolBar activeTool={activeTool} onToggle={toggleTool} />
-          <div className="flex min-h-[min(55%,16rem)] flex-1">
+          <div className="flex min-h-0 flex-1">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {game.combat ? <CombatHud combat={game.combat} onReply={canAct ? handleQuickReply : undefined} /> : null}
+              {game.combat ? <CombatHud compact showDeclaration={false} combat={game.combat} onReply={canAct ? handleQuickReply : undefined} onOpenEncounter={() => { setEncounterViewRevision((value) => value + 1); setActiveTool("map"); }} /> : null}
 
               {game.loading ? (
                 <div className="flex flex-1 items-center justify-center">
@@ -452,6 +457,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
               )}
 
               <div ref={composerRef} className="shrink-0">
+                {game.combat?.pending_declaration ? <div className="px-3 py-2"><CombatDeclaration combat={game.combat} onReply={canAct && !busy ? handleQuickReply : undefined} /></div> : null}
                 {campaignComplete ? (
                   <CampaignEndPanel campaignId={game.campaignId} onReopened={handleReopened} />
                 ) : !canAct ? (
@@ -488,6 +494,14 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
           onReadItem={openJournalEntry}
         />
         <PlayToolPanel
+          key={`tools:${encounterViewRevision}`}
+          combat={game.combat}
+          onSelectTarget={canAct ? (name) => { editDraft(draft ? `${draft}${/\s$/.test(draft) ? "" : " "}${name}` : name); requestAnimationFrame(() => inputRef.current?.focus()); } : undefined}
+          consultation={<>
+            {isDev ? <BrowserTurnTimings sessionId={sessionId} /> : null}
+            <PlayRecap data={journal.data} loading={journal.loading} error={journal.error} onOpenEntry={openJournalEntry} onResume={resumeAdventure} />
+            {canAct ? <PlayIdeas data={journal.data} hasDraft={draft.trim().length > 0} onAppend={(idea) => editDraft(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${idea}`)} /> : null}
+          </>}
           activeTool={activeTool}
           journal={{ data: journal.data, loading: journal.loading, error: journal.error, stale: journal.stale }}
           query={workspace.query}

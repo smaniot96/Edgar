@@ -32,6 +32,11 @@ function Probe({ sessionId }: { sessionId: number }) {
   return <output>{loading ? "loading" : data ? `${data.session_id}:${data.source_version}` : "empty"}</output>;
 }
 
+function RefreshProbe() {
+  const state = useSessionMap(1, true);
+  return <><button onClick={() => state.refresh()}>Refresh</button><output>{state.loading ? "loading" : state.data?.source_version} · {state.settledRequestRevision}</output></>;
+}
+
 beforeEach(() => vi.clearAllMocks());
 
 it("drops aborted map responses and never shows the prior session's data", async () => {
@@ -70,5 +75,22 @@ it("drops aborted map responses and never shows the prior session's data", async
     await act(() => root.unmount());
     container.remove();
     vi.unstubAllGlobals();
+  }
+});
+
+it("keeps a refresh pending when an older request finishes and identifies its own settlement", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const requests: Array<(value: SessionMapRead) => void> = [];
+  vi.mocked(getSessionMap).mockImplementation(() => new Promise((resolve) => requests.push(resolve)));
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(() => root.render(<RefreshProbe />));
+    await act(async () => { container.querySelector("button")!.click(); requests[0](mapFor(1, "old")); });
+    expect(container.querySelector("output")?.textContent).toBe("loading · -1");
+    await act(async () => requests[1](mapFor(1, "new")));
+    expect(container.querySelector("output")?.textContent).toBe("new · 1");
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
   }
 });

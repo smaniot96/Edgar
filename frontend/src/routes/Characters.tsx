@@ -4,7 +4,7 @@
  */
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { deleteCharacter, listAdventures, listCampaigns, listCharacters } from "../api/client";
 import type { CharacterAssignmentRef, CharacterListItem } from "../api/types";
@@ -21,6 +21,8 @@ import { cn } from "../lib/cn";
 import { useQuery } from "../lib/useQuery";
 
 export default function Characters() {
+  const [search] = useSearchParams();
+  const requestedLevel = Number(search.get("level") ?? 1);
   const { isDev } = useMode();
   const chars = useQuery("characters", (signal) => listCharacters(signal));
   // Assignments carry the stored campaign title, which can be a session name ("Solo Session").
@@ -66,7 +68,7 @@ export default function Characters() {
         description="Your player characters. A character can be engaged in one campaign at a time."
       />
 
-      <CharacterForm onCreated={() => chars.refetch()} />
+      <CharacterForm initialLevel={requestedLevel} onCreated={() => chars.refetch()} />
 
       <ErrorNotice error={actionError} />
 

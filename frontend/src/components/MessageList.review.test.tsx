@@ -6,6 +6,21 @@ import { MessageList } from "./MessageList";
 import type { JournalEntry } from "./journal/types";
 vi.mock("../dev/ModeContext", () => ({ useMode: () => ({ isDev: false }) }));
 
+it("labels surrender distinctly when combat ends", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(() => root.render(<MessageList messages={[{
+      id: "turn-surrender", role: "dm", content: "Guz accepts your surrender.", combatOutcome: "surrendered",
+    }]} pending={null} />));
+    expect(container.textContent).toContain("Combat over · Surrendered");
+    expect(container.textContent).not.toContain("Combat over · Fled");
+  } finally {
+    await act(() => root.unmount()); container.remove(); vi.unstubAllGlobals();
+  }
+});
+
 it("adds accessible links beside saved narration without changing its text", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div"); document.body.append(container);

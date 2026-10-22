@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   createCharacter: vi.fn(),
   createSession: vi.fn(),
   getCampaign: vi.fn(),
+  getAdventure: vi.fn(),
   listCharacterPresets: vi.fn(),
   listCharacters: vi.fn(),
   listSessions: vi.fn(),
@@ -75,6 +76,7 @@ beforeEach(() => {
   clearCampaignSetupProgress(campaign.id);
   vi.spyOn(crypto, "randomUUID").mockReturnValue("11111111-1111-4111-8111-111111111111");
   api.getCampaign.mockResolvedValue(campaign);
+  api.getAdventure.mockResolvedValue({ level_range: "4/5" });
   api.listCharacters.mockResolvedValue([existingCharacter]);
   api.listCharacterPresets.mockResolvedValue([preset]);
   api.listSessions.mockResolvedValue([]);
@@ -82,6 +84,33 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("defaults to a single assigned hero and starts without repeating selection or assignment", async () => {
+  const assigned = { ...existingCharacter, current_assignment: { campaign_id: campaign.id, campaign_title: campaign.title } };
+  api.listCharacters.mockResolvedValue([assigned]);
+  api.createSession.mockResolvedValue(createdSession);
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  expect(container.textContent).toContain("Create your saved playthrough");
+  expect(container.textContent).toContain("Starting with Mara Venn");
+  expect(container.textContent).toContain("outside this range");
+  expect(container.textContent).toContain("keeps their current campaign HP and resources");
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Start saved playthrough"))!.click(); });
+  await settle();
+  expect(api.assignCharacterToCampaign).not.toHaveBeenCalled();
+  expect(api.createSession).toHaveBeenCalledWith(campaign.id, assigned.id, expect.any(String));
+  expect(container.textContent).toContain("Play route");
+});
+
+it("lets a default assigned hero be changed without auto-selecting it again", async () => {
+  api.listCharacters.mockResolvedValue([{ ...existingCharacter, current_assignment: { campaign_id: campaign.id, campaign_title: campaign.title } }]);
+  await act(async () => { renderSetup(); await Promise.resolve(); });
+  await settle();
+  await act(async () => { [...container.querySelectorAll("button")].find((button) => button.textContent === "Change hero")!.click(); });
+  await settle();
+  expect(container.textContent).toContain("Choose who will explore");
+  expect(api.createSession).not.toHaveBeenCalled();
 });
 
 afterEach(async () => {

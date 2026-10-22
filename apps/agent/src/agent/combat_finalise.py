@@ -145,6 +145,8 @@ def settle_round(
         reaction="readied attack" if readied_fired else None,
     )
     view = initiative_view(combatants)
+    if rec.events or "round_events" in player:
+        player["round_events"] = rec.events[-40:]
     player_view_index = next((i for i, c in enumerate(view) if c["is_player"]), 0)
     combat_state.update(
         {
@@ -161,6 +163,7 @@ def settle_round(
             "raging": bool(player.get("raging")),
             "current_turn_index": player_view_index,
             "current_turn": None if ended else _display(player),
+            **({"round_events": rec.events[-40:]} if rec.events or "round_events" in player else {}),
         }
     )
     return RoundEnd(ended=ended, outcome=outcome, second_wind_used=second_wind_used)
@@ -192,9 +195,8 @@ def settle_adjudication(rec: RoundRecord, inp: SettlementInput) -> RoundSettleme
     adj.character_update = cu
     adj.damage = inp.dealt or None
     adj.dice_log = [
-        *adj.dice_log,
-        *[d for d in rec.dice_log if d not in adj.dice_log],
-        *inp.later_swing_dice,
+        *rec.dice_log,
+        *[d for d in adj.dice_log if d not in rec.dice_log],
     ]
     # Declared unsupported mechanics are ruled on in the round summary (no engine effect).
     summary_text = " ".join(line for line in log_lines if line)

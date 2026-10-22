@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from db.postgres.models import EventLog
+from edgar_core.public_places import public_place_label
 from edgar_core.story import (
     StoryFact,
     adjudicated_goal_outcome,
@@ -214,6 +215,7 @@ def project_player_journal(
     narration_events: Iterable[EventLog],
     *,
     active_character_id: int | None = None,
+    current_scene_id: str | None = None,
     prepared: JournalPreparedLabels | None = None,
     observations: Iterable[tuple[int, str, list[str]]] = (),
 ) -> JournalRead:
@@ -456,6 +458,8 @@ def project_player_journal(
                 if category in {"clue", "hint", "place"}
                 else ""
             ) or _TITLE[category]
+        if category == "place":
+            title = public_place_label(first_public["text"], title) or "Known location"
         origin_turn = event_order.get(origin_event_id) if origin_event_id is not None else None
         origin_place_entry_id = (
             place_at_event.get(origin_event_id) if origin_event_id is not None else None
@@ -626,6 +630,15 @@ def project_player_journal(
         (entry for _, entry in built if entry.id == latest_place_entry_id),
         None,
     )
+    if current_scene_id is not None:
+        current_ids = {
+            journal_entry_id(session_id, "place", fact.fact_id)
+            for fact, _, category, _ in safe_records
+            if category == "place"
+            and fact.kind in {"visit", "move"}
+            and fact.target.canonical_id == current_scene_id
+        }
+        current_place = next((entry for entry in entries if entry.id in current_ids), None)
     active_goal = next(
         (entry for _, entry in built if entry.category == "goal" and entry.status == "active"),
         None,

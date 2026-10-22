@@ -269,6 +269,11 @@ def plan_moves(
             changing = at_range
         for foe in changing:
             bands[id(foe)] = band
+            # A coarse band change invalidates an earlier measured scalar. Persist a consistent
+            # band-derived distance rather than retain (for example) 5 feet at ranged distance.
+            if "distance_ft" in foe:
+                plan.distances = [(row, d) for row, d in plan.distances if row is not foe]
+                plan.distances.append((foe, MELEE_FEET if band == MELEE else RANGED_START_FEET))
         if changing:
             plan.steps.append((band, changing))
     return plan

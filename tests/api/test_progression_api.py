@@ -208,6 +208,35 @@ async def test_a_won_encounter_grants_one_milestone_once(api_client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ordered_round_events_survive_combat_reload(api_client) -> None:
+    from apps.api.services.combat import load_active_combat, persist_combat
+    from apps.api.services.turn_runner import combat_state_public
+
+    seeded = await _seed(api_client)
+    events = [
+        {"kind": "second_wind", "text": "Hero regains 5 HP.", "actor_id": "Hero"},
+        {"kind": "attack", "text": "Hero attacks Goblin.", "actor_id": "Hero", "target_id": "Goblin"},
+    ]
+    participants = [{"id": "watcher", "name": "A watcher", "participation": "visible_nonparticipant", "reason": "Remains outside this exchange."}]
+    state = {
+        "initiative_order": ["Hero", "Goblin"], "round": 2, "ended": False,
+        "current_turn_index": 0, "outcome": None,
+        "combatants": [
+            {"name": "Hero", "is_player": True, "init": 20, "round_events": events, "encounter_participants": participants},
+            {"name": "Goblin", "is_player": False, "init": 5},
+        ],
+    }
+    async with sm.async_session_factory() as s:
+        await persist_combat(s, seeded["session_id"], state)
+        await s.commit()
+    async with sm.async_session_factory() as s:
+        reloaded = await load_active_combat(s, seeded["session_id"])
+    assert reloaded["round_events"] == events
+    assert combat_state_public(reloaded)["round_events"] == events
+    assert combat_state_public(reloaded)["participants"] == participants
+
+
+@pytest.mark.asyncio
 async def test_milestones_are_not_granted_past_the_cap(api_client) -> None:
     seeded = await _seed(api_client)
     cid, sid = seeded["campaign_id"], seeded["session_id"]

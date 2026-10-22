@@ -40,6 +40,7 @@ export function CharacterForm({
   onDraftChange,
   onCreateRequested,
   onEditPendingCreate,
+  initialLevel = 1,
 }: {
   onCreated: (character: CharacterRead) => void;
   onCancel?: () => void;
@@ -53,8 +54,13 @@ export function CharacterForm({
   /** Called synchronously before the API request so setup can durably retain its retry key. */
   onCreateRequested?: (request: PendingCharacterCreate) => boolean | void;
   onEditPendingCreate?: () => void;
+  initialLevel?: number;
 }) {
-  const presets = useQuery("character-presets", (signal) => listCharacterPresets(signal));
+  const [level, setLevel] = useState(() => {
+    const saved = pendingCreate?.body.level ?? Number(initialDraft?.presetKey?.match(/_l([1-5])$/)?.[1] ?? initialLevel);
+    return saved >= 1 && saved <= 5 ? saved : 1;
+  });
+  const presets = useQuery(`character-presets:${level}`, (signal) => listCharacterPresets(signal, level));
   // `null` = follow the first preset until the player picks one.
   const [pickedKey, setPickedKey] = useState<string | null>(initialDraft?.presetKey ?? null);
   const [name, setName] = useState(initialDraft?.name ?? "");
@@ -99,6 +105,7 @@ export function CharacterForm({
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!retainedCreate && !selected) return;
     const hp = Number.parseInt(hpValue, 10);
     if (!Number.isFinite(hp) || hp < 1) {
       setHpError("Enter a whole number of at least 1.");
@@ -144,6 +151,24 @@ export function CharacterForm({
           </Button>
         ) : null}
       </div>
+
+      <label className="block space-y-1 text-sm">
+        <span className="font-medium text-ink-muted">Starting level</span>
+        <select aria-label="Starting level" value={level} disabled={locked || busy}
+          className="min-h-11 rounded-control border border-line bg-surface-sunken px-3"
+          onChange={(event) => {
+            const nextLevel = Number(event.target.value);
+            const nextKey = selected ? `${selected.character_class.toLowerCase()}_l${nextLevel}` : `fighter_l${nextLevel}`;
+            setLevel(nextLevel);
+            setPickedKey(nextKey);
+            setHpText(null);
+            setHpError(null);
+            saveDraft({ presetKey: nextKey, hpText: null });
+          }}>
+          {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>Level {value}</option>)}
+        </select>
+        <span className="block text-xs text-ink-muted">HP and abilities follow the chosen level. Level 4 includes +2 to your class’s main ability.</span>
+      </label>
 
       {presets.pending ? (
         <LoadingText>Loading presets…</LoadingText>
@@ -239,7 +264,7 @@ export function CharacterForm({
           Edit details after validation error
         </Button>
       ) : null}
-      <Button type="submit" loading={busy} loadingText="Creating…">
+      <Button type="submit" disabled={!locked && !selected} loading={busy} loadingText="Creating…">
         {locked ? "Retry saved hero creation" : submitLabel}
       </Button>
     </form>

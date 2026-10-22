@@ -303,7 +303,9 @@ async def test_golden_covers_each_named_branch(
     assert golden["flee"]["combat_state"]["outcome"] == "fled"
     assert "Who do you attack?" in golden["clarification_question"]["narration"]
     assert golden["captive_ruling"]["captive_outcome"]
-    assert golden["encounter_setup_roster"]["combat_state"]["round"] == 2
+    assert golden["encounter_setup_roster"]["combat_state"]["round"] == 1
+    assert golden["encounter_setup_roster"]["adjudication_result"]["dice_log"] == []
+    assert "Confirm before any dice" in golden["encounter_setup_roster"]["narration"]
     assert any(
         c["name"] == "Troll" for c in golden["encounter_setup_roster"]["combat_state"]["combatants"]
     )

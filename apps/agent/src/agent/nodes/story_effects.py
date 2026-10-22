@@ -14,6 +14,7 @@ from agent.resolution_policies import policy_effect_key
 from agent.state import AgentState
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import require_published, select_scene_context
+from edgar_core.public_places import public_place_label
 from edgar_core.sources import eligible_context, source_citation
 from edgar_core.story import (
     HOMEBREW_KINDS,
@@ -347,8 +348,8 @@ def _reviewed_chunk(chunk: dict, state: AgentState) -> bool:
 def _arrival_chunks(target: StoryRef, chunks: list[dict], state: AgentState) -> list[dict]:
     """Unconditional-to-this-session player arrival text of one scene, exactly as reviewed.
 
-    Being in a scene is engine state. Its own player passage naming it as a known place is
-    what the player sees on arrival, so it may orient the journal without any private text.
+    Being in a scene is engine state. Its own public arrival passage orients the journal
+    even when it does not disclose the location's private prepared name.
     """
     value = (state.get("adventure_manifests") or {}).get(target.collection)
     if value is None:
@@ -360,7 +361,7 @@ def _arrival_chunks(target: StoryRef, chunks: list[dict], state: AgentState) -> 
         for p in manifest.passages
         if p.audience == "player"
         and target.canonical_id in p.scene_ids
-        and target.canonical_id in p.known_scene_ids
+        and p.scene_ids == [target.canonical_id]
         and all(flags.get(k) == v for k, v in p.requires.items())
     }
     return [
@@ -663,7 +664,9 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             source_refs=source_refs,
             evidence_kind="dm_adjudication" if dm_goal or dm_transition else "source",
             origin_turn_id=state["turn_id"] if dm_goal or dm_transition else None,
-            display_name=(
+            display_name=public_place_label(public_text, candidate["title"])
+            if proposal.target.kind == "scene" and public_text
+            else (
                 candidate["title"]
                 if any(candidate["title"] in c["text"] for c in public)
                 or (

@@ -995,6 +995,17 @@ def resolve_from_parsed(
         if routine_check_waived(player_input, check):
             log.info("routine_check_waived", extra={"check": norm[0]})
             return None, []
+        if (
+            norm is not None
+            and norm[0] in _QUESTION_CHECKS | _MOVEMENT_CHECKS
+            and "check_reason" in getattr(parsed, "model_fields_set", set())
+            and not getattr(parsed, "check_reason", None)
+            and not _RISK_WORDS.search(player_input)
+        ):
+            # New parser outputs must justify uncertainty. Archived parser shapes retain
+            # their historical behavior; genuine risks still use the engine check.
+            log.info("unjustified_routine_check_waived", extra={"check": norm[0]})
+            return None, []
         return resolve_check(
             character, check, difficulty, hint=hint, rng=rng, impaired=impaired
         ), []

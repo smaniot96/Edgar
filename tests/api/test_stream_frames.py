@@ -34,6 +34,29 @@ from apps.api.services.turn_runner import (
 GOLDEN_PATH = Path(__file__).parent / "fixtures" / "stream_frames.golden.json"
 
 
+def test_round_events_public_projection_bounds_and_filters_private_receipts() -> None:
+    state = _combat_state()
+    state["round_events"] = [
+        {
+            "kind": "attack", "text": "Edgar attacks Goblin.",
+            "actor_id": "Edgar", "target_id": "Goblin", "private_receipt": "secret",
+        },
+        {"kind": "move", "text": "An actor withdraws.", "actor_id": "hidden-actor"},
+        {"kind": "invalid", "text": ""},
+        "invalid",
+    ]
+    public = combat_state_public(state)
+    assert public["round_events"] == [
+        {"kind": "attack", "text": "Edgar attacks Goblin.", "actor_id": "Edgar", "target_id": "Goblin"},
+        {"kind": "move", "text": "An actor withdraws."},
+    ]
+    state["round_events"] = [{"kind": "a" * 100, "text": "b" * 600}] * 40
+    public = combat_state_public(state)
+    assert len(public["round_events"]) == 32
+    assert len(public["round_events"][0]["kind"]) == 80
+    assert len(public["round_events"][0]["text"]) == 500
+
+
 def _combat_state() -> dict[str, Any]:
     """A roster with one hero and one foe, shaped like the persisted combat dict."""
     return {

@@ -33,6 +33,10 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "api" /
 
 # AdjudicationResult fields the runner strips before the frame leaves the engine.
 ENGINE_ONLY_ADJUDICATION_FIELDS = {
+    "accepted_observations",
+    "observation_diagnostics",
+    "source_observations",
+    "combat_offer",
     "story_effects",
     "accepted_story_effects",
     "homebrew_proposals",

@@ -621,7 +621,7 @@ export interface Combatant {
   fled?: boolean | null;
 }
 
-export type CombatOutcome = "victory" | "defeat" | "fled" | null;
+export type CombatOutcome = "victory" | "defeat" | "fled" | "surrendered" | null;
 
 /** Initiative entry (newer backends); `init` is the rolled initiative. */
 export interface InitiativeEntry {
@@ -656,6 +656,16 @@ export interface CombatState {
   round: number;
   ended: boolean;
   outcome: CombatOutcome;
+  /** Engine-owned solo difficulty; absent on older encounters. Exact foes retain their statistics. */
+  solo_budget?: {
+    warning?: { tier?: string; text?: string } | null;
+    xp_check?: { adjusted_xp?: number; deadly_threshold?: number; [key: string]: unknown } | null;
+    [key: string]: unknown;
+  } | null;
+  /** Last committed round's public resolution sequence; absent for older saves. */
+  round_events?: { kind: string; text: string; actor_id?: string; target_id?: string }[] | null;
+  /** Player-visible scene participants; some have no turn in this encounter's initiative. */
+  participants?: { id: string; name: string; participation: "active" | "visible_nonparticipant"; reason: string }[] | null;
   second_wind_used?: boolean;
   /** The hero's last turn (additive); absent or null for legacy payloads. */
   economy?: CombatEconomy | null;

@@ -43,8 +43,8 @@ class PromptEntry:
 # entry can be matched to the profile that sent it. combat_narrator sends the NARRATOR text too
 # (`agent.nodes.narrator`), so editing NARRATOR changes both entries.
 PROMPTS: tuple[PromptEntry, ...] = (
-    PromptEntry("play.parser", "input parser", "1.2.0", INPUT_PARSER),
-    PromptEntry("play.consequence_planner", "rules adjudicator / consequence planner", "1.0.9", RULES_ADJUDICATOR),
+    PromptEntry("play.parser", "input parser", "1.3.0", INPUT_PARSER),
+    PromptEntry("play.consequence_planner", "rules adjudicator / consequence planner", "1.1.0", RULES_ADJUDICATOR),
     PromptEntry("play.narrator", "narrator", "1.1.0", NARRATOR),
     PromptEntry("play.combat_builder", "combat encounter builder", "1.0.0", ENCOUNTER_BUILDER),
     PromptEntry("play.combat_narrator", "combat narrator", "1.1.0", NARRATOR),

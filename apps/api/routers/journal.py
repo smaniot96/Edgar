@@ -59,6 +59,7 @@ async def _read_session_journal(session_id: int, db: AsyncSession, auth: Auth) -
         state,
         events,
         active_character_id=session.active_character_id,
+        current_scene_id=session.current_scene_id,
         prepared=prepared,
         observations=observations,
     )

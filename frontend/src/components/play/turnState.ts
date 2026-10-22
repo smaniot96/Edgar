@@ -32,6 +32,8 @@ export interface UserLine extends BaseLine {
 }
 
 export interface DmLine extends BaseLine {
+  /** Browser request identity, retained only for live performance correlation. */
+  browserRequestId?: string;
   citations?: SourceCitation[];
   ruling_citation_ids?: string[];
   role: "dm";
@@ -310,6 +312,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       const line: DmLine = {
         id: `${p.turnId}:dm`,
         turnId: p.turnId,
+        browserRequestId: p.requestId,
         role: "dm",
         content,
         eventId: (r as TurnResult & { event_id?: number }).event_id,

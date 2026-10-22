@@ -62,3 +62,15 @@ it("shows no confirmation when none is waiting or the encounter has ended", () =
   expect(ended.host.querySelector('[aria-label="Confirm declaration"]')).toBeNull();
   ended.unmount();
 });
+
+it("keeps the engine's exact-creature danger visible in compact combat and supports older saves", () => {
+  const text = "This exact foe is far above deadly for a level-1 solo hero. Its statistics are unchanged.";
+  const { host, unmount } = render(<CombatHud compact showDeclaration={false} combat={{ ...combat, solo_budget: { warning: { tier: "far_above_deadly", text } } }} />);
+  expect(host.textContent).toContain(text);
+  expect(host.textContent).toContain("Danger: far above deadly");
+  expect(host.querySelector('[aria-label="Confirm declaration"]')).toBeNull();
+  unmount();
+  const legacy = render(<CombatHud compact combat={{ ...combat, solo_budget: null }} />);
+  expect(legacy.host.textContent).not.toContain("Danger:");
+  legacy.unmount();
+});

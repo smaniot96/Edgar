@@ -1,6 +1,7 @@
 {
   "captive_ruling": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": null,
@@ -19,7 +20,7 @@
       "mechanical_summary": "You release Bandit. Bandit is no longer your captive and is not an enemy in this fight.",
       "modifier": null,
       "natural_roll": null,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {},
       "rest_record": null,
       "roll_expression": null,
       "scene_id": null,
@@ -61,6 +62,7 @@
   },
   "clarification_question": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": null,
@@ -79,7 +81,7 @@
       "mechanical_summary": "You don't see dragon among your foes. Who do you attack? (Goblin, Wolf)",
       "modifier": null,
       "natural_roll": null,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {},
       "rest_record": null,
       "roll_expression": null,
       "scene_id": null,
@@ -204,6 +206,7 @@
   },
   "declared_spell": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": "AC",
@@ -256,7 +259,14 @@
       "mechanical_summary": "spell attack: 2d20kl1+5 = 7 (disadvantage: d20 rolled 2 and 3, kept the lower 2) vs AC 12 -> failure. Fire Bolt misses Goblin. Goblin misses Ilse (rolled 6 vs AC 14).",
       "modifier": 5,
       "natural_roll": 2,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {
+        "accepted": 0,
+        "blocked": "turn_not_eligible",
+        "eligible_references": 0,
+        "matches": [],
+        "proposed": 0,
+        "rejected": []
+      },
       "rest_record": null,
       "roll_expression": "2d20kl1+5",
       "scene_id": null,
@@ -284,6 +294,14 @@
           "init_bonus": 1,
           "is_player": true,
           "name": "player",
+          "round_events": [
+            {
+              "actor_id": "Goblin",
+              "kind": "enemy_attack",
+              "target_id": "player",
+              "text": "Goblin attacks on its turn against Ilse."
+            }
+          ],
           "second_wind_used": false,
           "surprised": false
         },
@@ -356,6 +374,14 @@
       "round": 2,
       "round_actors": [
         "Goblin"
+      ],
+      "round_events": [
+        {
+          "actor_id": "Goblin",
+          "kind": "enemy_attack",
+          "target_id": "player",
+          "text": "Goblin attacks on its turn against Ilse."
+        }
       ],
       "second_wind_used": false,
       "second_wind_uses_remaining": 0
@@ -487,123 +513,103 @@
   },
   "encounter_setup_roster": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
-      "against": "AC",
-      "character_update": {
-        "add_conditions": [],
-        "class_feature_uses": null,
-        "damage_dice": null,
-        "death_saves": null,
-        "hit_dice_spent": null,
-        "hp_delta": -6,
-        "inventory_add": [],
-        "inventory_remove": [],
-        "remove_conditions": [],
-        "second_wind_uses_remaining": null,
-        "spell_slots_expended": null
-      },
-      "check": "attack",
+      "against": null,
+      "character_update": null,
+      "check": null,
       "citation_ids": [],
       "citations": [],
       "completion_status": "none",
       "conditions": [],
-      "damage": 4,
-      "dc": 14,
-      "dice_log": [
-        {
-          "expression": "1d20+5",
-          "modifier": 5,
-          "purpose": "attack check",
-          "rolls": [
-            12
-          ],
-          "total": 17
-        },
-        {
-          "expression": "1d8+3",
-          "modifier": 3,
-          "purpose": "player damage",
-          "rolls": [
-            1
-          ],
-          "total": 4
-        },
-        {
-          "expression": "1d20+6",
-          "modifier": 6,
-          "purpose": "Troll Bite attack",
-          "rolls": [
-            15
-          ],
-          "total": 21
-        },
-        {
-          "expression": "1d6+4",
-          "modifier": 4,
-          "purpose": "Troll Bite damage",
-          "rolls": [
-            2
-          ],
-          "total": 6
-        },
-        {
-          "expression": "1d20+6",
-          "modifier": 6,
-          "purpose": "Troll Claw attack",
-          "rolls": [
-            2
-          ],
-          "total": 8
-        },
-        {
-          "expression": "1d20+6",
-          "modifier": 6,
-          "purpose": "Troll Claw attack",
-          "rolls": [
-            6
-          ],
-          "total": 12
-        }
-      ],
-      "dice_result": 17,
+      "damage": null,
+      "dc": null,
+      "dice_log": [],
+      "dice_result": null,
       "flags_cleared": [],
       "flags_set": [],
-      "mechanical_summary": "Combat begins! Initiative: Eda 21, Troll 10. Solo level 1 hero: unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11); unscaled exact creature: Troll keeps its record attack +6 (solo limit +4); unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3). Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero. Declared, not executed for Troll: speed 30 ft.: movement is not simulated; Keen Smell: trait not executed; Regeneration: a creature at 0 HP is defeated at once; its death clause (regeneration at the start of its next turn) is not executed. attack: 1d20+5 = 17 (d20 rolled 12) vs AC 14 -> success. Eda hits Troll for 4 damage (69/73 HP left) Troll regenerates 4 HP. Troll's Bite hits Eda for 6 piercing damage (rolled 21 vs AC 18). Troll's Claw misses Eda (rolled 8 vs AC 18). Troll's Claw misses Eda (rolled 12 vs AC 18).",
-      "modifier": 5,
-      "natural_roll": 12,
-      "proposed_prepared_amendment": null,
+      "mechanical_summary": "Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.\nSolo level 1 hero: unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11); unscaled exact creature: Troll keeps its record attack +6 (solo limit +4); unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3).\nDeclared, not executed for Troll: speed 30 ft.: movement is not simulated; Keen Smell: trait not executed; Regeneration: a creature at 0 HP is defeated at once; its death clause (regeneration at the start of its next turn) is not executed.\nConfirm before any dice: Eda will attack Troll. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.\nYou can cancel and choose another approach.",
+      "modifier": null,
+      "natural_roll": null,
+      "observation_diagnostics": {},
       "rest_record": null,
-      "roll_expression": "1d20+5",
+      "roll_expression": null,
       "scene_id": null,
       "story_effects": [],
       "success": true
     },
-    "adventure_context": [],
-    "allowed_scene_ids": [],
     "combat_state": {
       "combatants": [
         {
           "ac": 18,
-          "action_economy": {
-            "action": "attack",
-            "bonus_action": null,
-            "dodging": false,
-            "round": 1
-          },
           "alive": true,
           "display_name": "Eda",
           "disposition": "active",
-          "hp_current": 34,
+          "encounter_participants": [
+            {
+              "id": "Troll",
+              "name": "Troll",
+              "participation": "active",
+              "reason": "Acts in the initiative order."
+            }
+          ],
+          "hp_current": 40,
           "hp_max": 40,
-          "init": 21,
-          "init_bonus": 1,
-          "init_roll": 20,
+          "initiative_pending": true,
           "is_player": true,
           "name": "player",
-          "second_wind_used": false,
+          "pending_declaration": {
+            "execution_plan": {
+              "actions": [
+                {
+                  "kind": "attack",
+                  "slot": "action"
+                }
+              ],
+              "distances": [],
+              "main_attack_count": 1,
+              "moves": [],
+              "order": [
+                "attack"
+              ],
+              "spell_target_ids": [
+                null
+              ],
+              "target_id": "Troll",
+              "version": 1
+            },
+            "parsed": {
+              "actions": [],
+              "check": "attack",
+              "check_reason": null,
+              "confirms_ending": false,
+              "dice_expression": null,
+              "difficulty": null,
+              "entities": {},
+              "intent": "combat",
+              "lethality": null,
+              "recall_fact_id": null,
+              "resolution_policy_id": null,
+              "retrieval_query": null,
+              "source_object_id": null,
+              "target": "Troll",
+              "uses_item": null
+            },
+            "player_input": "I attack the troll",
+            "round": 1,
+            "summary": "Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.\nSolo level 1 hero: unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11); unscaled exact creature: Troll keeps its record attack +6 (solo limit +4); unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3).\nDeclared, not executed for Troll: speed 30 ft.: movement is not simulated; Keen Smell: trait not executed; Regeneration: a creature at 0 HP is defeated at once; its death clause (regeneration at the start of its next turn) is not executed.\nConfirm before any dice: Eda will attack Troll. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.\nYou can cancel and choose another approach."
+          },
           "solo_budget": {
             "adapted": false,
+            "encounter_participants": [
+              {
+                "id": "Troll",
+                "name": "Troll",
+                "participation": "active",
+                "reason": "Acts in the initiative order."
+              }
+            ],
             "level": 1,
             "notes": [
               "unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11)",
@@ -642,14 +648,10 @@
           "challenge_xp": 1100,
           "creature_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "damage_dice": "1d6+4",
-          "damage_taken_types": [],
           "disposition": "active",
           "hero_surprised": false,
           "hp_current": 73,
           "hp_max": 73,
-          "init": 10,
-          "init_bonus": 1,
-          "init_roll": 9,
           "initiative_bonus": 1,
           "is_boss": false,
           "is_player": false,
@@ -723,7 +725,6 @@
             "vulnerabilities": []
           },
           "name": "Troll",
-          "reaction_used": false,
           "source_reference": {
             "collection": "rules_monster_manual",
             "creature_key": "troll",
@@ -743,14 +744,7 @@
           "surprised": false
         }
       ],
-      "current_turn": "Eda",
       "current_turn_index": 0,
-      "economy": {
-        "action": "attack",
-        "bonus_action": null,
-        "dodging": false,
-        "round": 1
-      },
       "ended": false,
       "initiative": [
         {
@@ -760,10 +754,10 @@
           "can_act": true,
           "disposition": "active",
           "effects": [],
-          "hp": 34,
+          "hp": 40,
           "hp_max": 40,
           "id": "player",
-          "init": 21,
+          "init": null,
           "is_player": true,
           "name": "Eda",
           "reaction_used": false
@@ -778,7 +772,7 @@
           "hp": 73,
           "hp_max": 73,
           "id": "Troll",
-          "init": 10,
+          "init": null,
           "is_player": false,
           "name": "Troll",
           "reaction_used": false
@@ -789,18 +783,25 @@
         "Troll"
       ],
       "outcome": null,
-      "player_ac": 18,
-      "raging": false,
-      "round": 2,
-      "round_actors": [
-        "Troll",
-        "Troll",
-        "Troll"
+      "participants": [
+        {
+          "id": "Troll",
+          "name": "Troll",
+          "participation": "active",
+          "reason": "Acts in the initiative order."
+        }
       ],
-      "second_wind_used": false,
-      "second_wind_uses_remaining": 1,
+      "round": 1,
       "solo_budget": {
         "adapted": false,
+        "encounter_participants": [
+          {
+            "id": "Troll",
+            "name": "Troll",
+            "participation": "active",
+            "reason": "Acts in the initiative order."
+          }
+        ],
         "level": 1,
         "notes": [
           "unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11)",
@@ -829,13 +830,10 @@
         }
       }
     },
-    "discovery_entities": [],
-    "engine_roll_mode": "normal",
-    "manifest_status": "review_required",
     "messages": [
       {
         "additional_kwargs": {},
-        "content": "Scripted narration.",
+        "content": "Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.\nSolo level 1 hero: unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11); unscaled exact creature: Troll keeps its record attack +6 (solo limit +4); unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3).\nDeclared, not executed for Troll: speed 30 ft.: movement is not simulated; Keen Smell: trait not executed; Regeneration: a creature at 0 HP is defeated at once; its death clause (regeneration at the start of its next turn) is not executed.\nConfirm before any dice: Eda will attack Troll. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.\nYou can cancel and choose another approach.",
         "id": null,
         "invalid_tool_calls": [],
         "name": null,
@@ -845,172 +843,13 @@
         "usage_metadata": null
       }
     ],
-    "narration": "Scripted narration.",
-    "planner_context": [],
+    "narration": "Warning: this fight is far above a solo level 1 hero's deadly threshold of 100 XP. Foes: Troll (CR 4, 1100 XP). Their raw XP is 1100, which counts as 1650 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.\nSolo level 1 hero: unscaled exact creature: Troll keeps its record HP 73 (solo band 5-11); unscaled exact creature: Troll keeps its record attack +6 (solo limit +4); unscaled exact creature: Troll keeps its record damage 1d6+4 (solo average limit 3).\nDeclared, not executed for Troll: speed 30 ft.: movement is not simulated; Keen Smell: trait not executed; Regeneration: a creature at 0 HP is defeated at once; its death clause (regeneration at the start of its next turn) is not executed.\nConfirm before any dice: Eda will attack Troll. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.\nYou can cancel and choose another approach.",
     "retrieval_degraded": false,
-    "retrieved_context": [
-      {
-        "kind": "rules",
-        "page": 1,
-        "source": "PHB",
-        "text": "Stub rule text."
-      }
-    ],
-    "rule_queries": [
-      {
-        "query": "Making an Attack rules",
-        "references": [
-          "Making an Attack"
-        ]
-      }
-    ],
-    "rules_context": [
-      {
-        "kind": "rules",
-        "page": 1,
-        "source": "PHB",
-        "text": "Stub rule text."
-      }
-    ],
-    "source_status": [],
-    "telemetry_events": [
-      {
-        "event_type": "combat_round",
-        "payload": {
-          "actors": [
-            {
-              "id": "Troll",
-              "name": "Troll"
-            }
-          ],
-          "dice_log": [
-            {
-              "expression": "1d20+5",
-              "modifier": 5,
-              "purpose": "attack check",
-              "rolls": [
-                12
-              ],
-              "total": 17
-            },
-            {
-              "expression": "1d8+3",
-              "modifier": 3,
-              "purpose": "player damage",
-              "rolls": [
-                1
-              ],
-              "total": 4
-            },
-            {
-              "expression": "1d20+6",
-              "modifier": 6,
-              "purpose": "Troll Bite attack",
-              "rolls": [
-                15
-              ],
-              "total": 21
-            },
-            {
-              "expression": "1d6+4",
-              "modifier": 4,
-              "purpose": "Troll Bite damage",
-              "rolls": [
-                2
-              ],
-              "total": 6
-            },
-            {
-              "expression": "1d20+6",
-              "modifier": 6,
-              "purpose": "Troll Claw attack",
-              "rolls": [
-                2
-              ],
-              "total": 8
-            },
-            {
-              "expression": "1d20+6",
-              "modifier": 6,
-              "purpose": "Troll Claw attack",
-              "rolls": [
-                6
-              ],
-              "total": 12
-            }
-          ],
-          "dispositions": [
-            {
-              "disposition": "active",
-              "hp_current": 34,
-              "id": "player",
-              "is_player": true,
-              "name": "Eda"
-            },
-            {
-              "disposition": "active",
-              "hp_current": 73,
-              "id": "Troll",
-              "is_player": false,
-              "name": "Troll"
-            }
-          ],
-          "ended": false,
-          "outcome": null,
-          "outcomes": [
-            {
-              "action": "attack",
-              "actor": "Troll",
-              "attack": "Bite",
-              "critical": false,
-              "damage": 6,
-              "damage_type": "piercing",
-              "hit": true,
-              "roll": 21,
-              "roll_mode": "normal",
-              "target_ac": 18
-            },
-            {
-              "action": "attack",
-              "actor": "Troll",
-              "attack": "Claw",
-              "critical": false,
-              "damage": 0,
-              "damage_type": "slashing",
-              "hit": false,
-              "roll": 8,
-              "roll_mode": "normal",
-              "target_ac": 18
-            },
-            {
-              "action": "attack",
-              "actor": "Troll",
-              "attack": "Claw",
-              "critical": false,
-              "damage": 0,
-              "damage_type": "slashing",
-              "hit": false,
-              "roll": 12,
-              "roll_mode": "normal",
-              "target_ac": 18
-            }
-          ],
-          "player_action": {
-            "action": "attack",
-            "damage": 4,
-            "hit": true,
-            "target": "Troll",
-            "target_disposition": "active"
-          },
-          "round": 1,
-          "turn_id": null,
-          "version": 1
-        }
-      }
-    ]
+    "source_status": []
   },
   "enemy_defeat_victory_with_suffix": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": "AC",
@@ -1065,7 +904,14 @@
       "mechanical_summary": "attack: 1d20+5 = 18 (d20 rolled 13) vs AC 1 -> success. Eda hits Goblin for 10 damage and it falls! All enemies are defeated. Victory! [The adventure appears to have reached its conclusion. Ask the player, in character, whether they want to end the campaign here; it only ends if they confirm.]",
       "modifier": 5,
       "natural_roll": 13,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {
+        "accepted": 0,
+        "blocked": "turn_not_eligible",
+        "eligible_references": 0,
+        "matches": [],
+        "proposed": 0,
+        "rejected": []
+      },
       "rest_record": null,
       "roll_expression": "1d20+5",
       "scene_id": null,
@@ -1271,6 +1117,7 @@
   },
   "enemy_turns_in_initiative_order": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": "AC",
@@ -1296,15 +1143,6 @@
       "dc": 12,
       "dice_log": [
         {
-          "expression": "1d20+5",
-          "modifier": 5,
-          "purpose": "attack check",
-          "rolls": [
-            10
-          ],
-          "total": 15
-        },
-        {
           "expression": "1d20+3",
           "modifier": 3,
           "purpose": "Wolf attack",
@@ -1312,6 +1150,15 @@
             8
           ],
           "total": 11
+        },
+        {
+          "expression": "1d20+5",
+          "modifier": 5,
+          "purpose": "attack check",
+          "rolls": [
+            10
+          ],
+          "total": 15
         },
         {
           "expression": "1d8+3",
@@ -1338,7 +1185,14 @@
       "mechanical_summary": "Wolf misses Eda (rolled 11 vs AC 30). attack: 1d20+5 = 15 (d20 rolled 10) vs AC 12 -> success. Eda hits Ogre for 5 damage (25/30 HP left) Ogre misses Eda (rolled 16 vs AC 30).",
       "modifier": 5,
       "natural_roll": 10,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {
+        "accepted": 0,
+        "blocked": "turn_not_eligible",
+        "eligible_references": 0,
+        "matches": [],
+        "proposed": 0,
+        "rejected": []
+      },
       "rest_record": null,
       "roll_expression": "1d20+5",
       "scene_id": null,
@@ -1382,6 +1236,20 @@
           "init_bonus": 1,
           "is_player": true,
           "name": "player",
+          "round_events": [
+            {
+              "actor_id": "Wolf",
+              "kind": "enemy_attack",
+              "target_id": "player",
+              "text": "Wolf attacks on its turn against Eda."
+            },
+            {
+              "actor_id": "Ogre",
+              "kind": "enemy_attack",
+              "target_id": "player",
+              "text": "Ogre attacks on its turn against Eda."
+            }
+          ],
           "second_wind_used": false,
           "surprised": false
         },
@@ -1472,6 +1340,20 @@
         "Wolf",
         "Ogre"
       ],
+      "round_events": [
+        {
+          "actor_id": "Wolf",
+          "kind": "enemy_attack",
+          "target_id": "player",
+          "text": "Wolf attacks on its turn against Eda."
+        },
+        {
+          "actor_id": "Ogre",
+          "kind": "enemy_attack",
+          "target_id": "player",
+          "text": "Ogre attacks on its turn against Eda."
+        }
+      ],
       "second_wind_used": false,
       "second_wind_uses_remaining": 1
     },
@@ -1535,15 +1417,6 @@
           ],
           "dice_log": [
             {
-              "expression": "1d20+5",
-              "modifier": 5,
-              "purpose": "attack check",
-              "rolls": [
-                10
-              ],
-              "total": 15
-            },
-            {
               "expression": "1d20+3",
               "modifier": 3,
               "purpose": "Wolf attack",
@@ -1551,6 +1424,15 @@
                 8
               ],
               "total": 11
+            },
+            {
+              "expression": "1d20+5",
+              "modifier": 5,
+              "purpose": "attack check",
+              "rolls": [
+                10
+              ],
+              "total": 15
             },
             {
               "expression": "1d8+3",
@@ -1638,6 +1520,7 @@
   },
   "flee": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": null,
@@ -1668,7 +1551,7 @@
       "mechanical_summary": "Eda disengages and flees the fight. You break away from the fight and escape.",
       "modifier": null,
       "natural_roll": null,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {},
       "rest_record": null,
       "roll_expression": null,
       "scene_id": null,
@@ -1830,6 +1713,7 @@
   },
   "plain_attack": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": "AC",
@@ -1897,7 +1781,14 @@
       "mechanical_summary": "attack: 1d20+5 = 13 (d20 rolled 8) vs AC 12 -> success. Eda hits Goblin for 6 damage (3/9 HP left) Goblin hits Eda for 6 damage (rolled 15 vs AC 13).",
       "modifier": 5,
       "natural_roll": 8,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {
+        "accepted": 0,
+        "blocked": "turn_not_eligible",
+        "eligible_references": 0,
+        "matches": [],
+        "proposed": 0,
+        "rejected": []
+      },
       "rest_record": null,
       "roll_expression": "1d20+5",
       "scene_id": null,
@@ -1925,6 +1816,14 @@
           "init_bonus": 1,
           "is_player": true,
           "name": "player",
+          "round_events": [
+            {
+              "actor_id": "Goblin",
+              "kind": "enemy_attack",
+              "target_id": "player",
+              "text": "Goblin attacks on its turn against Eda."
+            }
+          ],
           "second_wind_used": false,
           "surprised": false
         },
@@ -1997,6 +1896,14 @@
       "round": 2,
       "round_actors": [
         "Goblin"
+      ],
+      "round_events": [
+        {
+          "actor_id": "Goblin",
+          "kind": "enemy_attack",
+          "target_id": "player",
+          "text": "Goblin attacks on its turn against Eda."
+        }
       ],
       "second_wind_used": false,
       "second_wind_uses_remaining": 1
@@ -2141,6 +2048,7 @@
   },
   "player_defeat": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": null,
@@ -2190,7 +2098,14 @@
       "mechanical_summary": "Ogre hits Eda for 6 damage (rolled 8 vs AC 5). Eda is overwhelmed and falls unconscious, subdued by the enemy.",
       "modifier": null,
       "natural_roll": null,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {
+        "accepted": 0,
+        "blocked": "turn_not_eligible",
+        "eligible_references": 0,
+        "matches": [],
+        "proposed": 0,
+        "rejected": []
+      },
       "rest_record": null,
       "roll_expression": null,
       "scene_id": null,
@@ -2218,6 +2133,14 @@
           "init_bonus": 1,
           "is_player": true,
           "name": "player",
+          "round_events": [
+            {
+              "actor_id": "Ogre",
+              "kind": "enemy_attack",
+              "target_id": "player",
+              "text": "Ogre attacks on its turn against Eda."
+            }
+          ],
           "second_wind_used": false,
           "surprised": false
         },
@@ -2290,6 +2213,14 @@
       "round": 1,
       "round_actors": [
         "Ogre"
+      ],
+      "round_events": [
+        {
+          "actor_id": "Ogre",
+          "kind": "enemy_attack",
+          "target_id": "player",
+          "text": "Ogre attacks on its turn against Eda."
+        }
       ],
       "second_wind_used": false,
       "second_wind_uses_remaining": 1
@@ -2392,6 +2323,7 @@
   },
   "second_wind": {
     "adjudication_result": {
+      "accepted_observations": [],
       "accepted_prepared_amendment": null,
       "accepted_story_effects": [],
       "against": null,
@@ -2441,7 +2373,14 @@
       "mechanical_summary": "Eda uses Second Wind and regains 5 HP. Ogre misses Eda (rolled -10 vs AC 30).",
       "modifier": null,
       "natural_roll": null,
-      "proposed_prepared_amendment": null,
+      "observation_diagnostics": {
+        "accepted": 0,
+        "blocked": "turn_not_eligible",
+        "eligible_references": 0,
+        "matches": [],
+        "proposed": 0,
+        "rejected": []
+      },
       "rest_record": null,
       "roll_expression": null,
       "scene_id": null,
@@ -2469,6 +2408,14 @@
           "init_bonus": 1,
           "is_player": true,
           "name": "player",
+          "round_events": [
+            {
+              "actor_id": "Ogre",
+              "kind": "enemy_attack",
+              "target_id": "player",
+              "text": "Ogre attacks on its turn against Eda."
+            }
+          ],
           "second_wind_used": true,
           "surprised": false
         },
@@ -2541,6 +2488,14 @@
       "round": 2,
       "round_actors": [
         "Ogre"
+      ],
+      "round_events": [
+        {
+          "actor_id": "Ogre",
+          "kind": "enemy_attack",
+          "target_id": "player",
+          "text": "Ogre attacks on its turn against Eda."
+        }
       ],
       "second_wind_used": true,
       "second_wind_uses_remaining": 0

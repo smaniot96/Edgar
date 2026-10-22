@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import type { AdjudicationResult, DebugPayload } from "../api/types";
+import type { AdjudicationResult, CombatOutcome, DebugPayload } from "../api/types";
 import type { JournalEntry } from "./journal/types";
 import { useMode } from "../dev/ModeContext";
 import { cn } from "../lib/cn";
@@ -8,22 +8,25 @@ import { Narration } from "./play/Narration";
 import { RollCard } from "./play/RollCard";
 import { Button } from "./ui/Button";
 import type { DmLine, ErrorLine, Line, PendingTurn, TraceState } from "./play/turnState";
+import { afterBrowserPaint, markBrowserTurn } from "../dev/browserTurnTimeline";
 
 const DevPanel = lazy(() => import("../dev/DevPanel").then((m) => ({ default: m.DevPanel })));
 
 /** Distance from the bottom (px) within which new content keeps the view pinned. */
 const STICKY_THRESHOLD = 120;
 
-const OUTCOME_LABEL: Record<string, string> = {
+const OUTCOME_LABEL: Record<NonNullable<CombatOutcome>, string> = {
   victory: "Victory",
   defeat: "Defeat",
   fled: "Fled",
+  surrendered: "Surrendered",
 };
 
-const OUTCOME_STYLE: Record<string, string> = {
+const OUTCOME_STYLE: Record<NonNullable<CombatOutcome>, string> = {
   victory: "bg-success-soft text-success border-success/40",
   defeat: "bg-danger-soft text-danger border-danger-strong/60",
   fled: "bg-ember-950/50 text-ember-200 border-ember-800",
+  surrendered: "bg-ember-950/50 text-ember-200 border-ember-800",
 };
 
 /** Plain-language source labels for the Source references disclosure (no raw enum values). */
@@ -344,6 +347,11 @@ export function MessageList({
   const [showJump, setShowJump] = useState(false);
 
   const last = messages[messages.length - 1];
+  const textRequestId = pending?.text ? pending.requestId : last?.role === "dm" && last.content ? last.browserRequestId : undefined;
+  useLayoutEffect(() => {
+    if (!textRequestId) return;
+    return afterBrowserPaint(() => markBrowserTurn(textRequestId, "first_text_paint"));
+  }, [textRequestId]);
   const showCompletionPrompt =
     !pending && !!onQuickReply && last?.role === "dm" && last.adjudication?.completion_status === "pending";
 

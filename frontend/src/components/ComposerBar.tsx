@@ -100,7 +100,7 @@ export function ComposerBar({
             type="button"
             disabled={busy}
             onClick={() => onChange("")}
-            className="min-h-11 shrink-0 px-2 text-[0.7rem] font-medium text-ink-muted underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 shrink-0 px-2 text-[0.7rem] font-medium text-ink-muted underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 lg:min-h-6"
           >
             Clear draft
           </button>

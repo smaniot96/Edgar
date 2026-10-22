@@ -41,6 +41,8 @@ READY = ActionType("ready", ACTION, "Ready", ("trigger", "target"))
 SECOND_WIND = ActionType("second_wind", BONUS_ACTION, "Second Wind")
 RAGE = ActionType("rage", BONUS_ACTION, "Rage")
 MOVE = ActionType("move", FREE, "move", ("destination",))
+SURRENDER = ActionType("surrender", FREE, "offer surrender")
+DIALOGUE = ActionType("dialogue", FREE, "speak")
 # A conditional clause ("if it drops, hit the other"). Not executed yet: see the question it asks.
 CONTINGENCY = ActionType("contingency", FREE, "contingency", ("condition",))
 
@@ -59,6 +61,8 @@ REGISTRY: dict[str, ActionType] = {
         SECOND_WIND,
         RAGE,
         MOVE,
+        SURRENDER,
+        DIALOGUE,
         CONTINGENCY,
     )
 }

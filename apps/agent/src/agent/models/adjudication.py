@@ -141,6 +141,16 @@ def _require_answer_decision(schema: dict) -> None:
         required.append("source_observations")
 
 
+class CombatOffer(BaseModel):
+    """Source-backed social proposal; the combat engine validates it before ending a fight."""
+
+    decision: Literal["accepted", "rejected", "uncertain"]
+    actor_name: str = Field(max_length=100)
+    source_span_id: str = Field(max_length=80)
+    action_quote: str = Field(max_length=500)
+    achievement_basis: str = Field(max_length=800)
+
+
 class AdjudicationResult(BaseModel):
     model_config = ConfigDict(json_schema_extra=_require_answer_decision)
 
@@ -148,6 +158,10 @@ class AdjudicationResult(BaseModel):
     damage: int | None = None
     conditions: list[str] = []
     mechanical_summary: str = ""
+    combat_offer: CombatOffer | None = Field(
+        default=None, exclude=True,
+        description="Only when the engine explicitly asks to resolve a surrender/ceasefire offer: accepted/rejected/uncertain response by a present foe, selecting an eligible current-scene source_span_id and quoting exact player terms. Source evidence and achievement_basis must support that foe's response and all required conditions. Never infer acceptance from player wishes. Otherwise null.",
+    )
     dice_result: int | None = None  # overwritten by the adjudicator with the actual roll
 
     citation_ids: list[str] = Field(

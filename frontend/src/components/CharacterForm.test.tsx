@@ -127,3 +127,24 @@ it("never saves an unsupported draft class with another preset's kit", async () 
     vi.unstubAllGlobals();
   }
 });
+
+it("changing starting level submits the returned HP and improved abilities, and retains that level in the draft", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const advanced = { ...fighter, key: "fighter_l4", label: "Fighter (level 4)", level: 4, hp_max: 36, hp_current: 36, stats: { ...fighter.stats, STR: 18 } };
+  api.listCharacterPresets.mockImplementation(async (_signal, level: number) => level === 4 ? [advanced] : [fighter]);
+  api.createCharacter.mockReset();
+  api.createCharacter.mockResolvedValue({ id: 51, name: "Mira" });
+  const onDraftChange = vi.fn();
+  const { container, cleanup } = await renderForm({ initialDraft: { name: "Mira", presetKey: "fighter_l1", characterClass: "Fighter", hpText: "44" }, onDraftChange });
+  try {
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Starting level"]')!;
+      select.value = "4";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(container.querySelector<HTMLInputElement>('input[type="number"]')!.value).toBe("36");
+    expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ presetKey: "fighter_l4", hpText: null }));
+    await submitForm(container);
+    expect(api.createCharacter).toHaveBeenCalledWith(expect.objectContaining({ level: 4, hp_max: 36, base_stats: advanced.stats }), expect.any(String));
+  } finally { await cleanup(); vi.unstubAllGlobals(); }
+});

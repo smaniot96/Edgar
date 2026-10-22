@@ -75,7 +75,7 @@ export interface SpotlightChangedData extends SpotlightState {
 export interface CombatTurnChangedData {
   round: number | null;
   ended: boolean;
-  outcome: "victory" | "defeat" | "fled" | null;
+  outcome: "victory" | "defeat" | "fled" | "surrendered" | null;
   current_turn: string | null;
   current_turn_character_id: number | null;
   skipped_character_id: number | null;

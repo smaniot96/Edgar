@@ -107,6 +107,76 @@ def parser_guidance(state):
     )
 
 
+def source_object_choices(state):
+    """Known source objects, with exact identities; never an executable spell catalog.
+
+    A public current-scene entity binding (or an already carried object) makes an object
+    addressable. Merely existing in the private campaign registry does not.
+    """
+    from agent.nodes.story_effects import _reviewed_chunk
+    from agent.resolution import inventory_items, match_inventory_item
+
+    if state.get("source_mode") != "module":
+        return []
+    context = cached_scene_context(state) or state
+    current = state.get("current_scene_id")
+    public = [
+        c
+        for c in context.get("adventure_context", [])
+        if c.get("audience") == "player"
+        and current in c.get("scene_ids", [c.get("scene_id")])
+        and _reviewed_chunk(c, state)
+    ]
+    items = inventory_items(state.get("character") or {})
+    result = []
+    for collection, value in (state.get("adventure_manifests") or {}).items():
+        try:
+            manifest = require_published(value)
+        except (ValueError, TypeError):
+            continue
+        for obj in manifest.objects:
+            if current not in obj.scene_ids:
+                continue
+            entity_ids = {e.entity_id for e in manifest.entities if e.object_id == obj.canonical_id}
+            visible = any(
+                c.get("collection") == collection
+                and entity_ids.intersection(c.get("entity_ids", []))
+                for c in public
+            )
+            if visible or match_inventory_item(items, obj.title):
+                result.append({"object_id": obj.canonical_id, "name": obj.title})
+    return result
+
+
+def selected_source_object(state):
+    """A grounded object selector never authorizes independent spellcasting or combat."""
+    parsed = state.get("parsed_input")
+    selected = getattr(parsed, "source_object_id", None)
+    if not selected or (state.get("combat_state") and not state["combat_state"].get("ended")):
+        return None
+    text = state.get("player_input", "")
+    # Explicit casting stays under the spell engine even beside an object interaction.
+    if re.search(
+        r"\b(?:cast(?:s|ing)?|invoke[sd]?|invoking|unleash(?:es|ing)?|conjure[sd]?|conjuring)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return None
+    choices = [item for item in source_object_choices(state) if item["object_id"] == selected]
+    if len(choices) != 1:
+        return None
+    choice = choices[0]
+    spell = str((getattr(parsed, "entities", {}) or {}).get("spell") or "").strip()
+    if (
+        spell
+        and spell.casefold() not in choice["name"].casefold()
+        and spell.casefold() in text.casefold()
+    ):
+        # A second explicitly named spell beside the object remains under the spell engine.
+        return None
+    return choice
+
+
 def active_observation_chunks(state):
     """Only active scene facts; shared campaign registries cannot authorize disclosure."""
     from agent.nodes.story_effects import _reviewed_chunk

@@ -21,7 +21,7 @@ from ._common import Page
 router = APIRouter(tags=["characters"])
 
 # Fields that together must be one supported preset's starting kit (see services.character_presets).
-KIT_FIELDS = ("character_class", "base_stats", "base_inventory")
+KIT_FIELDS = ("character_class", "base_stats", "base_inventory", "level")
 
 
 def _kit_rejected(message: str) -> HTTPException:
@@ -118,7 +118,7 @@ async def create_character(
     db: AsyncSession = Depends(get_session),
     owner_id: int = Depends(current_user_id),
 ):
-    problem = kit_error(body.character_class, body.base_stats, body.base_inventory)
+    problem = kit_error(body.character_class, body.base_stats, body.base_inventory, body.level)
     if problem is not None:
         raise _kit_rejected(problem)
     existing = await creation_replay(db, Character, owner_id, body)
@@ -153,7 +153,7 @@ async def update_character(
     # Only a change to the kit is checked, so a legacy row can still be renamed or re-saved unchanged.
     if any(key in update_data and update_data[key] != getattr(character, key) for key in KIT_FIELDS):
         merged = {key: update_data.get(key, getattr(character, key)) for key in KIT_FIELDS}
-        problem = kit_error(merged["character_class"], merged["base_stats"], merged["base_inventory"])
+        problem = kit_error(merged["character_class"], merged["base_stats"], merged["base_inventory"], merged["level"])
         if problem is not None:
             raise _kit_rejected(problem)
         update_data["character_class"] = preset_for_class(merged["character_class"])["character_class"]

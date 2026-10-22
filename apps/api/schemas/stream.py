@@ -26,7 +26,7 @@ StreamStage = Literal["parsing", "retrieving", "adjudicating", "narrating", "sav
 STREAM_STAGES: tuple[str, ...] = get_args(StreamStage)
 
 OutcomeLabel = Literal["not_committed", "committed", "unknown"]
-CombatOutcomeLabel = Literal["victory", "defeat", "fled"]
+CombatOutcomeLabel = Literal["victory", "defeat", "fled", "surrendered"]
 
 _STRICT = ConfigDict(extra="forbid")
 
@@ -58,9 +58,26 @@ class CombatantPublic(_Frame):
     death_saves: dict[str, Any] | None = None
 
 
+class EncounterParticipantPublic(_Frame):
+    id: str
+    name: str
+    participation: Literal["active", "visible_nonparticipant"]
+    reason: str
+
+
+class CombatRoundEventPublic(_Frame):
+    """An ordered, engine-written public event from the last resolved round."""
+
+    kind: str
+    text: str
+    actor_id: str | None = None
+    target_id: str | None = None
+
+
 class CombatStatePublic(_Frame):
     """The encounter view attached to `done` (`combat_state_public`)."""
 
+    participants: list[EncounterParticipantPublic] | None = None
     round: int | None
     ended: bool
     outcome: CombatOutcomeLabel | None
@@ -83,6 +100,7 @@ class CombatStatePublic(_Frame):
     # Additive (EDG-049): a fight with two or more heroes, and whose turn it is (a character id).
     party: bool | None = None
     current_turn_character_id: int | None = None
+    round_events: list[CombatRoundEventPublic] | None = None
 
 
 class CombatOutcomeEntryPublic(_Frame):

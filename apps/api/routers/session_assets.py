@@ -46,6 +46,7 @@ async def _session_map_context(session_id: int, db: AsyncSession, auth: Auth) ->
         state,
         event_result.scalars().all(),
         active_character_id=session.active_character_id,
+        current_scene_id=session.current_scene_id,
     )
     manifests: dict[str, AdventureManifest] = {}
     if campaign.source_mode != "homebrew" and campaign.adventure_collections:

@@ -1,14 +1,15 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 
 import type { JournalView } from "../journal/model";
 import { JournalPanel } from "../journal/JournalPanel";
 import type { JournalRead } from "../journal/types";
-import type { SessionMapRead } from "../../api/types";
+import type { CombatState, SessionMapRead } from "../../api/types";
 import { Button } from "../ui/Button";
 import type { PlayTool } from "./usePlayWorkspaceState";
 import { useModalFocus } from "./useModalFocus";
 import { useNarrowViewport } from "./useNarrowViewport";
 import { SessionMapPanel } from "./SessionMapPanel";
+import { EncounterView } from "./EncounterView";
 
 export function PlayToolBar({
   activeTool,
@@ -23,16 +24,17 @@ export function PlayToolBar({
     { id: "journal", label: "Journal" },
     { id: "map", label: "Map" },
     { id: "character", label: "Character" },
+    { id: "recap", label: "Recap & ideas" },
   ];
   return (
-    <nav aria-label="Adventure tools" className="flex shrink-0 gap-2 overflow-x-auto border-b border-line bg-canvas/80 px-3 py-2 sm:px-4">
+    <nav aria-label="Adventure tools" className="flex shrink-0 gap-2 overflow-x-auto border-b border-line bg-canvas/80 px-3 py-1 sm:px-4">
       {tools.map((tool) => (
         <Button
           key={tool.id}
           type="button"
           variant={activeTool === tool.id ? "primary" : "secondary"}
           size="sm"
-          className="min-h-11"
+          className="min-h-9"
           disabled={disabled}
           aria-pressed={activeTool === tool.id}
           data-play-tool-trigger={tool.id}
@@ -64,6 +66,9 @@ export function PlayToolPanel({
   onMapRefresh,
   onOpenMapJournalEntry,
   onPrepareTravel,
+  combat,
+  onSelectTarget,
+  consultation,
 }: {
   activeTool: PlayTool;
   journal: { data: JournalRead | null; loading: boolean; error: unknown; stale: boolean };
@@ -83,10 +88,15 @@ export function PlayToolPanel({
   onMapRefresh: () => void;
   onOpenMapJournalEntry: (entryId: string) => void;
   onPrepareTravel: (place: string) => void;
+  combat?: CombatState | null;
+  onSelectTarget?: (name: string) => void;
+  consultation?: ReactNode;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
   const narrow = useNarrowViewport();
-  const open = activeTool === "journal" || activeTool === "map";
+  const open = activeTool === "journal" || activeTool === "map" || activeTool === "recap";
+  const [mapMode, setMapMode] = useState<"campaign" | "encounter" | null>(null);
+  const encounter = !!combat && (mapMode === "encounter" || (mapMode === null && !combat.ended));
   const [expandedJournal, setExpandedJournal] = useState(false);
   const [expandedMap, setExpandedMap] = useState(false);
   const [largeJournalText, setLargeJournalText] = useState(false);
@@ -98,7 +108,7 @@ export function PlayToolPanel({
   useModalFocus(open, modal, onClose, panelRef, findOpener);
   if (!open) return null;
 
-  const title = activeTool === "journal" ? "Journal" : "Map";
+  const title = activeTool === "journal" ? "Journal" : activeTool === "recap" ? "Recap & ideas" : "Map";
   return (
     <>
       {modal ? <button type="button" aria-label="Close adventure tool" className="fixed inset-0 z-30 cursor-default bg-black/55" onClick={onClose} /> : null}
@@ -108,7 +118,7 @@ export function PlayToolPanel({
         role={modal ? "dialog" : undefined}
         aria-modal={modal ? true : undefined}
         tabIndex={modal ? -1 : undefined}
-        className={`fixed inset-y-0 right-0 z-40 flex ${activeTool === "map" && narrow ? "w-full" : "w-[min(28rem,92vw)]"} flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 ${activeTool === "map" && expandedMap ? "lg:inset-4 lg:w-auto" : `lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "map" ? "lg:w-[min(60vw,60rem)]" : activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}`}
+        className={`fixed inset-y-0 right-0 z-40 flex ${activeTool === "map" && narrow ? "w-full" : "w-[min(28rem,92vw)]"} flex-col border-l border-line bg-canvas shadow-2xl shadow-black/60 ${activeTool === "map" && expandedMap ? "lg:inset-4 lg:w-auto" : `lg:static lg:z-auto lg:shrink-0 lg:shadow-none ${activeTool === "map" ? "lg:w-[min(40vw,32rem)]" : activeTool === "journal" && expandedJournal ? "lg:w-[min(55vw,52rem)]" : "lg:w-[min(30vw,25rem)]"}`}`}
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <h2 className="min-w-0 flex-1 font-display text-lg font-semibold text-ink">{title}</h2>
@@ -147,6 +157,10 @@ export function PlayToolPanel({
             ✕
           </button>
         </header>
+        {activeTool === "map" ? <div role="group" aria-label="Map view" className="flex shrink-0 gap-2 border-b border-line p-2">
+          <Button size="sm" variant={!encounter ? "primary" : "secondary"} aria-pressed={!encounter} onClick={() => setMapMode("campaign")}>Campaign map</Button>
+          <Button size="sm" variant={encounter ? "primary" : "secondary"} aria-pressed={encounter} disabled={!combat} onClick={() => setMapMode("encounter")}>Encounter view</Button>
+        </div> : null}
         <div className={activeTool === "map" ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] [overflow-wrap:anywhere]"}>
           {activeTool === "journal" ? (
             <JournalPanel
@@ -161,7 +175,11 @@ export function PlayToolPanel({
               onOpenHistory={onOpenHistory}
               largeText={largeJournalText}
             />
-          ) : (
+          ) : activeTool === "recap" ? consultation : encounter && combat ? <EncounterView combat={combat} onSelectTarget={onSelectTarget ? (name) => {
+            // Release the full-view focus trap before the composer receives the draft.
+            setExpandedMap(false);
+            onSelectTarget(name);
+          } : undefined} /> : (
             <SessionMapPanel
               sessionId={sessionId}
               actors={journal.data?.entries.filter((entry) => entry.category === "person")}

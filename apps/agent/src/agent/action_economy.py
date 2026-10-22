@@ -75,6 +75,7 @@ _OFF_HAND_DECLARED = re.compile(
 )
 _ATTACK_WORDS = re.compile(
     r"\b(?:attack\w*|strik\w*|stab\w*|swing\w*|slash\w*|shoot\w*|lunge\w*|smash\w*|thrust\w*"
+    r"|bash\w*|punch\w*|kick\w*|cleav\w*|hurl\w*|throw\w*|kill\w*|(?:keep|continue)\s+fighting|knock\s+(?:(?:the|a|an)\s+)?\w+\s+out"
     r"|hit\s+(?:the|a|an|him|her|it|them)|cut\s+(?:the|a|an|him|her|it|them))\b",
     re.IGNORECASE,
 )
@@ -98,7 +99,33 @@ def off_hand_declared(text: str | None) -> bool:
 
 def has_attack_words(text: str | None) -> bool:
     """True when the player's own words name an attack (a dodge's object does not count)."""
-    return bool(_ATTACK_WORDS.search(_DODGE_OBJECT.sub(" ", str(text or ""))))
+    return bool(affirmative_matches(_ATTACK_WORDS, _DODGE_OBJECT.sub(" ", str(text or ""))))
+
+
+def affirmative_matches(pattern: re.Pattern, text: str | None) -> list[re.Match]:
+    """Player actions only: quoted speech, hypothetical and negated verbs authorize no mechanics.
+
+    This is a conservative guard, not a semantic parser. Uncertain wording is clarified before dice.
+    A new explicit first-person clause resets the subject/negation of an earlier clause.
+    """
+    body = re.sub(r'"[^"\n]*"|“[^”\n]*”', lambda m: " " * len(m[0]), str(text or ""))
+    result = []
+    for match in pattern.finditer(body):
+        prefix = re.split(r"[.;!?\n]", body[:match.start()])[-1]
+        # An explicit new player subject can follow an enemy's description or a refusal.
+        if re.match(r"\s*(?:if|unless|whether)\b", prefix, re.I):
+            continue
+        subjects = list(re.finditer(r"\b(?:i|we)\b", prefix, re.I))
+        if subjects:
+            prefix = prefix[subjects[-1].start():]
+        elif re.match(r"\s*(?:the\s+)?(?:he|she|they|it|enemy|foe|goblin|wolf|guard)\b", prefix, re.I):
+            continue
+        if re.search(r"\b(?:if|unless|would|might|could|whether|instead\s+of)\b", prefix, re.I):
+            continue
+        if re.search(r"\b(?:not|never|don't|won't|cannot|can't|refuse\s+to|stop|without)\b[^,;]*$", prefix, re.I):
+            continue
+        result.append(match)
+    return result
 
 
 def refusal_for(declared: Sequence[Declared], hero: str) -> str | None:

@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import type { CharacterListItem } from "../../api/types";
 import { CreatePanel } from "./CreatePanel";
 
 const api = vi.hoisted(() => ({
@@ -17,22 +16,12 @@ vi.mock("../../api/client", async () => ({
   ...api,
 }));
 
-const freeHero: CharacterListItem = {
-  id: 1, name: "Mara Venn", character_class: "Ranger", level: 2, hp_max: 18,
-  base_stats: {}, base_inventory: {}, created_at: "2026-10-01", current_assignment: null,
-};
-const busyHero: CharacterListItem = {
-  ...freeHero, id: 2, name: "Gianni Ferro",
-  current_assignment: { campaign_id: 9, campaign_title: "Old Road" },
-};
-
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
-  api.listCharacters.mockResolvedValue([freeHero, busyHero]);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -48,15 +37,21 @@ async function settle() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
-it("offers heroes already adventuring elsewhere as unavailable in the preparation picker", async () => {
-  await act(() => root.render(<CreatePanel onCreated={vi.fn()} />));
+it("prepares a reusable adventure without requiring or loading a playthrough hero", async () => {
+  const onCreated = vi.fn();
+  api.generateAdventure.mockResolvedValue({ slug: "old_road", title: "Old Road" });
+  await act(() => root.render(<CreatePanel onCreated={onCreated} />));
   await settle();
-  const options = [...container.querySelectorAll<HTMLOptionElement>("select option")];
-  const free = options.find((option) => option.textContent?.includes("Mara Venn"))!;
-  const busy = options.find((option) => option.textContent?.includes("Gianni Ferro"))!;
-  expect(free.disabled).toBe(false);
-  expect(busy.disabled).toBe(true);
-  expect(busy.textContent).toContain("adventuring in Old Road");
+  expect(container.textContent).toContain("Choose or create your hero when you start a playthrough");
+  const submit = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.type === "submit")!;
+  expect(submit.disabled).toBe(false);
+  await act(async () => { container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+  expect(api.listCharacters).not.toHaveBeenCalled();
+  expect(api.generateAdventure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    size: "medium", preparation: { cost_target_microusd: 5_000_000 }, request_id: expect.any(String),
+  }));
+  expect(api.generateAdventure.mock.calls[0][0].preparation).not.toHaveProperty("character_id");
+  expect(onCreated).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ slug: "old_road", status: "processing" }));
 });
 
 it("shows the chosen PDF name on the upload form", async () => {

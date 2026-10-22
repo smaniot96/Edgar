@@ -56,7 +56,7 @@ def opening_journal_effects(
             if p.audience == "player"
             and not p.requires
             and opening in p.scene_ids
-            and opening in p.known_scene_ids
+            and p.scene_ids == [opening]
         }
         arrival = [p for p in passages if p.get("passage_id") in arrival_ids]
         if arrival:

@@ -122,7 +122,7 @@ def test_player_armor_class(armor: str, dex: int, expected: int, shield: bool) -
         ("I run away from the ogre", True),
         ("I turn and run.", True),
         ("I try to escape through the window", True),
-        ("I surrender.", True),
+        ("I surrender.", False),
         ("I run at the goblin and swing my sword", False),
         ("I run toward the door to block it", False),
         ("I escape the grapple", False),

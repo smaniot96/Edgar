@@ -7,6 +7,7 @@ question the player is asked, with no roll, no round and no state change. Everyt
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -27,8 +28,9 @@ from agent.action_economy import (
     off_hand_refusal,
     refusal_for,
 )
-from agent.class_features import RAGE
+from agent.class_features import ACTION_SURGE, RAGE
 from agent.combat_intent import _RANGED_HINT, _STAND_UP, _is_attack_action, _name_matches
+from agent.combat_plan import attack_count_question, operation_order, sequence_question
 from agent.combat_targeting import _release_target, additional_spell_targets, select_target
 from agent.combat_view import _ask_player
 from agent.combatants import CombatManeuver, can_act, classify_combat_maneuver, is_standing
@@ -67,6 +69,7 @@ from agent.resolution import (
     choose_weapon,
     find_healing_consumable,
     mentions_item_use,
+    normalise_check,
     off_hand_weapon,
 )
 from agent.spells import CastPlan, cast_request, target_count
@@ -106,6 +109,8 @@ class Declaration:
     contingency_moves: MovePlan | None = None  # its branch, planned on the bands before the action
     # EDG-049: the other hero a healing spell or potion is aimed at (a party fight), else the caster.
     ally_target: dict | None = None
+    execution_order: tuple[str, ...] = ()
+    main_attack_count: int = 1
 
 
 def declare_action(
@@ -136,7 +141,7 @@ def declare_action(
         )
         if ruling:
             return _ask_player(state, ruling, combat_state=combat_state)
-    is_attack, is_spell = (False, False) if fled else _is_attack_action(parsed, named)
+    is_attack, is_spell = (False, False) if fled else _is_attack_action(parsed, named, player_input)
     # A declared spell never becomes a weapon-style attack roll (EDG-028). A catalog spell the
     # character can cast resolves through agent.spells; any other declared spell keeps its ruling.
     actions = actions_for_state(state)
@@ -236,6 +241,17 @@ def declare_action(
         declared.append(OFF_HAND_ATTACK)
     if ready_declared:
         declared.append(Declared("ready", ACTION, "Ready"))
+    if is_attack:
+        attack_count = attack_count_question(
+            player_input, parsed, hero=hero,
+            available=1 + int(off_hand) + int(ACTION_SURGE in cf_requested and cf_left.get(ACTION_SURGE, 0) > 0),
+        )
+        if attack_count:
+            return _ask_player(state, attack_count, combat_state=combat_state)
+    execution_order = operation_order(declared, moving, parsed, player_input)
+    if question := sequence_question(execution_order, player_input, hero):
+        return _ask_player(state, question, combat_state=combat_state)
+    declared.sort(key=lambda d: execution_order.index(d.kind))
     refusal = refusal_for(declared, hero)
     if refusal:
         return _ask_player(state, refusal, combat_state=combat_state)
@@ -257,6 +273,21 @@ def declare_action(
             question = completeness_question(actions, living, player_input, hero)
         if question:
             return _ask_player(state, question, combat_state=combat_state)
+        idle = bool(re.search(r"\b(?:i|we)\s+(?:wait|do\s+nothing|hold\s+(?:my|our)\s+(?:action|turn))\b", player_input, re.I))
+        nonattack_check = normalise_check(getattr(parsed, "check", None))
+        if nonattack_check and nonattack_check[1] in ("attack", "spell_attack"):
+            nonattack_check = None
+        if not declared and not moving and not standing_up and combat_action is None and player_input and not idle and not nonattack_check:
+            return _ask_player(
+                state,
+                "What do you do this turn? I have not declared an attack. You can speak, offer surrender, "
+                "attack, Dodge, Disengage, or move. No roll is made and no turn is spent.",
+                combat_state=combat_state,
+            )
+    for name in named:
+        participant = next((p for p in player.get("encounter_participants", []) if p.get("participation") == "visible_nonparticipant" and _name_matches(name, p.get("name", ""))), None)
+        if participant is not None and (is_attack or combat_action is not None or spell_plan is not None):
+            return _ask_player(state, f"{participant['name']} is visible but is outside this encounter's active roster. The engine cannot add that actor to this fight automatically. Choose an active foe or a different approach. No roll is made and no turn is spent.", combat_state=combat_state)
     target: dict | None = None
     release_target: dict | None = None
     if combat_action is not None and combat_action.kind == "release":
@@ -355,7 +386,12 @@ def declare_action(
     )
     attack_ranged = bool(_RANGED_HINT.search(player_input)) or attack_weapon.ranged
     if target is not None and not is_spell and not attack_ranged:
-        if moves.bands.get(id(target), band_of(target)) == RANGED and (
+        attack_band = (
+            moves.bands.get(id(target), band_of(target))
+            if "move" in execution_order and execution_order.index("move") < execution_order.index("attack" if is_attack else "maneuver")
+            else band_of(target)
+        )
+        if attack_band == RANGED and (
             is_attack or combat_action is not None
         ):
             return _ask_player(state, reach_refusal(hero, target["name"]), combat_state=combat_state)
@@ -397,6 +433,8 @@ def declare_action(
         contingency=contingency,
         contingency_moves=branch_plan,
         ally_target=ally_target,
+        execution_order=execution_order,
+        main_attack_count=1 + int(is_attack and ACTION_SURGE in cf_requested and cf_left.get(ACTION_SURGE, 0) > 0),
     )
 
 

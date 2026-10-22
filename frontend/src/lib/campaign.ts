@@ -1,5 +1,14 @@
 import type { AdventureRead, CampaignRead } from "../api/types";
 
+/** Public adventure metadata; an unknown recommendation is never guessed from its title. */
+export function recommendedLevels(value: string | null | undefined): { min: number; max: number } | null {
+  const match = value?.trim().match(/^(?:levels?\s*)?(\d{1,2})(?:\s*(?:[-–—/]|to)\s*(\d{1,2}))?$/i);
+  if (!match) return null;
+  const min = Number(match[1]);
+  const max = Number(match[2] ?? match[1]);
+  return min >= 1 && min <= max && max <= 20 ? { min, max } : null;
+}
+
 /** Titles the backend/seed use when nobody named the campaign. */
 const GENERIC_TITLES = new Set(["", "solo session", "new campaign", "untitled campaign", "ai campaign"]);
 

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { isJournalView, viewFor, type JournalView } from "../journal/model";
 import type { JournalCategory } from "../journal/types";
 
-export type PlayTool = "journal" | "map" | "character" | null;
+export type PlayTool = "journal" | "map" | "character" | "recap" | null;
 
 export interface PlayWorkspaceState {
   activeTool: PlayTool;
@@ -19,7 +19,7 @@ function keyFor(sessionId: number): string {
 function readState(sessionId: number, initialTool: PlayTool): PlayWorkspaceState {
   try {
     const parsed = JSON.parse(localStorage.getItem(keyFor(sessionId)) ?? "null") as (Partial<PlayWorkspaceState> & { category?: string }) | null;
-    const validTool = parsed?.activeTool === "journal" || parsed?.activeTool === "map" || parsed?.activeTool === "character" || parsed?.activeTool === null;
+    const validTool = parsed?.activeTool === "journal" || parsed?.activeTool === "map" || parsed?.activeTool === "character" || parsed?.activeTool === "recap" || parsed?.activeTool === null;
     if (parsed && validTool) {
       return {
         activeTool: parsed.activeTool ?? null,

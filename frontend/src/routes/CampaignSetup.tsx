@@ -5,6 +5,7 @@ import {
   ApiError,
   assignCharacterToCampaign,
   createSession,
+  getAdventure,
   getCampaign,
   isNotFound,
   listCharacters,
@@ -12,13 +13,14 @@ import {
 } from "../api/client";
 import type { CharacterListItem, SessionRead } from "../api/types";
 import { CharacterForm } from "../components/CharacterForm";
+import { LevelRecommendation } from "../components/campaign/LevelRecommendation";
 import { ReadinessNotice } from "../components/campaign/ReadinessNotice";
 import { Button, ButtonLink } from "../components/ui/Button";
 import { EmptyState, LoadingText } from "../components/ui/EmptyState";
 import { ErrorNotice, OfflineState } from "../components/ui/ErrorNotice";
 import { ArrowLeftIcon, PlayIcon, PlusIcon } from "../components/ui/icons";
 import { Page, PageHeader } from "../components/ui/Page";
-import { campaignDisplayName } from "../lib/campaign";
+import { campaignDisplayName, recommendedLevels } from "../lib/campaign";
 import {
   createRequestId,
   emptyCharacterDraft,
@@ -41,12 +43,12 @@ export default function CampaignSetup() {
 function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
   const validId = Number.isInteger(campaignId) && campaignId > 0;
   const navigate = useNavigate();
-  const [progress, setProgress] = useState<CampaignSetupProgress>(() =>
+  const [storedProgress, setProgress] = useState<CampaignSetupProgress>(() =>
     validId ? readCampaignSetupProgress(campaignId) : readCampaignSetupProgress(0),
   );
   const [assigning, setAssigning] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [showCreateHero, setShowCreateHero] = useState(() => progress.pendingCharacter != null);
+  const [showCreateHero, setShowCreateHero] = useState(() => storedProgress.pendingCharacter != null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
@@ -55,14 +57,24 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
     getCampaign(campaignId, signal),
   );
   const characters = useQuery(validId ? "characters" : null, (signal) => listCharacters(signal));
+  const adventureSlug = campaign.data?.adventure_collections[0];
+  const adventure = useQuery(adventureSlug ? `adventure:${adventureSlug}` : null, (signal) => getAdventure(adventureSlug!, signal));
   const sessions = useQuery(validId ? `sessions:${campaignId}` : null, (signal) =>
     listSessions(campaignId, signal),
   );
 
-  const selectedCharacter = useMemo(
-    () => characters.data?.find((character) => character.id === progress.characterId) ?? null,
-    [characters.data, progress.characterId],
-  );
+  const assignedHeroes = characters.data?.filter((character) => character.current_assignment?.campaign_id === campaignId) ?? [];
+  // A single already-assigned hero is a safe default. An explicit choice, retry or draft wins.
+  const defaultHero = storedProgress.stage === "hero" && storedProgress.characterId == null &&
+    !storedProgress.pendingCharacter && !storedProgress.pendingSession && !storedProgress.characterDraft.name &&
+    assignedHeroes.length === 1 ? assignedHeroes[0] : null;
+  const progress = defaultHero ? { ...storedProgress, stage: "playthrough" as const, characterId: defaultHero.id, assignedCharacterId: defaultHero.id } : storedProgress;
+  const selectedCharacter = useMemo(() => {
+    const character = characters.data?.find((item) => item.id === progress.characterId);
+    if (!character) return null;
+    const assignment = campaign.data?.characters?.find((item) => item.character_id === character.id);
+    return assignment ? { ...character, level: assignment.level, hp_max: assignment.hp_max } : character;
+  }, [characters.data, campaign.data?.characters, progress.characterId]);
   const setupSession = getSetupSession(sessions.data, progress.sessionId);
   const canStart = campaign.data?.status === "active" && campaign.data.readiness?.play_allowed === true;
   const readiness = campaign.data?.readiness ?? null;
@@ -79,7 +91,7 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
     setSetupMessage(null);
     save({
       ...progress,
-      stage: character ? "assignment" : "playthrough",
+      stage: character && character.current_assignment?.campaign_id !== campaignId ? "assignment" : "playthrough",
       characterId: character?.id ?? null,
       assignedCharacterId: character?.current_assignment?.campaign_id === campaignId ? character.id : null,
       sessionId: null,
@@ -140,7 +152,10 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
     if (!canStart || starting) return;
     // A second tab may have persisted a retry key or completed the save after this tab loaded.
     // Read storage immediately before selecting a request ID so retries share the same intent.
-    const latest = readCampaignSetupProgress(campaignId);
+    const stored = readCampaignSetupProgress(campaignId);
+    const latest = defaultHero && stored.stage === "hero" && stored.characterId == null && !stored.pendingCharacter && !stored.pendingSession
+      ? { ...stored, stage: "playthrough" as const, characterId: defaultHero.id, assignedCharacterId: defaultHero.id }
+      : stored;
     if (latest.sessionId != null) {
       save(latest);
       setSetupMessage("This setup was updated in another tab. Loading its saved playthrough.");
@@ -218,6 +233,7 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
         description="Your campaign brings a party to one adventure. Choose the character you will control in this session."
         actions={<Link to={`/campaigns/${campaignId}`} className="inline-flex items-center gap-1 text-sm text-ink-muted hover:text-ink"><ArrowLeftIcon className="h-3.5 w-3.5" /> Campaign</Link>}
       />
+      <LevelRecommendation range={adventure.data?.level_range} heroes={selectedCharacter ? [selectedCharacter] : []} />
 
       {!canStart ? (
         readiness ? <ReadinessNotice readiness={readiness} onRetry={campaign.refetch} /> : (
@@ -286,6 +302,7 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
           ) : characters.data?.length === 0 ? <p className="text-sm text-ink-muted">You have no heroes yet. Create one below or start a playthrough without a hero.</p> : null}
           {showCreateHero ? (
             <CharacterForm
+              initialLevel={Math.min(5, recommendedLevels(adventure.data?.level_range)?.min ?? 1)}
               title="Create a hero"
               submitLabel="Save hero and continue"
               onCancel={() => setShowCreateHero(false)}
@@ -344,10 +361,11 @@ function CampaignSetupScreen({ campaignId }: { campaignId: number }) {
           <div>
             <h2 id="playthrough-step-title" className="font-display text-xl">Create your saved playthrough</h2>
             <p className="mt-1 text-sm text-ink-muted">{selectedCharacter ? `Starting with ${selectedCharacter.name}.` : "Starting without a hero; the DM will improvise one."} This creates a fresh playthrough. Existing saves stay as they are.</p>
+            {selectedCharacter ? <p className="mt-1 text-xs text-ink-muted">This hero keeps their current campaign HP and resources. A new save does not rest or reset the hero.</p> : null}
           </div>
           {selectedCharacter && !alreadyAssigned ? <p role="alert" className="text-sm text-warning">Assign this hero before creating the playthrough.</p> : null}
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" disabled={starting || !!progress.pendingSession} onClick={() => save({ ...progress, stage: selectedCharacter ? "assignment" : "hero" })}>Back</Button>
+            <Button variant="secondary" disabled={starting || !!progress.pendingSession} onClick={() => save({ ...progress, stage: "hero" })}>Change hero</Button>
             <Button loading={starting} loadingText="Saving playthrough…" disabled={!canStart || (!!selectedCharacter && !alreadyAssigned)} onClick={() => void startSavedPlaythrough()}>
               <PlayIcon className="h-3.5 w-3.5" /> Start saved playthrough
             </Button>

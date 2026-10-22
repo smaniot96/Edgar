@@ -168,6 +168,8 @@ def public_adjudication(adjudication) -> dict | None:
             "accepted_story_effects",
             "accepted_observations",
             "observation_diagnostics",
+            "source_observations",
+            "combat_offer",
             "proposed_prepared_amendment",
             "accepted_prepared_amendment",
         }
@@ -737,6 +739,39 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
     # Additive (EDG-182): the hero's standing reaction orders, each cancellable by a reply.
     if orders := public_standing_orders(combat_state.get("combatants") or []):
         public["standing_orders"] = orders
+
+    # These engine-authored events use earned roster labels. Never forward private receipts,
+    # extra keys, or identities outside the public roster from the persisted combat JSON.
+    roster_ids = {row["id"] for row in public["combatants"]}
+    events = []
+    for event in (combat_state.get("round_events") or [])[:32]:
+        if not isinstance(event, dict) or not isinstance(event.get("text"), str):
+            continue
+        if not isinstance(event.get("kind"), str) or not event["text"].strip():
+            continue
+        entry = {"kind": event["kind"][:80], "text": event["text"][:500]}
+        for field in ("actor_id", "target_id"):
+            if event.get(field) in roster_ids:
+                entry[field] = event[field]
+        events.append(entry)
+    if events:
+        public["round_events"] = events
+    participants = []
+    participant_rows = combat_state.get("participants") or next((
+        row.get("encounter_participants") for row in combat_state.get("combatants", [])
+        if row.get("is_player") and row.get("encounter_participants")
+    ), [])
+    for participant in participant_rows[:32]:
+        if not isinstance(participant, dict) or participant.get("participation") not in {"active", "visible_nonparticipant"}:
+            continue
+        if not all(isinstance(participant.get(key), str) and participant[key].strip() for key in ("id", "name", "reason")):
+            continue
+        participants.append({
+            "id": participant["id"][:200], "name": participant["name"][:200],
+            "participation": participant["participation"], "reason": participant["reason"][:500],
+        })
+    if participants:
+        public["participants"] = participants
     if party:
         # Additive (EDG-049): the fight is shared, and the engine says whose turn it is.
         public["party"] = True
@@ -882,7 +917,7 @@ def _debug_payload(
     return {
         # Policy selectors and earned-clue IDs can encode reviewed internal names. They are
         # model-only routing data, so omit them from the optional client developer stream.
-        "parsed_input": parsed.model_dump(exclude={"resolution_policy_id", "recall_fact_id"})
+        "parsed_input": parsed.model_dump(exclude={"resolution_policy_id", "recall_fact_id", "source_object_id", "check_reason"})
         if parsed is not None
         else None,
         "rules_context": _truncate_ctx(rules_ctx),

@@ -17,7 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from edgar_core.identifiers import Digest, Identifier
 from edgar_core.manifests import AdventureManifest
 from edgar_core.prepared import route_identity, validate_prepared_campaign
-from edgar_core.story import StoryFact
+from edgar_core.public_places import public_place_label
+from edgar_core.story import StoryFact, player_story_effect
 
 
 class AssetRecord(BaseModel):
@@ -104,10 +105,11 @@ def _public_map_version(
 
 def _safe_fact_scene_ids(
     facts: list[StoryFact], *, collection: str, source_sha256: str, manifest_sha256: str
-) -> tuple[set[str], set[str], dict[str, str]]:
+) -> tuple[set[str], set[str], dict[str, str], dict[str, str]]:
     known: set[str] = set()
     visited: set[str] = set()
     details: dict[str, str] = {}
+    public_text: dict[str, str] = {}
     for fact in facts:
         target = fact.target
         if (
@@ -121,9 +123,15 @@ def _safe_fact_scene_ids(
             known.add(target.canonical_id)
             if fact.kind in {"visit", "move"}:
                 visited.add(target.canonical_id)
-            if fact.display_name:
-                details[target.canonical_id] = fact.display_name
-    return known, visited, details
+            public = player_story_effect(fact)
+            if public is None:
+                continue
+            label = public_place_label(public.get("text"), public.get("name", ""))
+            if label:
+                details[target.canonical_id] = label
+            if public.get("text"):
+                public_text[target.canonical_id] = public["text"][:12000]
+    return known, visited, details, public_text
 
 
 def project_player_map(
@@ -154,7 +162,7 @@ def project_player_map(
     source_version = hashlib.sha256(
         f"{collection}\0{source_hash}\0{manifest_hash}".encode()
     ).hexdigest()
-    known, visited, details = _safe_fact_scene_ids(
+    known, visited, details, public_text = _safe_fact_scene_ids(
         bound_facts,
         collection=collection,
         source_sha256=source_hash,
@@ -178,7 +186,10 @@ def project_player_map(
     places = [
         PlayerMapPlace(
             scene_id=scene_id,
-            title=details.get(scene_id, scene_by_id[scene_id].title),
+            title=details.get(
+                scene_id, "Current location" if scene_id == current_scene_id else "Known location"
+            ),
+            detail=public_text.get(scene_id),
             status=(
                 "current"
                 if scene_id == current_scene_id

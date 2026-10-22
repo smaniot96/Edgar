@@ -1485,8 +1485,14 @@ def engine_applied_for_state(state: dict[str, Any] | None) -> EngineApplied:
     """
     state = state or {}
     mode = state.get(ENGINE_ROLL_MODE_KEY)
-    request = cast_request(
-        state.get("player_input"), state.get("parsed_input"), state.get("character")
+    from agent.scene_guidance import selected_source_object
+
+    request = (
+        None
+        if selected_source_object(state)
+        else cast_request(
+            state.get("player_input"), state.get("parsed_input"), state.get("character")
+        )
     )
     return EngineApplied(
         roll_mode=mode if mode in ("advantage", "disadvantage") else "normal",
@@ -1641,9 +1647,24 @@ _EXECUTED_BONUS_ACTION = re.compile(
 
 
 def actions_for_state(state: dict[str, Any]) -> tuple[UnsupportedAction, ...]:
+    from agent.scene_guidance import selected_source_object
+
+    parsed = state.get("parsed_input")
+    text = state.get("player_input")
+    if source_object := selected_source_object(state):
+        # Correct a parser-inferred cast when the actual declaration interacts with a known
+        # object. Explicit casting is excluded by the selector, and every textual mechanic
+        # outside the object's name still passes through the normal boundary below.
+        entities = {
+            k: v for k, v in (getattr(parsed, "entities", {}) or {}).items() if k != "spell"
+        }
+        parsed = parsed.model_copy(update={"entities": entities, "check": None})
+        text = re.sub(
+            re.escape(source_object["name"]), "source object", str(text or ""), flags=re.IGNORECASE
+        )
     return classify_unsupported_actions(
-        state.get("player_input"),
-        state.get("parsed_input"),
+        text,
+        parsed,
         state.get("character"),
         applied=engine_applied_for_state(state),
     )
