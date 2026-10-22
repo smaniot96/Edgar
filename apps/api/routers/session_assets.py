@@ -15,6 +15,7 @@ from db.postgres.models import Campaign, EventLog
 from edgar_core.assets import PlayerMapProjection, project_player_map, render_player_map_svg
 from edgar_core.manifests import AdventureManifest
 from edgar_core.story import StoryFact
+from edgar_core.world_map import PlayerWorldMap, project_world_map, render_world_map_svg
 
 from ..auth import Auth, member_session
 from ..dependencies import get_session
@@ -53,8 +54,7 @@ async def _session_map_context(session_id: int, db: AsyncSession, auth: Auth) ->
                 campaign_manifests, list(campaign.adventure_collections)
             )
             manifests = {
-                name: AdventureManifest.model_validate(raw)
-                for name, raw in raw_manifests.items()
+                name: AdventureManifest.model_validate(raw) for name, raw in raw_manifests.items()
             }
         except Exception:
             # A broken or stale source cannot make the map endpoint disclose template data.
@@ -97,6 +97,25 @@ def _select_manifest(context: dict[str, Any]) -> tuple[str, AdventureManifest] |
         and any(scene.scene_id == session.current_scene_id for scene in manifest.scenes)
     ]
     return current_matches[0] if len(current_matches) == 1 else None
+
+
+async def _player_world_map(
+    collection: str, projection: PlayerMapProjection
+) -> PlayerWorldMap | None:
+    """Project the prepared world map with the same earned scene knowledge as the scene map."""
+    from ..services.campaign_prep.runtime import published_world_map
+
+    prepared = await run_in_threadpool(published_world_map, collection)
+    if prepared is None:
+        return None
+    return project_world_map(
+        prepared,
+        known_scene_ids={place.scene_id for place in projection.places},
+        visited_scene_ids={
+            place.scene_id for place in projection.places if place.status != "known"
+        },
+        current_scene_id=projection.current_scene_id,
+    )
 
 
 def _known_place_entries(journal: Any) -> list[dict[str, Any]]:
@@ -145,10 +164,13 @@ async def get_session_map(
             "known_place_entries": _known_place_entries(journal),
             "artwork": [],
             "tracking": journal.tracking,
+            "world_map": None,
         }
 
     collection, manifest = selected
-    manifests_dict = {name: item.model_dump(mode="json") for name, item in context["manifests"].items()}
+    manifests_dict = {
+        name: item.model_dump(mode="json") for name, item in context["manifests"].items()
+    }
     flags = session_story_flags(
         context["state"], manifests_dict, await load_world_flags(db, context["campaign"].id)
     )
@@ -160,9 +182,7 @@ async def get_session_map(
         world_flags=flags,
         current_scene_id=session.current_scene_id,
     )
-    entries_by_id = {
-        entry.id: entry for entry in journal.entries if entry.category == "place"
-    }
+    entries_by_id = {entry.id: entry for entry in journal.entries if entry.category == "place"}
     journal_ids: dict[str, str] = {}
     for fact in facts:
         if (
@@ -175,6 +195,7 @@ async def get_session_map(
             entry_id = journal_entry_id(session_id, "place", fact.fact_id)
             if entry_id in entries_by_id:
                 journal_ids[fact.target.canonical_id] = entry_id
+    world = await _player_world_map(collection, projection)
     artwork = adventure_assets.authorized_player_assets(
         session_id=session_id,
         collection=collection,
@@ -187,6 +208,7 @@ async def get_session_map(
         "known_place_entries": _known_place_entries(journal),
         "artwork": artwork,
         "tracking": journal.tracking,
+        "world_map": world.model_dump(mode="json") if world else None,
     }
 
 
@@ -233,6 +255,43 @@ async def get_session_map_svg(
         raise HTTPException(status_code=409, detail="Map changed. Refresh this session's map.")
     return BinaryResponse(
         content=render_player_map_svg(projection),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.get("/sessions/{session_id}/world-map.svg")
+async def get_session_world_map_svg(
+    session_id: int,
+    auth: Auth,
+    response: Response,
+    db: AsyncSession = Depends(get_session),
+) -> BinaryResponse:
+    """Render the prepared regional map with only what this session may see."""
+    response.headers["Cache-Control"] = "private, no-store"
+    context = await _session_map_context(session_id, db, auth)
+    selected = _select_manifest(context)
+    if selected is None:
+        raise HTTPException(status_code=404, detail="No world map for this session.")
+    collection, manifest = selected
+    flags = session_story_flags(
+        context["state"],
+        {name: item.model_dump(mode="json") for name, item in context["manifests"].items()},
+        await load_world_flags(db, context["campaign"].id),
+    )
+    projection = project_player_map(
+        session_id=session_id,
+        collection=collection,
+        manifest=manifest,
+        facts=context["facts"],
+        world_flags=flags,
+        current_scene_id=context["session"].current_scene_id,
+    )
+    world = await _player_world_map(collection, projection)
+    if world is None:
+        raise HTTPException(status_code=404, detail="No world map for this session.")
+    return BinaryResponse(
+        content=render_world_map_svg(world),
         media_type="image/svg+xml",
         headers={"Cache-Control": "private, no-store"},
     )

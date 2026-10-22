@@ -258,6 +258,7 @@ def safe_preparation_status(meta, slug):
         "ai_cast": "Creating the cast and secrets",
         "ai_outline": "Outlining the chapters",
         "ai_chapter": "Writing the chapters",
+        "ai_map": "Drawing the map",
         "ai_compose": "Joining the chapters",
         "bundles": "Preparing chapter bundles",
         "continuity": "Joining shared identities",
@@ -293,6 +294,20 @@ def safe_preparation_status(meta, slug):
         if status == "blocked"
         else "wait",
     )
+
+
+def published_world_map(slug):
+    """The prepared world map of a Ready AI adventure, or None."""
+    try:
+        # Never create a store as a side effect of reading a map.
+        if not (meta_store.adventure_path(slug, "preparation-v2") / "graph.sqlite3").exists():
+            return None
+        store = Store(slug)
+        if store.state().get("status") != "ready":
+            return None
+        return store.get("world-map")
+    except Exception:
+        return None
 
 
 def preparation_job_spend(slug):

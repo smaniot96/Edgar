@@ -250,6 +250,8 @@ class Workflow:
             "ai_outline_check",
             "ai_chapter",
             "ai_chapter_check",
+            "ai_map",
+            "ai_map_check",
             "ai_compose",
         ):
             builder.add_node(name, getattr(self, name))
@@ -274,7 +276,13 @@ class Workflow:
         builder.add_conditional_edges(
             "ai_chapter_check",
             self.route_ai_chapter,
-            {"revise": "ai_chapter", "next": "ai_chapter", "compose": "ai_compose"},
+            {"revise": "ai_chapter", "next": "ai_chapter", "compose": "ai_map"},
+        )
+        builder.add_edge("ai_map", "ai_map_check")
+        builder.add_conditional_edges(
+            "ai_map_check",
+            self.route_ai_check("ai_map"),
+            {"revise": "ai_map", "next": "ai_compose"},
         )
         builder.add_edge("ai_compose", "continuity")
         for previous, following in (
@@ -344,6 +352,14 @@ class Workflow:
 
     async def ai_chapter_check(self, address):
         self.ai.chapter_check()
+        return address
+
+    async def ai_map(self, address):
+        await self.ai.world_map()
+        return address
+
+    async def ai_map_check(self, address):
+        self.ai.world_map_check()
         return address
 
     async def ai_compose(self, address):

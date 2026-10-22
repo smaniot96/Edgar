@@ -253,3 +253,39 @@ it("keeps the plain handout link and makes no fetch in local mode (no token)", a
     vi.unstubAllGlobals();
   }
 });
+
+it("shows the region map with only the places this session may see", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const withWorld: SessionMapRead = {
+    ...map,
+    world_map: {
+      title: "Saltmere and the Tideworks",
+      current_place_id: "saltmere",
+      places: [
+        { place_id: "saltmere", label: "Saltmere", x: 20, y: 40, symbol: "town", status: "current" },
+        { place_id: "lighthouse", label: "Sealed Lighthouse", x: 70, y: 20, symbol: "tower", status: "rumoured" },
+      ],
+      routes: [{ from_place_id: "saltmere", to_place_id: "lighthouse", kind: "path", label: "Cliff path" }],
+      features: [{ name: "Saltmere Bay", kind: "water" }],
+    },
+  };
+  try {
+    await act(() => root.render(
+      <SessionMapPanel sessionId={12} map={withWorld} loading={false} error={null}
+        onRefresh={vi.fn()} onOpenJournal={vi.fn()} onPrepareTravel={vi.fn()} />,
+    ));
+    const section = container.querySelector('[aria-labelledby="world-map-heading"]');
+    expect(section?.querySelector("h3")?.textContent).toBe("Saltmere and the Tideworks");
+    expect(section?.textContent).toContain("You are at Saltmere.");
+    const items = [...section!.querySelectorAll('[aria-label="Places on the region map"] li')].map((li) => li.textContent);
+    expect(items).toEqual(["SaltmereYou are here", "Sealed LighthouseKnown by reputation"]);
+    expect(section?.textContent).toContain("Saltmere – Sealed Lighthouse (Cliff path)");
+    expect(section?.querySelector("img")?.getAttribute("alt")).toContain("Sealed Lighthouse (known by reputation)");
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+  }
+});

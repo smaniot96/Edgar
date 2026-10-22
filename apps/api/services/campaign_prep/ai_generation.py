@@ -20,6 +20,7 @@ from pydantic import Field
 from agent.resolution import normalise_check
 from edgar_core.campaign_semantics import Bundles, Record, Spine
 from edgar_core.identifiers import Identifier
+from edgar_core.world_map import FEATURE_KINDS, ROUTE_KINDS, SYMBOLS, WorldMap
 
 from .compile import validate_semantics
 from .profiles import canonical_profiles
@@ -287,6 +288,50 @@ class AiChapterDraft(Record):
     continuity_summary: str = Field(
         description="DM-facing: what this chapter establishes, possible outcomes and open threads."
     )
+
+
+class AiMapPoint(Record):
+    x: int = Field(ge=0, le=100)
+    y: int = Field(ge=0, le=100)
+
+
+class AiMapFeature(Record):
+    name: str = Field(description="Short map label, e.g. 'Saltmere Bay' or 'Greywood'.")
+    kind: Literal[FEATURE_KINDS]
+    shape: Literal["area", "line"]
+    points: list[AiMapPoint] = Field(
+        min_length=2, description="Outline of an area (3+ points) or the course of a line."
+    )
+
+
+def world_map_schema(places):
+    """Map places may only be existing place entities, each placed exactly once."""
+    PlaceRef = Literal[tuple(p["id"] for p in places)]  # noqa: N806
+
+    class AiMapPlace(Record):
+        place_id: PlaceRef
+        label: str = Field(description="Short player-safe map label.")
+        x: int = Field(ge=0, le=100, description="0 is west, 100 is east.")
+        y: int = Field(ge=0, le=100, description="0 is north, 100 is south.")
+        symbol: Literal[SYMBOLS]
+        public: bool = Field(
+            description="Common knowledge when play begins; false for places to discover."
+        )
+
+    class AiMapRoute(Record):
+        from_place_id: PlaceRef
+        to_place_id: PlaceRef
+        kind: Literal[ROUTE_KINDS]
+        hidden: bool = Field(description="A secret way the heroes must discover.")
+        label: str
+
+    class AiWorldMap(Record):
+        title: str
+        places: list[AiMapPlace] = Field(min_length=1)
+        routes: list[AiMapRoute]
+        features: list[AiMapFeature]
+
+    return AiWorldMap
 
 
 # --- Local conversion ---------------------------------------------------------------
@@ -811,6 +856,69 @@ def check_chapter(
     return draft, problems
 
 
+def check_world_map(value, places, opening_place):
+    problems = []
+    expected = {p["id"] for p in places}
+    placed = [p["place_id"] for p in value["places"]]
+    missing = sorted(expected - set(placed))
+    if missing:
+        problems.append("Place every adventure place on the map: " + ", ".join(missing))
+    twice = sorted({i for i in placed if placed.count(i) > 1})
+    if twice:
+        problems.append("Place each place once: " + ", ".join(twice))
+    rows = value["places"]
+    for i, a in enumerate(rows):
+        for b in rows[i + 1 :]:
+            if a["place_id"] != b["place_id"] and abs(a["x"] - b["x"]) + abs(a["y"] - b["y"]) < 8:
+                problems.append(
+                    f"{a['place_id']} and {b['place_id']} overlap; keep places at least 8 grid "
+                    "units apart (move one, or show a building beside its settlement)."
+                )
+    by_id = {p["place_id"]: p for p in rows}
+    if opening_place in by_id and not by_id[opening_place]["public"]:
+        problems.append(f"The opening location {opening_place} must be public.")
+    links = {}
+    for route in value["routes"]:
+        a, b = route["from_place_id"], route["to_place_id"]
+        if a == b:
+            problems.append(f"Route from {a} to itself.")
+        links.setdefault(a, set()).add(b)
+        links.setdefault(b, set()).add(a)
+    if rows:
+        seen, pending = set(), [rows[0]["place_id"]]
+        while pending:
+            current = pending.pop()
+            if current not in seen:
+                seen.add(current)
+                pending.extend(links.get(current, ()))
+        cut_off = sorted(set(placed) - seen)
+        if cut_off:
+            problems.append(
+                "Every place needs a route (road, path, river, sea, tunnel or bridge) "
+                "connecting it to the rest of the map: " + ", ".join(cut_off)
+            )
+    for feature in value["features"]:
+        if feature["shape"] == "area" and len(feature["points"]) < 3:
+            problems.append(f"Area feature {feature['name']} needs at least 3 points.")
+    if len(value["features"]) > 12:
+        problems.append("Use at most 12 terrain features; keep the sketch readable.")
+    return value, problems
+
+
+def world_map(value, bundles):
+    """The prepared map plus each scene's place, from the scenes' location IDs."""
+    return WorldMap.model_validate(
+        {
+            **value,
+            "scene_places": {
+                event["id"]: event["location_id"]
+                for chapter in bundles["chapters"]
+                for event in chapter["events"]
+            },
+        }
+    ).model_dump(mode="json")
+
+
 def compose(premise, cast, outline, chapters):
     """Join accepted steps into the shared Spine and Bundles contracts."""
     ids = chapter_ids(outline)
@@ -1180,6 +1288,44 @@ class AiGeneration:
         self.store.put("ai-bundle-" + cid, chapter_bundle(cid, draft))
         return True
 
+    def map_places(self):
+        return [e for e in self.known_entities().values() if e["kind"] == "place"]
+
+    async def world_map(self):
+        self.store.enter("ai_map")
+        places = self.map_places()
+        evidence = {
+            **self.basis(),
+            "premise": self.accepted("premise"),
+            "places": [{k: e[k] for k in ("id", "name", "aliases", "description")} for e in places],
+            "chapters": [
+                {
+                    "chapter_id": cid,
+                    "title": plan["title"],
+                    "primary_location_id": plan["primary_location_id"],
+                    "leads_onward": plan["leads_onward"],
+                }
+                for cid, plan in self.plans()
+            ],
+            "story": [
+                {
+                    "chapter_id": bundle["chapter_id"],
+                    "events": [
+                        {k: e[k] for k in ("title", "location_id", "public_description")}
+                        for e in bundle["events"]
+                    ],
+                }
+                for bundle in self.committed()
+            ],
+            "secrets": self.accepted("cast")["secrets"],
+        }
+        await self.author("map", "ai-map", world_map_schema(places), evidence)
+
+    def world_map_check(self):
+        places = self.map_places()
+        opening = self.plans()[0][1]["primary_location_id"]
+        return self.check("map", lambda value: check_world_map(value, places, opening))
+
     def chapters_complete(self):
         return self.current_chapter()[0] is None
 
@@ -1195,3 +1341,4 @@ class AiGeneration:
         validate_semantics(spine, bundles, self.store.get("source"))
         self.store.put("spine", spine, digest([premise, cast, outline]))
         self.store.put("bundles", bundles, digest(spine))
+        self.store.put("world-map", world_map(self.accepted("map"), bundles), digest(bundles))

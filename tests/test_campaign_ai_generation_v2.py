@@ -16,12 +16,14 @@ from apps.api.services.campaign_prep.ai_generation import (
     chapter_bundle,
     check_chapter,
     check_outline,
+    check_world_map,
     outline_schema,
 )
 from apps.api.services.campaign_prep.graph import Workflow
 from apps.api.services.campaign_prep.provider import SemanticClient, response_format
 from apps.api.services.campaign_prep.store import NeedsAttention, Store, digest
 from edgar_core.campaign_semantics import Review
+from edgar_core.world_map import WorldMap, project_world_map, render_world_map_svg
 
 CHAPTERS = ("arrival", "reef", "engine")
 CATALOGUE = [
@@ -228,6 +230,42 @@ def chapter(cid, plan, *, bad=False):
     }
 
 
+def world(places):
+    rows = [
+        {
+            "place_id": place["id"],
+            "label": place["name"],
+            "x": 10 + 25 * (index % 4),
+            "y": 15 + 30 * (index // 4),
+            "symbol": "town" if index == 0 else "building",
+            "public": place["id"] != "tide_engine",
+        }
+        for index, place in enumerate(places)
+    ]
+    return {
+        "title": "Greywake and the Outer Reef",
+        "places": rows,
+        "routes": [
+            {
+                "from_place_id": a["place_id"],
+                "to_place_id": b["place_id"],
+                "kind": "path",
+                "hidden": b["place_id"] == "tide_engine",
+                "label": "Causeway",
+            }
+            for a, b in zip(rows, rows[1:], strict=False)
+        ],
+        "features": [
+            {
+                "name": "Greywake Bay",
+                "kind": "water",
+                "shape": "area",
+                "points": [{"x": 0, "y": 60}, {"x": 40, "y": 70}, {"x": 0, "y": 100}],
+            }
+        ],
+    }
+
+
 class AiResponses:
     """Provider transport fixture; durable dispatch, parsing and acceptance stay real."""
 
@@ -254,6 +292,8 @@ class AiResponses:
                 self.bad_chapter and requested["number"] == 2 and not revising
             )
             value = chapter(requested["chapter_id"], requested, bad=bad)
+        elif name == "AiWorldMap":
+            value = world(evidence["places"])
         elif name == Review.__name__:
             value = {"covered_ids": evidence["review_ids"], "findings": []}
         else:
@@ -314,7 +354,7 @@ async def test_medium_request_runs_sequential_steps_into_the_shared_tail(ai_stor
         "AiChapterDraft",
         "AiChapterDraft",
     ]
-    assert set(responses.calls[6:]) == {"Review"}
+    assert set(responses.calls[7:]) == {"Review"}
     # Chapters are written in play order, each seeing the accepted ones before it.
     drafts = [e for name, e in responses.evidence if name == "AiChapterDraft"]
     assert [d["requested_chapter"]["chapter_id"] for d in drafts] == [
@@ -344,6 +384,11 @@ async def test_medium_request_runs_sequential_steps_into_the_shared_tail(ai_stor
     assert "old_tobin" in scene["participants"]
     assert bundles["chapters"][0]["checks"][0]["check"] == "survival"
     assert "Vex Marrow" in spine["dm_guidance"]
+    # The regional sketch is prepared from every place and bound to the scenes there.
+    assert responses.calls.index("AiWorldMap") == 6
+    prepared = ai_store.get("world-map")
+    assert {p["place_id"] for p in prepared["places"]} >= {"greywake", "outer_reef", "tide_engine"}
+    assert prepared["scene_places"]["ch1_arrival_event_0"] == "greywake"
 
 
 @pytest.mark.asyncio
@@ -570,3 +615,52 @@ def test_new_ai_requests_use_the_sequential_workflow_and_retry_adds_a_round(tmp_
     assert ai_generation.creature_index(
         [{"name": "Bandit", "text": "Bandit\nChallenge 1/8 (25 XP)"}]
     ) == [{"name": "Bandit", "challenge": "1/8"}]
+
+
+def test_world_map_check_places_everything_once_and_connects_it():
+    places = [{"id": "greywake"}, {"id": "outer_reef"}, {"id": "tide_engine"}]
+    value = world([{"id": "greywake", "name": "Greywake"}, {"id": "outer_reef", "name": "Reef"}])
+    value["places"][1]["x"], value["places"][1]["y"] = 12, 17
+    value["routes"] = []
+    _, problems = check_world_map(value, places, "greywake")
+    assert problems == [
+        "Place every adventure place on the map: tide_engine",
+        "greywake and outer_reef overlap; keep places at least 8 grid units apart (move one, "
+        "or show a building beside its settlement).",
+        "Every place needs a route (road, path, river, sea, tunnel or bridge) connecting it "
+        "to the rest of the map: outer_reef",
+    ]
+
+
+def test_players_see_public_and_earned_places_and_only_earned_hidden_routes():
+    prepared = WorldMap.model_validate(
+        {
+            **world(
+                [
+                    {"id": "greywake", "name": "Greywake"},
+                    {"id": "outer_reef", "name": "The Outer Reef"},
+                    {"id": "tide_engine", "name": "The Tide Engine"},
+                ]
+            ),
+            "scene_places": {"s1": "greywake", "s2": "outer_reef", "s3": "tide_engine"},
+        }
+    )
+    start = project_world_map(
+        prepared, known_scene_ids={"s1"}, visited_scene_ids={"s1"}, current_scene_id="s1"
+    )
+    assert [(p.place_id, p.status) for p in start.places] == [
+        ("greywake", "current"),
+        ("outer_reef", "rumoured"),
+    ]
+    assert "tide_engine" not in render_world_map_svg(start).decode()
+    later = project_world_map(
+        prepared,
+        known_scene_ids={"s1", "s2", "s3"},
+        visited_scene_ids={"s1", "s2"},
+        current_scene_id="s2",
+    )
+    assert [(p.place_id, p.status) for p in later.places][-1] == ("tide_engine", "known")
+    # The hidden causeway shows only once both of its ends have been visited.
+    assert [(r.from_place_id, r.to_place_id) for r in later.routes] == [("greywake", "outer_reef")]
+    svg = render_world_map_svg(later).decode()
+    assert "The Tide Engine" in svg and "Greywake Bay" in svg

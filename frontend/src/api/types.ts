@@ -296,6 +296,23 @@ export interface SessionMapRead {
   known_place_entries: Array<{ id: string; title: string; text: string | null; status: string; origin: Record<string, unknown> }>;
   artwork: SessionMapAsset[];
   tracking: "available" | "legacy_untracked";
+  /** Prepared regional sketch (AI adventures), filtered to what this session may see. */
+  world_map?: SessionWorldMap | null;
+}
+
+export interface SessionWorldMap {
+  title: string;
+  current_place_id: string | null;
+  places: Array<{
+    place_id: string;
+    label: string;
+    x: number;
+    y: number;
+    symbol: string;
+    status: "current" | "visited" | "known" | "rumoured";
+  }>;
+  routes: Array<{ from_place_id: string; to_place_id: string; kind: string; label: string }>;
+  features: Array<{ name: string; kind: string }>;
 }
 
 /** Whether a DM line's original roll was stored (EDG-030). Legacy rows are "not_captured". */
