@@ -2,7 +2,7 @@
 # environment credential. Editing this file is picked up on the next request; each request
 # and durable preparation run freezes a complete snapshot at entry.
 schema_version = 1
-profile_version = "2"
+profile_version = "3"
 
 # max_input_tokens is the estimated prompt budget (see docs/runtime-model-profiles.md); play
 # prompts drop the oldest verbatim history to fit it. Omit it to leave a stage unbounded.
@@ -20,21 +20,21 @@ max_output_tokens = 1800
 
 [profiles.play.narrator]
 max_input_tokens = 32000
-max_output_tokens = 600
+max_output_tokens = 1600
 
 [profiles.play.combat_builder]
 max_output_tokens = 1200
 
 [profiles.play.combat_narrator]
 max_input_tokens = 32000
-max_output_tokens = 600
+max_output_tokens = 1000
 
 [profiles.play.memory_summarizer]
 max_input_tokens = 32000
 max_output_tokens = 800
 
 [profiles.play.session_intro]
-max_output_tokens = 600
+max_output_tokens = 2200
 
 # Campaign preparation semantic work is deliberately policy-bound. The loader rejects a
 # file that attempts to change these settings; no account access is claimed by this config.

@@ -13,10 +13,10 @@ from edgar_core.model_profiles import (
     is_reasoning_model,
 )
 
-# Upper bound for one narration (~3 short paragraphs). Keeps latency/cost predictable and stops
-# runaway "status block" style output. On reasoning models this cap also covers reasoning tokens,
-# which is why they run at a low `reasoning_effort`.
-NARRATOR_MAX_TOKENS = 600
+# Safety ceiling for turn narration; stage profiles can choose a smaller output budget.
+# Allows developed scene prose plus reasoning without forcing every exchange to use the cap.
+# Reasoning models count reasoning tokens against this limit as well as visible output.
+NARRATOR_MAX_TOKENS = 1600
 
 
 def chat_model_kwargs(

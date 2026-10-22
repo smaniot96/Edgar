@@ -13,7 +13,9 @@ boundary heuristics offline. No model is called by the tests or by `tools/eval_b
 
 Model `gpt-6-luna` (the configured `LLM_MODEL`), run 15 October 2026. Model calls made: 206 in total
 (parser 167 logical calls, narrator 39), under the 300 budget. Parser calls use `max_tokens` 700, and
-narrator calls use the production `NARRATOR_MAX_TOKENS` of 600. The parser's `max_tokens` was set by a
+narrator calls used the then-production `NARRATOR_MAX_TOKENS` of 600 (the current ceiling is
+1600). These are historical samples, not a quality evaluation of the current narration prompt.
+The parser's `max_tokens` was set by a
 wrapper in the collection script, because production passes none. The collection script is not in the
 repository. Each call is one logical call; SDK-level retries are not counted, and none errored.
 

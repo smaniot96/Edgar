@@ -11,6 +11,7 @@ import pytest
 from agent import prompt_registry
 from agent.prompt_registry import PROMPTS, PromptEntry, manifest_drift, prompt_manifest
 from agent.prompts import INPUT_PARSER, NARRATOR, RULES_ADJUDICATOR
+from apps.api.services.session_intro import INTRO_SYSTEM
 
 GOLDEN = Path(__file__).resolve().parents[1] / "evals" / "prompt_manifest.golden.json"
 
@@ -21,6 +22,7 @@ EXPECTED_IDS = {
     "play.combat_builder",
     "play.combat_narrator",
     "play.memory_summarizer",
+    "play.session_intro",
 }
 
 
@@ -28,7 +30,7 @@ def _golden() -> dict[str, dict[str, str]]:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
-def test_registry_covers_the_six_play_prompts_with_semver_versions() -> None:
+def test_registry_covers_the_play_prompts_with_semver_versions() -> None:
     manifest = prompt_manifest()
     assert set(manifest) == EXPECTED_IDS
     for entry in manifest.values():
@@ -43,6 +45,7 @@ def test_registry_text_is_the_runtime_constant_not_a_copy() -> None:
     assert by_id["play.consequence_planner"] is RULES_ADJUDICATOR
     assert by_id["play.narrator"] is NARRATOR
     assert by_id["play.combat_narrator"] is NARRATOR
+    assert by_id["play.session_intro"] is INTRO_SYSTEM
 
 
 def test_committed_golden_manifest_matches_current_prompts() -> None:

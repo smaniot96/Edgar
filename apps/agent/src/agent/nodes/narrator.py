@@ -110,6 +110,13 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
     current_scene_id = state.get("current_scene_id")
 
     context_parts = [f"Player's attempted action: {wrap_player_action(player_input)}"]
+    context_parts.append(
+        "Narration mode: resolved combat round. Use 1-3 focused paragraphs; describe only "
+        "the recorded actions and their results, then leave the next decision to the player."
+        if profile == "play.combat_narrator"
+        else "Narration mode: exploration or conversation. Give the response and its grounded "
+        "scene detail room to breathe, while keeping routine exchanges brief."
+    )
     boundary = boundary_prompt_block(actions_for_state(state))
     if boundary:
         context_parts.append(boundary)

@@ -26,6 +26,30 @@ Any node that sets `error` short-circuits to `END`, so no further LLM calls run 
 
 `narrator` builds its prompt with `build_narrator_prompt` (shared with the SSE path), sees the memory summary and known NPCs, is capped by `NARRATOR_MAX_TOKENS`, and is told not to print HP or status blocks, because the UI renders state.
 
+The narration prompt asks for a concrete response to the attempted action, supported sensory
+detail, understandable stakes and an opening for the next choice. Ordinary exploration and
+conversation usually use 2–4 developed paragraphs; routine answers can be shorter. Combat uses
+1–3 focused paragraphs describing the already resolved round. Pacing is a prompt instruction,
+not a separate model pass or a change to mechanics. Neither mode may invent new clues, dangers,
+NPC motives, tactical movement or the player's decisions to make the prose more dramatic.
+
+The new-session service (`apps/api/services/session_intro.py`) uses the shared `SESSION_INTRO`
+prompt. It sets the place, atmosphere, immediate situation, visible stakes and opportunities
+to act, usually in 4–6 paragraphs when the source has enough material. Sparse reviewed passages
+produce shorter openings. Only explicit homebrew play permits a new local premise. Reviewed
+opening excerpts use the same neutralised reference wrappers as ordinary narration, and the
+opening prompt is included in the versioned prompt manifest.
+
+To review prose quality, use the synthetic ferry opening in
+`tests/fixtures/adventures/opening_boundary_cases.json`: the courier's missing boat, closing
+market, exposed path, lit watch house and waiting ferryman should make the scene playable.
+The forged seal, harbor keeper's allegiance and later confrontation must stay absent. Follow
+with a routine question, an approved NPC answer, a failed check and a resolved combat round:
+the answer should be responsive, failure should remain failure, and the round should gain no
+extra actions. Check that the player can choose another approach without the DM deciding it.
+Automated tests verify prompt/context boundaries, budgets and sync/SSE contracts; they do not
+measure whether a live model's prose is engaging. Existing saved openings are retained.
+
 The rolling memory summary is not a graph node. After a turn commits, the API folds older turns into a stored `memory_summary` event (`apps/api/services/session_messages.py`) and loads the latest one into `state["memory_summary"]` on the next turn.
 
 ## Untrusted input and limits
@@ -37,7 +61,7 @@ These limits rely on code or on prompt wording, not on a security boundary:
 - Narration is free text. Reviewed campaigns never send planner material to the narrator, but prompt wording alone does not stop it from disclosing player-visible text. Unreviewed campaigns send adventure excerpts to the narrator without an audience filter.
 - Model-proposed world flags are accepted if their key is well formed and not reserved. Unreviewed play also accepts well-formed unknown scene ids and up to three mundane item grants per turn.
 - The engine checks that a check failed and caps the hazard roll. It does not check that a hazard exists.
-- Only the adjudicator prompt says that excerpts are data. The narrator prompt does not, so narration may follow an excerpt's instructions, though it cannot write state.
+- Prompts and reference wrappers identify excerpts as data. A model may still follow embedded instructions; these measures do not make free-text narration a security boundary.
 
 ## State
 

@@ -4,11 +4,11 @@
     "version": "1.0.0"
   },
   "play.combat_narrator": {
-    "sha256": "f49dbfaf8f453752723537676827e05c043fe8db969e4bb15233103daf577000",
-    "version": "1.0.6"
+    "sha256": "b5b43905672e74a9084f5d7f73d32a50aec63be5da528b980795f2f1d62613f0",
+    "version": "1.1.0"
   },
   "play.consequence_planner": {
-    "sha256": "e74a6c3d53a9161cd62b52389527eb5af4c86c624e9b286638c574d7fecc12ba",
+    "sha256": "27cb0c235b699ace99d35d6ac9e33a2696fb1c3f9eaa518b43fcd97d2127c4c7",
     "version": "1.0.9"
   },
   "play.memory_summarizer": {
@@ -16,11 +16,15 @@
     "version": "1.0.0"
   },
   "play.narrator": {
-    "sha256": "f49dbfaf8f453752723537676827e05c043fe8db969e4bb15233103daf577000",
-    "version": "1.0.6"
+    "sha256": "b5b43905672e74a9084f5d7f73d32a50aec63be5da528b980795f2f1d62613f0",
+    "version": "1.1.0"
   },
   "play.parser": {
     "sha256": "7c6196e33cf95b9db4cceea07f01ee421953af1d65c29b07467bbd94dcd5176f",
     "version": "1.2.0"
+  },
+  "play.session_intro": {
+    "sha256": "f24284b94b6fca3f0c05494268743e0517a5de0e3c7be9e264cda735f2e71803",
+    "version": "1.0.0"
   }
 }
