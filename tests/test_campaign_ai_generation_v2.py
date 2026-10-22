@@ -24,6 +24,15 @@ from apps.api.services.campaign_prep.store import NeedsAttention, Store, digest
 from edgar_core.campaign_semantics import Review
 
 CHAPTERS = ("arrival", "reef", "engine")
+CATALOGUE = [
+    {
+        "name": "Bandit",
+        "collection": "rules_monster_manual",
+        "source_sha256": "0" * 64,
+        "rules_edition": "2014",
+        "text": "Bandit\nChallenge 1/8 (25 XP)",
+    }
+]
 
 
 def premise():
@@ -127,6 +136,13 @@ def outline(*, reveal_first=False):
                 else [],
                 "antagonist_pressure": "Vex tightens his grip",
                 "leads_onward": [] if final else ["Tobin's rumor", "The ledger's last page"],
+                "combat_encounters": [
+                    {
+                        "opponents": "Kell's divers",
+                        "stakes": "They guard the sluices",
+                        "alternatives": "Bribe or outswim them",
+                    }
+                ],
                 "chronology": "Day " + str(index + 1),
             }
         )
@@ -163,12 +179,12 @@ def chapter(cid, plan, *, bad=False):
                 "encounters": [
                     {
                         "actor_id": "diver_kell",
-                        "creature": "Kraken",
-                        "quantity": 1,
-                        "tactics": "Ambush",
+                        "creature": "Kraken" if bad else "bandit",
+                        "quantity": 1 if bad else 3,
+                        "tactics": "Ambush, then flee into the water",
                     }
                 ]
-                if bad and i == 3
+                if i == 3
                 else [],
             }
         )
@@ -264,7 +280,7 @@ def ai_store(tmp_path, monkeypatch):
             "ai_workflow": AI_WORKFLOW,
         }
     )
-    monkeypatch.setattr(graph, "catalogue", lambda _edition: [])
+    monkeypatch.setattr(graph, "catalogue", lambda _edition: CATALOGUE)
     published = []
 
     def publish(store):
@@ -428,6 +444,50 @@ def test_chapter_encounters_become_shared_catalogue_profiles():
     assert bundle["mechanical_profiles"] == [
         {"id": "profile_bandit", "creature": "Bandit", "source_stat_block": "", "source_pages": []}
     ]
+
+
+def test_planned_fights_must_be_written_and_actors_keep_one_creature():
+    plan = outline()["chapters"][0]
+    known = {e["id"]: e["kind"] for e in cast()["entities"]}
+    known.update({s["id"]: "secret" for s in cast()["secrets"]})
+    creatures = [{"name": "Bandit", "challenge": "1/8"}, {"name": "Wolf", "challenge": "1/4"}]
+    draft = chapter("ch1_arrival", plan)
+    draft["events"][3]["encounters"] = []
+    _, problems = check_chapter(
+        draft,
+        plan=plan,
+        chapter_id="ch1_arrival",
+        profile=SIZE_PROFILES["medium"],
+        known_kinds=known,
+        creatures=creatures,
+    )
+    assert problems == [
+        "The plan calls for 1 combat encounter(s) here but 0 event(s) have encounters; give "
+        "each planned fight an event encounter with an NPC actor and a verified creature."
+    ]
+    draft = chapter("ch1_arrival", plan)
+    draft["events"][3]["encounters"][0]["creature"] = "Wolf"
+    _, problems = check_chapter(
+        draft,
+        plan=plan,
+        chapter_id="ch1_arrival",
+        profile=SIZE_PROFILES["medium"],
+        known_kinds=known,
+        creatures=creatures,
+        actor_creatures={"diver_kell": "Bandit"},
+    )
+    assert problems == [
+        "Event ch1_arrival_event_3: actor diver_kell is already a Bandit; reuse that "
+        "creature or give the Wolf its own NPC actor."
+    ]
+
+
+def test_outline_must_plan_the_size_profiles_fights():
+    value = outline()
+    for plan in value["chapters"]:
+        plan["combat_encounters"] = []
+    _, problems = check_outline(value, cast(), SIZE_PROFILES["medium"])
+    assert problems == ["Plan 3-6 combat encounters in total; 0 were planned."]
 
 
 def test_new_ai_requests_use_the_sequential_workflow_and_retry_adds_a_round(tmp_path, monkeypatch):

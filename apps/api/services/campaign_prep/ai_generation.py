@@ -54,6 +54,7 @@ class SizeProfile:
     goals_per_chapter: tuple[int, int]
     campaign_secrets: tuple[int, int]
     shared_cast: tuple[int, int]
+    combat_encounters: tuple[int, int]
     arc: str
 
 
@@ -64,6 +65,7 @@ SIZE_PROFILES = {
         (1, 3),
         (1, 2),
         (5, 9),
+        (0, 2),
         "One compact situation, or a hook chapter followed by its resolution.",
     ),
     "medium": SizeProfile(
@@ -72,6 +74,7 @@ SIZE_PROFILES = {
         (2, 4),
         (2, 3),
         (10, 14),
+        (3, 6),
         "Hook with early action; a hub or investigation offering at least one optional lead; "
         "the antagonist's site or stronghold; a climax whose outcome depends on choices.",
     ),
@@ -81,6 +84,7 @@ SIZE_PROFILES = {
         (2, 5),
         (3, 4),
         (16, 24),
+        (5, 10),
         "Hook; a hub with several optional regional sites; the antagonist reacts to progress "
         "between chapters; a stronghold; a climax and aftermath.",
     ),
@@ -90,6 +94,7 @@ SIZE_PROFILES = {
         (3, 6),
         (4, 6),
         (24, 36),
+        (8, 16),
         "Several acts, each with its own hub or site, a mid-campaign turn that changes the "
         "heroes' goal, and secrets revealed across acts toward a decisive climax.",
     ),
@@ -162,6 +167,14 @@ class AiCast(Record):
     secrets: list[AiSecret] = Field(min_length=1)
 
 
+class AiCombatPlan(Record):
+    opponents: str = Field(description="Who or what fights, as the chapter author will cast it.")
+    stakes: str = Field(description="Why this fight matters to the story.")
+    alternatives: str = Field(
+        description="How the heroes might avoid, end or win it without slaughter."
+    )
+
+
 def outline_schema(cast):
     """Chapter plans may only name cast identities that already exist."""
     ids = tuple(e["id"] for e in cast["entities"])
@@ -187,6 +200,7 @@ def outline_schema(cast):
         leads_onward: list[str] = Field(
             description="Independent leads toward the next chapter; empty only for the final one."
         )
+        combat_encounters: list[AiCombatPlan]
         chronology: str
 
     class AiOutline(Record):
@@ -410,6 +424,10 @@ def check_outline(value, cast, profile):
                 + plan["archetype"]
                 + "."
             )
+    planned = sum(len(p["combat_encounters"]) for p in plans)
+    low, high = profile.combat_encounters
+    if not low <= planned <= high:
+        problems.append(f"Plan {low}-{high} combat encounters in total; {planned} were planned.")
     for secret in cast["secrets"]:
         setups = [i for i, p in enumerate(plans) if secret["id"] in p["sets_up_secret_ids"]]
         reveals = [i for i, p in enumerate(plans) if secret["id"] in p["reveals_secret_ids"]]
@@ -571,7 +589,17 @@ def chapter_bundle(chapter_id, draft):
     }
 
 
-def check_chapter(draft, *, plan, chapter_id, profile, known_kinds, creatures, known_names=None):
+def check_chapter(
+    draft,
+    *,
+    plan,
+    chapter_id,
+    profile,
+    known_kinds,
+    creatures,
+    known_names=None,
+    actor_creatures=None,
+):
     """Normalize, then list every problem so one revision can address all of them."""
     draft = normalize_chapter(draft, known_kinds, creatures)
     problems = []
@@ -619,6 +647,7 @@ def check_chapter(draft, *, plan, chapter_id, profile, known_kinds, creatures, k
     if not low <= len(draft["goals"]) <= high + 2:
         problems.append(f"Write {low}-{high} goals; {len(draft['goals'])} were supplied.")
     creature_names = {c["name"] for c in creatures}
+    bindings = dict(actor_creatures or {})
     for event in draft["events"]:
         eid = event["id"]
         if kinds.get(event["location_id"]) != "place":
@@ -655,6 +684,13 @@ def check_chapter(draft, *, plan, chapter_id, profile, known_kinds, creatures, k
                 problems.append(
                     f"Event {eid}: creature '{encounter['creature']}' is not in verified_creatures."
                 )
+            # The engine binds one actor to one creature profile everywhere.
+            bound = bindings.setdefault(encounter["actor_id"], encounter["creature"])
+            if bound != encounter["creature"]:
+                problems.append(
+                    f"Event {eid}: actor {encounter['actor_id']} is already a {bound}; reuse that "
+                    f"creature or give the {encounter['creature']} its own NPC actor."
+                )
     for goal in draft["goals"]:
         bad = sorted(set(goal["event_ids"]) - event_ids)
         if bad:
@@ -689,6 +725,14 @@ def check_chapter(draft, *, plan, chapter_id, profile, known_kinds, creatures, k
             problems.append(
                 f"Secret {secret['id']} known_by must name NPCs or factions: " + ", ".join(bad)
             )
+    planned = len(plan.get("combat_encounters", []))
+    fights = sum(1 for e in draft["events"] if e["encounters"])
+    if fights < planned:
+        problems.append(
+            f"The plan calls for {planned} combat encounter(s) here but {fights} event(s) have "
+            "encounters; give each planned fight an event encounter with an NPC actor and a "
+            "verified creature."
+        )
     present = {i for e in draft["events"] for i in e["secret_ids"]}
     for field, verb in (("sets_up_secret_ids", "set up"), ("reveals_secret_ids", "reveal")):
         missing = sorted(set(plan[field]) - present)
@@ -923,6 +967,16 @@ class AiGeneration:
             + [e for bundle in self.committed() for e in bundle["new_entities"]]
         )
 
+    def actor_creatures(self):
+        """Actor -> creature already fixed by accepted chapters."""
+        result = {}
+        for bundle in self.committed():
+            profiles = {p["id"]: p["creature"] for p in bundle["mechanical_profiles"]}
+            for event in bundle["events"]:
+                for encounter in event["encounters"]:
+                    result.setdefault(encounter["actor_id"], profiles[encounter["profile_id"]])
+        return result
+
     def creatures(self):
         return creature_index(self.store.get("mechanics"))
 
@@ -1006,6 +1060,7 @@ class AiGeneration:
                 for bundle in committed
             ],
             "existing_ids": sorted(self.known_kinds()),
+            "existing_combatants": self.actor_creatures(),
             "verified_creatures": self.creatures(),
         }
         await self.author("chapter-" + cid, "ai-chapter", AiChapterDraft, evidence)
@@ -1016,6 +1071,7 @@ class AiGeneration:
             return True
         _, profile = size_profile(self.workflow.request())
         known, names, creatures = self.known_kinds(), self.known_names(), self.creatures()
+        combatants = self.actor_creatures()
         premise, cast, outline = (
             self.accepted("premise"),
             self.accepted("cast"),
@@ -1032,6 +1088,7 @@ class AiGeneration:
                 known_kinds=known,
                 creatures=creatures,
                 known_names=names,
+                actor_creatures=combatants,
             )
             if problems:
                 return draft, problems
