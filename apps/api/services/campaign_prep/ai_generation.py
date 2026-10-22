@@ -270,6 +270,12 @@ class AiItem(Record):
 
 
 class AiChapterDraft(Record):
+    entry_event_id: Identifier = Field(
+        description="The event where the heroes arrive in this chapter; it is played first."
+    )
+    exit_event_id: Identifier = Field(
+        description="The event where the leads onward converge; it leads to the next chapter."
+    )
     new_entities: list[AiEntity]
     new_secrets: list[AiSecret]
     goals: list[AiGoal] = Field(min_length=1)
@@ -510,6 +516,10 @@ def normalize_chapter(draft, known_kinds, creatures):
             | {gid for gid, goal in goals.items() if raw["id"] in goal["event_ids"]}
         )
         events.append(event)
+    # The compiler links a chapter's last event to the next chapter's first event, so
+    # the arrival is played first and the convergent exit is placed last.
+    entry, exit_ = draft.get("entry_event_id"), draft.get("exit_event_id")
+    events.sort(key=lambda e: 0 if e["id"] == entry else 2 if e["id"] == exit_ else 1)
     draft["events"] = events
     event_goals = {e["id"]: set(e["goal_ids"]) for e in events}
     draft["goals"] = [
@@ -589,6 +599,18 @@ def chapter_bundle(chapter_id, draft):
     }
 
 
+def reachable(start, events):
+    links = {e["id"]: e["next_event_ids"] for e in events}
+    seen, pending = set(), [start]
+    while pending:
+        current = pending.pop()
+        if current in seen or current not in links:
+            continue
+        seen.add(current)
+        pending.extend(links[current])
+    return seen
+
+
 def check_chapter(
     draft,
     *,
@@ -599,6 +621,8 @@ def check_chapter(
     creatures,
     known_names=None,
     actor_creatures=None,
+    known_entities=None,
+    final=False,
 ):
     """Normalize, then list every problem so one revision can address all of them."""
     draft = normalize_chapter(draft, known_kinds, creatures)
@@ -741,6 +765,43 @@ def check_chapter(
                 f"The plan says this chapter must {verb} these secrets; reference each in an "
                 "event's secret_ids: " + ", ".join(missing)
             )
+    entry, exit_ = draft["entry_event_id"], draft["exit_event_id"]
+    if entry not in event_ids or exit_ not in event_ids:
+        problems.append("entry_event_id and exit_event_id must name events in this chapter.")
+    else:
+        if len(event_ids) > 1 and entry == exit_:
+            problems.append("The entry and exit must be different events.")
+        unreached = sorted(event_ids - reachable(entry, draft["events"]))
+        if unreached:
+            problems.append(
+                f"Events cannot be reached from the entry {entry} through next_event_ids: "
+                + ", ".join(unreached)
+            )
+        stranded = sorted(
+            e["id"] for e in draft["events"] if exit_ not in reachable(e["id"], draft["events"])
+        )
+        if not final and stranded:
+            problems.append(
+                f"The exit {exit_} leads to the next chapter, so every event must reach it "
+                "through next_event_ids; these cannot: " + ", ".join(stranded)
+            )
+    rows = {**(known_entities or {}), **{e["id"]: e for e in draft["new_entities"]}}
+    for event in draft["events"]:
+        scene_text = normalized_name(
+            " ".join((event["title"], event["public_description"], event["dm_notes"]))
+        )
+        for actor in {x["actor_id"] for x in event["encounters"]}:
+            row = rows.get(actor)
+            if row is None:
+                continue
+            name = normalized_name(row["name"])
+            if len(name.split()) > 2 or name not in scene_text or not row["aliases"]:
+                problems.append(
+                    f"Combatant {actor} is named '{row['name']}'. Players attack foes by the "
+                    "name the scene uses, so a fighting NPC needs a short natural name of one or "
+                    "two words (for example 'Salvagers'), used verbatim in the event's "
+                    "description or notes, plus aliases; use or create such an NPC."
+                )
     if plan["primary_location_id"] not in {e["location_id"] for e in draft["events"]}:
         problems.append(
             "At least one event must take place at the planned primary location "
@@ -961,6 +1022,13 @@ class AiGeneration:
         kinds.update({cid: "chapter" for cid, _ in self.plans()})
         return kinds
 
+    def known_entities(self):
+        return {
+            e["id"]: e
+            for e in self.accepted("cast")["entities"]
+            + [e for bundle in self.committed() for e in bundle["new_entities"]]
+        }
+
     def known_names(self):
         return entity_names(
             self.accepted("cast")["entities"]
@@ -1089,6 +1157,8 @@ class AiGeneration:
                 creatures=creatures,
                 known_names=names,
                 actor_creatures=combatants,
+                known_entities=self.known_entities(),
+                final=cid == chapter_ids(outline)[-1],
             )
             if problems:
                 return draft, problems

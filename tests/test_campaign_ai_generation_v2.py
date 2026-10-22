@@ -87,7 +87,7 @@ def cast():
         entity("vex_marrow", "npc", "Vex Marrow", "antagonist"),
         entity("mara_vell", "npc", "Mara Vell", "patron"),
         entity("old_tobin", "npc", "Old Tobin", "informant"),
-        entity("diver_kell", "npc", "Kell", "lieutenant"),
+        {**entity("diver_kell", "npc", "Kell", "lieutenant"), "aliases": ["Diver Kell"]},
         entity("tide_wardens", "faction", "The Tide Wardens", "rival"),
         entity("greywake", "place", "Greywake", "hub"),
         entity("outer_reef", "place", "The Outer Reef", "site"),
@@ -174,7 +174,9 @@ def chapter(cid, plan, *, bad=False):
                 "trigger": "The heroes arrive",
                 "timing": "Any time",
                 "public_description": "Wet stone and gull cries.",
-                "dm_notes": "Several approaches work.",
+                "dm_notes": "Kell guards the sluice; several approaches work."
+                if i == 3
+                else "Several approaches work.",
                 "next_event_ids": [f"{cid}_event_{i + 1}"] if i < 3 else [],
                 "encounters": [
                     {
@@ -189,6 +191,8 @@ def chapter(cid, plan, *, bad=False):
             }
         )
     return {
+        "entry_event_id": f"{cid}_event_0",
+        "exit_event_id": f"{cid}_event_3",
         "new_entities": [
             entity(local_clue, "clue", "ch1_arrival token" if bad else cid + " token")
         ],
@@ -488,6 +492,75 @@ def test_outline_must_plan_the_size_profiles_fights():
         plan["combat_encounters"] = []
     _, problems = check_outline(value, cast(), SIZE_PROFILES["medium"])
     assert problems == ["Plan 3-6 combat encounters in total; 0 were planned."]
+
+
+def known():
+    rows = {e["id"]: e["kind"] for e in cast()["entities"]}
+    rows.update({s["id"]: "secret" for s in cast()["secrets"]})
+    return rows
+
+
+def checked(draft, plan, **options):
+    return check_chapter(
+        draft,
+        plan=plan,
+        chapter_id="ch1_arrival",
+        profile=SIZE_PROFILES["medium"],
+        known_kinds=known(),
+        creatures=[{"name": "Bandit", "challenge": "1/8"}],
+        known_entities={e["id"]: e for e in cast()["entities"]},
+        **options,
+    )
+
+
+def test_entry_is_played_first_and_the_exit_last_for_the_compiled_chapter_link():
+    plan = outline()["chapters"][0]
+    draft = chapter("ch1_arrival", plan)
+    # A hub entry with side scenes that all lead back to the exit.
+    for event in draft["events"]:
+        event["next_event_ids"] = []
+    draft["events"][2]["next_event_ids"] = ["ch1_arrival_event_0", "ch1_arrival_event_1"]
+    draft["events"][0]["next_event_ids"] = ["ch1_arrival_event_3"]
+    draft["events"][1]["next_event_ids"] = ["ch1_arrival_event_3"]
+    draft["entry_event_id"], draft["exit_event_id"] = "ch1_arrival_event_2", "ch1_arrival_event_0"
+    draft["events"][3]["next_event_ids"] = ["ch1_arrival_event_0"]
+    normalized, problems = checked(draft, plan)
+    assert problems == []
+    assert [e["id"] for e in normalized["events"]] == [
+        "ch1_arrival_event_2",
+        "ch1_arrival_event_1",
+        "ch1_arrival_event_3",
+        "ch1_arrival_event_0",
+    ]
+
+
+def test_side_scenes_must_reach_the_exit_unless_the_chapter_is_final():
+    plan = outline()["chapters"][0]
+    draft = chapter("ch1_arrival", plan)
+    draft["exit_event_id"] = "ch1_arrival_event_1"
+    _, problems = checked(draft, plan)
+    assert problems == [
+        "The exit ch1_arrival_event_1 leads to the next chapter, so every event must reach it "
+        "through next_event_ids; these cannot: ch1_arrival_event_2, ch1_arrival_event_3"
+    ]
+    _, problems = checked(draft, plan, final=True)
+    assert problems == []
+
+
+def test_combatants_need_short_names_used_by_the_scene():
+    plan = outline()["chapters"][0]
+    draft = chapter("ch1_arrival", plan)
+    draft["new_entities"].append(
+        {**entity("ch1_rooftop_salvagers", "npc", "Rooftop Salvagers"), "aliases": ["salvager"]}
+    )
+    draft["events"][3]["encounters"][0]["actor_id"] = "ch1_rooftop_salvagers"
+    _, problems = checked(draft, plan)
+    assert problems == [
+        "Combatant ch1_rooftop_salvagers is named 'Rooftop Salvagers'. Players attack foes by the "
+        "name the scene uses, so a fighting NPC needs a short natural name of one or two words "
+        "(for example 'Salvagers'), used verbatim in the event's description or notes, plus "
+        "aliases; use or create such an NPC."
+    ]
 
 
 def test_new_ai_requests_use_the_sequential_workflow_and_retry_adds_a_round(tmp_path, monkeypatch):
