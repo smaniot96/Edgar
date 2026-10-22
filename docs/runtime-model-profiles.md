@@ -59,6 +59,14 @@ The checked-in file names these actual play profiles:
 rules-engine calculations, and other deterministic nodes do not receive fictional model
 profiles.
 
+Narration has separate default output budgets: 1600 tokens for ordinary play, 1000 for a
+resolved combat round, and 2200 for the session opening. These are ceilings, not length targets;
+reasoning models count reasoning tokens against them as well as visible prose. The narrator
+factory also enforces a 1600-token safety ceiling for play turns, so a smaller configured
+`max_output_tokens` is respected and a larger value is clamped. The opening service uses its
+profile's output limit directly. Input-history budgets and the number of provider calls are
+unchanged. Larger outputs can increase latency and token use when a scene needs the space.
+
 Campaign semantics always use the following policy-bound roles, independent of ordinary play
 settings:
 

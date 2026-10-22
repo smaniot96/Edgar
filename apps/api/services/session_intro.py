@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.llm import make_chat_model, message_text
+from agent.prompts import SESSION_INTRO as INTRO_SYSTEM, wrap_retrieved_excerpt
 from db.postgres.models import Campaign, EventLog, Session as SessionModel
 from db.vector.retrieval import retrieve_active_scene
 from edgar_core.manifests import ManifestError
@@ -39,17 +40,6 @@ from .session_party import session_party
 from .story_state import persist_story_effects
 
 _INTRO_TEMPERATURE = 0.7
-
-INTRO_SYSTEM = (
-    "You are the Dungeon Master opening a brand-new session of a Dungeons & Dragons 5e "
-    "adventure. Write a vivid, welcoming opening of 2-4 short paragraphs that pulls the player "
-    "in. When adventure-module text is provided, ground it strictly in that context; when the "
-    "player explicitly chose homebrew, improvise an opening. Establish where the "
-    "player's character is, the situation and hook that begins the story, and the atmosphere. "
-    "Address the character by name. End with a short, open invitation to act (for example, "
-    "'What do you do?'). Do NOT roll dice, resolve actions, introduce the player's decisions, "
-    "or skip ahead — just set the stage."
-)
 
 
 def _reviewed_opening(primary: str, edition: str) -> tuple[str, list[dict], list]:
@@ -105,7 +95,8 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
     require_play_readiness(
         readiness,
         source_slug=next(iter(campaign.adventure_collections or []), None)
-        if campaign.source_mode != "homebrew" else None,
+        if campaign.source_mode != "homebrew"
+        else None,
     )
     homebrew = campaign.source_mode == "homebrew"
     adventure_collections = [] if homebrew else list(campaign.adventure_collections or [])
@@ -144,7 +135,7 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
             raise source_error(sources) from exc
 
     citations = public_citations(citations_for(passages, edition))
-    opening_text = "\n\n".join(cited_excerpt(p, edition) for p in passages)
+    opening_text = "\n\n".join(wrap_retrieved_excerpt(cited_excerpt(p, edition)) for p in passages)
 
     context_parts: list[str] = []
     if character:
@@ -167,8 +158,9 @@ async def generate_session_intro(db: AsyncSession, session: SessionModel) -> dic
         )
     else:
         context_parts.append(
-            "The player explicitly chose homebrew play. Write a brief, inviting opening for a "
-            "fresh D&D adventure and prompt the player to set out."
+            "The player explicitly chose homebrew play. Establish a fresh local scene with "
+            "atmosphere, an immediate situation, visible stakes and room to choose an approach. "
+            "Leave the character's involvement and next action for the player to decide."
         )
     context_parts.append("Write the opening narration now.")
 

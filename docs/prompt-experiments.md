@@ -28,10 +28,12 @@ live run has been performed or authorized.
 | `tests/test_prompt_registry.py`, `tests/test_prompt_experiments.py`, `tests/test_compare_runs.py` | Offline tests. |
 
 Prompt ids are the model-profile stage names: `play.parser`, `play.consequence_planner` (the rules
-adjudicator), `play.narrator`, `play.combat_builder`, `play.combat_narrator` and `play.memory_summarizer`.
+adjudicator), `play.narrator`, `play.combat_builder`, `play.combat_narrator`, `play.memory_summarizer`
+and `play.session_intro`.
 `play.combat_narrator` sends the same text as `play.narrator` (`agent.nodes.narrator`), so both entries share
-a hash and a bump to `NARRATOR` changes both. Other prompts (session intro, campaign generation, preparation)
-are not in the registry.
+a hash and a bump to `NARRATOR` changes both. The opening service imports `SESSION_INTRO` from
+`agent.prompts`, so the registered opening text is also the exact runtime constant. Campaign
+generation and preparation prompts are not in this registry.
 
 ## Prompt versions
 

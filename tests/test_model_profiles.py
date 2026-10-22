@@ -176,3 +176,35 @@ def test_model_profile_read_errors_do_not_disclose_config_path(
     assert "sk-private-profile-location" not in str(error.value)
     assert "private path details" not in str(error.value)
     assert "PermissionError" in str(error.value)
+
+
+def test_narration_budgets_reach_the_provider_and_allow_smaller_campaign_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import agent.llm as llm
+    from agent.nodes.narrator import make_narrator_model
+    from edgar_core.config import EDGAR_ROOT
+
+    calls: list[dict] = []
+    monkeypatch.setattr(llm, "ChatOpenAI", lambda **kwargs: calls.append(kwargs))
+    defaults = load_model_profiles(
+        EDGAR_ROOT / "config/model-profiles.toml", environ={"LLM_MODEL": "gpt-4o-mini"}
+    )
+    with model_profile_snapshot(defaults):
+        make_narrator_model("play.narrator")
+        make_narrator_model("play.combat_narrator")
+        llm.make_chat_model(profile="play.session_intro", temperature=0.7)
+    assert [call["max_tokens"] for call in calls] == [1600, 1000, 2200]
+
+    path = tmp_path / "profiles.toml"
+    path.write_text(
+        "[profiles.play.narrator]\nmax_output_tokens = 450\n"
+        "[profiles.play.combat_narrator]\nmax_output_tokens = 5000\n",
+        encoding="utf-8",
+    )
+    custom = load_model_profiles(path, environ={"LLM_MODEL": "gpt-4o-mini"})
+    with model_profile_snapshot(custom):
+        make_narrator_model("play.narrator")
+        make_narrator_model("play.combat_narrator")
+    assert [call["max_tokens"] for call in calls[-2:]] == [450, llm.NARRATOR_MAX_TOKENS]

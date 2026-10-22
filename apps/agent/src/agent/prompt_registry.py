@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from agent.graph_combat import ENCOUNTER_BUILDER
 from agent.nodes.memory_summarizer import MEMORY_SUMMARY_PROMPT
-from agent.prompts import INPUT_PARSER, NARRATOR, RULES_ADJUDICATOR
+from agent.prompts import INPUT_PARSER, NARRATOR, RULES_ADJUDICATOR, SESSION_INTRO
 
 _SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
@@ -45,10 +45,11 @@ class PromptEntry:
 PROMPTS: tuple[PromptEntry, ...] = (
     PromptEntry("play.parser", "input parser", "1.2.0", INPUT_PARSER),
     PromptEntry("play.consequence_planner", "rules adjudicator / consequence planner", "1.0.9", RULES_ADJUDICATOR),
-    PromptEntry("play.narrator", "narrator", "1.0.6", NARRATOR),
+    PromptEntry("play.narrator", "narrator", "1.1.0", NARRATOR),
     PromptEntry("play.combat_builder", "combat encounter builder", "1.0.0", ENCOUNTER_BUILDER),
-    PromptEntry("play.combat_narrator", "combat narrator", "1.0.6", NARRATOR),
+    PromptEntry("play.combat_narrator", "combat narrator", "1.1.0", NARRATOR),
     PromptEntry("play.memory_summarizer", "rolling story summarizer", "1.0.0", MEMORY_SUMMARY_PROMPT),
+    PromptEntry("play.session_intro", "session opening narrator", "1.0.0", SESSION_INTRO),
 )  # fmt: skip
 
 
