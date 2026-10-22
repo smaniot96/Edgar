@@ -7,7 +7,8 @@ export type JournalCategory =
   | "place"
   | "promise"
   | "clock"
-  | "consequence";
+  | "consequence"
+  | "note";
 
 export type JournalStatus =
   | "discovered"
@@ -28,7 +29,8 @@ export type JournalStatus =
   | "captive"
   | "released"
   | "dead"
-  | "defeated";
+  | "defeated"
+  | "learned";
 
 export type JournalOwnership = "carried" | "left_behind" | "with_another_character" | "consumed" | "untracked";
 
@@ -42,6 +44,7 @@ export interface JournalOrigin {
   turn_number: number | null;
   history_event_id: number | null;
   place: string | null;
+  place_id?: string | null;
   actor: string | null;
   actor_id?: string | null;
   citation: string | null;
@@ -72,4 +75,5 @@ export interface JournalRead {
   entries: JournalEntry[];
   current_place: JournalEntry | null;
   active_goal: JournalEntry | null;
+  current_lead?: JournalEntry | null;
 }

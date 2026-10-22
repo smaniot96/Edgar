@@ -1,3 +1,4 @@
+import { currentThread } from "../journal/model";
 import type { JournalEntry, JournalRead, JournalStatus } from "../journal/types";
 import { Button } from "../ui/Button";
 
@@ -39,6 +40,7 @@ export function PlayRecap({
   onOpenEntry: (entryId: string) => void;
   onResume: () => void;
 }) {
+  const thread = currentThread(data);
   const changes = data ? recentChanges(data) : [];
   const promises = data?.entries.filter(isOpenPromise) ?? [];
 
@@ -64,9 +66,9 @@ export function PlayRecap({
                 </dd>
               </div>
               <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">Active goal</dt>
+                <dt className="text-xs font-medium uppercase tracking-wide text-ink-subtle">{data.active_goal ? "Active goal" : "Latest lead"}</dt>
                 <dd className="mt-0.5">
-                  {data.active_goal ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => onOpenEntry(data.active_goal!.id)}>{data.active_goal.title}</button> : <span className="text-ink-muted">No active goal recorded</span>}
+                  {thread ? <button type="button" className="min-h-11 max-w-full whitespace-normal break-words text-left font-medium text-ember-300 underline decoration-ember-400 underline-offset-2 [overflow-wrap:anywhere]" onClick={() => onOpenEntry(thread.id)}>{thread.title}</button> : <span className="text-ink-muted">No lead recorded yet</span>}
                 </dd>
               </div>
             </dl>

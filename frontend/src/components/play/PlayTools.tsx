@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 
+import type { JournalView } from "../journal/model";
 import { JournalPanel } from "../journal/JournalPanel";
-import type { JournalCategory, JournalRead } from "../journal/types";
+import type { JournalRead } from "../journal/types";
 import type { SessionMapRead } from "../../api/types";
 import { Button } from "../ui/Button";
 import type { PlayTool } from "./usePlayWorkspaceState";
@@ -49,8 +50,8 @@ export function PlayToolPanel({
   journal,
   query,
   onQueryChange,
-  category,
-  onCategoryChange,
+  view,
+  onViewChange,
   selectedEntryId,
   onSelectedEntryChange,
   onRefresh,
@@ -68,8 +69,8 @@ export function PlayToolPanel({
   journal: { data: JournalRead | null; loading: boolean; error: unknown; stale: boolean };
   query: string;
   onQueryChange: (value: string) => void;
-  category: JournalCategory | "all";
-  onCategoryChange: (value: JournalCategory | "all") => void;
+  view: JournalView;
+  onViewChange: (value: JournalView) => void;
   selectedEntryId: string | null;
   onSelectedEntryChange: (id: string | null) => void;
   onRefresh: () => void;
@@ -153,8 +154,8 @@ export function PlayToolPanel({
               onRefresh={onRefresh}
               selectedEntryId={selectedEntryId}
               onSelectedEntryChange={onSelectedEntryChange}
-              category={category}
-              onCategoryChange={onCategoryChange}
+              view={view}
+              onViewChange={onViewChange}
               query={query}
               onQueryChange={onQueryChange}
               onOpenHistory={onOpenHistory}
