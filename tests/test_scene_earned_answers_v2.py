@@ -121,6 +121,28 @@ async def test_current_private_answer_reaches_narrator_without_private_dossier(s
     assert result.flags_set == [] and result.character_update is None
 
 
+@pytest.mark.parametrize(
+    ("quote", "accepted"),
+    [
+        ("“Why is departure delayed?”", True),
+        ("“When is departure delayed?”", False),
+        ("“why is departure delayed?”", False),
+    ],
+)
+async def test_action_quote_allows_only_typographic_quote_changes(scene_state, quote, accepted):
+    state = await prepared(scene_state)
+    state["player_input"] = 'I ask the ferryman, "Why is departure delayed?"'
+    result = validate_story_effects(
+        AdjudicationResult(success=True, source_observations=[proposal(state, action_quote=quote)]),
+        state,
+    )
+    assert result.accepted_observations == ([ANSWER] if accepted else [])
+    if not accepted:
+        assert result.observation_diagnostics["rejected"] == [
+            {"index": 0, "reason": "action_quote_not_exact"}
+        ]
+
+
 @pytest.mark.asyncio
 async def test_linked_transition_template_binds_current_sources_without_disclosing_destination(
     scene_state,

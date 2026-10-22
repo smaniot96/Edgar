@@ -428,6 +428,12 @@ async def persist_turn(
                 checked = validate_story_effects(
                     AdjudicationResult(
                         success=adjudication.success,
+                        # Earned answers can authorize an actor's public identity. Recheck
+                        # their original evidence with the same engine verdict; dropping
+                        # it here can change the sealed display name and reject a valid turn.
+                        source_observations=adjudication.source_observations,
+                        check=adjudication.check,
+                        dice_result=adjudication.dice_result,
                         story_effects=[
                             StoryEffect.model_validate(
                                 effect.model_dump(include=set(StoryEffect.model_fields))

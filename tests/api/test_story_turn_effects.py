@@ -7,7 +7,7 @@ import json
 import pytest
 from sqlalchemy import func, select
 
-from agent.models.adjudication import AdjudicationResult, CharacterUpdate
+from agent.models.adjudication import AdjudicationResult, CharacterUpdate, SourceObservation
 from agent.models.parsed_input import ParsedInput
 from db.postgres.models import EventLog
 from edgar_core.artifacts import text_digest
@@ -21,7 +21,7 @@ SECRET = "PRIVATE FUTURE VILLAIN TRUE NAME"
 
 
 @pytest.fixture
-def story_source(monkeypatch, api_client):
+def story_source(monkeypatch, api_client, request):
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams
 
@@ -31,10 +31,16 @@ def story_source(monkeypatch, api_client):
     from ingestion.manifest import manifest_chunks
     from ingestion.quality import check_text
 
+    earned_name = getattr(request, "param", False)
+    public_text = (
+        PUBLIC.replace("Mara greets you.", "A ferryman greets you.") if earned_name else PUBLIC
+    )
+    introduction = "The ferryman introduces herself as Mara Fen."
+    private_text = introduction + "\n" + SECRET if earned_name else SECRET
     q = QdrantClient(":memory:")
     manifests, evidence = {}, {}
     for slug in DEFAULT_ADVENTURE_COLLECTIONS:
-        text = PUBLIC + "\n" + SECRET
+        text = public_text + "\n" + private_text
         manifest = AdventureManifest(
             source=slug,
             rules_edition="2014",
@@ -45,7 +51,11 @@ def story_source(monkeypatch, api_client):
             opening_scene_id="room",
             scenes=[{"scene_id": "room", "title": "Room"}],
             entities=[
-                {"entity_id": "mara", "kind": "actor", "title": "Mara"},
+                {
+                    "entity_id": "mara",
+                    "kind": "actor",
+                    "title": "Mara Fen" if earned_name else "Mara",
+                },
                 {
                     "entity_id": "lens_note",
                     "kind": "clue",
@@ -90,8 +100,8 @@ def story_source(monkeypatch, api_client):
                     "passage_id": "public",
                     "page": 1,
                     "start": 0,
-                    "end": len(PUBLIC),
-                    "text_sha256": text_digest(PUBLIC),
+                    "end": len(public_text),
+                    "text_sha256": text_digest(public_text),
                     "scene_ids": ["room"],
                     "entity_ids": ["mara", "lens_note"],
                     "audience": "player",
@@ -99,9 +109,9 @@ def story_source(monkeypatch, api_client):
                 {
                     "passage_id": "private",
                     "page": 1,
-                    "start": len(PUBLIC) + 1,
+                    "start": len(public_text) + 1,
                     "end": len(text),
-                    "text_sha256": text_digest(SECRET),
+                    "text_sha256": text_digest(private_text),
                     "scene_ids": ["room"],
                     "audience": "planner",
                 },
@@ -155,6 +165,17 @@ def story_source(monkeypatch, api_client):
             **kw,
         )
 
+    if earned_name:
+        private_chunk = next(c for c in evidence[slug] if c["audience"] == "planner")
+        effect.name_observation = SourceObservation(
+            text=introduction,
+            source_quote=introduction,
+            source_reference_id=source_citation({**private_chunk, "collection": slug}, "2014")[
+                "reference_id"
+            ],
+            action_quote="I ask the ferryman her name",
+            achievement_basis="She is present and willingly introduces herself.",
+        )
     yield effect
     q.close()
 
@@ -164,6 +185,54 @@ def events(text):
         (frame.splitlines()[0][7:], json.loads(frame.splitlines()[1][6:]))
         for frame in text.strip().split("\n\n")
     ]
+
+
+@pytest.mark.parametrize("story_source", [True], indirect=True)
+@pytest.mark.parametrize("stream", [False, True])
+async def test_name_earned_in_dialogue_survives_commit_and_reload(
+    story_source, fake_llm_schema, api_client, stream
+):
+    import db.postgres.session as sm
+    from apps.api.services.story_state import load_story_state, player_known_story
+
+    sid = (await api_client.post("/api/seed")).json()["session_id"]
+    fake_llm_schema.responses[ParsedInput] = ParsedInput(intent="social")
+    fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(
+        success=True,
+        source_observations=[story_source.name_observation],
+        story_effects=[
+            story_source("encounter", "mara", target_kind="entity", status="encountered")
+        ],
+    )
+    fake_llm_schema.narration = "The ferryman introduces herself as Mara Fen."
+    suffix = "/stream" if stream else ""
+    response = await api_client.post(
+        f"/api/sessions/{sid}/turn{suffix}",
+        json={"message": "I ask the ferryman her name."},
+    )
+    assert response.status_code == 200, response.text
+    if stream:
+        assert events(response.text)[-1][0] == "done", response.text
+    assert "Mara Fen" in response.text
+    for private_value in (
+        SECRET,
+        story_source.name_observation.achievement_basis,
+        story_source.name_observation.source_reference_id,
+    ):
+        assert private_value not in response.text
+    async with sm.async_session_factory() as db:
+        state = await load_story_state(db, sid)
+        assert len(state["facts"]) == 1
+        assert state["facts"][0]["display_name"] == "Mara Fen"
+        assert player_known_story(state)["facts"][0]["name"] == "Mara Fen"
+        assert (
+            await db.scalar(
+                select(func.count())
+                .select_from(EventLog)
+                .where(EventLog.session_id == sid, EventLog.event_type == "narration")
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio

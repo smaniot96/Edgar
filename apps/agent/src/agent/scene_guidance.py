@@ -421,6 +421,13 @@ def _unearned_visibility_gated_answer(
     return False
 
 
+def _action_quote_matches(quote: str, action: str) -> bool:
+    # A model can copy dialogue with typographic quotation marks. Preserve exact
+    # wording/case/punctuation while treating only straight/curly quotes equally.
+    quotes = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'"})
+    return bool(quote.strip()) and quote.translate(quotes) in action.translate(quotes)
+
+
 def validate_source_observations(adjudication, state):
     """Seal exact grounded answers chosen by the existing live DM judgment stage.
 
@@ -464,7 +471,7 @@ def validate_source_observations(adjudication, state):
             reason = "ineligible_source_reference"
         elif not proposal.achievement_basis.strip():
             reason = "missing_achievement_basis"
-        elif not proposal.action_quote.strip() or proposal.action_quote not in action:
+        elif not _action_quote_matches(proposal.action_quote, action):
             reason = "action_quote_not_exact"
         elif not proposal.text.strip():
             reason = "source_quote_not_exact"

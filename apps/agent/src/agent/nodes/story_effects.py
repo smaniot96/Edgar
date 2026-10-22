@@ -743,6 +743,15 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
         elif dm_transition and not public:
             # A private trigger can advance an event without becoming player knowledge.
             public_text = None
+        elif proposal.kind == "encounter":
+            # A name learned in an approved introduction must remain in the earned
+            # text as well as the label. Public projections intentionally refuse a
+            # prepared title that occurs only in hidden metadata.
+            introductions = [
+                answer for answer in adj.accepted_observations if candidate["title"] in answer
+            ]
+            if introductions:
+                public_text = "\n".join([public_text, *introductions])
         effect = proposal.model_copy(update={"player_text": public_text})
         if effect.kind in _OBJECT_KINDS:
             try:

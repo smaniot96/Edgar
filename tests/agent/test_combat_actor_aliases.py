@@ -8,7 +8,7 @@ from agent.combat_identity import canonical_actor_name, scene_actor_aliases
 from agent.combat_targeting import select_target
 from agent.graph_combat import EncounterSetup, EnemyStat, _build_enemy_roster
 from edgar_core.artifacts import text_digest
-from edgar_core.manifests import AdventureManifest, manifest_digest
+from edgar_core.manifests import AdventureManifest, ManifestError, StatReference, manifest_digest
 from tests.agent.test_creature_encounters import verified_record
 
 
@@ -182,3 +182,94 @@ def test_public_full_actor_name_has_priority_over_anothers_suffix():
     assert canonical_actor_name("Ash", aliases) == "Ash"
     assert public_actor_name("Captain Ash", aliases) is None
     assert public_actor_name("Ash", aliases) == "Ash"
+
+
+def descriptor_state():
+    """A public unnamed figure and its exact private actor stat block."""
+    state = alias_state()
+    manifest = AdventureManifest.model_validate(state["adventure_manifests"]["module"])
+    public = "A hulking half-orc demands the sheep. The half-orc draws a sword."
+    stats = "Captain Ash\nMedium humanoid (half-orc), neutral\nArmor Class 15\nHit Points 7"
+    manifest.entities[0].stat_reference = StatReference.model_validate({
+        "kind": "module", "creature_name": "Captain Ash", "passage_id": "captain_stats",
+    })
+    manifest.passages[0].text_sha256 = text_digest(public)
+    manifest.passages[0].end = len(public)
+    manifest.passages.append(type(manifest.passages[0])(
+        passage_id="captain_stats", page=2, start=0, end=len(stats),
+        text_sha256=text_digest(stats), scene_ids=["hall"], entity_ids=["captain"],
+        audience="planner",
+    ))
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    state["adventure_manifests"]["module"] = manifest.model_dump()
+    state["adventure_context"][0].update(text=public, manifest_sha256=manifest.reviewed_sha256)
+    state["planner_context"] = [{
+        **state["adventure_context"][0], "passage_id": "captain_stats",
+        "audience": "planner", "text": stats,
+    }]
+    return state
+
+
+@pytest.mark.asyncio
+async def test_visible_stat_descriptor_resolves_own_exact_actor_and_keeps_title_private(fake_llm_schema, monkeypatch):
+    from agent.combat_identity import public_actor_name
+
+    state = descriptor_state()
+    aliases = scene_actor_aliases(state)
+    assert aliases == {"Captain Ash": ["half-orc", "the half-orc"]}
+    assert canonical_actor_name("the half-orc", aliases) == "Captain Ash"
+    assert public_actor_name("Captain Ash", aliases) == "half-orc"
+    looked_up = []
+
+    def resolve(name, **kwargs):
+        looked_up.append(name)
+        return {**verified_record(), "actor_name": "Captain Ash", "actor_id": "captain"}
+
+    monkeypatch.setattr("agent.graph_combat.resolve_creature", resolve)
+    fake_llm_schema.responses[EncounterSetup] = EncounterSetup(enemies=[EnemyStat(name="half-orc", hp_max=7)])
+    roster = await _build_enemy_roster(state, ["the half-orc"])
+    assert looked_up == ["Captain Ash"]
+    assert roster[0]["name"] == "half-orc"
+    assert roster[0]["canonical_name"] == "Captain Ash"
+    assert roster[0]["source_reference"]["actor_id"] == "captain"
+    assert select_target(roster, ["the half-orc"]) == (roster[0], None)
+
+
+@pytest.mark.parametrize("change", ["not_public", "unassociated", "wrong_stat", "tampered", "prose_only", "locked"])
+def test_descriptor_needs_actor_specific_verified_public_and_stat_evidence(change):
+    state = descriptor_state()
+    manifest = AdventureManifest.model_validate(state["adventure_manifests"]["module"])
+    if change == "tampered":
+        state["planner_context"][0]["text"] += " changed"
+    elif change == "prose_only":
+        text = "Captain Ash\nMedium humanoid, neutral\nThe half-orc is nearby."
+        state["planner_context"][0]["text"] = text
+        manifest.passages[1].text_sha256 = text_digest(text)
+    elif change == "not_public":
+        text = "A hulking figure demands the sheep."
+        state["adventure_context"][0]["text"] = text
+        manifest.passages[0].text_sha256 = text_digest(text)
+    elif change == "unassociated":
+        manifest.passages[0].entity_ids = []
+    elif change == "wrong_stat":
+        manifest.passages[1].entity_ids = []
+    else:
+        manifest.passages[1].requires = {"revealed": "true"}
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    state["adventure_manifests"]["module"] = manifest.model_dump()
+    for chunk in state["adventure_context"] + state["planner_context"]:
+        chunk["manifest_sha256"] = manifest.reviewed_sha256
+    if change == "wrong_stat":
+        with pytest.raises(ManifestError):
+            scene_actor_aliases(state)
+    else:
+        assert scene_actor_aliases(state) == {}
+
+
+def test_shared_visible_subtype_is_ambiguous_and_does_not_choose_an_actor():
+    from agent.combat_identity import public_actor_name
+
+    aliases = {"Captain Ash": ["half-orc", "the half-orc"], "Lieutenant Elm": ["half-orc", "the half-orc"]}
+    assert canonical_actor_name("half-orc", aliases) == "half-orc"
+    assert public_actor_name("Captain Ash", aliases) is None
+    assert canonical_actor_name("orc", aliases) == "orc"
