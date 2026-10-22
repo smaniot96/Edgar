@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { apiBase, errorMessage } from "../../api/client";
 import { useAuthorizedObjectUrl } from "../../api/resources";
-import type { SessionMapRead } from "../../api/types";
+import type { SessionMapRead, SessionWorldMap } from "../../api/types";
 import type { JournalEntry } from "../journal/types";
 import { ApiDownloadLink } from "../ui/ApiDownloadLink";
 import { AuthorizedImage } from "../ui/AuthorizedImage";
@@ -62,6 +62,55 @@ type SessionMapPanelProps = {
   onPrepareTravel: (place: string) => void;
   actors?: JournalEntry[];
 };
+
+const WORLD_STATUS: Record<SessionWorldMap["places"][number]["status"], string> = {
+  current: "You are here",
+  visited: "Visited",
+  known: "Known",
+  rumoured: "Known by reputation",
+};
+
+function WorldMapSection({ sessionId, sourceVersion, world }: { sessionId: number; sourceVersion: string; world: SessionWorldMap }) {
+  const url = useMemo(
+    () => `${apiBase}/api/sessions/${sessionId}/world-map.svg?v=${encodeURIComponent(sourceVersion)}`,
+    [sessionId, sourceVersion],
+  );
+  const image = useAuthorizedObjectUrl(url);
+  const [failed, setFailed] = useState(false);
+  const labels = new Map(world.places.map((place) => [place.place_id, place.label]));
+  const here = world.current_place_id ? labels.get(world.current_place_id) : null;
+  return (
+    <section aria-labelledby="world-map-heading">
+      <h3 id="world-map-heading" className="font-serif text-lg font-semibold text-ink">{world.title}</h3>
+      {here ? <p className="mt-1 text-sm text-ink-muted">You are at {here}.</p> : null}
+      {!failed && !image.error ? (
+        <figure className="mt-2 overflow-auto rounded-control border border-line bg-[#efe2c4]">
+          <img
+            src={image.objectUrl ?? undefined}
+            onError={() => setFailed(true)}
+            alt={`Sketch map of ${world.title}: ${world.places.map((place) => `${place.label} (${WORLD_STATUS[place.status].toLowerCase()})`).join(", ")}.`}
+            className="h-auto w-full"
+          />
+        </figure>
+      ) : (
+        <p className="mt-2 text-sm text-ink-muted" role="status">The region map image is unavailable. Refresh the map, or use the list below.</p>
+      )}
+      <ul className="mt-3 grid gap-1 text-sm sm:grid-cols-2" aria-label="Places on the region map">
+        {world.places.map((place) => (
+          <li key={place.place_id} className="flex justify-between gap-2 rounded-control bg-surface px-2 py-1">
+            <span className="text-ink">{place.label}</span>
+            <span className="text-ink-muted">{WORLD_STATUS[place.status]}</span>
+          </li>
+        ))}
+      </ul>
+      {world.routes.length ? (
+        <p className="mt-2 text-xs text-ink-muted">
+          Ways known: {world.routes.map((route) => `${labels.get(route.from_place_id)} – ${labels.get(route.to_place_id)} (${route.label || route.kind})`).join("; ")}
+        </p>
+      ) : null}
+    </section>
+  );
+}
 
 export function SessionMapPanel(props: SessionMapPanelProps) {
   const sourceVersion = props.map?.source_version ?? "loading";
@@ -164,6 +213,12 @@ function SessionMapPanelContent({
             <p className="mt-2 text-sm text-ink-muted">{errorMessage(error)}</p>
             <Button className="mt-3 min-h-11" variant="secondary" size="sm" onClick={onRefresh}>Try again</Button>
           </section>
+        ) : null}
+        {map?.world_map ? (
+          <WorldMapSection sessionId={sessionId} sourceVersion={sourceVersion} world={map.world_map} />
+        ) : null}
+        {map?.world_map && places.length > 0 ? (
+          <h3 className="mt-5 font-serif text-lg font-semibold text-ink">Scenes reached</h3>
         ) : null}
         {map && places.length > 0 ? (
           <figure ref={mapFigureRef} tabIndex={0} onScroll={(event) => updateView({ panLeft: event.currentTarget.scrollLeft, panTop: event.currentTarget.scrollTop })} className="max-h-[50dvh] overflow-auto rounded-control border border-line bg-[#101827] p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ember-400" aria-label="Schematic map of known places">

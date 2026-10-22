@@ -13,6 +13,7 @@ from edgar_core.manifests import load_published_manifest, manifest_digest
 from edgar_core.preparation_status import PreparationJobStatus, PublicPreparationStatus
 
 from .. import adventures_meta as meta_store
+from .ai_generation import AI_WORKFLOW
 from .source import file_hash
 from .store import VERSION, Cancelled, NeedsAttention, Store, digest
 
@@ -84,6 +85,7 @@ def frozen_request(slug, meta, pdf_path=None):
         "pdf_path": str(pdf_path or meta_store.source_pdf_path(slug, meta))
         if mode == "pdf"
         else None,
+        **({"ai_workflow": AI_WORKFLOW} if mode == "ai" else {}),
     }
 
 
@@ -158,7 +160,10 @@ def retry_preparation(slug):
     if store.state().get("status") == "ready" or store.state().get("cancel_requested"):
         raise ValueError("A published or cancelled preparation cannot be resubmitted.")
     with worker_lock(store):
-        store.update(status="queued", error=None)
+        # A new round grants sequential AI steps fresh revision attempts.
+        store.update(
+            status="queued", error=None, retry_round=store.state().get("retry_round", 0) + 1
+        )
     token = meta_store.begin_attempt(
         slug,
         job_attempt=True,
@@ -249,6 +254,12 @@ def safe_preparation_status(meta, slug):
     mapping = {
         "source": "Reading campaign pages",
         "spine": "Establishing the campaign",
+        "ai_premise": "Shaping the premise",
+        "ai_cast": "Creating the cast and secrets",
+        "ai_outline": "Outlining the chapters",
+        "ai_chapter": "Writing the chapters",
+        "ai_map": "Drawing the map",
+        "ai_compose": "Joining the chapters",
         "bundles": "Preparing chapter bundles",
         "continuity": "Joining shared identities",
         "assemble": "Assembling playable material",
@@ -283,6 +294,20 @@ def safe_preparation_status(meta, slug):
         if status == "blocked"
         else "wait",
     )
+
+
+def published_world_map(slug):
+    """The prepared world map of a Ready AI adventure, or None."""
+    try:
+        # Never create a store as a side effect of reading a map.
+        if not (meta_store.adventure_path(slug, "preparation-v2") / "graph.sqlite3").exists():
+            return None
+        store = Store(slug)
+        if store.state().get("status") != "ready":
+            return None
+        return store.get("world-map")
+    except Exception:
+        return None
 
 
 def preparation_job_spend(slug):
