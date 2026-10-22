@@ -1,0 +1,310 @@
+[
+  {
+    "name": "edgar:turn:0d3e4786-5098-49f1-98ba-30514956c3b9:1:busy_paint",
+    "duration": 23.5
+  },
+  {
+    "name": "edgar:turn:0d3e4786-5098-49f1-98ba-30514956c3b9:1:headers",
+    "duration": 316.69999998807907
+  },
+  {
+    "name": "edgar:turn:0d3e4786-5098-49f1-98ba-30514956c3b9:1:first_token",
+    "duration": 12835.39999999106
+  },
+  {
+    "name": "edgar:turn:0d3e4786-5098-49f1-98ba-30514956c3b9:1:first_text_paint",
+    "duration": 12856.09999999404
+  },
+  {
+    "name": "edgar:turn:0d3e4786-5098-49f1-98ba-30514956c3b9:1:done",
+    "duration": 14504
+  },
+  {
+    "name": "edgar:turn:0d3e4786-5098-49f1-98ba-30514956c3b9:1:journal_settled",
+    "duration": 14518.199999988079
+  },
+  {
+    "name": "edgar:turn:0d3e4786-5098-49f1-98ba-30514956c3b9:1:composer_ready",
+    "duration": 14539.5
+  },
+  {
+    "name": "edgar:turn:6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1:busy_paint",
+    "duration": 30.5
+  },
+  {
+    "name": "edgar:turn:6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1:headers",
+    "duration": 298.5
+  },
+  {
+    "name": "edgar:turn:6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1:first_token",
+    "duration": 8981.199999988079
+  },
+  {
+    "name": "edgar:turn:6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1:first_text_paint",
+    "duration": 9014.39999999106
+  },
+  {
+    "name": "edgar:turn:6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1:done",
+    "duration": 10383.699999988079
+  },
+  {
+    "name": "edgar:turn:6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1:journal_settled",
+    "duration": 10393
+  },
+  {
+    "name": "edgar:turn:6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1:composer_ready",
+    "duration": 10413.199999988079
+  },
+  {
+    "name": "edgar:turn:dd31f273-0909-469a-b5dd-f019b684207c:1:busy_paint",
+    "duration": 29.900000005960464
+  },
+  {
+    "name": "edgar:turn:dd31f273-0909-469a-b5dd-f019b684207c:1:headers",
+    "duration": 302.5
+  },
+  {
+    "name": "edgar:turn:dd31f273-0909-469a-b5dd-f019b684207c:1:first_token",
+    "duration": 9958.70000000298
+  },
+  {
+    "name": "edgar:turn:dd31f273-0909-469a-b5dd-f019b684207c:1:first_text_paint",
+    "duration": 9980.20000000298
+  },
+  {
+    "name": "edgar:turn:dd31f273-0909-469a-b5dd-f019b684207c:1:done",
+    "duration": 11598.59999999404
+  },
+  {
+    "name": "edgar:turn:dd31f273-0909-469a-b5dd-f019b684207c:1:journal_settled",
+    "duration": 11608.20000000298
+  },
+  {
+    "name": "edgar:turn:dd31f273-0909-469a-b5dd-f019b684207c:1:composer_ready",
+    "duration": 11630.5
+  },
+  {
+    "name": "edgar:turn:fe04ec34-20c8-438f-a156-772bd1fc1dae:1:busy_paint",
+    "duration": 30.799999997019768
+  },
+  {
+    "name": "edgar:turn:fe04ec34-20c8-438f-a156-772bd1fc1dae:1:headers",
+    "duration": 315.20000000298023
+  },
+  {
+    "name": "edgar:turn:fe04ec34-20c8-438f-a156-772bd1fc1dae:1:first_token",
+    "duration": 7301.70000000298
+  },
+  {
+    "name": "edgar:turn:fe04ec34-20c8-438f-a156-772bd1fc1dae:1:first_text_paint",
+    "duration": 7329.9000000059605
+  },
+  {
+    "name": "edgar:turn:fe04ec34-20c8-438f-a156-772bd1fc1dae:1:done",
+    "duration": 9040
+  },
+  {
+    "name": "edgar:turn:fe04ec34-20c8-438f-a156-772bd1fc1dae:1:journal_settled",
+    "duration": 9051.60000000894
+  },
+  {
+    "name": "edgar:turn:fe04ec34-20c8-438f-a156-772bd1fc1dae:1:composer_ready",
+    "duration": 9064.5
+  },
+  {
+    "name": "edgar:turn:ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1:busy_paint",
+    "duration": 30.600000008940697
+  },
+  {
+    "name": "edgar:turn:ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1:headers",
+    "duration": 303.5
+  },
+  {
+    "name": "edgar:turn:ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1:first_token",
+    "duration": 7250.600000008941
+  },
+  {
+    "name": "edgar:turn:ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1:first_text_paint",
+    "duration": 7280.600000008941
+  },
+  {
+    "name": "edgar:turn:ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1:done",
+    "duration": 9208.10000000894
+  },
+  {
+    "name": "edgar:turn:ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1:journal_settled",
+    "duration": 9220.10000000894
+  },
+  {
+    "name": "edgar:turn:ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1:composer_ready",
+    "duration": 9230.29999999702
+  },
+  {
+    "name": "edgar:turn:d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1:busy_paint",
+    "duration": 30.5
+  },
+  {
+    "name": "edgar:turn:d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1:headers",
+    "duration": 322
+  },
+  {
+    "name": "edgar:turn:d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1:first_token",
+    "duration": 12381.5
+  },
+  {
+    "name": "edgar:turn:d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1:first_text_paint",
+    "duration": 12412.70000000298
+  },
+  {
+    "name": "edgar:turn:d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1:done",
+    "duration": 14226.70000000298
+  },
+  {
+    "name": "edgar:turn:d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1:journal_settled",
+    "duration": 14242.29999999702
+  },
+  {
+    "name": "edgar:turn:d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1:composer_ready",
+    "duration": 14263.70000000298
+  },
+  {
+    "name": "edgar:turn:543860ce-616e-47b2-893e-f7d4022dce87:1:busy_paint",
+    "duration": 30.69999998807907
+  },
+  {
+    "name": "edgar:turn:543860ce-616e-47b2-893e-f7d4022dce87:1:headers",
+    "duration": 336.19999998807907
+  },
+  {
+    "name": "edgar:turn:543860ce-616e-47b2-893e-f7d4022dce87:1:first_token",
+    "duration": 9439.79999999702
+  },
+  {
+    "name": "edgar:turn:543860ce-616e-47b2-893e-f7d4022dce87:1:first_text_paint",
+    "duration": 9463.59999999404
+  },
+  {
+    "name": "edgar:turn:543860ce-616e-47b2-893e-f7d4022dce87:1:done",
+    "duration": 10936.89999999106
+  },
+  {
+    "name": "edgar:turn:543860ce-616e-47b2-893e-f7d4022dce87:1:composer_ready",
+    "duration": 10963
+  },
+  {
+    "name": "edgar:turn:543860ce-616e-47b2-893e-f7d4022dce87:1:journal_settled",
+    "duration": 10968.39999999106
+  },
+  {
+    "name": "edgar:turn:642ec4f5-8f8c-41ca-a15e-09f5b7309716:1:busy_paint",
+    "duration": 30.099999994039536
+  },
+  {
+    "name": "edgar:turn:642ec4f5-8f8c-41ca-a15e-09f5b7309716:1:headers",
+    "duration": 405.5
+  },
+  {
+    "name": "edgar:turn:642ec4f5-8f8c-41ca-a15e-09f5b7309716:1:first_token",
+    "duration": 13335.89999999106
+  },
+  {
+    "name": "edgar:turn:642ec4f5-8f8c-41ca-a15e-09f5b7309716:1:first_text_paint",
+    "duration": 13364
+  },
+  {
+    "name": "edgar:turn:642ec4f5-8f8c-41ca-a15e-09f5b7309716:1:done",
+    "duration": 15332.20000000298
+  },
+  {
+    "name": "edgar:turn:642ec4f5-8f8c-41ca-a15e-09f5b7309716:1:journal_settled",
+    "duration": 15343.39999999106
+  },
+  {
+    "name": "edgar:turn:642ec4f5-8f8c-41ca-a15e-09f5b7309716:1:composer_ready",
+    "duration": 15363
+  },
+  {
+    "name": "edgar:turn:bf3d5d45-9879-4307-87a2-1ff419a92123:1:busy_paint",
+    "duration": 31
+  },
+  {
+    "name": "edgar:turn:bf3d5d45-9879-4307-87a2-1ff419a92123:1:headers",
+    "duration": 307.70000000298023
+  },
+  {
+    "name": "edgar:turn:bf3d5d45-9879-4307-87a2-1ff419a92123:1:first_token",
+    "duration": 9485.70000000298
+  },
+  {
+    "name": "edgar:turn:bf3d5d45-9879-4307-87a2-1ff419a92123:1:first_text_paint",
+    "duration": 9514.20000000298
+  },
+  {
+    "name": "edgar:turn:bf3d5d45-9879-4307-87a2-1ff419a92123:1:done",
+    "duration": 11806.70000000298
+  },
+  {
+    "name": "edgar:turn:bf3d5d45-9879-4307-87a2-1ff419a92123:1:journal_settled",
+    "duration": 11819.10000000894
+  },
+  {
+    "name": "edgar:turn:bf3d5d45-9879-4307-87a2-1ff419a92123:1:composer_ready",
+    "duration": 11831.20000000298
+  },
+  {
+    "name": "edgar:turn:a04ef769-b40d-4f10-b044-6c109d8cb5e5:1:busy_paint",
+    "duration": 29.799999997019768
+  },
+  {
+    "name": "edgar:turn:a04ef769-b40d-4f10-b044-6c109d8cb5e5:1:headers",
+    "duration": 358.79999999701977
+  },
+  {
+    "name": "edgar:turn:a04ef769-b40d-4f10-b044-6c109d8cb5e5:1:first_token",
+    "duration": 11423.29999999702
+  },
+  {
+    "name": "edgar:turn:a04ef769-b40d-4f10-b044-6c109d8cb5e5:1:first_text_paint",
+    "duration": 11446.90000000596
+  },
+  {
+    "name": "edgar:turn:a04ef769-b40d-4f10-b044-6c109d8cb5e5:1:done",
+    "duration": 13048.29999999702
+  },
+  {
+    "name": "edgar:turn:a04ef769-b40d-4f10-b044-6c109d8cb5e5:1:journal_settled",
+    "duration": 13062.90000000596
+  },
+  {
+    "name": "edgar:turn:a04ef769-b40d-4f10-b044-6c109d8cb5e5:1:composer_ready",
+    "duration": 13079.70000000298
+  },
+  {
+    "name": "edgar:turn:e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1:busy_paint",
+    "duration": 30.700000002980232
+  },
+  {
+    "name": "edgar:turn:e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1:headers",
+    "duration": 314.79999999701977
+  },
+  {
+    "name": "edgar:turn:e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1:first_token",
+    "duration": 11885.29999999702
+  },
+  {
+    "name": "edgar:turn:e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1:first_text_paint",
+    "duration": 11915
+  },
+  {
+    "name": "edgar:turn:e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1:done",
+    "duration": 13352.10000000894
+  },
+  {
+    "name": "edgar:turn:e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1:journal_settled",
+    "duration": 13362.79999999702
+  },
+  {
+    "name": "edgar:turn:e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1:composer_ready",
+    "duration": 13380.40000000596
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "deployed_source": "45a0f9e6a3ac6a2a1fccfa3053524deefdfaf81f",
+  "integrated_command": ".venv/bin/pytest -q tests/agent/test_desktop_story_turn.py tests/agent/test_story_effects.py tests/agent/test_history_context.py tests/agent/test_token_budget.py tests/agent/test_combat_visibility.py tests/test_homebrew_consequences.py tests/test_public_places.py tests/test_journal_adventure_log.py tests/test_prompt_registry.py",
+  "integrated_result": {
+    "passed": 141,
+    "failed_baseline": 2
+  },
+  "baseline_failures": [
+    "tests/agent/test_story_effects.py::test_explicit_failure_discovery_and_monotonic_objective_clock",
+    "tests/agent/test_story_effects.py::test_absent_promise_anchor_preserves_existing_effect_hash"
+  ],
+  "focused_progression": {
+    "passed": 104,
+    "deselected_baseline": 2
+  },
+  "frontend": {
+    "passed": 474,
+    "files": 74,
+    "production_build": "passed",
+    "lint": "passed"
+  },
+  "ruff_whole_tree": "passed",
+  "git_diff_check": "passed",
+  "note": "Suites overlap; do not add totals. Full API/broad agent baseline comparisons and limits are in IMPLEMENTATION-REPORT.md."
+}

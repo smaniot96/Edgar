@@ -1,0 +1,22 @@
+{
+  "campaign_id": 23,
+  "hero_id": 33,
+  "session": {
+    "id": 27,
+    "campaign_id": 23,
+    "started_at": "2026-10-22T10:38:07.178716Z",
+    "ended_at": null,
+    "current_scene_id": null,
+    "active_character_id": 33,
+    "character_name": "Aspen Desktop Continuity Verification L4",
+    "has_history": false,
+    "last_played_at": null,
+    "readiness": {
+      "play_allowed": true,
+      "history_allowed": true,
+      "state": "ready",
+      "primary_action": "play",
+      "blockers": []
+    }
+  }
+}

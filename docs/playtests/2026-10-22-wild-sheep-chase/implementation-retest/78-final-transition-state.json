@@ -1,0 +1,1151 @@
+{
+  "session": {
+    "id": 27,
+    "campaign_id": 23,
+    "started_at": "2026-10-22T10:38:07.178716Z",
+    "ended_at": null,
+    "current_scene_id": "chapter_two_compound_arrival",
+    "active_character_id": 33,
+    "character_name": "Aspen Desktop Continuity Verification L4",
+    "has_history": true,
+    "last_played_at": "2026-10-22T10:43:48.609162Z",
+    "readiness": {
+      "play_allowed": true,
+      "history_allowed": true,
+      "state": "ready",
+      "primary_action": "play",
+      "blockers": []
+    }
+  },
+  "messages": [
+    {
+      "role": "dm",
+      "content": "Aspen Desktop Continuity Verification L4, clattering hooves and surprised yelps cut through the afternoon. Frantic bleating follows, close enough to draw your attention toward a fluffy white sheep bounding toward your group.\n\nIt has a black face and curled horns. An ornate scroll is held in its mouth, and as the sheep comes near, it waves the scroll toward you.\n\nThe sheep is right here, the scroll plainly visible between its jaws. What do you do?",
+      "event_id": 545,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:38:07.967561Z"
+    },
+    {
+      "role": "user",
+      "content": "I read the scroll aloud and listen to the sheep.",
+      "event_id": 548,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:38:26.608848Z"
+    },
+    {
+      "role": "dm",
+      "content": "As you read the ornate scroll aloud, the sheep’s frantic bleating shifts into cultured Common, touched by an unmistakable bleat. “I am Finethir Shinebright, a wizard in dire need of aid.”\n\nHe explains that he needs help taking an extremely powerful magical artifact from a dangerous, possibly insane wizard. The scroll hangs from his mouth as he speaks; his curled horns frame an intent, woolly face. The sounds of hooves and startled yelps still carry from nearby.\n\nFinethir has made his plea. What do you say or do?",
+      "event_id": 548,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "5c040394-6b2c-4b86-90f4-e7aacc88d044",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:38:26.608848Z"
+    },
+    {
+      "role": "user",
+      "content": "Finethir, where can I find Noke and the wand, and how do I get there?",
+      "event_id": 551,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:38:36.193113Z"
+    },
+    {
+      "role": "dm",
+      "content": "Finethir answers through the scroll, his voice still carrying that odd bleat. “Noke lives in my former home, southeast of town. Take the road out of town until a well-trodden path branches off, a few miles out. Follow it through sparse woodland for about a mile, and you’ll reach the house.”\n\nHe adds that Noke keeps the wand on him and leaves the home only if absolutely necessary. The ornate scroll remains between the sheep’s jaws as the sounds of hooves and startled yelps linger nearby. What do you do next?",
+      "event_id": 551,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "e545faee-2c75-48dc-b4a7-7b33179340e1",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:38:36.193113Z"
+    },
+    {
+      "role": "user",
+      "content": "I stand beside Finethir in plain view and wait for the approaching pursuers to arrive.",
+      "event_id": 554,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:38:47.542636Z"
+    },
+    {
+      "role": "dm",
+      "content": "You remain beside Finethir as the commotion reaches you. A hulking half-orc pushes through the crowd, one hand resting on his greatsword. Three large wolves pace with him, iron collars around their necks; a huge cloaked figure follows, its heavy footfalls audible above the uproar.\n\nThe half-orc fixes his small eyes on the sheep. “That sheep is Master Noke’s... he desires to have it back.” Finethir stays close at your side, the ornate scroll still in his mouth. The pursuers have arrived, and the half-orc’s demand hangs between you. What do you do?",
+      "event_id": 554,
+      "citations": [
+        {
+          "page": 2,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 2,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 2,
+          "reference_id": "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1",
+          "source_pages": [
+            2
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "081e070b-0fbd-41b8-bc8d-29981393a829",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:38:47.542636Z"
+    },
+    {
+      "role": "user",
+      "content": "I stop hiding. I hand Finethir over to Guz and stand aside, then openly walk beside them as they leave. I ask Guz to take me to Noke.",
+      "event_id": 557,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:43:04.982008Z"
+    },
+    {
+      "role": "dm",
+      "content": "You stop hiding and place Finethir in Guz’s custody. The half-orc takes the sheep with him; the wolves pace alongside as the group sets off toward Noke’s home. You walk openly beside them, and Guz agrees to take you there.\n\nThe journey brings you to the approach to Noke’s home. Finethir remains with Guz, while the way ahead leads toward the place he described—the wizard’s former home, where Noke keeps the wand. What do you do as you reach it?",
+      "event_id": 557,
+      "citations": [
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1697,
+          "reference_id": "9fabb39b2f11e409338a961d2f9fc0ab64ce88d05106686318ad1e9e30f80001",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1698,
+          "reference_id": "872eb2919f8ddd9b1b98717837baf0c76c701e651889ee7a428e4b8e2bdef957",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1699,
+          "reference_id": "d5c967d36f49d7e1974375953ead34d2cf22baba8eccd33a10b4cbf3946cec6d",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 3,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 3,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 4,
+          "reference_id": "9cc86c7b0593aea287434ac5335b38799b561a37dcc7efb9c9d2bec86e299aec",
+          "source_pages": [
+            3
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        },
+        {
+          "page": 2,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 2,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 2,
+          "reference_id": "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1",
+          "source_pages": [
+            2
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [
+        "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1"
+      ],
+      "turn_id": "96937c9d-ad7f-4935-a0b2-7fd030f8e493",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:43:04.982008Z"
+    },
+    {
+      "role": "user",
+      "content": "I stop hiding and openly follow Guz to Noke’s home. I want to speak to Noke, and I walk along the route they take.",
+      "event_id": 560,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:43:28.553712Z"
+    },
+    {
+      "role": "dm",
+      "content": "You stop hiding and follow the route openly. The road gives way to a narrow, well-trodden track through a gap in the bushes, winding among tall oaks. Many overlapping prints mark the earth. Beyond them, the woodland is sparse and quiet.\n\nThe track continues ahead through the trees, but Noke’s home is not yet in view. What do you do?",
+      "event_id": 560,
+      "citations": [
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1697,
+          "reference_id": "9fabb39b2f11e409338a961d2f9fc0ab64ce88d05106686318ad1e9e30f80001",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1698,
+          "reference_id": "872eb2919f8ddd9b1b98717837baf0c76c701e651889ee7a428e4b8e2bdef957",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1699,
+          "reference_id": "d5c967d36f49d7e1974375953ead34d2cf22baba8eccd33a10b4cbf3946cec6d",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 5,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 5,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 7,
+          "reference_id": "dfbe9576a031010a8e10b9526b3d43bcaaebce57edf473fad5e054ffbd33b23d",
+          "source_pages": [
+            5
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "5c8bc332-0444-4d31-ab74-931d73d4cda0",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:43:28.553712Z"
+    },
+    {
+      "role": "user",
+      "content": "I continue along the well-trodden track through the tall oaks until I reach Noke’s home.",
+      "event_id": 563,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:43:48.609162Z"
+    },
+    {
+      "role": "dm",
+      "content": "Continuing along the track, you come within sight of a strange house woven through four sturdy oaks. Thick platforms of living branches span the trees; above the ground, a bowl-shaped garden is filled with flowers, and an enclosed structure of wood and branches rises beyond it.\n\nOn the lawn, three great apes lounge or play with oversized dice beside iron greatswords. Two small huts stand beneath the platforms, with a large outhouse nearby. You’re still outside, with the house ahead—how do you approach?",
+      "event_id": 563,
+      "citations": [
+        {
+          "page": 6,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 6,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 9,
+          "reference_id": "5884f88fbc4aed10a80dc4e2d41094d04e4a9b1c7cb5437515c3b32fe7da23d5",
+          "source_pages": [
+            6
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        },
+        {
+          "page": 5,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 5,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 7,
+          "reference_id": "dfbe9576a031010a8e10b9526b3d43bcaaebce57edf473fad5e054ffbd33b23d",
+          "source_pages": [
+            5
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [
+        "dfbe9576a031010a8e10b9526b3d43bcaaebce57edf473fad5e054ffbd33b23d"
+      ],
+      "turn_id": "8a5d335d-aa3d-4070-b71a-9fcba130a6d3",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:43:48.609162Z"
+    }
+  ],
+  "map": {
+    "session_id": 27,
+    "source_version": "9be3c8ecb6b27d2818249ec9f391139ac6289ef0b3dc7401388474a462a12caf",
+    "topology": "reviewed_manifest",
+    "schematic": true,
+    "scale": null,
+    "current_scene_id": "chapter_two_compound_arrival",
+    "places": [
+      {
+        "scene_id": "chapter_one_aftermath",
+        "title": "Unidentified place",
+        "status": "visited",
+        "detail": "The commotion subsides. The white sheep stays close, its ornate scroll still within reach, and looks from one person to another with an unmistakably expectant air."
+      },
+      {
+        "scene_id": "chapter_one_guz_confrontation",
+        "title": "Unidentified place",
+        "status": "visited",
+        "detail": "Howling, angry shouts, and an occasional scream draw nearer. A hulking half-orc pushes through the crowd with one hand on a greatsword. Three large wolves wear iron collars; behind him, a huge cloaked figure's heavy footfalls rise above the commotion. The half-orc fixes his small eyes on the sheep and says, “That sheep is Master Noke’s... he desires to have it back.”"
+      },
+      {
+        "scene_id": "chapter_one_sheep_arrives",
+        "title": "Unidentified place",
+        "status": "visited",
+        "detail": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them."
+      },
+      {
+        "scene_id": "chapter_two_compound_arrival",
+        "title": "Unidentified place",
+        "status": "current",
+        "detail": "Through the treetops, a strange house of living branches comes into view: thick woven platforms occupy four sturdy oaks. A flowered, bowl-shaped garden sits above the ground, and an enclosed wooden-and-branch structure rises beyond it. Three great apes lounge or play with oversized dice on the lawn beside iron greatswords. Below the platforms stand two small huts and a large outhouse."
+      },
+      {
+        "scene_id": "chapter_two_trail",
+        "title": "Unidentified place",
+        "status": "visited",
+        "detail": "A narrow track leaves the road through a gap in the bushes and winds among tall oaks. The woodland is sparse, quiet, and apparently uninhabited; the path is well trodden, with many overlapping prints in the earth."
+      }
+    ],
+    "routes": [
+      {
+        "from_scene_id": "chapter_one_sheep_arrives",
+        "to_scene_id": "chapter_one_guz_confrontation"
+      },
+      {
+        "from_scene_id": "chapter_one_guz_confrontation",
+        "to_scene_id": "chapter_one_aftermath"
+      },
+      {
+        "from_scene_id": "chapter_one_aftermath",
+        "to_scene_id": "chapter_two_trail"
+      },
+      {
+        "from_scene_id": "chapter_two_trail",
+        "to_scene_id": "chapter_two_compound_arrival"
+      }
+    ],
+    "note": "Schematic map; it shows learned connections and does not establish distance or scale.",
+    "journal_entry_ids": {
+      "chapter_one_sheep_arrives": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+      "chapter_one_guz_confrontation": "entry_RLX1yWN9jkBDtTWfRApSJg",
+      "chapter_one_aftermath": "entry_aKqIwxGF2IOIatla83EUyQ",
+      "chapter_two_trail": "entry_VN6HEGVvN5KAAtVkaZNPDQ",
+      "chapter_two_compound_arrival": "entry_9QVddvvo9ApPO6b50r8qTw"
+    },
+    "known_place_entries": [
+      {
+        "id": "entry_9QVddvvo9ApPO6b50r8qTw",
+        "title": "Unidentified place",
+        "text": "Through the treetops, a strange house of living branches comes into view: thick woven platforms occupy four sturdy oaks. A flowered, bowl-shaped garden sits above the ground, and an enclosed wooden-and-branch structure rises beyond it. Three great apes lounge or play with oversized dice on the lawn beside iron greatswords. Below the platforms stand two small huts and a large outhouse.",
+        "status": "visited",
+        "origin": {
+          "turn_number": 7,
+          "history_event_id": 563,
+          "place": "Unidentified place",
+          "place_id": "entry_9QVddvvo9ApPO6b50r8qTw",
+          "actor": null,
+          "actor_id": null,
+          "citation": "Page 6",
+          "provenance": "module"
+        }
+      },
+      {
+        "id": "entry_VN6HEGVvN5KAAtVkaZNPDQ",
+        "title": "Unidentified place",
+        "text": "A narrow track leaves the road through a gap in the bushes and winds among tall oaks. The woodland is sparse, quiet, and apparently uninhabited; the path is well trodden, with many overlapping prints in the earth.",
+        "status": "visited",
+        "origin": {
+          "turn_number": 6,
+          "history_event_id": 560,
+          "place": "Unidentified place",
+          "place_id": "entry_VN6HEGVvN5KAAtVkaZNPDQ",
+          "actor": null,
+          "actor_id": null,
+          "citation": "Page 3",
+          "provenance": "module"
+        }
+      },
+      {
+        "id": "entry_aKqIwxGF2IOIatla83EUyQ",
+        "title": "Unidentified place",
+        "text": "The commotion subsides. The white sheep stays close, its ornate scroll still within reach, and looks from one person to another with an unmistakably expectant air.",
+        "status": "visited",
+        "origin": {
+          "turn_number": 5,
+          "history_event_id": 557,
+          "place": "Unidentified place",
+          "place_id": "entry_aKqIwxGF2IOIatla83EUyQ",
+          "actor": null,
+          "actor_id": null,
+          "citation": "Page 2",
+          "provenance": "module"
+        }
+      },
+      {
+        "id": "entry_RLX1yWN9jkBDtTWfRApSJg",
+        "title": "Unidentified place",
+        "text": "Howling, angry shouts, and an occasional scream draw nearer. A hulking half-orc pushes through the crowd with one hand on a greatsword. Three large wolves wear iron collars; behind him, a huge cloaked figure's heavy footfalls rise above the commotion. The half-orc fixes his small eyes on the sheep and says, “That sheep is Master Noke’s... he desires to have it back.”",
+        "status": "visited",
+        "origin": {
+          "turn_number": 4,
+          "history_event_id": 554,
+          "place": "Unidentified place",
+          "place_id": "entry_RLX1yWN9jkBDtTWfRApSJg",
+          "actor": null,
+          "actor_id": null,
+          "citation": "Page 2",
+          "provenance": "module"
+        }
+      },
+      {
+        "id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+        "title": "Unidentified place",
+        "text": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them.",
+        "status": "visited",
+        "origin": {
+          "turn_number": 1,
+          "history_event_id": 545,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": "Page 1",
+          "provenance": "module"
+        }
+      }
+    ],
+    "artwork": [],
+    "tracking": "available",
+    "world_map": null
+  },
+  "journal": {
+    "session_id": 27,
+    "tracking": "available",
+    "entries": [
+      {
+        "id": "entry_F2ZxafkGJxWctfhwAsSmPw",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "goal",
+        "title": "Find a Way to the House",
+        "text": null,
+        "status": "completed",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 7,
+          "history_event_id": 563,
+          "place": "Unidentified place",
+          "place_id": "entry_9QVddvvo9ApPO6b50r8qTw",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "completed",
+            "turn_number": 7,
+            "history_event_id": 563
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_9QVddvvo9ApPO6b50r8qTw",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "place",
+        "title": "Unidentified place",
+        "text": "Through the treetops, a strange house of living branches comes into view: thick woven platforms occupy four sturdy oaks. A flowered, bowl-shaped garden sits above the ground, and an enclosed wooden-and-branch structure rises beyond it. Three great apes lounge or play with oversized dice on the lawn beside iron greatswords. Below the platforms stand two small huts and a large outhouse.",
+        "status": "visited",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 7,
+          "history_event_id": 563,
+          "place": "Unidentified place",
+          "place_id": "entry_9QVddvvo9ApPO6b50r8qTw",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "visited",
+            "turn_number": 7,
+            "history_event_id": 563
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_VN6HEGVvN5KAAtVkaZNPDQ",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "place",
+        "title": "Unidentified place",
+        "text": "A narrow track leaves the road through a gap in the bushes and winds among tall oaks. The woodland is sparse, quiet, and apparently uninhabited; the path is well trodden, with many overlapping prints in the earth.",
+        "status": "visited",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 6,
+          "history_event_id": 560,
+          "place": "Unidentified place",
+          "place_id": "entry_VN6HEGVvN5KAAtVkaZNPDQ",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "visited",
+            "turn_number": 6,
+            "history_event_id": 560
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_aKqIwxGF2IOIatla83EUyQ",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "place",
+        "title": "Unidentified place",
+        "text": "The commotion subsides. The white sheep stays close, its ornate scroll still within reach, and looks from one person to another with an unmistakably expectant air.",
+        "status": "visited",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 5,
+          "history_event_id": 557,
+          "place": "Unidentified place",
+          "place_id": "entry_aKqIwxGF2IOIatla83EUyQ",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "visited",
+            "turn_number": 5,
+            "history_event_id": 557
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_lDedUCAhSKtiN-HUJ4UM5A",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "Guz takes Shinebright with him, and the group sets off for Noke's home",
+        "text": "Guz takes Shinebright with him, and the group sets off for Noke's home.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 5,
+          "history_event_id": 557,
+          "place": "Unidentified place",
+          "place_id": "entry_aKqIwxGF2IOIatla83EUyQ",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 5,
+            "history_event_id": 557
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_aKqIwxGF2IOIatla83EUyQ"
+        ]
+      },
+      {
+        "id": "entry_RLX1yWN9jkBDtTWfRApSJg",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "place",
+        "title": "Unidentified place",
+        "text": "Howling, angry shouts, and an occasional scream draw nearer. A hulking half-orc pushes through the crowd with one hand on a greatsword. Three large wolves wear iron collars; behind him, a huge cloaked figure's heavy footfalls rise above the commotion. The half-orc fixes his small eyes on the sheep and says, “That sheep is Master Noke’s... he desires to have it back.”",
+        "status": "visited",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 4,
+          "history_event_id": 554,
+          "place": "Unidentified place",
+          "place_id": "entry_RLX1yWN9jkBDtTWfRApSJg",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "visited",
+            "turn_number": 4,
+            "history_event_id": 554
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_qINTDNS1qsm4C-QediSs6g",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "The howling and commotion draw close; a hulking half-orc pushes through…",
+        "text": "The howling and commotion draw close; a hulking half-orc pushes through the crowd with a hand resting on his greatsword. Three iron-collared wolves are with him, and a hulking cloaked figure follows behind.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 4,
+          "history_event_id": 554,
+          "place": "Unidentified place",
+          "place_id": "entry_RLX1yWN9jkBDtTWfRApSJg",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 4,
+            "history_event_id": 554
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_RLX1yWN9jkBDtTWfRApSJg"
+        ]
+      },
+      {
+        "id": "entry_o0ai09ppJNg4q7oKV0_gMQ",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "Noke lives at Shinebright's former home southeast of town",
+        "text": "Noke lives at Shinebright's former home southeast of town. Take the road out of town until a well-trodden path branches off a few miles out, then follow it through sparse woodland for about a mile to the house.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 3,
+          "history_event_id": 551,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 3,
+            "history_event_id": 551
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_7o54iEy5UM8Vf5zcfFHDcA"
+        ]
+      },
+      {
+        "id": "entry_qOJexGhYC8QmwxKMJQ-AZw",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "Noke keeps the wand on him, and he only leaves the home if absolutely…",
+        "text": "Noke keeps the wand on him, and he only leaves the home if absolutely necessary.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 3,
+          "history_event_id": 551,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 3,
+            "history_event_id": 551
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_7o54iEy5UM8Vf5zcfFHDcA"
+        ]
+      },
+      {
+        "id": "entry_ep70i35JtzYeY24dzfirAw",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "clue",
+        "title": "Clattering hooves, surprised yelps, and frantic bleating cut through…",
+        "text": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them.",
+        "status": "discovered",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": "untracked",
+        "origin": {
+          "turn_number": 2,
+          "history_event_id": 548,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "discovered",
+            "turn_number": 2,
+            "history_event_id": 548
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_0NLATggiW5I7ZuAMPlGtfQ",
+        "actor_id": "entry_0NLATggiW5I7ZuAMPlGtfQ",
+        "actor_aliases": [
+          "Finethir Shinebright"
+        ],
+        "actor_reference_event_ids": [
+          548
+        ],
+        "related_actor_id": null,
+        "category": "person",
+        "title": "Finethir Shinebright",
+        "text": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them.",
+        "status": "encountered",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 2,
+          "history_event_id": 548,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "encountered",
+            "turn_number": 2,
+            "history_event_id": 548
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_UYoF_EQo4smWnI8dx4XMkg",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "The sheep's bleating becomes cultured, elven-accented Common with a…",
+        "text": "The sheep's bleating becomes cultured, elven-accented Common with a slight bleat, and it introduces itself as Finethir Shinebright, a wizard in dire need of aid.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 2,
+          "history_event_id": 548,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 2,
+            "history_event_id": 548
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "entry_ep70i35JtzYeY24dzfirAw",
+          "entry_0NLATggiW5I7ZuAMPlGtfQ"
+        ]
+      },
+      {
+        "id": "entry_FqjQSQbYbFHniCEBzfuxxw",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "Shinebright wants help taking an extremely powerful magical artifact…",
+        "text": "Shinebright wants help taking an extremely powerful magical artifact from a dangerous, possibly insane wizard.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 2,
+          "history_event_id": 548,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 2,
+            "history_event_id": 548
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "entry_ep70i35JtzYeY24dzfirAw"
+        ]
+      },
+      {
+        "id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "place",
+        "title": "Unidentified place",
+        "text": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them.",
+        "status": "visited",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 1,
+          "history_event_id": 545,
+          "place": "Unidentified place",
+          "place_id": "entry_7o54iEy5UM8Vf5zcfFHDcA",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "visited",
+            "turn_number": 1,
+            "history_event_id": 545
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      }
+    ],
+    "current_place": {
+      "id": "entry_9QVddvvo9ApPO6b50r8qTw",
+      "actor_id": null,
+      "actor_aliases": [],
+      "actor_reference_event_ids": [],
+      "related_actor_id": null,
+      "category": "place",
+      "title": "Unidentified place",
+      "text": "Through the treetops, a strange house of living branches comes into view: thick woven platforms occupy four sturdy oaks. A flowered, bowl-shaped garden sits above the ground, and an enclosed wooden-and-branch structure rises beyond it. Three great apes lounge or play with oversized dice on the lawn beside iron greatswords. Below the platforms stand two small huts and a large outhouse.",
+      "status": "visited",
+      "quantity": null,
+      "clock_maximum": null,
+      "ownership": null,
+      "origin": {
+        "turn_number": 7,
+        "history_event_id": 563,
+        "place": "Unidentified place",
+        "place_id": "entry_9QVddvvo9ApPO6b50r8qTw",
+        "actor": null,
+        "actor_id": null,
+        "citation": null,
+        "provenance": "module"
+      },
+      "history": [
+        {
+          "status": "visited",
+          "turn_number": 7,
+          "history_event_id": 563
+        }
+      ],
+      "related_entry_id": null,
+      "related_entry_ids": []
+    },
+    "active_goal": null,
+    "current_lead": {
+      "id": "entry_lDedUCAhSKtiN-HUJ4UM5A",
+      "actor_id": null,
+      "actor_aliases": [],
+      "actor_reference_event_ids": [],
+      "related_actor_id": null,
+      "category": "note",
+      "title": "Guz takes Shinebright with him, and the group sets off for Noke's home",
+      "text": "Guz takes Shinebright with him, and the group sets off for Noke's home.",
+      "status": "learned",
+      "quantity": null,
+      "clock_maximum": null,
+      "ownership": null,
+      "origin": {
+        "turn_number": 5,
+        "history_event_id": 557,
+        "place": "Unidentified place",
+        "place_id": "entry_aKqIwxGF2IOIatla83EUyQ",
+        "actor": null,
+        "actor_id": null,
+        "citation": null,
+        "provenance": "module"
+      },
+      "history": [
+        {
+          "status": "learned",
+          "turn_number": 5,
+          "history_event_id": 557
+        }
+      ],
+      "related_entry_id": null,
+      "related_entry_ids": [
+        "entry_aKqIwxGF2IOIatla83EUyQ"
+      ]
+    }
+  }
+}

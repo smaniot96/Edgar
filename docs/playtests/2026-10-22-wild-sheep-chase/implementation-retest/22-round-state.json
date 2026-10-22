@@ -1,0 +1,149 @@
+{
+  "round": 4,
+  "ended": false,
+  "outcome": null,
+  "combatants": [
+    {
+      "name": "Rowan Desktop Retest L4",
+      "is_player": true,
+      "hp_current": 22,
+      "hp_max": 36,
+      "ac": 18,
+      "id": "player",
+      "alive": true,
+      "disposition": "active",
+      "can_act": true,
+      "band": null,
+      "reaction_used": false
+    },
+    {
+      "name": "Guz",
+      "is_player": false,
+      "hp_current": 56,
+      "hp_max": 67,
+      "ac": 14,
+      "id": "Guz",
+      "alive": true,
+      "disposition": "active",
+      "can_act": true,
+      "band": "melee",
+      "reaction_used": false
+    }
+  ],
+  "initiative": [
+    {
+      "name": "Rowan Desktop Retest L4",
+      "init": 19,
+      "is_player": true,
+      "hp": 22,
+      "hp_max": 36,
+      "ac": 18,
+      "id": "player",
+      "disposition": "active",
+      "can_act": true,
+      "alive": true,
+      "effects": [],
+      "band": null,
+      "reaction_used": false
+    },
+    {
+      "name": "Guz",
+      "init": 3,
+      "is_player": false,
+      "hp": 56,
+      "hp_max": 67,
+      "ac": 14,
+      "id": "Guz",
+      "disposition": "active",
+      "can_act": true,
+      "alive": true,
+      "effects": [],
+      "band": "melee",
+      "reaction_used": false
+    }
+  ],
+  "current_turn_id": "player",
+  "current_turn": "Rowan Desktop Retest L4",
+  "current_turn_index": 0,
+  "player_ac": 18,
+  "second_wind_used": true,
+  "solo_budget": {
+    "level": 4,
+    "notes": [
+      "unscaled exact creature: Guz keeps its record HP 67 (solo band 9-19)",
+      "unscaled exact creature: Guz keeps its record attack +5 (solo limit +4)",
+      "unscaled exact creature: Guz keeps its record damage 2d6+3 (solo average limit 8)"
+    ],
+    "adapted": false,
+    "warning": {
+      "text": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: Guz (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
+      "tier": "above_deadly"
+    },
+    "xp_check": {
+      "foes": 1,
+      "raw_xp": 450,
+      "warning": "above_deadly",
+      "difficulty": "deadly",
+      "exact_foes": [
+        {
+          "cr": "2",
+          "xp": 450,
+          "name": "Guz"
+        }
+      ],
+      "multiplier": 1.5,
+      "adjusted_xp": 675,
+      "deadly_threshold": 500
+    },
+    "encounter_participants": [
+      {
+        "id": "Guz",
+        "name": "Guz",
+        "reason": "Acts in the initiative order.",
+        "participation": "active"
+      }
+    ]
+  },
+  "second_wind_uses_remaining": null,
+  "economy": {
+    "round": 3,
+    "action": "Disengage",
+    "dodging": false,
+    "bonus_action": null
+  },
+  "raging": false,
+  "concentration": null,
+  "round_events": [
+    {
+      "kind": "disengage",
+      "text": "Rowan Desktop Retest L4 takes Disengage; withdrawal this turn does not provoke opportunity attacks.",
+      "actor_id": "player"
+    },
+    {
+      "kind": "withdraw",
+      "text": "Rowan Desktop Retest L4 withdraws from Guz.",
+      "actor_id": "player",
+      "target_id": "Guz"
+    },
+    {
+      "kind": "enemy_close",
+      "text": "Guz closes to melee on its turn.",
+      "actor_id": "Guz",
+      "target_id": "player"
+    },
+    {
+      "kind": "enemy_attack",
+      "text": "Guz attacks on its turn against Rowan Desktop Retest L4.",
+      "actor_id": "Guz",
+      "target_id": "player"
+    }
+  ],
+  "participants": [
+    {
+      "id": "Guz",
+      "name": "Guz",
+      "participation": "active",
+      "reason": "Acts in the initiative order."
+    }
+  ]
+}

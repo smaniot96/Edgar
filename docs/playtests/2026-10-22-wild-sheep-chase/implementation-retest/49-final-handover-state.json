@@ -1,0 +1,231 @@
+{
+  "session": {
+    "id": 25,
+    "campaign_id": 22,
+    "started_at": "2026-10-22T10:25:49.897230Z",
+    "ended_at": null,
+    "current_scene_id": "chapter_one_guz_confrontation",
+    "active_character_id": 32,
+    "character_name": "Cedar Desktop Travel Verification L4",
+    "has_history": true,
+    "last_played_at": "2026-10-22T10:29:26.292199Z",
+    "readiness": {
+      "play_allowed": true,
+      "history_allowed": true,
+      "state": "ready",
+      "primary_action": "play",
+      "blockers": []
+    }
+  },
+  "messages": [
+    {
+      "role": "dm",
+      "content": "Cedar Desktop Travel Verification L4, clattering hooves and frantic bleating break into the afternoon. A fluffy white sheep with a black face and curled horns bounds toward you and the group, its wool bouncing with each stride. It has an ornate scroll clenched in its mouth.\n\nAs it reaches you, the sheep waves the scroll toward the group. Its bleating and the surprised yelps around you make the commotion hard to miss, but the scroll itself is the clearest thing it seems to be offering.\n\nThe sheep is close enough to approach, and the scroll is within reach. What do you do?",
+      "event_id": 475,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:25:50.661705Z"
+    },
+    {
+      "role": "user",
+      "content": "I read the scroll aloud and listen to the sheep.",
+      "event_id": 478,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:26:08.388320Z"
+    },
+    {
+      "role": "dm",
+      "content": "You take the scroll and read its ornate script aloud. The sheep’s frantic bleating shifts into cultured Common, spoken with an elven accent and a slight bleat.\n\n“Finethir Shinebright,” he says. “I’m a wizard, and I urgently need your aid. A dangerous wizard has a powerful artifact, and I need help recovering it.” He fixes his black face on you, the scroll still held out between you.\n\nHis plea hangs amid the fading clatter and surprised yelps. What do you say or do?",
+      "event_id": 478,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "fa98093a-2d0c-45be-ae43-224e4b903c40",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:26:08.388320Z"
+    },
+    {
+      "role": "user",
+      "content": "I stand beside Finethir in plain view and wait for the approaching pursuers to arrive.",
+      "event_id": 481,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:26:19.263527Z"
+    },
+    {
+      "role": "dm",
+      "content": "You remain beside Finethir as the approaching commotion swells into howling, angry shouts, and occasional screams. Guz shoves through the crowd, three large wolves at his side, their iron collars clanking as they move. Their eyes seem strangely intelligent. Behind him looms a hulking figure in a dirty brown cloak.\n\nFinethir’s black face turns toward the newcomers; his curled horns and white fleece stand out against the jostling crowd. The scroll’s plea for help is still fresh between you, while Guz and his wolves close in. What do you do?",
+      "event_id": 481,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [
+        "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7"
+      ],
+      "turn_id": "958fdaa5-ed20-4042-ac2b-d8e0835301b6",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:26:19.263527Z"
+    },
+    {
+      "role": "user",
+      "content": "I stop hiding. I hand Finethir over to Guz and stand aside, then openly walk beside them as they leave. I ask Guz to take me to Noke.",
+      "event_id": 488,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:29:26.292199Z"
+    },
+    {
+      "role": "dm",
+      "content": "You step into plain view and hand Finethir over to Guz. Guz takes the sheep and turns to his wolves, who close around him, their iron collars catching the light. The hulking, cloaked figure follows as Guz starts away through the crowd.\n\nYou fall into step beside them and ask to be taken to Noke. Guz gives you a hard look, one hand still on his greatsword. “You’ll see Master Noke,” he says, brusque and certain. He keeps moving, with Finethir and the wolves in his custody. The crowd’s shouts and scattered screams fade behind you as the group leaves; where Guz will take you next remains ahead.",
+      "event_id": 488,
+      "citations": [
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1697,
+          "reference_id": "9fabb39b2f11e409338a961d2f9fc0ab64ce88d05106686318ad1e9e30f80001",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1698,
+          "reference_id": "872eb2919f8ddd9b1b98717837baf0c76c701e651889ee7a428e4b8e2bdef957",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 178,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 178,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1699,
+          "reference_id": "d5c967d36f49d7e1974375953ead34d2cf22baba8eccd33a10b4cbf3946cec6d",
+          "source_pages": [
+            174,
+            178
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 2,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 2,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 2,
+          "reference_id": "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1",
+          "source_pages": [
+            2
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "c37c6667-d3f2-409e-8436-acee2f6f81cc",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:29:26.292199Z"
+    }
+  ]
+}

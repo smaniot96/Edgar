@@ -1,0 +1,505 @@
+{
+  "notes": [
+    "Browser Performance measures, not shell elapsed time. Headers are not narrative text.",
+    "First-text-paint uses double requestAnimationFrame paint opportunity, not a physical screen visibility sensor.",
+    "Mixed declared actions, confirmations, dialogue, exploration and travel; not a matched baseline speed comparison.",
+    "Initial harness rows07 and08 stopped waiting during a phase change; their elapsedMs and screenshots are not completion evidence. Later cumulative Performance measures and completed snapshots recover actual turn timings.",
+    "Initial scroll/dialogue captured in early-timings and public saved messages; placeholders04 and37-opening are loading captures, not completed output."
+  ],
+  "complete_turns": 48,
+  "summary": {
+    "busy_paint": {
+      "n": 48,
+      "median_ms": 30.3,
+      "min_ms": 23.5,
+      "max_ms": 31
+    },
+    "headers": {
+      "n": 48,
+      "median_ms": 308.7,
+      "min_ms": 135.9,
+      "max_ms": 477.9
+    },
+    "first_token": {
+      "n": 48,
+      "median_ms": 9333.7,
+      "min_ms": 866.1,
+      "max_ms": 14504.7
+    },
+    "first_text_paint": {
+      "n": 48,
+      "median_ms": 9363.8,
+      "min_ms": 896.6,
+      "max_ms": 14523.4
+    },
+    "done": {
+      "n": 48,
+      "median_ms": 10902.3,
+      "min_ms": 1183.2,
+      "max_ms": 17139.5
+    },
+    "composer_ready": {
+      "n": 48,
+      "median_ms": 10929.3,
+      "min_ms": 1213.2,
+      "max_ms": 17162.2
+    },
+    "journal_settled": {
+      "n": 48,
+      "median_ms": 10922.5,
+      "min_ms": 1197.2,
+      "max_ms": 17148.9
+    },
+    "map_settled": {
+      "n": 11,
+      "median_ms": 3828.5,
+      "min_ms": 1262.5,
+      "max_ms": 6128.7
+    }
+  },
+  "turns": {
+    "9c7de5dd-ba54-4dbd-8cb9-33c2a1701922:1": {
+      "busy_paint": 24.599999994039536,
+      "headers": 342.3999999910593,
+      "first_token": 4703.899999991059,
+      "first_text_paint": 4725.899999991059,
+      "done": 6052.199999988079,
+      "journal_settled": 6070.5,
+      "composer_ready": 6090.899999991059,
+      "map_settled": 6128.699999988079
+    },
+    "272358af-478d-4a72-89ad-79d58432b89f:1": {
+      "busy_paint": 30.900000005960464,
+      "headers": 280.29999999701977,
+      "first_token": 2721.9000000059605,
+      "first_text_paint": 2747.0999999940395,
+      "done": 2889.4000000059605,
+      "journal_settled": 2905.4000000059605,
+      "composer_ready": 2914.4000000059605,
+      "map_settled": 2961.5999999940395
+    },
+    "67579d8b-8da1-4b25-923d-5d317eb8b8e0:1": {
+      "busy_paint": 30.399999991059303,
+      "headers": 311.3999999910593,
+      "first_token": 4322.20000000298,
+      "first_text_paint": 4347.5999999940395,
+      "done": 5509.5,
+      "journal_settled": 5534.0999999940395,
+      "composer_ready": 5547.29999999702,
+      "map_settled": 5587.5
+    },
+    "d6b5e40a-a486-423b-99d2-6202f09b5168:1": {
+      "busy_paint": 29.5,
+      "headers": 307.3999999910593,
+      "first_token": 13214.79999999702,
+      "first_text_paint": 13246.29999999702,
+      "done": 14957.699999988079,
+      "journal_settled": 14971.699999988079,
+      "composer_ready": 14980
+    },
+    "b86c02d6-7ebf-4f51-a77c-b98018420e76:1": {
+      "busy_paint": 30.399999991059303,
+      "headers": 320.5,
+      "first_token": 11452.09999999404,
+      "first_text_paint": 11480.29999999702,
+      "done": 13401.39999999106,
+      "journal_settled": 13416.59999999404,
+      "composer_ready": 13432.79999999702
+    },
+    "0d3e4786-5098-49f1-98ba-30514956c3b9:1": {
+      "busy_paint": 23.5,
+      "headers": 316.69999998807907,
+      "first_token": 12835.39999999106,
+      "first_text_paint": 12856.09999999404,
+      "done": 14504,
+      "journal_settled": 14518.199999988079,
+      "composer_ready": 14539.5
+    },
+    "6b56e2f9-193c-40ea-9ce8-ee654e038b2d:1": {
+      "busy_paint": 30.5,
+      "headers": 298.5,
+      "first_token": 8981.199999988079,
+      "first_text_paint": 9014.39999999106,
+      "done": 10383.699999988079,
+      "journal_settled": 10393,
+      "composer_ready": 10413.199999988079
+    },
+    "dd31f273-0909-469a-b5dd-f019b684207c:1": {
+      "busy_paint": 29.900000005960464,
+      "headers": 302.5,
+      "first_token": 9958.70000000298,
+      "first_text_paint": 9980.20000000298,
+      "done": 11598.59999999404,
+      "journal_settled": 11608.20000000298,
+      "composer_ready": 11630.5
+    },
+    "fe04ec34-20c8-438f-a156-772bd1fc1dae:1": {
+      "busy_paint": 30.799999997019768,
+      "headers": 315.20000000298023,
+      "first_token": 7301.70000000298,
+      "first_text_paint": 7329.9000000059605,
+      "done": 9040,
+      "journal_settled": 9051.60000000894,
+      "composer_ready": 9064.5
+    },
+    "ab3cdbd3-f96e-4ad8-8c53-015bc3ae9b7f:1": {
+      "busy_paint": 30.600000008940697,
+      "headers": 303.5,
+      "first_token": 7250.600000008941,
+      "first_text_paint": 7280.600000008941,
+      "done": 9208.10000000894,
+      "journal_settled": 9220.10000000894,
+      "composer_ready": 9230.29999999702
+    },
+    "d5b5d62a-325d-4c89-87c6-f8705dddc7ce:1": {
+      "busy_paint": 30.5,
+      "headers": 322,
+      "first_token": 12381.5,
+      "first_text_paint": 12412.70000000298,
+      "done": 14226.70000000298,
+      "journal_settled": 14242.29999999702,
+      "composer_ready": 14263.70000000298
+    },
+    "543860ce-616e-47b2-893e-f7d4022dce87:1": {
+      "busy_paint": 30.69999998807907,
+      "headers": 336.19999998807907,
+      "first_token": 9439.79999999702,
+      "first_text_paint": 9463.59999999404,
+      "done": 10936.89999999106,
+      "composer_ready": 10963,
+      "journal_settled": 10968.39999999106
+    },
+    "642ec4f5-8f8c-41ca-a15e-09f5b7309716:1": {
+      "busy_paint": 30.099999994039536,
+      "headers": 405.5,
+      "first_token": 13335.89999999106,
+      "first_text_paint": 13364,
+      "done": 15332.20000000298,
+      "journal_settled": 15343.39999999106,
+      "composer_ready": 15363
+    },
+    "bf3d5d45-9879-4307-87a2-1ff419a92123:1": {
+      "busy_paint": 31,
+      "headers": 307.70000000298023,
+      "first_token": 9485.70000000298,
+      "first_text_paint": 9514.20000000298,
+      "done": 11806.70000000298,
+      "journal_settled": 11819.10000000894,
+      "composer_ready": 11831.20000000298
+    },
+    "a04ef769-b40d-4f10-b044-6c109d8cb5e5:1": {
+      "busy_paint": 29.799999997019768,
+      "headers": 358.79999999701977,
+      "first_token": 11423.29999999702,
+      "first_text_paint": 11446.90000000596,
+      "done": 13048.29999999702,
+      "journal_settled": 13062.90000000596,
+      "composer_ready": 13079.70000000298
+    },
+    "e0d5a983-dfc0-4021-9c9c-9ed732e381dd:1": {
+      "busy_paint": 30.700000002980232,
+      "headers": 314.79999999701977,
+      "first_token": 11885.29999999702,
+      "first_text_paint": 11915,
+      "done": 13352.10000000894,
+      "journal_settled": 13362.79999999702,
+      "composer_ready": 13380.40000000596
+    },
+    "96937c9d-ad7f-4935-a0b2-7fd030f8e493:1": {
+      "busy_paint": 26.100000008940697,
+      "headers": 309.1000000089407,
+      "first_token": 12053.79999999702,
+      "first_text_paint": 12075.90000000596,
+      "done": 13579.40000000596,
+      "journal_settled": 13597.20000000298,
+      "composer_ready": 13610.70000000298
+    },
+    "5c8bc332-0444-4d31-ab74-931d73d4cda0:1": {
+      "busy_paint": 28.099999994039536,
+      "headers": 374.09999999403954,
+      "first_token": 13540.79999999702,
+      "first_text_paint": 13562.09999999404,
+      "done": 14678.79999999702,
+      "journal_settled": 14690.29999999702,
+      "composer_ready": 14711.40000000596
+    },
+    "8a5d335d-aa3d-4070-b71a-9fcba130a6d3:1": {
+      "busy_paint": 30.599999994039536,
+      "headers": 312.8999999910593,
+      "first_token": 11042.199999988079,
+      "first_text_paint": 11063.79999999702,
+      "done": 12556.79999999702,
+      "journal_settled": 12568.5,
+      "composer_ready": 12581.5
+    },
+    "a7db5655-e715-4b7f-8524-53bb83018f26:1": {
+      "busy_paint": 30.400000005960464,
+      "headers": 301.5,
+      "first_token": 9314.90000000596,
+      "first_text_paint": 9346.90000000596,
+      "done": 10827.90000000596,
+      "journal_settled": 10844.5,
+      "composer_ready": 10863.40000000596
+    },
+    "b85e7047-6535-4688-9a74-bab21f44d434:1": {
+      "busy_paint": 30.299999997019768,
+      "headers": 386.5,
+      "first_token": 9063.89999999106,
+      "first_text_paint": 9097,
+      "done": 11671.199999988079,
+      "journal_settled": 11683.59999999404,
+      "composer_ready": 11698.699999988079
+    },
+    "ac75f01e-4e1b-42c2-894e-1658cae2181d:1": {
+      "busy_paint": 29.299999997019768,
+      "headers": 316.29999999701977,
+      "first_token": 9241.09999999404,
+      "first_text_paint": 9262.59999999404,
+      "done": 10867.699999988079,
+      "journal_settled": 10876.699999988079,
+      "composer_ready": 10895.699999988079
+    },
+    "33ff0ab8-c8ac-411c-a086-b2c0f1f57ce4:1": {
+      "busy_paint": 29.099999994039536,
+      "headers": 341.40000000596046,
+      "first_token": 866.0999999940395,
+      "first_text_paint": 896.5999999940395,
+      "done": 1183.2000000029802,
+      "journal_settled": 1197.2000000029802,
+      "composer_ready": 1213.2000000029802,
+      "map_settled": 1262.5
+    },
+    "f0f2ee27-bd8c-41c3-b152-0b41ddcae69d:1": {
+      "busy_paint": 30.599999994039536,
+      "headers": 287.79999999701977,
+      "first_token": 3587.8999999910593,
+      "first_text_paint": 3612.7999999970198,
+      "done": 3756.699999988079,
+      "journal_settled": 3770.8999999910593,
+      "composer_ready": 3780.0999999940395,
+      "map_settled": 3828.5
+    },
+    "99b9f179-e5e9-4fd7-9341-396838b63962:1": {
+      "busy_paint": 30.5,
+      "headers": 333.09999999403954,
+      "first_token": 4437.70000000298,
+      "first_text_paint": 4463.5999999940395,
+      "done": 4614.9000000059605,
+      "journal_settled": 4628.5999999940395,
+      "composer_ready": 4647,
+      "map_settled": 4692.4000000059605
+    },
+    "2fdd302e-fcbf-4b39-a445-97ccc25a7bee:1": {
+      "busy_paint": 29.799999997019768,
+      "headers": 477.90000000596046,
+      "first_token": 3723.2000000029802,
+      "first_text_paint": 3746.9000000059605,
+      "done": 3898.9000000059605,
+      "journal_settled": 3912.7999999970198,
+      "composer_ready": 3930,
+      "map_settled": 3981.2000000029802
+    },
+    "2d9e7b3c-fdef-49ca-9806-b5b97f504015:1": {
+      "busy_paint": 29.69999998807907,
+      "headers": 297.79999999701977,
+      "first_token": 2927,
+      "first_text_paint": 2947.5,
+      "done": 3102.699999988079,
+      "journal_settled": 3118.5999999940395,
+      "composer_ready": 3130.699999988079,
+      "map_settled": 3174.5
+    },
+    "c5851587-0c00-430e-9232-59cd2a344a9c:1": {
+      "busy_paint": 30.700000002980232,
+      "headers": 330.1000000089407,
+      "first_token": 4449.600000008941,
+      "first_text_paint": 4481.300000011921,
+      "done": 5585.5,
+      "journal_settled": 5605.4000000059605,
+      "composer_ready": 5613.70000000298,
+      "map_settled": 5660.100000008941
+    },
+    "72818f64-6ebb-4b40-962a-941238c4d4da:1": {
+      "busy_paint": 30.30000001192093,
+      "headers": 135.90000000596046,
+      "first_token": 7041.70000000298,
+      "first_text_paint": 7063.70000000298,
+      "done": 8631.40000000596,
+      "journal_settled": 8641.60000000894,
+      "composer_ready": 8664.90000000596
+    },
+    "79b1ce4e-baed-4257-93cd-08adc3a3099a:1": {
+      "busy_paint": 28.700000002980232,
+      "headers": 296.30000001192093,
+      "first_token": 13492.90000000596,
+      "first_text_paint": 13511.40000000596,
+      "done": 17139.5,
+      "journal_settled": 17148.90000000596,
+      "composer_ready": 17162.20000000298
+    },
+    "fa98093a-2d0c-45be-ae43-224e4b903c40:1": {
+      "busy_paint": 30,
+      "headers": 303.79999999701977,
+      "first_token": 12476.5,
+      "first_text_paint": 12496.20000000298,
+      "done": 14577.20000000298,
+      "journal_settled": 14588.5,
+      "composer_ready": 14596.29999999702
+    },
+    "c37c6667-d3f2-409e-8436-acee2f6f81cc:1": {
+      "busy_paint": 25.100000008940697,
+      "headers": 301.80000001192093,
+      "first_token": 10931.70000000298,
+      "first_text_paint": 10958.60000000894,
+      "done": 12575.90000000596,
+      "journal_settled": 12589.90000000596,
+      "composer_ready": 12607.70000000298
+    },
+    "0eefc284-182c-46ad-a617-a7a44170e5e7:1": {
+      "busy_paint": 24.900000005960464,
+      "headers": 274.20000000298023,
+      "first_token": 11271.5,
+      "first_text_paint": 11291.90000000596,
+      "done": 12351.40000000596,
+      "journal_settled": 12365.20000000298,
+      "composer_ready": 12374.70000000298
+    },
+    "65542a85-ec36-4c5c-97c1-fcdc25fd223a:1": {
+      "busy_paint": 30.5,
+      "headers": 353.29999999701977,
+      "first_token": 7883.5999999940395,
+      "first_text_paint": 7914.70000000298,
+      "done": 8789.59999999404,
+      "journal_settled": 8802.79999999702,
+      "composer_ready": 8814.20000000298
+    },
+    "c21a9716-2773-48ff-9830-e3d7d88d89bb:1": {
+      "busy_paint": 30.299999997019768,
+      "headers": 313.1000000089407,
+      "first_token": 11259.70000000298,
+      "first_text_paint": 11280.40000000596,
+      "done": 12097.40000000596,
+      "journal_settled": 12110.29999999702,
+      "composer_ready": 12130.20000000298
+    },
+    "d703faf8-40c0-411c-aeec-e8f85d7e4a00:1": {
+      "busy_paint": 30.399999991059303,
+      "headers": 299.59999999403954,
+      "first_token": 11245.39999999106,
+      "first_text_paint": 11263.79999999702,
+      "done": 12850.699999988079,
+      "journal_settled": 12861.699999988079,
+      "composer_ready": 12879.39999999106
+    },
+    "bc248baf-3dbb-4e91-9068-4269c5997cc4:1": {
+      "busy_paint": 25.100000008940697,
+      "headers": 336.6000000089407,
+      "first_token": 3532.2999999970198,
+      "first_text_paint": 3558.6000000089407,
+      "done": 3701.5,
+      "journal_settled": 3713,
+      "composer_ready": 3724.7000000029802,
+      "map_settled": 3769.2000000029802
+    },
+    "85740643-812d-4fff-b306-0e4b1cb33c08:1": {
+      "busy_paint": 30.299999997019768,
+      "headers": 308,
+      "first_token": 3443.7000000029802,
+      "first_text_paint": 3464.2000000029802,
+      "done": 3609,
+      "journal_settled": 3628.8999999910593,
+      "composer_ready": 3647.5999999940395,
+      "map_settled": 3688.5999999940395
+    },
+    "0d6460d5-1a24-463c-ac13-8fa04616d952:1": {
+      "busy_paint": 25.19999998807907,
+      "headers": 310.3999999910593,
+      "first_token": 11019.09999999404,
+      "first_text_paint": 11040.699999988079,
+      "done": 12475.59999999404,
+      "journal_settled": 12486.39999999106,
+      "composer_ready": 12507.699999988079
+    },
+    "90522386-01f7-4a16-aa85-863d915a9783:1": {
+      "busy_paint": 30.599999994039536,
+      "headers": 305.79999999701977,
+      "first_token": 7920,
+      "first_text_paint": 7947.0999999940395,
+      "done": 9246.70000000298,
+      "journal_settled": 9257.89999999106,
+      "composer_ready": 9280.59999999404
+    },
+    "0aaf0a77-a23b-4a19-85f5-eaeb00b2032b:1": {
+      "busy_paint": 23.900000005960464,
+      "headers": 401.20000000298023,
+      "first_token": 14504.70000000298,
+      "first_text_paint": 14523.40000000596,
+      "done": 16391,
+      "journal_settled": 16405.20000000298,
+      "composer_ready": 16423.40000000596
+    },
+    "94ea4975-fd41-41fb-ab07-c757fefb65e0:1": {
+      "busy_paint": 30.799999997019768,
+      "headers": 287,
+      "first_token": 8040.70000000298,
+      "first_text_paint": 8064,
+      "done": 9328.29999999702,
+      "journal_settled": 9344.20000000298,
+      "composer_ready": 9363.39999999106
+    },
+    "d32803a7-6bd5-4c8e-91ee-b52a9e13e86e:1": {
+      "busy_paint": 30.900000005960464,
+      "headers": 282.90000000596046,
+      "first_token": 9352.40000000596,
+      "first_text_paint": 9380.70000000298,
+      "done": 10407.79999999702,
+      "journal_settled": 10420.70000000298,
+      "composer_ready": 10430.90000000596
+    },
+    "34ddabbf-177b-44a8-81f3-e8bd442eb9ac:1": {
+      "busy_paint": 30.799999997019768,
+      "headers": 308.20000000298023,
+      "first_token": 10025.39999999106,
+      "first_text_paint": 10047.29999999702,
+      "done": 11062.5,
+      "journal_settled": 11076,
+      "composer_ready": 11097.70000000298
+    },
+    "5e2f6ad9-2a2c-41c8-940a-a17cd0719cd4:1": {
+      "busy_paint": 30.700000002980232,
+      "headers": 279.59999999403954,
+      "first_token": 6717.5999999940395,
+      "first_text_paint": 6747.29999999702,
+      "done": 7779.4000000059605,
+      "journal_settled": 7795.5,
+      "composer_ready": 7813.9000000059605
+    },
+    "a358c469-e4c8-4d5d-8523-ba44ce3f2b7a:1": {
+      "busy_paint": 26,
+      "headers": 275.29999999701977,
+      "first_token": 6738.5,
+      "first_text_paint": 6759.5,
+      "done": 7813.5,
+      "journal_settled": 7823.20000000298,
+      "composer_ready": 7842.4000000059605
+    },
+    "5c040394-6b2c-4b86-90f4-e7aacc88d044:1": {
+      "busy_paint": 26.200000002980232,
+      "headers": 294.5,
+      "first_token": 13448.70000000298,
+      "first_text_paint": 13476.29999999702,
+      "done": 14927.90000000596,
+      "journal_settled": 14940.40000000596,
+      "composer_ready": 14959.59999999404
+    },
+    "e545faee-2c75-48dc-b4a7-7b33179340e1:1": {
+      "busy_paint": 30.099999994039536,
+      "headers": 291.79999999701977,
+      "first_token": 8194.40000000596,
+      "first_text_paint": 8214.09999999404,
+      "done": 9428.70000000298,
+      "journal_settled": 9443.29999999702,
+      "composer_ready": 9463.40000000596
+    }
+  }
+}

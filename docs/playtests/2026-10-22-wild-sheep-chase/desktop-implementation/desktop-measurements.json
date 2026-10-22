@@ -1,0 +1,84 @@
+{
+  "mode": "New frontend on isolated Vite proxy; existing live session 20 read-only; no turn submitted",
+  "results": [
+    {
+      "width": 1280,
+      "height": 800,
+      "textarea": {
+        "top": 724.390625,
+        "bottom": 768.390625,
+        "left": 16,
+        "right": 677.515625,
+        "height": 44
+      },
+      "send": {
+        "top": 724.390625,
+        "bottom": 768.390625,
+        "left": 685.515625,
+        "right": 752,
+        "height": 44
+      },
+      "story": {
+        "top": 332.390625,
+        "bottom": 593.390625,
+        "left": 0,
+        "right": 768,
+        "height": 261
+      },
+      "confirmation": {
+        "top": 601.390625,
+        "bottom": 703.390625,
+        "left": 12,
+        "right": 756,
+        "height": 102
+      },
+      "tool": {
+        "top": 53,
+        "bottom": 800,
+        "left": 768,
+        "right": 1280,
+        "height": 747
+      }
+    },
+    {
+      "width": 1440,
+      "height": 1000,
+      "textarea": {
+        "top": 924.390625,
+        "bottom": 968.390625,
+        "left": 80,
+        "right": 773.515625,
+        "height": 44
+      },
+      "send": {
+        "top": 924.390625,
+        "bottom": 968.390625,
+        "left": 781.515625,
+        "right": 848,
+        "height": 44
+      },
+      "story": {
+        "top": 332.390625,
+        "bottom": 793.390625,
+        "left": 0,
+        "right": 928,
+        "height": 461
+      },
+      "confirmation": {
+        "top": 801.390625,
+        "bottom": 903.390625,
+        "left": 80,
+        "right": 848,
+        "height": 102
+      },
+      "tool": {
+        "top": 53,
+        "bottom": 1000,
+        "left": 928,
+        "right": 1440,
+        "height": 947
+      }
+    }
+  ],
+  "errors": []
+}

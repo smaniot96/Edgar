@@ -1,0 +1,1205 @@
+{
+  "session": {
+    "id": 21,
+    "campaign_id": 18,
+    "started_at": "2026-10-22T10:09:49.878078Z",
+    "ended_at": null,
+    "current_scene_id": "chapter_one_guz_confrontation",
+    "active_character_id": 28,
+    "character_name": "Rowan Desktop Retest L4",
+    "has_history": true,
+    "last_played_at": "2026-10-22T10:14:31.520826Z",
+    "readiness": {
+      "play_allowed": true,
+      "history_allowed": true,
+      "state": "ready",
+      "primary_action": "play",
+      "blockers": []
+    }
+  },
+  "map": {
+    "session_id": 21,
+    "source_version": "8394c82a3c0340ef6a0465bae18e8ddfc118de2cd49fd3d4e49453508f12c0d6",
+    "topology": "reviewed_manifest",
+    "schematic": true,
+    "scale": null,
+    "current_scene_id": "chapter_one_guz_confrontation",
+    "places": [
+      {
+        "scene_id": "chapter_one_guz_confrontation",
+        "title": "Howling, angry shouts, and an occasional scream draw nearer",
+        "status": "current",
+        "detail": "Howling, angry shouts, and an occasional scream draw nearer. A hulking half-orc pushes through the crowd with one hand on a greatsword. Three large wolves wear iron collars; behind him, a huge cloaked figure's heavy footfalls rise above the commotion. The half-orc fixes his small eyes on the sheep and says, “That sheep is Master Noke’s... he desires to have it back.”"
+      },
+      {
+        "scene_id": "chapter_one_sheep_arrives",
+        "title": "Clattering hooves, surprised yelps, and frantic bleating cut",
+        "status": "visited",
+        "detail": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them."
+      }
+    ],
+    "routes": [
+      {
+        "from_scene_id": "chapter_one_sheep_arrives",
+        "to_scene_id": "chapter_one_guz_confrontation"
+      }
+    ],
+    "note": "Schematic map; it shows learned connections and does not establish distance or scale.",
+    "journal_entry_ids": {
+      "chapter_one_sheep_arrives": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+      "chapter_one_guz_confrontation": "entry_D6pu_S9GUI6U5hhtYGB_9w"
+    },
+    "known_place_entries": [
+      {
+        "id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+        "title": "Howling, angry shouts, and an occasional scream draw nearer",
+        "text": "Howling, angry shouts, and an occasional scream draw nearer. A hulking half-orc pushes through the crowd with one hand on a greatsword. Three large wolves wear iron collars; behind him, a huge cloaked figure's heavy footfalls rise above the commotion. The half-orc fixes his small eyes on the sheep and says, “That sheep is Master Noke’s... he desires to have it back.”",
+        "status": "visited",
+        "origin": {
+          "turn_number": 5,
+          "history_event_id": 400,
+          "place": "Howling, angry shouts, and an occasional scream draw nearer",
+          "place_id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+          "actor": null,
+          "actor_id": null,
+          "citation": "Page 2",
+          "provenance": "module"
+        }
+      },
+      {
+        "id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+        "title": "Clattering hooves, surprised yelps, and frantic bleating cut",
+        "text": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them.",
+        "status": "visited",
+        "origin": {
+          "turn_number": 1,
+          "history_event_id": 388,
+          "place": "Clattering hooves, surprised yelps, and frantic bleating cut",
+          "place_id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "actor": null,
+          "actor_id": null,
+          "citation": "Page 1",
+          "provenance": "module"
+        }
+      }
+    ],
+    "artwork": [],
+    "tracking": "available",
+    "world_map": null
+  },
+  "journal": {
+    "session_id": 21,
+    "tracking": "available",
+    "entries": [
+      {
+        "id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "place",
+        "title": "Howling, angry shouts, and an occasional scream draw nearer",
+        "text": "Howling, angry shouts, and an occasional scream draw nearer. A hulking half-orc pushes through the crowd with one hand on a greatsword. Three large wolves wear iron collars; behind him, a huge cloaked figure's heavy footfalls rise above the commotion. The half-orc fixes his small eyes on the sheep and says, “That sheep is Master Noke’s... he desires to have it back.”",
+        "status": "visited",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 5,
+          "history_event_id": 400,
+          "place": "Howling, angry shouts, and an occasional scream draw nearer",
+          "place_id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "visited",
+            "turn_number": 5,
+            "history_event_id": 400
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_Ku-1fUe_4fk89V7CelXQKg",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "The howling grows close; angry shouts and occasional screams accompany…",
+        "text": "The howling grows close; angry shouts and occasional screams accompany the approaching pursuit.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 5,
+          "history_event_id": 400,
+          "place": "Howling, angry shouts, and an occasional scream draw nearer",
+          "place_id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 5,
+            "history_event_id": 400
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_D6pu_S9GUI6U5hhtYGB_9w"
+        ]
+      },
+      {
+        "id": "entry_3x1M2fyRXc1t2ObBRg2Bdg",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "Noke keeps Shinebright’s former home a few miles southeast of town…",
+        "text": "Noke keeps Shinebright’s former home a few miles southeast of town, reached by a well-trodden path through sparse woodland. Noke keeps the wand on his person and rarely leaves except when absolutely necessary.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 4,
+          "history_event_id": 397,
+          "place": "Clattering hooves, surprised yelps, and frantic bleating cut",
+          "place_id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 4,
+            "history_event_id": 397
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_gg4aialJ7aPzzHF2EK8B5Q"
+        ]
+      },
+      {
+        "id": "entry_N5Smu_n5vxHawk-Vnuanng",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "Expect an occupied compound guarded by Noke’s transformed followers…",
+        "text": "Expect an occupied compound guarded by Noke’s transformed followers, including wolves and other beasts. The approach is through woodland; the source establishes threats, but not a guaranteed encounter on the way there.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 4,
+          "history_event_id": 397,
+          "place": "Clattering hooves, surprised yelps, and frantic bleating cut",
+          "place_id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 4,
+            "history_event_id": 397
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_gg4aialJ7aPzzHF2EK8B5Q"
+        ]
+      },
+      {
+        "id": "entry_rO9tzVvttYwUvHmlb0g99w",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "Finethir says Ahmed Noke, his former apprentice, transformed him into a…",
+        "text": "Finethir says Ahmed Noke, his former apprentice, transformed him into a sheep and took his Wand of True Polymorph. He needs access to the wand to return to his original form, and asks for your help recovering it.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 3,
+          "history_event_id": 394,
+          "place": "Clattering hooves, surprised yelps, and frantic bleating cut",
+          "place_id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 3,
+            "history_event_id": 394
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_gg4aialJ7aPzzHF2EK8B5Q"
+        ]
+      },
+      {
+        "id": "entry_IvHUTsOjc_VAUIldTYdRlg",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "clue",
+        "title": "The sheep's bleating shifts into cultured, elven-accented Common with a…",
+        "text": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them.",
+        "status": "discovered",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": "untracked",
+        "origin": {
+          "turn_number": 2,
+          "history_event_id": 391,
+          "place": "Clattering hooves, surprised yelps, and frantic bleating cut",
+          "place_id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "discovered",
+            "turn_number": 2,
+            "history_event_id": 391
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      },
+      {
+        "id": "entry_L4Cq6iLwY0TZJ5be2ffGVA",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "note",
+        "title": "The sheep's bleating shifts into cultured, elven-accented Common with a…",
+        "text": "The sheep's bleating shifts into cultured, elven-accented Common with a slight bleat; he identifies himself as Finethir Shinebright, a wizard in urgent need of aid, and starts asking for help recovering a powerful artifact from a dangerous wizard.",
+        "status": "learned",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 2,
+          "history_event_id": 391,
+          "place": "Clattering hooves, surprised yelps, and frantic bleating cut",
+          "place_id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "learned",
+            "turn_number": 2,
+            "history_event_id": 391
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": [
+          "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "entry_IvHUTsOjc_VAUIldTYdRlg"
+        ]
+      },
+      {
+        "id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+        "actor_id": null,
+        "actor_aliases": [],
+        "actor_reference_event_ids": [],
+        "related_actor_id": null,
+        "category": "place",
+        "title": "Clattering hooves, surprised yelps, and frantic bleating cut",
+        "text": "Clattering hooves, surprised yelps, and frantic bleating cut through the afternoon. A fluffy white sheep with a black face and curled horns bounds toward the group, an ornate scroll held in its mouth, and waves the scroll toward them.",
+        "status": "visited",
+        "quantity": null,
+        "clock_maximum": null,
+        "ownership": null,
+        "origin": {
+          "turn_number": 1,
+          "history_event_id": 388,
+          "place": "Clattering hooves, surprised yelps, and frantic bleating cut",
+          "place_id": "entry_gg4aialJ7aPzzHF2EK8B5Q",
+          "actor": null,
+          "actor_id": null,
+          "citation": null,
+          "provenance": "module"
+        },
+        "history": [
+          {
+            "status": "visited",
+            "turn_number": 1,
+            "history_event_id": 388
+          }
+        ],
+        "related_entry_id": null,
+        "related_entry_ids": []
+      }
+    ],
+    "current_place": {
+      "id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+      "actor_id": null,
+      "actor_aliases": [],
+      "actor_reference_event_ids": [],
+      "related_actor_id": null,
+      "category": "place",
+      "title": "Howling, angry shouts, and an occasional scream draw nearer",
+      "text": "Howling, angry shouts, and an occasional scream draw nearer. A hulking half-orc pushes through the crowd with one hand on a greatsword. Three large wolves wear iron collars; behind him, a huge cloaked figure's heavy footfalls rise above the commotion. The half-orc fixes his small eyes on the sheep and says, “That sheep is Master Noke’s... he desires to have it back.”",
+      "status": "visited",
+      "quantity": null,
+      "clock_maximum": null,
+      "ownership": null,
+      "origin": {
+        "turn_number": 5,
+        "history_event_id": 400,
+        "place": "Howling, angry shouts, and an occasional scream draw nearer",
+        "place_id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+        "actor": null,
+        "actor_id": null,
+        "citation": null,
+        "provenance": "module"
+      },
+      "history": [
+        {
+          "status": "visited",
+          "turn_number": 5,
+          "history_event_id": 400
+        }
+      ],
+      "related_entry_id": null,
+      "related_entry_ids": []
+    },
+    "active_goal": null,
+    "current_lead": {
+      "id": "entry_Ku-1fUe_4fk89V7CelXQKg",
+      "actor_id": null,
+      "actor_aliases": [],
+      "actor_reference_event_ids": [],
+      "related_actor_id": null,
+      "category": "note",
+      "title": "The howling grows close; angry shouts and occasional screams accompany…",
+      "text": "The howling grows close; angry shouts and occasional screams accompany the approaching pursuit.",
+      "status": "learned",
+      "quantity": null,
+      "clock_maximum": null,
+      "ownership": null,
+      "origin": {
+        "turn_number": 5,
+        "history_event_id": 400,
+        "place": "Howling, angry shouts, and an occasional scream draw nearer",
+        "place_id": "entry_D6pu_S9GUI6U5hhtYGB_9w",
+        "actor": null,
+        "actor_id": null,
+        "citation": null,
+        "provenance": "module"
+      },
+      "history": [
+        {
+          "status": "learned",
+          "turn_number": 5,
+          "history_event_id": 400
+        }
+      ],
+      "related_entry_id": null,
+      "related_entry_ids": [
+        "entry_D6pu_S9GUI6U5hhtYGB_9w"
+      ]
+    }
+  },
+  "messages": [
+    {
+      "role": "dm",
+      "content": "Rowan Desktop Retest L4, the afternoon is interrupted by clattering hooves, surprised yelps, and frantic bleating. Close by, a fluffy white sheep with a black face and curled horns bounds toward you and the group.\n\nAn ornate scroll is held in the sheep’s mouth. As it approaches, the sheep waves the scroll toward you, its motion drawing the eye as clearly as the commotion around it.\n\nThe sheep is here before you, scroll still in its mouth and waving toward the group. You can address the sheep, take a closer look at the scroll, or respond to the commotion in whatever way you choose.",
+      "event_id": 388,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:09:50.620932Z"
+    },
+    {
+      "role": "user",
+      "content": "I read the scroll aloud and listen to the sheep.",
+      "event_id": 391,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:10:17.706944Z"
+    },
+    {
+      "role": "dm",
+      "content": "As you read the scroll aloud, the sheep’s bleating changes. The sounds resolve into cultured Common, touched with an elven accent and a faint bleat at the edges.\n\n“I am Finethir Shinebright,” he says urgently. “I’m a wizard, and I need your aid. A dangerous wizard has taken a powerful artifact—I must recover it.” The ornate scroll remains in his mouth as he speaks, its waving now less frantic.\n\nThe commotion of hooves and bleating continues around you. What do you say or do?",
+      "event_id": 391,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "d6b5e40a-a486-423b-99d2-6202f09b5168",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:10:17.706944Z"
+    },
+    {
+      "role": "user",
+      "content": "Finethir, who changed you into a sheep, what artifact was taken, and how can I help you recover it?",
+      "event_id": 394,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:10:48.008260Z"
+    },
+    {
+      "role": "dm",
+      "content": "Finethir’s cultured voice, still edged with a faint bleat, grows more urgent. “Ahmed Noke—my former apprentice—did this to me. He took my Wand of True Polymorph. I need access to it to return to my proper form, and I’m asking you to help me recover it.”\n\nThe sheep keeps the ornate scroll in its mouth as the commotion of hooves and bleating carries on around you. Finethir has named the wizard and the wand, but hasn’t yet said where Ahmed or the artifact can be found. What do you ask or do next?",
+      "event_id": 394,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "b86c02d6-7ebf-4f51-a77c-b98018420e76",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:10:48.008260Z"
+    },
+    {
+      "role": "user",
+      "content": "Where can I find Ahmed Noke and the wand, and what dangers should I expect there?",
+      "event_id": 397,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:11:33.009878Z"
+    },
+    {
+      "role": "dm",
+      "content": "Finethir answers from behind the ornate scroll, his cultured voice still touched by a faint bleat. “Ahmed keeps my former home a few miles southeast of town. Follow the well-trodden path through the sparse woodland, and you’ll reach his place.”\n\nHis curled horns shift as he adds, “He keeps the wand on his person and rarely leaves unless absolutely necessary. The compound is occupied, and his transformed followers guard it—wolves and other beasts. That’s what I know of the dangers; I can’t promise what you’ll meet along the way.”\n\nThe sheep remains before you amid the continuing clatter and bleating, the scroll still in its mouth. What do you do next?",
+      "event_id": 397,
+      "citations": [
+        {
+          "page": 1,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 1,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 0,
+          "reference_id": "902748694f9423490713967a583f003d7b57893839e9b355c092545647db13f7",
+          "source_pages": [
+            1
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "b85e7047-6535-4688-9a74-bab21f44d434",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:11:33.009878Z"
+    },
+    {
+      "role": "user",
+      "content": "I stand between Finethir and the approaching noise, draw my sword, and wait for the pursuers to arrive.",
+      "event_id": 400,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:11:44.204067Z"
+    },
+    {
+      "role": "dm",
+      "content": "You step between Finethir and the approaching noise, drawing your longsword as the pursuit pushes into view. Howling, angry shouts, and occasional screams swell around the clatter of the crowd. A hulking half-orc comes through with one hand on a greatsword. Three large wolves in iron collars keep close, while the heavy footfalls of a huge cloaked figure sound behind them.\n\nThe half-orc fixes his small eyes on the sheep. “That sheep is Master Noke’s... he desires to have it back.” Finethir stays behind you, the ornate scroll still in his mouth. The half-orc and his companions have not yet reached you.",
+      "event_id": 400,
+      "citations": [
+        {
+          "page": 2,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 2,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 2,
+          "reference_id": "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1",
+          "source_pages": [
+            2
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "ac75f01e-4e1b-42c2-894e-1658cae2181d",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:11:44.204067Z"
+    },
+    {
+      "role": "user",
+      "content": "I attack Guz with my longsword to protect Finethir.",
+      "event_id": 402,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:12:12.743994Z"
+    },
+    {
+      "role": "dm",
+      "content": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: Guz (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.\nSolo level 4 hero: unscaled exact creature: Guz keeps its record HP 67 (solo band 9-19); unscaled exact creature: Guz keeps its record attack +5 (solo limit +4); unscaled exact creature: Guz keeps its record damage 2d6+3 (solo average limit 8).\nDeclared, not executed for Guz: speed 30 ft.: movement is not simulated; Reckless: trait not executed; Whirling Greatsword: multiple distinct targets are not executed; one current target is attacked.\nConfirm before any dice: Rowan Desktop Retest L4 will attack Guz. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.\nYou can cancel and choose another approach.",
+      "event_id": 402,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "9f0740dd-133c-4436-9d93-e3de255008a8",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:12:12.743994Z"
+    },
+    {
+      "role": "user",
+      "content": "no",
+      "event_id": 404,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:12:57.315761Z"
+    },
+    {
+      "role": "dm",
+      "content": "Cancelled: nothing was rolled and no turn was spent. Say what Rowan Desktop Retest L4 does instead.",
+      "event_id": 404,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "33ff0ab8-c8ac-411c-a086-b2c0f1f57ce4",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:12:57.315761Z"
+    },
+    {
+      "role": "user",
+      "content": "I surrender. I do not attack.",
+      "event_id": 406,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:13:01.354438Z"
+    },
+    {
+      "role": "dm",
+      "content": "Confirm before any dice: Rowan Desktop Retest L4 will offer surrender or a ceasefire on the terms stated. This does not mean fleeing, attacking, or automatic acceptance. Reply yes to offer it, or no to change it. A supported refusal spends your action and the enemies take their turns; unknown or unsupported terms are clarified without a turn. No roll is made until you confirm.",
+      "event_id": 406,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "f0f2ee27-bd8c-41c3-b152-0b41ddcae69d",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:13:01.354438Z"
+    },
+    {
+      "role": "user",
+      "content": "yes",
+      "event_id": 408,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:13:13.952111Z"
+    },
+    {
+      "role": "dm",
+      "content": "Your offer has not been accepted on the available evidence. The fight remains active; you can change your terms, keep defending yourself, or declare another action. You have not attacked or fled. No roll is made and no turn is spent.",
+      "event_id": 408,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "99b9f179-e5e9-4fd7-9341-396838b63962",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:13:13.952111Z"
+    },
+    {
+      "role": "user",
+      "content": "I attack Guz twice with my longsword.",
+      "event_id": 410,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:13:41.153139Z"
+    },
+    {
+      "role": "dm",
+      "content": "Rowan Desktop Retest L4 requested 2 attacks, but this declaration allows 1. Choose one attack, or explicitly declare an available Action Surge or a legal off-hand attack. No roll is made and no turn is spent.",
+      "event_id": 410,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "2fdd302e-fcbf-4b39-a445-97ccc25a7bee",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:13:41.153139Z"
+    },
+    {
+      "role": "user",
+      "content": "I attack Guz with my longsword.",
+      "event_id": 412,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:13:44.423290Z"
+    },
+    {
+      "role": "dm",
+      "content": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: Guz (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.\nConfirm before any dice: Rowan Desktop Retest L4 will attack Guz. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.\nYou can cancel and choose another approach.",
+      "event_id": 412,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "2d9e7b3c-fdef-49ca-9806-b5b97f504015",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:13:44.423290Z"
+    },
+    {
+      "role": "user",
+      "content": "yes",
+      "event_id": 415,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:13:50.128493Z"
+    },
+    {
+      "role": "dm",
+      "content": "You commit to the attack as the commotion reaches you. Your longsword swings at Guz, but the blow goes wide. Guz answers with a sweeping strike of his greatsword; it, too, misses you.\n\nGuz remains within striking distance, with the three iron-collared wolves and the huge cloaked figure behind him. What do you do?",
+      "event_id": 415,
+      "citations": [
+        {
+          "page": 194,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 195,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1865,
+          "reference_id": "f29a3e61ea8711e579664adccbe0d3a213fb9ce8d403d3d67dc846cd4c516c78",
+          "source_pages": [
+            190,
+            194,
+            195
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 193,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 193,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1854,
+          "reference_id": "8ccc11bdea305af73801d3a237c55c910a311487b194ef9ed1b6bd6e56393674",
+          "source_pages": [
+            190,
+            193
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 2,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 2,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 2,
+          "reference_id": "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1",
+          "source_pages": [
+            2
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [
+        "f29a3e61ea8711e579664adccbe0d3a213fb9ce8d403d3d67dc846cd4c516c78"
+      ],
+      "turn_id": "c5851587-0c00-430e-9232-59cd2a344a9c",
+      "roll_status": "captured",
+      "roll": {
+        "dc": 14,
+        "rest": null,
+        "check": "attack",
+        "damage": null,
+        "against": "AC",
+        "healing": null,
+        "success": false,
+        "turn_id": "c5851587-0c00-430e-9232-59cd2a344a9c",
+        "dice_log": [
+          {
+            "kept": null,
+            "rolls": [
+              1
+            ],
+            "total": 7,
+            "purpose": "attack check",
+            "modifier": 6,
+            "roll_mode": null,
+            "expression": "1d20+6"
+          },
+          {
+            "kept": null,
+            "rolls": [
+              11
+            ],
+            "total": 16,
+            "purpose": "Guz Whirling Greatsword attack",
+            "modifier": 5,
+            "roll_mode": null,
+            "expression": "1d20+5"
+          }
+        ],
+        "modifier": 6,
+        "conditions": [],
+        "dice_result": 7,
+        "natural_roll": 1,
+        "roll_expression": "1d20+6",
+        "mechanical_summary": "Combat begins! Initiative: Rowan Desktop Retest L4 19, Guz 3. attack: 1d20+6 = 7 (d20 rolled 1) vs AC 14 -> automatic miss (natural 1). Rowan Desktop Retest L4 misses Guz. Guz's Whirling Greatsword misses Rowan Desktop Retest L4 (rolled 16 vs AC 18)."
+      },
+      "created_at": "2026-10-22T10:13:50.128493Z"
+    },
+    {
+      "role": "user",
+      "content": "First I use Second Wind to heal myself, then I attack Guz with my longsword.",
+      "event_id": 417,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:14:03.397773Z"
+    },
+    {
+      "role": "dm",
+      "content": "Confirm before any dice: Rowan Desktop Retest L4 will Second Wind then attack Guz. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.",
+      "event_id": 417,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "c9e1bcd8-87d3-4d0f-b91b-c43e253e1115",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:14:03.397773Z"
+    },
+    {
+      "role": "user",
+      "content": "yes",
+      "event_id": 420,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:14:10.421244Z"
+    },
+    {
+      "role": "dm",
+      "content": "You use Second Wind, steadying yourself, then bring your longsword down on Guz. The blade strikes solidly, drawing a sharp grunt from the half-orc. He answers with a sweeping blow of his greatsword, but it cuts past you without landing.\n\nGuz remains within striking distance, with the three iron-collared wolves and the huge cloaked figure behind him. What do you do?",
+      "event_id": 420,
+      "citations": [
+        {
+          "page": 194,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 195,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1865,
+          "reference_id": "f29a3e61ea8711e579664adccbe0d3a213fb9ce8d403d3d67dc846cd4c516c78",
+          "source_pages": [
+            190,
+            194,
+            195
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 193,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 193,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1854,
+          "reference_id": "8ccc11bdea305af73801d3a237c55c910a311487b194ef9ed1b6bd6e56393674",
+          "source_pages": [
+            190,
+            193
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 2,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 2,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 2,
+          "reference_id": "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1",
+          "source_pages": [
+            2
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "9c7de5dd-ba54-4dbd-8cb9-33c2a1701922",
+      "roll_status": "captured",
+      "roll": {
+        "dc": 14,
+        "rest": null,
+        "check": "attack",
+        "damage": 11,
+        "against": "AC",
+        "healing": null,
+        "success": true,
+        "turn_id": "9c7de5dd-ba54-4dbd-8cb9-33c2a1701922",
+        "dice_log": [
+          {
+            "kept": null,
+            "rolls": [
+              2
+            ],
+            "total": 6,
+            "purpose": "second wind",
+            "modifier": 4,
+            "roll_mode": null,
+            "expression": "1d10+4"
+          },
+          {
+            "kept": null,
+            "rolls": [
+              18
+            ],
+            "total": 24,
+            "purpose": "attack check",
+            "modifier": 6,
+            "roll_mode": null,
+            "expression": "1d20+6"
+          },
+          {
+            "kept": null,
+            "rolls": [
+              7
+            ],
+            "total": 11,
+            "purpose": "player damage",
+            "modifier": 4,
+            "roll_mode": null,
+            "expression": "1d8+4"
+          },
+          {
+            "kept": null,
+            "rolls": [
+              1
+            ],
+            "total": 6,
+            "purpose": "Guz Whirling Greatsword attack",
+            "modifier": 5,
+            "roll_mode": null,
+            "expression": "1d20+5"
+          }
+        ],
+        "modifier": 6,
+        "conditions": [],
+        "dice_result": 24,
+        "natural_roll": 18,
+        "roll_expression": "1d20+6",
+        "mechanical_summary": "Rowan Desktop Retest L4 uses Second Wind and regains 6 HP. attack: 1d20+6 = 24 (d20 rolled 18) vs AC 14 -> success. Rowan Desktop Retest L4 hits Guz for 11 damage (56/67 HP left) Guz's Whirling Greatsword misses Rowan Desktop Retest L4 (rolled 6 vs AC 18)."
+      },
+      "created_at": "2026-10-22T10:14:10.421244Z"
+    },
+    {
+      "role": "user",
+      "content": "I disengage and back away from Guz.",
+      "event_id": 422,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:14:13.549281Z"
+    },
+    {
+      "role": "dm",
+      "content": "Confirm before any dice: Rowan Desktop Retest L4 will Disengage then move. Reply yes to commit, or no to change it. No roll is made and no turn is spent until you reply yes.",
+      "event_id": 422,
+      "citations": [],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "272358af-478d-4a72-89ad-79d58432b89f",
+      "roll_status": "no_roll",
+      "roll": null,
+      "created_at": "2026-10-22T10:14:13.549281Z"
+    },
+    {
+      "role": "user",
+      "content": "yes",
+      "event_id": 426,
+      "citations": [],
+      "rules_edition": null,
+      "ruling_citation_ids": [],
+      "turn_id": null,
+      "roll_status": null,
+      "roll": null,
+      "created_at": "2026-10-22T10:14:31.520826Z"
+    },
+    {
+      "role": "dm",
+      "content": "You disengage, but before you can get clear, Guz closes to within striking distance and whirls his greatsword into you. The heavy blade catches you hard across the side, leaving you badly battered.\n\nGuz remains within five feet. The wolves and the huge cloaked figure are still behind him as the angry shouts and howling draw nearer. What do you do?",
+      "event_id": 426,
+      "citations": [
+        {
+          "page": 194,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 195,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1865,
+          "reference_id": "f29a3e61ea8711e579664adccbe0d3a213fb9ce8d403d3d67dc846cd4c516c78",
+          "source_pages": [
+            190,
+            194,
+            195
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 193,
+          "source": "D&D 5E - Player's Handbook",
+          "audience": "player",
+          "page_end": 193,
+          "collection": "rules_player_handbook",
+          "chunk_index": 1854,
+          "reference_id": "8ccc11bdea305af73801d3a237c55c910a311487b194ef9ed1b6bd6e56393674",
+          "source_pages": [
+            190,
+            193
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "1eaec135c30e7adc30f48cbe0ecf6a636e988d0262724058ad9046846f0798ed",
+          "edition_status": "compatible",
+          "extraction_sha256": "466740c9ee6863b71ae41772e5fce3f632c9ffeaa621766e7ce4349faa320d2d"
+        },
+        {
+          "page": 2,
+          "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "audience": "player",
+          "page_end": 2,
+          "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+          "chunk_index": 2,
+          "reference_id": "4d3b18d8e954895584727f1daeb1d24479b1cc7b2e2eb479bd85ccb2f88290b1",
+          "source_pages": [
+            2
+          ],
+          "rules_edition": "2014",
+          "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+          "edition_status": "compatible",
+          "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+          "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+        }
+      ],
+      "rules_edition": "2014",
+      "ruling_citation_ids": [],
+      "turn_id": "67579d8b-8da1-4b25-923d-5d317eb8b8e0",
+      "roll_status": "captured",
+      "roll": {
+        "dc": null,
+        "rest": null,
+        "check": null,
+        "damage": null,
+        "against": null,
+        "healing": null,
+        "success": true,
+        "turn_id": "67579d8b-8da1-4b25-923d-5d317eb8b8e0",
+        "dice_log": [
+          {
+            "kept": null,
+            "rolls": [
+              16
+            ],
+            "total": 21,
+            "purpose": "Guz Whirling Greatsword attack",
+            "modifier": 5,
+            "roll_mode": null,
+            "expression": "1d20+5"
+          },
+          {
+            "kept": null,
+            "rolls": [
+              5,
+              6
+            ],
+            "total": 14,
+            "purpose": "Guz Whirling Greatsword damage",
+            "modifier": 3,
+            "roll_mode": null,
+            "expression": "2d6+3"
+          }
+        ],
+        "modifier": null,
+        "conditions": [],
+        "dice_result": null,
+        "natural_roll": null,
+        "roll_expression": null,
+        "mechanical_summary": "The attempt proceeds without a roll. Guz closes to melee range. Guz's Whirling Greatsword hits Rowan Desktop Retest L4 for 14 slashing damage (rolled 21 vs AC 18)."
+      },
+      "created_at": "2026-10-22T10:14:31.520826Z"
+    }
+  ]
+}
