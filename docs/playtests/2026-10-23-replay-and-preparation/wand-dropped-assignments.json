@@ -1,0 +1,77 @@
+[
+  {
+    "id": 37,
+    "campaign_id": 32,
+    "campaign_title": "Wild Sheep — Acceptance Peace 20261022-1520Z",
+    "hp_current": 20,
+    "hp_max": 36,
+    "stats": {
+      "CHA": 8,
+      "CON": 14,
+      "DEX": 12,
+      "INT": 10,
+      "STR": 18,
+      "WIS": 12,
+      "conditions": [],
+      "second_wind": {
+        "uses_remaining": 0
+      },
+      "class_features": {
+        "action_surge": {
+          "uses_remaining": 0
+        }
+      }
+    },
+    "inventory": {
+      "armor": "chain mail",
+      "items": [],
+      "weapons": [
+        "longsword",
+        "shield"
+      ]
+    },
+    "hit_dice": {
+      "remaining": 4,
+      "total": 4,
+      "die": "d10"
+    },
+    "assigned_at": "2026-10-22T15:40:09.205616Z",
+    "ended_at": null,
+    "status": "active",
+    "second_wind": {
+      "uses_remaining": 0,
+      "uses_max": 1
+    },
+    "class_features": {
+      "action_surge": {
+        "uses_remaining": 0,
+        "uses_max": 1
+      }
+    },
+    "spell_slots": null,
+    "armor_class": 18,
+    "spells": null,
+    "proficiencies": {
+      "saving_throws": [
+        {
+          "ability": "STR",
+          "modifier": 6
+        },
+        {
+          "ability": "CON",
+          "modifier": 4
+        }
+      ],
+      "skills": [
+        {
+          "skill": "athletics",
+          "modifier": 6
+        },
+        {
+          "skill": "perception",
+          "modifier": 3
+        }
+      ]
+    }
+  }
+]

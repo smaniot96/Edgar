@@ -1,0 +1,20 @@
+{
+  "implementation": "612393036d6da682ed0c0ad9de54d1852b9bc6b1",
+  "backend": {
+    "passed": 3772,
+    "skipped": 6,
+    "elapsed_seconds": 274.28,
+    "command": "DOCKER_HOST=unix:///Users/psmaniotto/.docker/run/docker.sock .venv/bin/pytest -q --tb=short"
+  },
+  "focused_custody_regressions": {
+    "passed": 172
+  },
+  "tracked_python_ruff": "passed",
+  "git_diff_check": "passed",
+  "production_frontend_build": "passed",
+  "deployed_image": "sha256:3fb6c1334b68bffe6062a2b6ef3c616c40c41b8fc2f835f4a376610f112dd399",
+  "deployment_receipt_directory": "/Users/psmaniotto/EdgarBackups/replay-dev-61239303",
+  "backup_directory": "/Users/psmaniotto/EdgarBackups/replay-before-20261023-141726",
+  "deployment_preserved_files": 899,
+  "infrastructure_preserved": true
+}

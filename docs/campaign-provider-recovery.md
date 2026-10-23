@@ -25,6 +25,16 @@ correction onto the actual baseline; the application never guesses a near match 
 moves the edit to another record. A second invalid result in the same field holds
 for attention; retry reuses the saved correction receipt instead of submitting it again.
 
+A definitive `incomplete` response with `max_output_tokens` is retained with its exact
+output and usage. A prose-only recovery can make a distinct sparse request for the
+findings' own chapter/event text fields. Its schema bounds the number of edits to
+the available fields and validation permits one edit per record/field pair. The
+incomplete full Patch is never accepted, reconstructed or resubmitted. A changed
+prompt/schema still adopts the matching original dispatch when its frozen evidence
+and image bytes match. Structural changes outside the sparse scope, another exhausted
+recovery, invalid edits or unchanged findings remain held; normal independent review
+and publication gates still follow any valid correction.
+
 An interruption after the ID is saved resumes by retrieving that same response. A
 connection failure before any response receipt remains ambiguous and blocks ordinary
 retry. An idempotency header alone is not proof that a repeat create is safe.

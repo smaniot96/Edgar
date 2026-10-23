@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-10-23T11:32:05.055Z",
+  "captured_at": "2026-10-23T12:22:23.837Z",
   "adventures": {
     "the_wild_sheep_chase_preparation_replay_20261022": {
       "status": "processing",
@@ -20,7 +20,7 @@
         "job_id": "5d47435bacdd4af4b24a81d5f149bf2e",
         "kind": "ingestion",
         "state": "running",
-        "stage": "Repairing affected records",
+        "stage": "Independent final review",
         "completed_chapters": 0,
         "checkpoint_available": true,
         "retryable": false,

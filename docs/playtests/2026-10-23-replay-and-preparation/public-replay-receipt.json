@@ -1,960 +1,891 @@
 {
-  "002-custody-dialogue": {
-    "session": 36,
-    "scene": "chapter_two_noke_encounter",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "Finethir, I am speaking to you where Guz is holding you; I am not taking you from him. Noke is defeated. Can you tell us what you need now?",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:34:19.331584Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "Finethir answers from Guz’s grip, his cultured voice tight but clear. “I need your help recovering the powerful wand Noke took from me. I cannot leave with you while Guz holds me, but I can answer your questions.”\n\nGuz keeps hold of him. The scroll remains open in your possession, and the rune-banded wand you inspected is still with you, unactivated. What would you ask Finethir—or say to Guz?",
-        "turn_id": "1960f5e3-1051-4b6e-9eff-dd2144f517d5",
-        "created_at": "2026-10-23T10:34:19.331584Z",
-        "roll": null
-      }
-    ],
-    "active_combat": null
-  },
-  "003-wand-pickup": {
-    "session": 36,
-    "scene": "chapter_two_noke_encounter",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "I return to the laboratory where Noke fell. I pick up his visible rune-banded oak wand and put it in my pack without activating it.",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:34:53.949097Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "You head back into the laboratory, where shelves crowd the walls and ink-spattered papers lie across the worktables. Noke remains fallen among them. The rune-banded oak wand is still near where you last saw it; your attempt to pick it up has not established that it is in your possession, so it remains there, unactivated.\n\nThe open scroll is still with you. What will you do with it—or with the wand?",
-        "turn_id": "cbd168f2-371a-417d-8ec3-f4cc42db50a8",
-        "created_at": "2026-10-23T10:34:53.949097Z",
-        "roll": null
-      }
-    ],
-    "active_combat": null
-  },
-  "004-wand-isolated-pickup": {
-    "session": 36,
-    "scene": "chapter_two_noke_encounter",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "I take the oak wand lying next to Noke and stow it in my pack. I do not try to use its magic.",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:36:07.122567Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "You put the rune-banded oak wand into your pack without activating it. It is now in your possession, alongside the open scroll. Noke remains fallen among the ink-spattered papers and intricate beast drawings; the crowded shelves stand undisturbed around the worktables.\n\nThe wand’s purpose is still unknown, but Finethir is able to answer questions while Guz holds him outside. What do you do next?",
-        "turn_id": "531e497e-d3d1-4e48-8f9f-32fe332aed0a",
-        "created_at": "2026-10-23T10:36:07.122567Z",
-        "roll": null
-      }
-    ],
-    "active_combat": null
-  },
-  "012-grid-wall-refusal": {
-    "session": 38,
-    "scene": "chapter_one_guz_confrontation",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "I move to F1.",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:42:32.438165Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "Pine Acceptance AI Combat L4 cannot end a move on F1: the square is blocked or taken. Choose another square: no roll is made and no turn is spent.",
-        "turn_id": "2c631bc3-3f97-41f6-a262-bca6f6c01f72",
-        "created_at": "2026-10-23T10:42:32.438165Z",
-        "roll": null
-      }
-    ],
-    "active_combat": {
-      "round": 3,
-      "ended": false,
-      "outcome": null,
-      "combatants": [
+  "captured_at": "2026-10-23T12:22:44.605347+00:00",
+  "implementation": "612393036d6da682ed0c0ad9de54d1852b9bc6b1",
+  "retained_live_baseline": {
+    "002-custody-dialogue": {
+      "session": 36,
+      "scene": "chapter_two_noke_encounter",
+      "latest_exchange": [
         {
-          "name": "Pine Acceptance AI Combat L4",
-          "is_player": true,
-          "hp_current": 26,
-          "hp_max": 36,
-          "ac": 18,
-          "id": "player",
-          "alive": true,
-          "disposition": "active",
-          "can_act": true,
-          "band": null,
-          "reaction_used": false,
-          "position": {
-            "x": 13,
-            "y": 5,
-            "label": "N6"
-          },
-          "speed_ft": 30
+          "role": "user",
+          "content": "Finethir, I am speaking to you where Guz is holding you; I am not taking you from him. Noke is defeated. Can you tell us what you need now?",
+          "turn_id": null,
+          "created_at": "2026-10-23T10:34:19.331584Z",
+          "roll": null
         },
         {
-          "name": "half-orc",
-          "is_player": false,
-          "hp_current": 59,
-          "hp_max": 67,
-          "ac": 14,
-          "id": "half-orc",
-          "alive": true,
-          "disposition": "active",
-          "can_act": true,
-          "band": "melee",
-          "reaction_used": false,
-          "position": {
-            "x": 12,
-            "y": 4,
-            "label": "M5"
-          },
-          "speed_ft": 30
+          "role": "dm",
+          "content": "Finethir answers from Guz\u2019s grip, his cultured voice tight but clear. \u201cI need your help recovering the powerful wand Noke took from me. I cannot leave with you while Guz holds me, but I can answer your questions.\u201d\n\nGuz keeps hold of him. The scroll remains open in your possession, and the rune-banded wand you inspected is still with you, unactivated. What would you ask Finethir\u2014or say to Guz?",
+          "turn_id": "1960f5e3-1051-4b6e-9eff-dd2144f517d5",
+          "created_at": "2026-10-23T10:34:19.331584Z",
+          "roll": null
         }
       ],
-      "initiative": [
+      "active_combat": null
+    },
+    "011-grid-dash-round": {
+      "session": 38,
+      "scene": "chapter_one_guz_confrontation",
+      "latest_exchange": [
         {
-          "name": "Pine Acceptance AI Combat L4",
-          "init": 16,
-          "is_player": true,
-          "hp": 26,
-          "hp_max": 36,
-          "ac": 18,
-          "id": "player",
-          "disposition": "active",
-          "can_act": true,
-          "alive": true,
-          "effects": [],
-          "band": null,
-          "reaction_used": false
+          "role": "user",
+          "content": "yes",
+          "turn_id": null,
+          "created_at": "2026-10-23T10:42:12.625252Z",
+          "roll": null
         },
         {
-          "name": "half-orc",
-          "init": 8,
-          "is_player": false,
-          "hp": 59,
-          "hp_max": 67,
-          "ac": 14,
-          "id": "half-orc",
-          "disposition": "active",
-          "can_act": true,
-          "alive": true,
-          "effects": [],
-          "band": "melee",
-          "reaction_used": false
-        }
-      ],
-      "current_turn_id": "player",
-      "current_turn": "Pine Acceptance AI Combat L4",
-      "current_turn_index": 0,
-      "player_ac": 18,
-      "second_wind_used": false,
-      "solo_budget": {
-        "level": 4,
-        "notes": [
-          "unscaled exact creature: half-orc keeps its record HP 67 (solo band 9-19)",
-          "unscaled exact creature: half-orc keeps its record attack +5 (solo limit +4)",
-          "unscaled exact creature: half-orc keeps its record damage 2d6+3 (solo average limit 8)"
-        ],
-        "adapted": false,
-        "warning": {
-          "text": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: half-orc (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
-          "tier": "above_deadly"
-        },
-        "xp_check": {
-          "foes": 1,
-          "raw_xp": 450,
-          "warning": "above_deadly",
-          "difficulty": "deadly",
-          "exact_foes": [
-            {
-              "cr": "2",
-              "xp": 450,
-              "name": "half-orc"
-            }
-          ],
-          "multiplier": 1.5,
-          "adjusted_xp": 675,
-          "deadly_threshold": 500
-        },
-        "encounter_participants": [
-          {
-            "id": "half-orc",
-            "name": "half-orc",
-            "reason": "Acts in the initiative order.",
-            "participation": "active"
-          }
-        ]
-      },
-      "second_wind_uses_remaining": null,
-      "economy": {
-        "round": 2,
-        "action": "Dash",
-        "dodging": false,
-        "bonus_action": null
-      },
-      "raging": false,
-      "concentration": null,
-      "battlefield": {
-        "width": 14,
-        "height": 10,
-        "square_ft": 5,
-        "theme": "open",
-        "terrain": [
-          {
-            "x": 3,
-            "y": 0,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 4,
-            "y": 0,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 5,
-            "y": 0,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 4,
-            "y": 1,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 5,
-            "y": 1,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 8,
-            "y": 4,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 8,
-            "y": 5,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 8,
-            "y": 6,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 9,
-            "y": 6,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 10,
-            "y": 8,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 11,
-            "y": 8,
-            "kind": "wall",
-            "feature": "boulder"
-          }
-        ]
-      },
-      "round_events": [
-        {
-          "kind": "opportunity_attack",
-          "text": "half-orc makes an opportunity attack against Pine Acceptance AI Combat L4.",
-          "actor_id": "half-orc",
-          "target_id": "player"
-        },
-        {
-          "kind": "move",
-          "text": "Pine Acceptance AI Combat L4 moves 55 feet from C6 to N6.",
-          "actor_id": "player"
-        },
-        {
-          "kind": "enemy_move",
-          "text": "half-orc dashes 45 feet from D6 to M5.",
-          "actor_id": "half-orc"
-        }
-      ],
-      "participants": [
-        {
-          "id": "half-orc",
-          "name": "half-orc",
-          "participation": "active",
-          "reason": "Acts in the initiative order."
-        },
-        {
-          "id": "visible_ec40849d835de905c976",
-          "name": "Three large wolves",
-          "participation": "visible_nonparticipant",
-          "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
-        },
-        {
-          "id": "visible_240e71365ec16a216f3b",
-          "name": "huge cloaked figure",
-          "participation": "visible_nonparticipant",
-          "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
-        }
-      ]
-    }
-  },
-  "018-ferry-corrected-observations": {
-    "session": 34,
-    "scene": "ch2_riverfront_resolution",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "Jory and Mara, is Jory the ferryman whose disappearance brought me here? Have we brought him home and made the barge safe, and what practical crossing decision remains?",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:53:09.099588Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "Jory answers first. “I’m Willowwake’s ferryman, but I wasn’t the one who disappeared. I’m home safely now. The other ferryman and the ferry are still missing.”\n\nMara glances toward the pilings. “And the barge is secured. Those immediate dangers are over. For a safe crossing, we still need to choose a practical course: repair the ferry and add safeguards, pursue another crossing, or arrange something temporary. I can organize the residents, but we need to settle on a plan and carry it out.” Rain runs in rivulets along the pilings as she waits for your answer.",
-        "turn_id": "0f2917e3-be65-4dd1-847c-833af059a2d5",
-        "created_at": "2026-10-23T10:53:09.099588Z",
-        "roll": null
-      }
-    ],
-    "active_combat": null
-  },
-  "019-source-demand-handover": {
-    "session": 38,
-    "scene": "chapter_one_guz_confrontation",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "I offer the half-orc the sheep he demanded, stop fighting, and stand aside. I ask only that we both stop attacking while we arrange the handover.",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:53:37.723069Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "Confirm before any dice: Pine Acceptance AI Combat L4 will offer surrender or a ceasefire on the terms stated. This does not mean fleeing, attacking, or automatic acceptance. Reply yes to offer it, or no to change it. A supported refusal spends your action and the enemies take their turns; unknown or unsupported terms are clarified without a turn. No roll is made until you confirm.",
-        "turn_id": "0f06f424-30aa-4aff-aa3c-b23b917cc4a4",
-        "created_at": "2026-10-23T10:53:37.723069Z",
-        "roll": null
-      }
-    ],
-    "active_combat": {
-      "round": 3,
-      "ended": false,
-      "outcome": null,
-      "combatants": [
-        {
-          "name": "Pine Acceptance AI Combat L4",
-          "is_player": true,
-          "hp_current": 26,
-          "hp_max": 36,
-          "ac": 18,
-          "id": "player",
-          "alive": true,
-          "disposition": "active",
-          "can_act": true,
-          "band": null,
-          "reaction_used": false,
-          "position": {
-            "x": 13,
-            "y": 5,
-            "label": "N6"
-          },
-          "speed_ft": 30
-        },
-        {
-          "name": "half-orc",
-          "is_player": false,
-          "hp_current": 59,
-          "hp_max": 67,
-          "ac": 14,
-          "id": "half-orc",
-          "alive": true,
-          "disposition": "active",
-          "can_act": true,
-          "band": "melee",
-          "reaction_used": false,
-          "position": {
-            "x": 12,
-            "y": 4,
-            "label": "M5"
-          },
-          "speed_ft": 30
-        }
-      ],
-      "initiative": [
-        {
-          "name": "Pine Acceptance AI Combat L4",
-          "init": 16,
-          "is_player": true,
-          "hp": 26,
-          "hp_max": 36,
-          "ac": 18,
-          "id": "player",
-          "disposition": "active",
-          "can_act": true,
-          "alive": true,
-          "effects": [],
-          "band": null,
-          "reaction_used": false
-        },
-        {
-          "name": "half-orc",
-          "init": 8,
-          "is_player": false,
-          "hp": 59,
-          "hp_max": 67,
-          "ac": 14,
-          "id": "half-orc",
-          "disposition": "active",
-          "can_act": true,
-          "alive": true,
-          "effects": [],
-          "band": "melee",
-          "reaction_used": false
-        }
-      ],
-      "current_turn_id": "player",
-      "current_turn": "Pine Acceptance AI Combat L4",
-      "current_turn_index": 0,
-      "player_ac": 18,
-      "second_wind_used": false,
-      "solo_budget": {
-        "level": 4,
-        "notes": [
-          "unscaled exact creature: half-orc keeps its record HP 67 (solo band 9-19)",
-          "unscaled exact creature: half-orc keeps its record attack +5 (solo limit +4)",
-          "unscaled exact creature: half-orc keeps its record damage 2d6+3 (solo average limit 8)"
-        ],
-        "adapted": false,
-        "warning": {
-          "text": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: half-orc (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
-          "tier": "above_deadly"
-        },
-        "xp_check": {
-          "foes": 1,
-          "raw_xp": 450,
-          "warning": "above_deadly",
-          "difficulty": "deadly",
-          "exact_foes": [
-            {
-              "cr": "2",
-              "xp": 450,
-              "name": "half-orc"
-            }
-          ],
-          "multiplier": 1.5,
-          "adjusted_xp": 675,
-          "deadly_threshold": 500
-        },
-        "encounter_participants": [
-          {
-            "id": "half-orc",
-            "name": "half-orc",
-            "reason": "Acts in the initiative order.",
-            "participation": "active"
-          }
-        ]
-      },
-      "second_wind_uses_remaining": null,
-      "economy": {
-        "round": 2,
-        "action": "Dash",
-        "dodging": false,
-        "bonus_action": null
-      },
-      "raging": false,
-      "concentration": null,
-      "battlefield": {
-        "width": 14,
-        "height": 10,
-        "square_ft": 5,
-        "theme": "open",
-        "terrain": [
-          {
-            "x": 3,
-            "y": 0,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 4,
-            "y": 0,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 5,
-            "y": 0,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 4,
-            "y": 1,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 5,
-            "y": 1,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 8,
-            "y": 4,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 8,
-            "y": 5,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 8,
-            "y": 6,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 9,
-            "y": 6,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 10,
-            "y": 8,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 11,
-            "y": 8,
-            "kind": "wall",
-            "feature": "boulder"
-          }
-        ]
-      },
-      "pending_declaration": {
-        "summary": "Confirm before any dice: Pine Acceptance AI Combat L4 will offer surrender or a ceasefire on the terms stated. This does not mean fleeing, attacking, or automatic acceptance. Reply yes to offer it, or no to change it. A supported refusal spends your action and the enemies take their turns; unknown or unsupported terms are clarified without a turn. No roll is made until you confirm."
-      },
-      "round_events": [
-        {
-          "kind": "opportunity_attack",
-          "text": "half-orc makes an opportunity attack against Pine Acceptance AI Combat L4.",
-          "actor_id": "half-orc",
-          "target_id": "player"
-        },
-        {
-          "kind": "move",
-          "text": "Pine Acceptance AI Combat L4 moves 55 feet from C6 to N6.",
-          "actor_id": "player"
-        },
-        {
-          "kind": "enemy_move",
-          "text": "half-orc dashes 45 feet from D6 to M5.",
-          "actor_id": "half-orc"
-        }
-      ],
-      "participants": [
-        {
-          "id": "half-orc",
-          "name": "half-orc",
-          "participation": "active",
-          "reason": "Acts in the initiative order."
-        },
-        {
-          "id": "visible_ec40849d835de905c976",
-          "name": "Three large wolves",
-          "participation": "visible_nonparticipant",
-          "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
-        },
-        {
-          "id": "visible_240e71365ec16a216f3b",
-          "name": "huge cloaked figure",
-          "participation": "visible_nonparticipant",
-          "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
-        }
-      ]
-    }
-  },
-  "020-source-demand-result": {
-    "session": 38,
-    "scene": "chapter_one_guz_confrontation",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "yes",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:53:55.564305Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "half-orc: Guz lowers his greatsword a fraction. “Good. No more fighting while we take the sheep.” half-orc accepts your offer to stop fighting. **Surrender agreed.** You remain here with your current HP and equipment; further terms must be resolved in play.",
-        "turn_id": "fa4ebe1d-8ecc-48e1-85fa-35fceadd8810",
-        "created_at": "2026-10-23T10:53:55.564305Z",
-        "roll": null
-      }
-    ],
-    "active_combat": null
-  },
-  "021-ferry-contradiction-challenge": {
-    "session": 34,
-    "scene": "ch2_riverfront_resolution",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "Mara, you have called Jory Willowwake’s ferryman, and I brought him home from the tollhouse. You also mentioned another missing ferryman. Who is that person? Please name them, or correct that account if you meant Jory.",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:55:33.979658Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "Mara’s expression shifts as she looks from you to Jory. “I need to correct what I said. Jory Fen is Willowwake’s ferryman—the one you brought home. I don’t have grounds to say there’s another missing ferryman.”\n\nJory gives a short, rueful nod. “That’s right. I’m home, and the barge is secured. The ferry itself is still missing, though. We still don’t know who cut the line or where it went.”\n\nRain runs in rivulets along the pilings. The barge now rests secured there, while residents gather the spare coils and small boats. The immediate danger is over; a practical crossing plan remains. What course do you want to take with Mara?",
-        "turn_id": "733bd245-3cb0-4640-8456-b7bfd45ec733",
-        "created_at": "2026-10-23T10:55:33.979658Z",
-        "roll": null
-      }
-    ],
-    "active_combat": null
-  },
-  "022-ferry-temporary-crossing": {
-    "session": 34,
-    "scene": "ch2_riverfront_resolution",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "With Jory home and the grain barge secure, I choose a temporary safe crossing arrangement. I help Mara organize the residents and available boats, keep people away from the dangerous ferry berth, and ask Jory to supervise the ropes from the bank. We postpone unsafe crossings until the river settles. Can we carry out that plan now?",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:56:04.710090Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "“Good,” Mara says, turning her slate toward the gathered residents. “We’ll make this a temporary arrangement: no one crosses while the river is running like this. Keep the boats and lines ready here, but well clear of the dangerous ferry berth.”\n\nYou help her organize the residents and the available boats around that plan. Jory stays on the bank to supervise the ropes, his attention fixed on the secured grain barge and the lines at the pilings. Rain runs down the posts and darkens the coils as people move them out of the berth’s way.\n\nThe barge remains secure, and Jory is safely home. Willowwake now has an agreed temporary precaution, not a working crossing; the missing ferry’s fate is still unknown. What would you like to do next?",
-        "turn_id": "58c4575f-9a13-4eec-a285-e02a3235f7b8",
-        "created_at": "2026-10-23T10:56:04.710090Z",
-        "roll": null
-      }
-    ],
-    "active_combat": null
-  },
-  "011-grid-dash-round": {
-    "session": 38,
-    "scene": "chapter_one_guz_confrontation",
-    "latest_exchange": [
-      {
-        "role": "user",
-        "content": "yes",
-        "turn_id": null,
-        "created_at": "2026-10-23T10:42:12.625252Z",
-        "roll": null
-      },
-      {
-        "role": "dm",
-        "content": "The half-orc’s sweeping greatsword misses as you move away. You Dash from C6 to N6, covering the battlefield; the half-orc then rushes after you, Dashing from D6 to M5. He ends close beside you, but makes no attack this turn.",
-        "turn_id": "4959c045-b18d-4bd6-ab36-26507a201c04",
-        "created_at": "2026-10-23T10:42:12.625252Z",
-        "roll": {
-          "dc": null,
-          "rest": null,
-          "check": null,
-          "damage": null,
-          "against": null,
-          "healing": null,
-          "success": true,
+          "role": "dm",
+          "content": "The half-orc\u2019s sweeping greatsword misses as you move away. You Dash from C6 to N6, covering the battlefield; the half-orc then rushes after you, Dashing from D6 to M5. He ends close beside you, but makes no attack this turn.",
           "turn_id": "4959c045-b18d-4bd6-ab36-26507a201c04",
-          "dice_log": [
-            {
-              "kept": null,
-              "rolls": [
-                9
-              ],
-              "total": 14,
-              "purpose": "half-orc opportunity attack",
-              "modifier": 5,
-              "roll_mode": null,
-              "expression": "1d20+5"
-            }
-          ],
-          "modifier": null,
-          "conditions": [],
-          "dice_result": null,
-          "natural_roll": null,
-          "roll_expression": null,
-          "mechanical_summary": "half-orc's Whirling Greatsword (opportunity attack) misses Pine Acceptance AI Combat L4 (rolled 14 vs AC 18). Pine Acceptance AI Combat L4 moves 55 feet from C6 to N6. The attempt proceeds without a roll. half-orc dashes 45 feet from D6 to M5. half-orc takes the Dash action and makes no attack this turn."
-        }
-      }
-    ],
-    "active_combat": {
-      "round": 3,
-      "ended": false,
-      "outcome": null,
-      "combatants": [
-        {
-          "name": "Pine Acceptance AI Combat L4",
-          "is_player": true,
-          "hp_current": 26,
-          "hp_max": 36,
-          "ac": 18,
-          "id": "player",
-          "alive": true,
-          "disposition": "active",
-          "can_act": true,
-          "band": null,
-          "reaction_used": false,
-          "position": {
-            "x": 13,
-            "y": 5,
-            "label": "N6"
-          },
-          "speed_ft": 30
-        },
-        {
-          "name": "half-orc",
-          "is_player": false,
-          "hp_current": 59,
-          "hp_max": 67,
-          "ac": 14,
-          "id": "half-orc",
-          "alive": true,
-          "disposition": "active",
-          "can_act": true,
-          "band": "melee",
-          "reaction_used": false,
-          "position": {
-            "x": 12,
-            "y": 4,
-            "label": "M5"
-          },
-          "speed_ft": 30
+          "created_at": "2026-10-23T10:42:12.625252Z",
+          "roll": {
+            "dc": null,
+            "rest": null,
+            "check": null,
+            "damage": null,
+            "against": null,
+            "healing": null,
+            "success": true,
+            "turn_id": "4959c045-b18d-4bd6-ab36-26507a201c04",
+            "dice_log": [
+              {
+                "kept": null,
+                "rolls": [
+                  9
+                ],
+                "total": 14,
+                "purpose": "half-orc opportunity attack",
+                "modifier": 5,
+                "roll_mode": null,
+                "expression": "1d20+5"
+              }
+            ],
+            "modifier": null,
+            "conditions": [],
+            "dice_result": null,
+            "natural_roll": null,
+            "roll_expression": null,
+            "mechanical_summary": "half-orc's Whirling Greatsword (opportunity attack) misses Pine Acceptance AI Combat L4 (rolled 14 vs AC 18). Pine Acceptance AI Combat L4 moves 55 feet from C6 to N6. The attempt proceeds without a roll. half-orc dashes 45 feet from D6 to M5. half-orc takes the Dash action and makes no attack this turn."
+          }
         }
       ],
-      "initiative": [
-        {
-          "name": "Pine Acceptance AI Combat L4",
-          "init": 16,
-          "is_player": true,
-          "hp": 26,
-          "hp_max": 36,
-          "ac": 18,
-          "id": "player",
-          "disposition": "active",
-          "can_act": true,
-          "alive": true,
-          "effects": [],
-          "band": null,
-          "reaction_used": false
-        },
-        {
-          "name": "half-orc",
-          "init": 8,
-          "is_player": false,
-          "hp": 59,
-          "hp_max": 67,
-          "ac": 14,
-          "id": "half-orc",
-          "disposition": "active",
-          "can_act": true,
-          "alive": true,
-          "effects": [],
-          "band": "melee",
-          "reaction_used": false
-        }
-      ],
-      "current_turn_id": "player",
-      "current_turn": "Pine Acceptance AI Combat L4",
-      "current_turn_index": 0,
-      "player_ac": 18,
-      "second_wind_used": false,
-      "solo_budget": {
-        "level": 4,
-        "notes": [
-          "unscaled exact creature: half-orc keeps its record HP 67 (solo band 9-19)",
-          "unscaled exact creature: half-orc keeps its record attack +5 (solo limit +4)",
-          "unscaled exact creature: half-orc keeps its record damage 2d6+3 (solo average limit 8)"
+      "active_combat": {
+        "round": 3,
+        "ended": false,
+        "outcome": null,
+        "combatants": [
+          {
+            "name": "Pine Acceptance AI Combat L4",
+            "is_player": true,
+            "hp_current": 26,
+            "hp_max": 36,
+            "ac": 18,
+            "id": "player",
+            "alive": true,
+            "disposition": "active",
+            "can_act": true,
+            "band": null,
+            "reaction_used": false,
+            "position": {
+              "x": 13,
+              "y": 5,
+              "label": "N6"
+            },
+            "speed_ft": 30
+          },
+          {
+            "name": "half-orc",
+            "is_player": false,
+            "hp_current": 59,
+            "hp_max": 67,
+            "ac": 14,
+            "id": "half-orc",
+            "alive": true,
+            "disposition": "active",
+            "can_act": true,
+            "band": "melee",
+            "reaction_used": false,
+            "position": {
+              "x": 12,
+              "y": 4,
+              "label": "M5"
+            },
+            "speed_ft": 30
+          }
         ],
-        "adapted": false,
-        "warning": {
-          "text": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: half-orc (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
-          "tier": "above_deadly"
-        },
-        "xp_check": {
-          "foes": 1,
-          "raw_xp": 450,
-          "warning": "above_deadly",
-          "difficulty": "deadly",
-          "exact_foes": [
-            {
-              "cr": "2",
-              "xp": 450,
-              "name": "half-orc"
-            }
+        "initiative": [
+          {
+            "name": "Pine Acceptance AI Combat L4",
+            "init": 16,
+            "is_player": true,
+            "hp": 26,
+            "hp_max": 36,
+            "ac": 18,
+            "id": "player",
+            "disposition": "active",
+            "can_act": true,
+            "alive": true,
+            "effects": [],
+            "band": null,
+            "reaction_used": false
+          },
+          {
+            "name": "half-orc",
+            "init": 8,
+            "is_player": false,
+            "hp": 59,
+            "hp_max": 67,
+            "ac": 14,
+            "id": "half-orc",
+            "disposition": "active",
+            "can_act": true,
+            "alive": true,
+            "effects": [],
+            "band": "melee",
+            "reaction_used": false
+          }
+        ],
+        "current_turn_id": "player",
+        "current_turn": "Pine Acceptance AI Combat L4",
+        "current_turn_index": 0,
+        "player_ac": 18,
+        "second_wind_used": false,
+        "solo_budget": {
+          "level": 4,
+          "notes": [
+            "unscaled exact creature: half-orc keeps its record HP 67 (solo band 9-19)",
+            "unscaled exact creature: half-orc keeps its record attack +5 (solo limit +4)",
+            "unscaled exact creature: half-orc keeps its record damage 2d6+3 (solo average limit 8)"
           ],
-          "multiplier": 1.5,
-          "adjusted_xp": 675,
-          "deadly_threshold": 500
+          "adapted": false,
+          "warning": {
+            "text": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: half-orc (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
+            "tier": "above_deadly"
+          },
+          "xp_check": {
+            "foes": 1,
+            "raw_xp": 450,
+            "warning": "above_deadly",
+            "difficulty": "deadly",
+            "exact_foes": [
+              {
+                "cr": "2",
+                "xp": 450,
+                "name": "half-orc"
+              }
+            ],
+            "multiplier": 1.5,
+            "adjusted_xp": 675,
+            "deadly_threshold": 500
+          },
+          "encounter_participants": [
+            {
+              "id": "half-orc",
+              "name": "half-orc",
+              "reason": "Acts in the initiative order.",
+              "participation": "active"
+            }
+          ]
         },
-        "encounter_participants": [
+        "second_wind_uses_remaining": null,
+        "economy": {
+          "round": 2,
+          "action": "Dash",
+          "dodging": false,
+          "bonus_action": null
+        },
+        "raging": false,
+        "concentration": null,
+        "battlefield": {
+          "width": 14,
+          "height": 10,
+          "square_ft": 5,
+          "theme": "open",
+          "terrain": [
+            {
+              "x": 3,
+              "y": 0,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 4,
+              "y": 0,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 5,
+              "y": 0,
+              "kind": "wall",
+              "feature": "boulder"
+            },
+            {
+              "x": 4,
+              "y": 1,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 5,
+              "y": 1,
+              "kind": "wall",
+              "feature": "boulder"
+            },
+            {
+              "x": 8,
+              "y": 4,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 8,
+              "y": 5,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 8,
+              "y": 6,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 9,
+              "y": 6,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 10,
+              "y": 8,
+              "kind": "wall",
+              "feature": "boulder"
+            },
+            {
+              "x": 11,
+              "y": 8,
+              "kind": "wall",
+              "feature": "boulder"
+            }
+          ]
+        },
+        "round_events": [
+          {
+            "kind": "opportunity_attack",
+            "text": "half-orc makes an opportunity attack against Pine Acceptance AI Combat L4.",
+            "actor_id": "half-orc",
+            "target_id": "player"
+          },
+          {
+            "kind": "move",
+            "text": "Pine Acceptance AI Combat L4 moves 55 feet from C6 to N6.",
+            "actor_id": "player"
+          },
+          {
+            "kind": "enemy_move",
+            "text": "half-orc dashes 45 feet from D6 to M5.",
+            "actor_id": "half-orc"
+          }
+        ],
+        "participants": [
           {
             "id": "half-orc",
             "name": "half-orc",
-            "reason": "Acts in the initiative order.",
-            "participation": "active"
+            "participation": "active",
+            "reason": "Acts in the initiative order."
+          },
+          {
+            "id": "visible_ec40849d835de905c976",
+            "name": "Three large wolves",
+            "participation": "visible_nonparticipant",
+            "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
+          },
+          {
+            "id": "visible_240e71365ec16a216f3b",
+            "name": "huge cloaked figure",
+            "participation": "visible_nonparticipant",
+            "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
           }
         ]
-      },
-      "second_wind_uses_remaining": null,
-      "economy": {
-        "round": 2,
-        "action": "Dash",
-        "dodging": false,
-        "bonus_action": null
-      },
-      "raging": false,
-      "concentration": null,
-      "battlefield": {
-        "width": 14,
-        "height": 10,
-        "square_ft": 5,
-        "theme": "open",
-        "terrain": [
-          {
-            "x": 3,
-            "y": 0,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 4,
-            "y": 0,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 5,
-            "y": 0,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 4,
-            "y": 1,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 5,
-            "y": 1,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 8,
-            "y": 4,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 8,
-            "y": 5,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 8,
-            "y": 6,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 9,
-            "y": 6,
-            "kind": "difficult",
-            "feature": "brush"
-          },
-          {
-            "x": 10,
-            "y": 8,
-            "kind": "wall",
-            "feature": "boulder"
-          },
-          {
-            "x": 11,
-            "y": 8,
-            "kind": "wall",
-            "feature": "boulder"
-          }
-        ]
-      },
-      "round_events": [
+      }
+    },
+    "012-grid-wall-refusal": {
+      "session": 38,
+      "scene": "chapter_one_guz_confrontation",
+      "latest_exchange": [
         {
-          "kind": "opportunity_attack",
-          "text": "half-orc makes an opportunity attack against Pine Acceptance AI Combat L4.",
-          "actor_id": "half-orc",
-          "target_id": "player"
+          "role": "user",
+          "content": "I move to F1.",
+          "turn_id": null,
+          "created_at": "2026-10-23T10:42:32.438165Z",
+          "roll": null
         },
         {
-          "kind": "move",
-          "text": "Pine Acceptance AI Combat L4 moves 55 feet from C6 to N6.",
-          "actor_id": "player"
-        },
-        {
-          "kind": "enemy_move",
-          "text": "half-orc dashes 45 feet from D6 to M5.",
-          "actor_id": "half-orc"
+          "role": "dm",
+          "content": "Pine Acceptance AI Combat L4 cannot end a move on F1: the square is blocked or taken. Choose another square: no roll is made and no turn is spent.",
+          "turn_id": "2c631bc3-3f97-41f6-a262-bca6f6c01f72",
+          "created_at": "2026-10-23T10:42:32.438165Z",
+          "roll": null
         }
       ],
-      "participants": [
+      "active_combat": {
+        "round": 3,
+        "ended": false,
+        "outcome": null,
+        "combatants": [
+          {
+            "name": "Pine Acceptance AI Combat L4",
+            "is_player": true,
+            "hp_current": 26,
+            "hp_max": 36,
+            "ac": 18,
+            "id": "player",
+            "alive": true,
+            "disposition": "active",
+            "can_act": true,
+            "band": null,
+            "reaction_used": false,
+            "position": {
+              "x": 13,
+              "y": 5,
+              "label": "N6"
+            },
+            "speed_ft": 30
+          },
+          {
+            "name": "half-orc",
+            "is_player": false,
+            "hp_current": 59,
+            "hp_max": 67,
+            "ac": 14,
+            "id": "half-orc",
+            "alive": true,
+            "disposition": "active",
+            "can_act": true,
+            "band": "melee",
+            "reaction_used": false,
+            "position": {
+              "x": 12,
+              "y": 4,
+              "label": "M5"
+            },
+            "speed_ft": 30
+          }
+        ],
+        "initiative": [
+          {
+            "name": "Pine Acceptance AI Combat L4",
+            "init": 16,
+            "is_player": true,
+            "hp": 26,
+            "hp_max": 36,
+            "ac": 18,
+            "id": "player",
+            "disposition": "active",
+            "can_act": true,
+            "alive": true,
+            "effects": [],
+            "band": null,
+            "reaction_used": false
+          },
+          {
+            "name": "half-orc",
+            "init": 8,
+            "is_player": false,
+            "hp": 59,
+            "hp_max": 67,
+            "ac": 14,
+            "id": "half-orc",
+            "disposition": "active",
+            "can_act": true,
+            "alive": true,
+            "effects": [],
+            "band": "melee",
+            "reaction_used": false
+          }
+        ],
+        "current_turn_id": "player",
+        "current_turn": "Pine Acceptance AI Combat L4",
+        "current_turn_index": 0,
+        "player_ac": 18,
+        "second_wind_used": false,
+        "solo_budget": {
+          "level": 4,
+          "notes": [
+            "unscaled exact creature: half-orc keeps its record HP 67 (solo band 9-19)",
+            "unscaled exact creature: half-orc keeps its record attack +5 (solo limit +4)",
+            "unscaled exact creature: half-orc keeps its record damage 2d6+3 (solo average limit 8)"
+          ],
+          "adapted": false,
+          "warning": {
+            "text": "Warning: this fight is above a solo level 4 hero's deadly threshold of 500 XP. Foes: half-orc (CR 2, 450 XP). Their raw XP is 450, which counts as 675 adjusted XP (x1.5 for 1 foes). Exact creature records are not rescaled and the fight is not refused. A deadly fight can be lethal for a solo hero.",
+            "tier": "above_deadly"
+          },
+          "xp_check": {
+            "foes": 1,
+            "raw_xp": 450,
+            "warning": "above_deadly",
+            "difficulty": "deadly",
+            "exact_foes": [
+              {
+                "cr": "2",
+                "xp": 450,
+                "name": "half-orc"
+              }
+            ],
+            "multiplier": 1.5,
+            "adjusted_xp": 675,
+            "deadly_threshold": 500
+          },
+          "encounter_participants": [
+            {
+              "id": "half-orc",
+              "name": "half-orc",
+              "reason": "Acts in the initiative order.",
+              "participation": "active"
+            }
+          ]
+        },
+        "second_wind_uses_remaining": null,
+        "economy": {
+          "round": 2,
+          "action": "Dash",
+          "dodging": false,
+          "bonus_action": null
+        },
+        "raging": false,
+        "concentration": null,
+        "battlefield": {
+          "width": 14,
+          "height": 10,
+          "square_ft": 5,
+          "theme": "open",
+          "terrain": [
+            {
+              "x": 3,
+              "y": 0,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 4,
+              "y": 0,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 5,
+              "y": 0,
+              "kind": "wall",
+              "feature": "boulder"
+            },
+            {
+              "x": 4,
+              "y": 1,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 5,
+              "y": 1,
+              "kind": "wall",
+              "feature": "boulder"
+            },
+            {
+              "x": 8,
+              "y": 4,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 8,
+              "y": 5,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 8,
+              "y": 6,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 9,
+              "y": 6,
+              "kind": "difficult",
+              "feature": "brush"
+            },
+            {
+              "x": 10,
+              "y": 8,
+              "kind": "wall",
+              "feature": "boulder"
+            },
+            {
+              "x": 11,
+              "y": 8,
+              "kind": "wall",
+              "feature": "boulder"
+            }
+          ]
+        },
+        "round_events": [
+          {
+            "kind": "opportunity_attack",
+            "text": "half-orc makes an opportunity attack against Pine Acceptance AI Combat L4.",
+            "actor_id": "half-orc",
+            "target_id": "player"
+          },
+          {
+            "kind": "move",
+            "text": "Pine Acceptance AI Combat L4 moves 55 feet from C6 to N6.",
+            "actor_id": "player"
+          },
+          {
+            "kind": "enemy_move",
+            "text": "half-orc dashes 45 feet from D6 to M5.",
+            "actor_id": "half-orc"
+          }
+        ],
+        "participants": [
+          {
+            "id": "half-orc",
+            "name": "half-orc",
+            "participation": "active",
+            "reason": "Acts in the initiative order."
+          },
+          {
+            "id": "visible_ec40849d835de905c976",
+            "name": "Three large wolves",
+            "participation": "visible_nonparticipant",
+            "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
+          },
+          {
+            "id": "visible_240e71365ec16a216f3b",
+            "name": "huge cloaked figure",
+            "participation": "visible_nonparticipant",
+            "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
+          }
+        ]
+      }
+    },
+    "020-source-demand-result": {
+      "session": 38,
+      "scene": "chapter_one_guz_confrontation",
+      "latest_exchange": [
         {
-          "id": "half-orc",
-          "name": "half-orc",
-          "participation": "active",
-          "reason": "Acts in the initiative order."
+          "role": "user",
+          "content": "yes",
+          "turn_id": null,
+          "created_at": "2026-10-23T10:53:55.564305Z",
+          "roll": null
         },
         {
-          "id": "visible_ec40849d835de905c976",
-          "name": "Three large wolves",
-          "participation": "visible_nonparticipant",
-          "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
+          "role": "dm",
+          "content": "half-orc: Guz lowers his greatsword a fraction. \u201cGood. No more fighting while we take the sheep.\u201d half-orc accepts your offer to stop fighting. **Surrender agreed.** You remain here with your current HP and equipment; further terms must be resolved in play.",
+          "turn_id": "fa4ebe1d-8ecc-48e1-85fa-35fceadd8810",
+          "created_at": "2026-10-23T10:53:55.564305Z",
+          "roll": null
+        }
+      ],
+      "active_combat": null
+    }
+  },
+  "latest_live": {
+    "023-ferry-ordinary-followup": {
+      "session": 34,
+      "scene": "ch2_riverfront_resolution",
+      "latest_exchange": [
+        {
+          "role": "user",
+          "content": "Mara, is everyone from the tollhouse rescue accounted for, and what work remains before Willowwake can use the crossing again?",
+          "event_id": 1436,
+          "citations": [],
+          "rules_edition": null,
+          "ruling_citation_ids": [],
+          "turn_id": null,
+          "roll_status": null,
+          "roll": null,
+          "created_at": "2026-10-23T12:08:08.590392Z"
         },
         {
-          "id": "visible_240e71365ec16a216f3b",
-          "name": "huge cloaked figure",
-          "participation": "visible_nonparticipant",
-          "reason": "Visible in this scene; outside the active combat roster and takes no turn in this encounter."
+          "role": "dm",
+          "content": "Mara checks the slate in her hand, then answers plainly. \u201cJory Fen is home. We have no other rescued person identified as still missing.\u201d\n\nJory stands with her near the landing, while the secured grain barge rests against the pilings. The temporary plan is in effect: people are kept clear of the dangerous ferry berth, and crossings are postponed until the river settles. \u201cThat gives Willowwake a safe precaution for now,\u201d Mara adds. \u201cIt isn\u2019t a working crossing. Later we\u2019ll need to choose whether to repair the ferry with safeguards, pursue another crossing, or continue making temporary arrangements.\u201d\n\nRain threads down the pilings as residents gather their spare coils and boats. What would you like to take up next?",
+          "event_id": 1436,
+          "citations": [
+            {
+              "page": 12,
+              "source": "the_silent_ferry_preparation_replay_20261022",
+              "audience": "player",
+              "page_end": 12,
+              "collection": "the_silent_ferry_preparation_replay_20261022",
+              "chunk_index": 18,
+              "reference_id": "3022e8c29efc786f457f7613bd649e76805698254441f17bb37dfbcbfee042df",
+              "source_pages": [
+                12
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "6412f9dbe99e6ba6c75d063d95e17273c227428e97e7cf716ea3f94ccf25a578",
+              "edition_status": "compatible",
+              "manifest_sha256": "df50b1d1f18cd2efe6bedc518f1571b3691daf09a0e11dcf6e2415230bcd4b72",
+              "extraction_sha256": "6412f9dbe99e6ba6c75d063d95e17273c227428e97e7cf716ea3f94ccf25a578"
+            }
+          ],
+          "rules_edition": "2014",
+          "ruling_citation_ids": [],
+          "turn_id": "17e513d4-d0b7-4e2e-b23b-706889e12737",
+          "roll_status": "no_roll",
+          "roll": null,
+          "created_at": "2026-10-23T12:08:08.590392Z"
+        }
+      ]
+    },
+    "025-ferry-occupation": {
+      "session": 34,
+      "scene": "ch2_riverfront_resolution",
+      "latest_exchange": [
+        {
+          "role": "user",
+          "content": "Jory, what is your job in Willowwake, and how can you help Mara decide when the crossing can safely reopen?",
+          "event_id": 1442,
+          "citations": [],
+          "rules_edition": null,
+          "ruling_citation_ids": [],
+          "turn_id": null,
+          "roll_status": null,
+          "roll": null,
+          "created_at": "2026-10-23T12:10:13.654293Z"
+        },
+        {
+          "role": "dm",
+          "content": "Jory answers, \u201cI\u2019m Willowwake\u2019s ferryman. River work is my job\u2014getting people across when it\u2019s safe.\u201d His practical, river-worn clothes are still damp from the rescue. He glances toward the secured grain barge, then back to Mara. \u201cI can help you judge the river and organize the ropes and boats. But I can\u2019t give you a safe time to reopen the crossing yet.\u201d\n\nMara taps her slate. \u201cFor now, we keep people clear of the dangerous berth and postpone crossings until the river settles. Jory can advise us as conditions change, but we haven\u2019t established a specific level or sign that makes reopening safe. We\u2019ll need to assess it then, before anyone crosses.\u201d The barge remains secured at the pilings as rain runs in rivulets between them. What would you like to take up with Mara or Jory?",
+          "event_id": 1442,
+          "citations": [
+            {
+              "page": 12,
+              "source": "the_silent_ferry_preparation_replay_20261022",
+              "audience": "player",
+              "page_end": 12,
+              "collection": "the_silent_ferry_preparation_replay_20261022",
+              "chunk_index": 18,
+              "reference_id": "3022e8c29efc786f457f7613bd649e76805698254441f17bb37dfbcbfee042df",
+              "source_pages": [
+                12
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "6412f9dbe99e6ba6c75d063d95e17273c227428e97e7cf716ea3f94ccf25a578",
+              "edition_status": "compatible",
+              "manifest_sha256": "df50b1d1f18cd2efe6bedc518f1571b3691daf09a0e11dcf6e2415230bcd4b72",
+              "extraction_sha256": "6412f9dbe99e6ba6c75d063d95e17273c227428e97e7cf716ea3f94ccf25a578"
+            }
+          ],
+          "rules_edition": "2014",
+          "ruling_citation_ids": [],
+          "turn_id": "b921f9e6-3eca-4a77-af2b-3377be323e01",
+          "roll_status": "no_roll",
+          "roll": null,
+          "created_at": "2026-10-23T12:10:13.654293Z"
+        }
+      ]
+    },
+    "027-wand-compound-pickup": {
+      "session": 36,
+      "scene": "chapter_two_noke_encounter",
+      "latest_exchange": [
+        {
+          "role": "user",
+          "content": "I return to the laboratory table, pick up the oak wand I set down, and put it in my pack without activating it.",
+          "event_id": 1449,
+          "citations": [],
+          "rules_edition": null,
+          "ruling_citation_ids": [],
+          "turn_id": null,
+          "roll_status": null,
+          "roll": null,
+          "created_at": "2026-10-23T12:18:44.804588Z"
+        },
+        {
+          "role": "dm",
+          "content": "You lift the rune-banded oak wand from the laboratory table and stow it in your pack without activating it. It is now in your possession. Noke remains fallen among the ink-spattered papers and beast drawings, and the crowded shelves stand undisturbed around the worktables.\n\nThe open scroll is not among your recorded belongings. What will you do next?",
+          "event_id": 1449,
+          "citations": [
+            {
+              "page": 7,
+              "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "audience": "player",
+              "page_end": 7,
+              "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "chunk_index": 11,
+              "reference_id": "c667c1e4c39db90d54b81243274996246a05cd5951387a0441e52b83c64837d2",
+              "source_pages": [
+                7
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+              "edition_status": "compatible",
+              "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+              "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+            },
+            {
+              "page": 10,
+              "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "audience": "player",
+              "page_end": 10,
+              "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "chunk_index": 15,
+              "reference_id": "f65fa2c7dd82420ab53b60a666987da84ef6f533b89c56788c3474eaadb524f6",
+              "source_pages": [
+                10
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+              "edition_status": "compatible",
+              "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+              "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+            }
+          ],
+          "rules_edition": "2014",
+          "ruling_citation_ids": [],
+          "turn_id": "aba0c60b-0412-4e07-b651-20807d85b65a",
+          "roll_status": "no_roll",
+          "roll": null,
+          "created_at": "2026-10-23T12:18:44.804588Z"
+        }
+      ]
+    },
+    "028-wand-drop-narration": {
+      "session": 36,
+      "scene": "chapter_two_noke_encounter",
+      "latest_exchange": [
+        {
+          "role": "user",
+          "content": "I set the oak wand down on the laboratory table beside me again, without activating it or giving it to anyone.",
+          "event_id": 1452,
+          "citations": [],
+          "rules_edition": null,
+          "ruling_citation_ids": [],
+          "turn_id": null,
+          "roll_status": null,
+          "roll": null,
+          "created_at": "2026-10-23T12:19:25.096265Z"
+        },
+        {
+          "role": "dm",
+          "content": "You set the rune-banded oak wand down on the laboratory table beside you. It rests there unactivated; you neither hand it to anyone nor attempt to use it.\n\nInk-spattered papers and intricate beast drawings still cover the crowded worktables, and Noke remains fallen among the shelves. The wand is within reach on the table. What do you do next?",
+          "event_id": 1452,
+          "citations": [
+            {
+              "page": 7,
+              "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "audience": "player",
+              "page_end": 7,
+              "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "chunk_index": 11,
+              "reference_id": "c667c1e4c39db90d54b81243274996246a05cd5951387a0441e52b83c64837d2",
+              "source_pages": [
+                7
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+              "edition_status": "compatible",
+              "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+              "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+            },
+            {
+              "page": 10,
+              "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "audience": "player",
+              "page_end": 10,
+              "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "chunk_index": 15,
+              "reference_id": "f65fa2c7dd82420ab53b60a666987da84ef6f533b89c56788c3474eaadb524f6",
+              "source_pages": [
+                10
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+              "edition_status": "compatible",
+              "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+              "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+            }
+          ],
+          "rules_edition": "2014",
+          "ruling_citation_ids": [],
+          "turn_id": "6f10d57a-8f76-4209-9cd7-93000d4f17b5",
+          "roll_status": "no_roll",
+          "roll": null,
+          "created_at": "2026-10-23T12:19:25.096265Z"
+        }
+      ]
+    },
+    "029-wand-pickup-reload": {
+      "session": 36,
+      "scene": "chapter_two_noke_encounter",
+      "latest_exchange": [
+        {
+          "role": "user",
+          "content": "I step back to the laboratory table, pick up the oak wand, and stow it in my pack without using it.",
+          "event_id": 1455,
+          "citations": [],
+          "rules_edition": null,
+          "ruling_citation_ids": [],
+          "turn_id": null,
+          "roll_status": null,
+          "roll": null,
+          "created_at": "2026-10-23T12:20:13.794721Z"
+        },
+        {
+          "role": "dm",
+          "content": "You pick the rune-banded oak wand up from the laboratory table and stow it in your pack, leaving it unactivated. Noke still lies fallen among the ink-spattered papers and beast drawings; the crowded shelves remain undisturbed.\n\nThe wand is with you again. What do you do next?",
+          "event_id": 1455,
+          "citations": [
+            {
+              "page": 7,
+              "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "audience": "player",
+              "page_end": 7,
+              "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "chunk_index": 11,
+              "reference_id": "c667c1e4c39db90d54b81243274996246a05cd5951387a0441e52b83c64837d2",
+              "source_pages": [
+                7
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+              "edition_status": "compatible",
+              "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+              "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+            },
+            {
+              "page": 10,
+              "source": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "audience": "player",
+              "page_end": 10,
+              "collection": "wild_sheep_chase_chapter_source_fidelity_demonstration",
+              "chunk_index": 15,
+              "reference_id": "f65fa2c7dd82420ab53b60a666987da84ef6f533b89c56788c3474eaadb524f6",
+              "source_pages": [
+                10
+              ],
+              "rules_edition": "2014",
+              "source_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386",
+              "edition_status": "compatible",
+              "manifest_sha256": "cbc6f8b8b9fdbd3853cedc871f8731d674005387d018e5fa4ef59cc643e76dab",
+              "extraction_sha256": "14d1557bad560be378d9430f488682eb9ad3823062141211bfbf3c112a755386"
+            }
+          ],
+          "rules_edition": "2014",
+          "ruling_citation_ids": [],
+          "turn_id": "c4e78d82-de05-4122-af39-ca301595d9cb",
+          "roll_status": "no_roll",
+          "roll": null,
+          "created_at": "2026-10-23T12:20:13.794721Z"
         }
       ]
     }
-  }
+  },
+  "identity_verification_revision": "ebeadfd41b9812c4b87207fcc1eaabb426f18b0d",
+  "inventory_verification_revision": "612393036d6da682ed0c0ad9de54d1852b9bc6b1"
 }

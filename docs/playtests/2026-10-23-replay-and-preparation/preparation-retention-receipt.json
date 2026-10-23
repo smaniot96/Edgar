@@ -1,26 +1,28 @@
 {
-  "captured_at_unix": 1792755054.2699862,
-  "implementation_revision": "b36628ae80c9847714fe4cdc006f40e8c48c07aa",
-  "checks": {
+  "captured_at": "2026-10-23T12:22:23.358050+00:00",
+  "adventures": {
     "the_wild_sheep_chase_preparation_replay_20261022": {
-      "state": "running",
-      "node": "repair",
-      "original_receipt_count_before_final_recovery": 19,
-      "all_existing_receipts_preserved": true,
-      "current_call_count": 25,
-      "new_distinct_calls_since_before_recovery": 6,
+      "original_call_count": 25,
+      "preserved_dispatches": 25,
+      "frozen_requests_unchanged": true,
+      "response_ids_unchanged": true,
+      "source_unchanged": true,
+      "current_call_count": 36,
       "physical_source_pages": 6,
-      "original_dispatches_resubmitted": false
+      "original_exhausted_output_and_usage_unchanged": true,
+      "repeated_full_repair_creates": 0,
+      "original_exhaustion_status": "incomplete",
+      "original_exhaustion_output_tokens": 128000,
+      "sparse_recovery_calls": 1
     },
     "lanterns_at_greybank_ai_preparation_20261023": {
-      "state": "running",
-      "node": "ai_chapter",
-      "original_receipt_count_before_final_recovery": 5,
-      "all_existing_receipts_preserved": true,
+      "original_call_count": 5,
+      "preserved_dispatches": 5,
+      "frozen_requests_unchanged": true,
+      "response_ids_unchanged": true,
+      "source_unchanged": true,
       "current_call_count": 5,
-      "new_distinct_calls_since_before_recovery": 0,
-      "physical_source_pages": 0,
-      "original_dispatches_resubmitted": false
+      "physical_source_pages": 0
     }
   }
 }
