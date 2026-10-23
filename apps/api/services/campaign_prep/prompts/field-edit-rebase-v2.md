@@ -1,0 +1,5 @@
+Rebase the retained prose correction onto exactly the supplied record and field.
+
+The original_text is the accepted baseline. One or more proposed_edits quote an old_text that is absent or not unique in that baseline. Do not guess a near match or move a correction to another record. Read the baseline and the retained proposed corrections, then express only their applicable intended changes as exact, unique, nonoverlapping substring replacements against original_text. Preserve every unrelated original detail and compatible intended correction. A single complete-field replacement is acceptable when necessary. If a proposed passage is not in this field, do not invent it or transplant it here.
+
+All replacements must address only the supplied record_id and field. Do not introduce new facts or mechanics, broaden the repair, append contradictory old guidance, or change other fields. This is a candidate, not publication approval: exact validators and the normal independent critic still review it. Return the valid replacements for this field; a remaining defect will hold for attention rather than trigger another rebase.

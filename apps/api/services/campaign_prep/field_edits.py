@@ -11,10 +11,15 @@ from edgar_core.campaign_semantics import FieldEdit, Record
 from .store import NeedsAttention, digest
 
 
-class OverlappingFieldEdits(NeedsAttention):
-    def __init__(self, record_id, field):
-        super().__init__("Exact text repair contains overlapping replacements.")
+class InvalidFieldEdits(NeedsAttention):
+    def __init__(self, record_id, field, message):
+        super().__init__(message)
         self.record_id, self.field = record_id, field
+
+
+class OverlappingFieldEdits(InvalidFieldEdits):
+    def __init__(self, record_id, field):
+        super().__init__(record_id, field, "Exact text repair contains overlapping replacements.")
 
 
 class FieldEditBatch(Record):
@@ -22,7 +27,7 @@ class FieldEditBatch(Record):
 
 
 async def recover_field_edits(registry, bundles, edits, allowed, semantic, store):
-    """Consolidate a conflicting field once, preserving every unrelated proposed edit.
+    """Correct an invalid field once, preserving every unrelated proposed edit.
 
     The raw paid patch remains immutable. Every attempted consolidation has a durable
     semantic receipt, is checked against the original field, and still needs review.
@@ -31,11 +36,11 @@ async def recover_field_edits(registry, bundles, edits, allowed, semantic, store
     while True:
         try:
             return apply_field_edits(registry, bundles, pending, allowed)
-        except OverlappingFieldEdits as exc:
+        except InvalidFieldEdits as exc:
             group = (exc.record_id, exc.field)
             if group in corrected:
                 raise NeedsAttention(
-                    "Consolidated exact text repair still overlaps; retained candidate requires attention."
+                    "Corrected exact text repair remains invalid; retained candidate requires attention."
                 ) from exc
             selected = [row for row in pending if (row.record_id, row.field) == group]
             evidence = {
@@ -45,8 +50,9 @@ async def recover_field_edits(registry, bundles, edits, allowed, semantic, store
                 "proposed_edits": [row.model_dump() for row in selected],
             }
             identity = digest(evidence)
+            prompt = "field-edit-overlap" if isinstance(exc, OverlappingFieldEdits) else "field-edit-rebase"
             result = await semantic.call(
-                "field-edit-overlap-" + identity[:16], "field-edit-overlap",
+                prompt + "-" + identity[:16], prompt,
                 FieldEditBatch, evidence,
             )
             if not result.field_edits or any(
@@ -88,9 +94,13 @@ def apply_field_edits(registry, bundles, edits, allowed):
             raise NeedsAttention("Do not mix an exact text edit with a replacement of that field.")
         start = original.find(edit.old_text)
         if start < 0:
-            raise NeedsAttention("Exact text repair substring was not found in the accepted field.")
+            raise InvalidFieldEdits(
+                key, field, "Exact text repair substring was not found in the accepted field."
+            )
         if original.find(edit.old_text, start + 1) >= 0:
-            raise NeedsAttention("Exact text repair substring is ambiguous in the accepted field.")
+            raise InvalidFieldEdits(
+                key, field, "Exact text repair substring is ambiguous in the accepted field."
+            )
         end = start + len(edit.old_text)
         group = (key, field)
         if any(start < prior_end and prior_start < end for prior_start, prior_end, _ in grouped[group]):

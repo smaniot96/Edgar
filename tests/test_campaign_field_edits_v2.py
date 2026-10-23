@@ -144,6 +144,51 @@ async def test_overlap_consolidation_is_bounded_atomic_and_preserves_other_edits
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("old_text", ["A sentence from another event.", " "])
+@pytest.mark.parametrize("valid", [True, False])
+async def test_unmatched_field_edits_are_rebased_once_without_guessing(
+    tmp_path, monkeypatch, old_text, valid,
+):
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path)
+    store = Store("rebase_probe")
+    store.initialize({"source_kind": "ai", "rules_edition": "2014"})
+    _, bundles, registry = fixture()
+    before = deepcopy(bundles)
+    retained = FieldEdit(record_id="ch_bell_content", field="source_notes",
+                         old_text=old_text, new_text="A captive can give directions.")
+    unrelated = FieldEdit(record_id="event_square", field="dm_notes",
+                          old_text="Retain the rescue reward.", new_text="Keep the earned reward.")
+    calls = []
+
+    class Rebaser:
+        async def call(self, node, prompt, schema, evidence):
+            calls.append(node)
+            assert prompt == "field-edit-rebase" and schema is FieldEditBatch
+            assert evidence["original_text"] == before["chapters"][0]["source_notes"]
+            assert evidence["proposed_edits"] == [retained.model_dump()]
+            assert bundles == before
+            corrected = retained.model_copy(update={"old_text": "Do not promise castle directions."})
+            return FieldEditBatch(field_edits=[corrected if valid else retained])
+
+    if valid:
+        await recover_field_edits(
+            registry, bundles, [retained, unrelated],
+            {"ch_bell_content", "event_square"}, Rebaser(), store,
+        )
+        assert "A captive can give directions." in bundles["chapters"][0]["source_notes"]
+        assert "Keep the trail and its traps." in bundles["chapters"][0]["source_notes"]
+        assert "Keep the earned reward." in bundles["chapters"][0]["events"][0]["dm_notes"]
+    else:
+        with pytest.raises(NeedsAttention, match="remains invalid"):
+            await recover_field_edits(
+                registry, bundles, [retained, unrelated],
+                {"ch_bell_content", "event_square"}, Rebaser(), store,
+            )
+        assert bundles == before
+    assert len(calls) == 1 and retained.old_text == old_text
+
+
+@pytest.mark.asyncio
 async def test_workflow_sparse_repair_does_not_reintroduce_superseded_guidance(tmp_path, monkeypatch):
     monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
     store = Store("sparse_prose")
