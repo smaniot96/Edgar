@@ -196,6 +196,21 @@ def test_registry_quote_cannot_escape_the_current_actor_description(quote):
     assert result.observation_diagnostics["rejected"][0]["reason"] == "ineligible_source_span"
 
 
+def test_narrator_receives_known_identity_without_a_new_planner_observation_or_private_dossier():
+    from langchain_core.messages import AIMessage
+
+    state = registry_identity_state()
+    state["messages"] = [AIMessage(content="Jory is not the missing ferryman.")]
+    state["adjudication_result"] = AdjudicationResult(success=True)
+    rendered = str(build_narrator_prompt(state))
+    assert "Jory Fen is the missing ferryman." in rendered
+    for private in ("PRIVATE_MOTIVE", "PRIVATE_KNOWLEDGE", "PRIVATE_UNMET_IDENTITY"):
+        assert private not in rendered
+    # Removing visibility without an earned encounter removes the identity evidence.
+    state["adventure_context"] = []
+    assert "Jory Fen is the missing ferryman." not in str(build_narrator_prompt(state))
+
+
 def test_multiple_actor_descriptions_survive_registry_order_and_budget_trimming(monkeypatch):
     from types import SimpleNamespace
 

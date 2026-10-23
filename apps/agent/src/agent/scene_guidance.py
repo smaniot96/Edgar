@@ -353,6 +353,20 @@ def observation_span_catalog(state, chunks=None):
     return result
 
 
+def known_actor_descriptions(state):
+    """Reviewed description fields only; never the registry's private NPC dossier.
+
+    Share the same current/encountered-actor boundary as observation validation.
+    Descriptions identify actors without establishing their current whereabouts.
+    """
+    return [
+        json.loads('"' + chunk["text"][start:end] + '"')
+        for chunk in active_observation_chunks(state)
+        if chunk.get("passage_id") == "campaign_registry"
+        for start, end in observation_ranges(chunk, state)
+    ]
+
+
 def observation_excerpt(chunk, spans, edition="2014"):
     """Annotate existing evidence inline; never duplicate it or rehash altered text."""
     from edgar_core.sources import cited_excerpt, source_citation
