@@ -32,6 +32,9 @@ class CombatState(Base):
     )
     # 'victory' | 'defeat' | 'fled' | None (still in progress).
     outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Combat grid: the battlefield (size and scenery; see agent.battlefield). Combatant squares live on
+    # the `combatants` rows. NULL for an encounter opened before the grid, which keeps range bands.
+    battlefield: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

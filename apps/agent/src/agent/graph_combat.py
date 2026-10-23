@@ -59,6 +59,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent.action_economy import has_attack_words
+from agent.battlefield import open_battlefield, sync_bands
 from agent.class_features import (
     requested_features,
     resource_uses,
@@ -83,6 +84,7 @@ from agent.combat_finalise import (
     settle_adjudication,
     settle_round,
 )
+from agent.combat_grid import ensure_positions
 from agent.combat_identity import canonical_actor_name, public_actor_name, scene_actor_aliases
 from agent.combat_intent import (
     _name_matches,
@@ -178,6 +180,7 @@ from agent.supported_rules import (
 )
 from db.vector.creatures import CreatureResolutionError, resolve_creature
 from db.vector.references import normalize_reference
+from edgar_core import config
 from edgar_core.log_safety import error_summary
 from edgar_core.safe_errors import provider_error_code
 from tools.dice import roll
@@ -554,11 +557,38 @@ async def _open_encounter(
             + ", ".join(f"{_display(c)} {c['init']}" for c in ordered)
             + "."
         )
+    if config.COMBAT_GRID_ENABLED:
+        # Combat grid: the battlefield and every combatant's square, placed from the opening bands.
+        battlefield = open_battlefield(
+            combat_state,
+            scene_text=_scene_text(state),
+            seed=f"{state.get('session_id') or ''}:{state.get('current_scene_id') or ''}:"
+            + ",".join(str(c.get("name")) for c in ordered),
+        )
+        sync_bands(combat_state, next((c for c in ordered if c.get("is_player")), None))
+        log_lines.append(
+            f"The fight opens on a {battlefield['width']} by {battlefield['height']} square battlefield "
+            f"(5 feet a square): " + "; ".join(_square_line(c) for c in ordered) + "."
+        )
     if adaptation := adaptation_sentence(budget_summary):
         log_lines.append(adaptation)
     # What each exact record declares but the engine does not run is stated, never implied.
     log_lines += [line for e in enemies if (line := declared_line(e))]
     return None
+
+
+def _scene_text(state: AgentState) -> str:
+    """The words the battlefield's scenery is chosen from: the scene id and the retrieved scene text."""
+    chunks = state.get("adventure_context") or []
+    texts = [str(c.get("text") or "") if isinstance(c, dict) else str(c) for c in chunks[:3]]
+    return " ".join([str(state.get("current_scene_id") or ""), *texts])
+
+
+def _square_line(c: dict) -> str:
+    from agent.battlefield import label, pos_of
+
+    at = pos_of(c)
+    return f"{_display(c)} at {label(at)}" if at is not None else _display(c)
 
 
 # --------------------------------------------------------------------------------------------
@@ -771,6 +801,7 @@ async def combat_round_node(state: AgentState) -> dict:
     combatants = sort_by_initiative(combat_state["combatants"])
     combat_state["combatants"] = combatants
     combat_state["initiative_order"] = [c["name"] for c in combatants]
+    ensure_positions(combat_state)
     enemies = [c for c in combatants if not c.get("is_player")]
     if party_fight:
         for row in hero_rows(combatants):
@@ -976,6 +1007,7 @@ async def combat_round_node(state: AgentState) -> dict:
     cf_requested = () if fled else requested_features(player_input, parsed_feature_name(parsed))
 
     # --- Decide the player's action BEFORE any dice (agent.combat_declaration, EDG-044) ---
+    sync_bands(combat_state, player)  # combat grid: bands are read from the acting hero's square
     decl = declare_action(
         state,
         contingency=contingency,
@@ -1148,6 +1180,9 @@ async def combat_round_node(state: AgentState) -> dict:
         end = settle_round(
             rec, declared=turn.declared, player_acted=turn.player_acted, max_rounds=MAX_COMBAT_ROUNDS
         )
+
+    # Combat grid: the bands the HUD and the next round read are the acting hero's.
+    sync_bands(combat_state, player)
 
     # --- The adjudication the API persists: engine HP + validated flags/scene/items (agent.combat_finalise) ---
     settlement = settle_adjudication(

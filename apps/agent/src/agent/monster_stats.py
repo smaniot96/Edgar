@@ -233,6 +233,9 @@ class MonsterAttack:
     recharge: int | None = None  # "Recharge N-6": the d6 result that restores the attack (N)
     rider: AttackRider | None = None
     save: AttackSave | None = None
+    # Combat grid: "reach 10 ft." and "range 80/320 ft." as the stat line states them; None when unstated.
+    reach_ft: int | None = None
+    range_ft: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -301,7 +304,15 @@ def _attack_from(raw: Mapping[str, Any]) -> MonsterAttack:
         recharge=None if raw.get("recharge") is None else int(raw["recharge"]),
         rider=None if not isinstance(rider, Mapping) else AttackRider(**rider),
         save=None if not isinstance(save, Mapping) else AttackSave(**save),
+        reach_ft=None if raw.get("reach_ft") is None else int(raw["reach_ft"]),
+        range_ft=_range_from(raw.get("range_ft")),
     )
+
+
+def _range_from(raw: Any) -> tuple[int, int] | None:
+    if isinstance(raw, (list, tuple)) and len(raw) == 2:
+        return int(raw[0]), int(raw[1])
+    return None
 
 
 @dataclass(frozen=True)
@@ -564,7 +575,26 @@ def _save_action(body: str, name: str, recharge: int | None) -> MonsterAttack | 
     return None
 
 
+_REACH = re.compile(r"\breach\s+(\d+)\s*ft", re.IGNORECASE)
+_RANGE = re.compile(r"\brange\s+(\d+)(?:\s*/\s*(\d+))?\s*ft", re.IGNORECASE)
+
+
 def _attack(body: str, name: str) -> tuple[MonsterAttack | None, str | None]:
+    """An attack entry, with the reach and range its stat line states (combat grid)."""
+    attack, declared = _attack_entry(body, name)
+    if attack is None:
+        return attack, declared
+    head = re.split(r"\bHit:", body, maxsplit=1, flags=re.IGNORECASE)[0]
+    reach = _REACH.search(head)
+    span = _RANGE.search(head)
+    return replace(
+        attack,
+        reach_ft=int(reach.group(1)) if reach else None,
+        range_ft=(int(span.group(1)), int(span.group(2) or span.group(1))) if span else None,
+    ), declared
+
+
+def _attack_entry(body: str, name: str) -> tuple[MonsterAttack | None, str | None]:
     match = _ATTACK.match(body)
     if not match:
         return None, None

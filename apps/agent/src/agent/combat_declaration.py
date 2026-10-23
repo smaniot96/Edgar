@@ -28,7 +28,9 @@ from agent.action_economy import (
     off_hand_refusal,
     refusal_for,
 )
+from agent.battlefield import square_move
 from agent.class_features import ACTION_SURGE, RAGE, max_uses
+from agent.combat_grid import attack_reach_check, grid_active, hero_budget, plan_route, project
 from agent.combat_identity import unique_roster_target
 from agent.combat_intent import _RANGED_HINT, _STAND_UP, _is_attack_action, _name_matches
 from agent.combat_plan import attack_count_question, operation_order, sequence_question
@@ -113,6 +115,8 @@ class Declaration:
     ally_target: dict | None = None
     execution_order: tuple[str, ...] = ()
     main_attack_count: int = 1
+    # Combat grid: the weapon attack is made beyond its normal range (disadvantage, PHB p.195).
+    attack_long_range: bool = False
 
 
 def declare_action(
@@ -164,7 +168,11 @@ def declare_action(
     disengage = not fled and disengage_declared(player_input)
     # A readied attack's trigger ("when the goblin closes in") is the foe's move, not the hero's.
     moves_text = movement_text(player_input)
-    moving = not fled and bool(movement_steps(moves_text))
+    grid = grid_active(combat_state)
+    # Combat grid: "move to D4" is a move too.
+    moving = not fled and (
+        bool(movement_steps(moves_text)) or (grid and square_move(moves_text) is not None)
+    )
     standing_up = not fled and bool(_STAND_UP.search(player_input))
     off_hand = not fled and off_hand_declared(player_input)
     # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
@@ -368,9 +376,36 @@ def declare_action(
         player, "frightened", before, round_num
     )
     branch_steps = len(branch_plan.steps) if branch_plan is not None else 0
-    refused_move = move_refusal(hero, len(moves.steps) + branch_steps, dash=dash) or (
-        None if fear_will_end_before_turn else fear_refusal(hero, player, moves.steps)
-    )
+    if grid and not fled:
+        # Combat grid: movement is spent in feet along a route, not counted in band changes.
+        living = [e for e in enemies if can_act(e)]
+        budget = hero_budget(player, dash=dash)
+        route = plan_route(
+            combat_state, player, moves_text, moves, living, budget_ft=budget, hero_name=hero, dash=dash
+        )
+        if isinstance(route, str):
+            return _ask_player(state, route, combat_state=combat_state)
+        project(moves, route, living)
+        if branch_plan is not None and contingency is not None:
+            branch_route = plan_route(
+                combat_state,
+                player,
+                contingency.branch,
+                branch_plan,
+                living,
+                budget_ft=budget - route.cost_ft,
+                hero_name=hero,
+                dash=dash,
+                start=route.destination,
+            )
+            if isinstance(branch_route, str):
+                return _ask_player(state, branch_route, combat_state=combat_state)
+            project(branch_plan, branch_route, living)
+        refused_move = None if fear_will_end_before_turn else fear_refusal(hero, player, moves.steps)
+    else:
+        refused_move = move_refusal(hero, len(moves.steps) + branch_steps, dash=dash) or (
+            None if fear_will_end_before_turn else fear_refusal(hero, player, moves.steps)
+        )
     if refused_move:
         return _ask_player(state, refused_move, combat_state=combat_state)
     ready: ReadyOrder | None = None
@@ -393,7 +428,25 @@ def declare_action(
         character, player_input, prefer_ranged=bool(_RANGED_HINT.search(player_input))
     )
     attack_ranged = bool(_RANGED_HINT.search(player_input)) or attack_weapon.ranged
-    if target is not None and not is_spell and not attack_ranged:
+    attack_kind = "attack" if is_attack else "maneuver"
+    move_before_action = (
+        "move" in execution_order
+        and attack_kind in execution_order
+        and execution_order.index("move") < execution_order.index(attack_kind)
+    )
+    attack_long_range = False
+    if grid and target is not None and not is_spell and (is_attack or (combat_action is not None and combat_action.kind != "release")):
+        # Combat grid: reach and range are measured from the square the hero's moves end on.
+        refusal, attack_long_range = attack_reach_check(
+            hero,
+            target,
+            from_square=(moves.route.destination if move_before_action else moves.route.start),
+            weapon_name=attack_weapon.name if combat_action is None else None,
+            ranged=attack_ranged and combat_action is None,
+        )
+        if refusal:
+            return _ask_player(state, refusal, combat_state=combat_state)
+    elif not grid and target is not None and not is_spell and not attack_ranged:
         attack_band = (
             moves.bands.get(id(target), band_of(target))
             if "move" in execution_order and execution_order.index("move") < execution_order.index("attack" if is_attack else "maneuver")
@@ -443,6 +496,7 @@ def declare_action(
         ally_target=ally_target,
         execution_order=execution_order,
         main_attack_count=1 + int(is_attack and ACTION_SURGE in cf_requested and cf_left.get(ACTION_SURGE, 0) > 0),
+        attack_long_range=attack_long_range,
     )
 
 
@@ -453,7 +507,7 @@ def _branch_refusal(hero: str, contingency: Contingency, attacks: bool) -> str |
             f"'{contingency.describe()}' needs an attack this turn, to say which foe it means. No roll is "
             "made and no turn is spent."
         )
-    if movement_legs(contingency.branch):
+    if movement_legs(contingency.branch) or square_move(contingency.branch) is not None:
         return None
     if has_attack_words(contingency.branch):
         return (

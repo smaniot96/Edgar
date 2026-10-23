@@ -77,6 +77,7 @@ services:
       - "EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}"
       - "MODEL_PROFILES_PATH=${MODEL_PROFILES_PATH:-}"
       - "EDGAR_DEBUG=${EDGAR_DEBUG:-0}"
+      - "EDGAR_COMBAT_GRID=${EDGAR_COMBAT_GRID:-0}"
       - "EDGAR_METRICS_ENABLED=${EDGAR_METRICS_ENABLED:-}"
       - "EDGAR_METRICS_TOKEN=${EDGAR_METRICS_TOKEN:-}"
       # Summary bound (EDG-158), origin policy (EDG-052) and auth mode (EDG-065); empty means the code default.

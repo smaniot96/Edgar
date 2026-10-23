@@ -133,3 +133,52 @@ async def test_held_readied_attack_and_grapple_effects_survive_a_reload(db_sessi
         "weapon_hint": "with my longsword",
     }
     assert rows["Raider"]["effects"] == [{"kind": "grappled", "source": "hands", "applied_round": 2}]
+
+
+@pytest.mark.asyncio
+async def test_grid_insert_update_and_public_reload_keep_terrain_and_positions(db_session) -> None:
+    import db.postgres.session as sm
+    from apps.api.schemas.stream import CombatStatePublic
+    from apps.api.services.combat import persist_combat
+    from apps.api.services.turn_runner import combat_state_public
+
+    user = User(email="grid@example.test")
+    db_session.add(user)
+    await db_session.flush()
+    campaign = Campaign(title="Grid persistence", system="5e", created_by=user.id)
+    db_session.add(campaign)
+    await db_session.flush()
+    session = Session(campaign_id=campaign.id)
+    db_session.add(session)
+    await db_session.flush()
+    sid = session.id
+    field = {
+        "version": 1, "width": 14, "height": 10, "theme": "forest",
+        "terrain": [{"x": 5, "y": 3, "kind": "difficult", "feature": "undergrowth"}],
+    }
+    state = {
+        "round": 1, "ended": False, "initiative_order": ["player", "Goblin"],
+        "current_turn_index": 0, "battlefield": field,
+        "combatants": [
+            {"name": "player", "is_player": True, "alive": True, "hp_current": 12, "hp_max": 12, "pos": [1, 4], "speed_ft": 30},
+            {"name": "Goblin", "is_player": False, "alive": True, "hp_current": 7, "hp_max": 7, "pos": [2, 4], "speed_ft": 20},
+        ],
+    }
+    row_id = await persist_combat(db_session, sid, state)
+    await db_session.commit()
+    db_session.expunge_all()
+    async with sm.async_session_factory() as fresh:
+        loaded = await load_active_combat(fresh, sid)
+        assert loaded["id"] == row_id and loaded["battlefield"] == field
+        loaded["combatants"][0]["pos"] = [0, 4]
+        loaded["round"] = 2
+        await persist_combat(fresh, sid, loaded)
+        await fresh.commit()
+    async with sm.async_session_factory() as fresh:
+        loaded = await load_active_combat(fresh, sid)
+    public = combat_state_public(loaded)
+    CombatStatePublic.model_validate(public)
+    assert loaded["round"] == 2 and loaded["battlefield"] == field
+    assert public["combatants"][0]["position"] == {"x": 0, "y": 4, "label": "A5"}
+    assert public["combatants"][1]["speed_ft"] == 20
+    assert public["battlefield"]["terrain"] == field["terrain"]

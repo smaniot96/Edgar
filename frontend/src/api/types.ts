@@ -598,6 +598,21 @@ export interface CombatEffect {
   applied_round?: number | null;
 }
 
+export interface GridPosition {
+  x: number;
+  y: number;
+  label: string;
+}
+
+/** Experimental backend grid; absent for the default range-band encounters. */
+export interface Battlefield {
+  width: number;
+  height: number;
+  square_ft: number;
+  theme: string;
+  terrain: { x: number; y: number; kind: "wall" | "difficult"; feature: string }[];
+}
+
 export interface Combatant {
   /** Stable roster identity supplied by the server; older saves may omit it. */
   id?: string;
@@ -624,6 +639,8 @@ export interface Combatant {
   death_saves?: Record<string, unknown> | null;
   /** The hero left the fight (EDG-049, additive). */
   fled?: boolean | null;
+  position?: GridPosition | null;
+  speed_ft?: number | null;
 }
 
 export type CombatOutcome = "victory" | "defeat" | "fled" | "surrendered" | null;
@@ -658,6 +675,7 @@ export interface CombatEconomy {
 }
 
 export interface CombatState {
+  battlefield?: Battlefield | null;
   round: number;
   ended: boolean;
   outcome: CombatOutcome;

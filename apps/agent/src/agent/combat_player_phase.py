@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent.action_economy import ACTION, SECOND_WIND, Declared
+from agent.battlefield import Route, pos_of
 from agent.class_features import (
     ACTION_SURGE,
     RAGE,
@@ -28,6 +29,14 @@ from agent.class_features import (
 from agent.combat_declaration import Declaration
 from agent.combat_dice import _contest, _mode_log
 from agent.combat_enemy_turns import EnemyTurns
+from agent.combat_grid import (
+    attack_reach_check,
+    grid_active,
+    hero_budget,
+    plan_route,
+    project,
+    walk_hero,
+)
 from agent.combat_plan import phase_for
 from agent.combat_round_record import RoundRecord
 from agent.combatants import (
@@ -77,7 +86,7 @@ from agent.monster_stats import (
     weapon_damage_type,
 )
 from agent.positioning import MELEE, RANGED, MovePlan, band_of, plan_moves, start_turn
-from agent.readied_action import ReadyOrder
+from agent.readied_action import ReadyOrder, movement_text
 from agent.resolution import (
     DEATH_SAVES_KEY,
     SECOND_WIND_REFUSAL,
@@ -144,6 +153,10 @@ class _Turn:
     runtime_fear_blocked: bool = False
     surge_swing: bool = False
     disengaged: bool = False
+    # Combat grid: feet of movement walked this turn, and whether the attack is at long range.
+    moved_ft: int = 0
+    long_range: bool = False
+    out_of_reach: bool = False
 
 
 def _strike(
@@ -199,8 +212,10 @@ def run_player_turn(rec: RoundRecord, inp: PlayerTurnInput) -> PlayerTurnResult:
         elif phase == "move":
             _declared_moves(t)
         else:
+            _grid_reach(t)
             _resolve_action(t)
     if "action" not in phases:
+        _grid_reach(t)
         _resolve_action(t)  # records a move/bonus-only turn, without inventing another action
     _contingency(t)
     return PlayerTurnResult(
@@ -363,16 +378,28 @@ def _declared_moves(t: _Turn) -> None:
     decl = t.inp.decl
     if not (t.player_acted and not t.rec.fled):
         return
-    _apply_moves(t, decl.moves, disengage=t.disengaged, dash=decl.dash)
+    _apply_moves(
+        t,
+        decl.moves,
+        disengage=t.disengaged,
+        dash=decl.dash,
+        text=movement_text(t.inp.player_input),
+    )
     if decl.dash:
         t.rec.round_effects.append("dash")
     if decl.disengage:
         t.rec.round_effects.append("disengage")
 
 
-def _apply_moves(t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool) -> None:
+def _apply_moves(
+    t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool, text: str | None = None
+) -> None:
     """Apply a planned move to the foes: bands, recorded distances, and the opportunity attacks it
-    provokes. A foe the fear rule blocks keeps its band and distance (EDG-145)."""
+    provokes. A foe the fear rule blocks keeps its band and distance (EDG-145). On the combat grid the
+    hero walks a route instead (`_grid_moves`)."""
+    if grid_active(t.rec.combat_state) and moves.route is not None:
+        _grid_moves(t, moves, disengage=disengage, dash=dash, text=text)
+        return
     rec, inp = t.rec, t.inp
     player, hero = rec.player, rec.hero
     log_lines = rec.log_lines
@@ -420,6 +447,60 @@ def _apply_moves(t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool) -> N
             row["distance_ft"] = distance  # a feet move's recorded distance (positioning.distance_of)
 
 
+def _grid_moves(t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool, text: str | None) -> None:
+    """Combat grid: walk the declared moves. The route is planned again from the squares as they are
+    now, because foes ahead of the hero in initiative may have moved since the declaration. A move that
+    can no longer be made is logged and the hero holds position; no move is invented in its place."""
+    rec = t.rec
+    player = rec.player
+    start = pos_of(player)
+    if start is None:
+        return
+    living = [e for e in rec.enemies if can_act(e)]
+    budget = hero_budget(player, dash=dash) - t.moved_ft
+    route = plan_route(
+        rec.combat_state, player, text, moves, living, budget_ft=budget, hero_name=rec.hero, dash=dash
+    )
+    if isinstance(route, str):
+        rec.log_lines.append(f"{rec.hero} cannot make the declared move now: {route.split('. ')[0]}.")
+        route = Route(start)
+    probe = MovePlan()
+    project(probe, route, living)
+    if refusal := fear_refusal(rec.hero, player, probe.steps):
+        t.runtime_fear_blocked = True
+        rec.log_lines.append(f"{refusal.split('. ')[0]}; {rec.hero} holds position.")
+        route = Route(start)
+    walked = walk_hero(t.inp.turns, route, disengage=disengage)
+    t.moved_ft += walked.cost_ft
+    project(moves, walked, living)
+
+
+def _grid_reach(t: _Turn) -> None:
+    """Combat grid: the declared attack's reach and range, checked again from where the hero stands
+    once its moves are made (a foe may have moved). Out of reach, the attack is not rolled."""
+    decl, rec = t.inp.decl, t.rec
+    t.long_range = decl.attack_long_range
+    target = decl.target
+    if (
+        not grid_active(rec.combat_state)
+        or target is None
+        or decl.is_spell
+        or not (decl.is_attack or decl.combat_action is not None)
+        or (decl.combat_action is not None and decl.combat_action.kind == "release")
+        or pos_of(rec.player) is None
+    ):
+        return
+    weapon = choose_weapon(rec.character, t.inp.player_input, prefer_ranged=decl.attack_ranged)
+    refusal, t.long_range = attack_reach_check(
+        rec.hero,
+        target,
+        from_square=pos_of(rec.player),  # type: ignore[arg-type]
+        weapon_name=weapon.name if decl.combat_action is None else None,
+        ranged=decl.attack_ranged and decl.combat_action is None,
+    )
+    t.out_of_reach = refusal is not None
+
+
 def _contingency(t: _Turn) -> None:
     """The turn's "if" clause, after its action (EDG-182). The condition is read from the recorded state;
     a branch that holds is applied through the same path as a declared move, and one that does not hold
@@ -449,7 +530,9 @@ def _contingency(t: _Turn) -> None:
         return
     rec.log_lines.append(f"{clause.describe()} holds, so {rec.hero} carries on: {clause.branch}.")
     rec.round_effects.append("contingency")
-    _apply_moves(t, plan, disengage=t.disengaged, dash=decl.dash)
+    if grid_active(rec.combat_state) and pos_of(rec.player) is not None:
+        plan.route = Route(pos_of(rec.player))  # type: ignore[arg-type]
+    _apply_moves(t, plan, disengage=t.disengaged, dash=decl.dash, text=clause.branch)
 
 
 def _resolve_action(t: _Turn) -> None:
@@ -499,8 +582,9 @@ def _resolve_action(t: _Turn) -> None:
         _ready(t, decl.ready)
     elif decl.combat_action is not None and decl.combat_action.kind == "release":
         _release(t)
-    elif (
-        decl.target is not None
+    elif t.out_of_reach or (
+        not grid_active(rec.combat_state)
+        and decl.target is not None
         and not decl.is_spell
         and not decl.attack_ranged
         and (decl.is_attack or decl.combat_action is not None)
@@ -516,7 +600,9 @@ def _resolve_action(t: _Turn) -> None:
             "result": "out_of_reach",
         }
         t.extra_outcome = (
-            f"{hero} cannot reach {target['name']} with a melee attack from beyond 5 feet."
+            f"{hero} cannot reach {target['name']} from {hero}'s square: it moved out of range."
+            if t.out_of_reach
+            else f"{hero} cannot reach {target['name']} with a melee attack from beyond 5 feet."
         )
         log_lines.append(t.extra_outcome)
     elif decl.combat_action is not None and decl.target is not None:
@@ -543,10 +629,10 @@ def _resolve_action(t: _Turn) -> None:
                     "actor_id": stable_id(player),
                 })
         elif decl.moving:
-            t.player_action = {
-                "action": "move",
-                "result": "moved" if decl.moves.steps else "already_there",
-            }
+            moved = (
+                decl.moves.route.moved if decl.moves.route is not None else bool(decl.moves.steps)
+            )
+            t.player_action = {"action": "move", "result": "moved" if moved else "already_there"}
         elif decl.standing_up:
             t.player_action = {"action": "stand_up", "result": "stood_up"}
     else:
@@ -951,6 +1037,7 @@ def _attack(t: _Turn, target: dict, *, readied: bool = False) -> None:
             target,
             ranged=ranged,
             within_five_feet=ranged and band_of(target) == MELEE,
+            long_range=t.long_range and not off_hand_swing,
         )
         attack = resolve_attack(
             character,

@@ -17,6 +17,7 @@ from agent.class_features import (
     rage_resists,
 )
 from agent.combat_dice import _mode_log, _roll_with_mode
+from agent.combat_grid import bands_for, fly_away, foe_attack_range, grid_active, position_foe
 from agent.combat_round_record import RoundRecord
 from agent.combat_setup import (
     EnemyStat as EnemyStat,
@@ -210,6 +211,7 @@ class EnemyTurns:
         ranged: bool = False,
         within_five_feet: bool = False,
         reaction: bool = False,
+        long_range: bool = False,
     ) -> None:
         """One engine-rolled attack by an enemy. `exact` attacks keep their record's dice.
 
@@ -222,7 +224,9 @@ class EnemyTurns:
             "text": f"{_display(e)} {'makes an opportunity attack against' if reaction else 'attacks on its turn against'} {self.rec.hero}.",
             "actor_id": stable_id(e), "target_id": stable_id(self.rec.player),
         })
-        mode = attack_roll_mode(e, self.rec.player, ranged=ranged, within_five_feet=within_five_feet)
+        mode = attack_roll_mode(
+            e, self.rec.player, ranged=ranged, within_five_feet=within_five_feet, long_range=long_range
+        )
         self.rec.round_modes.append(mode)
         atk, draws = _roll_with_mode(f"1d20{bonus:+d}", mode)
         consume_mark(self.rec.player)  # a Guiding Bolt mark grants advantage to the next attack roll only
@@ -409,6 +413,9 @@ class EnemyTurns:
                 rider=attack.rider,
                 ranged=attack.ranged,
                 within_five_feet=band == MELEE,
+                long_range=foe_attack_range(e, self.rec.player, attack)[1]
+                if grid_active(self.rec.combat_state)
+                else False,
             )
 
     def choose_monster_spell(self, e: dict, action_cost: str) -> tuple[SpellSpec, int] | None:
@@ -608,6 +615,9 @@ class EnemyTurns:
 
     def foe_attacks(self, e: dict) -> None:
         stats = stats_of(e)
+        grid = grid_active(self.rec.combat_state)
+        if stats is None and grid and not position_foe(self, e):
+            return  # combat grid: it Dashed toward the hero and has no action left
         if stats is None:
             # Legacy or generic combatant: its stored numbers, one attack (EDG-148 clamps apply).
             # Its one attack is a melee attack, so at range it closes in first (EDG-044).
@@ -626,6 +636,10 @@ class EnemyTurns:
             )
             return
         if self.monster_spell_action(e):
+            return
+        if grid:
+            if position_foe(self, e):
+                self._grid_attacks(e, stats)
             return
         # Exact record: make each listed attack in order after start-of-turn features resolve.
         plan = attack_plan(stats, spent=e.get("recharge_spent") or ())
@@ -652,6 +666,27 @@ class EnemyTurns:
             "kind": "enemy_close", "text": f"{_display(e)} closes to melee on its turn.",
             "actor_id": stable_id(e), "target_id": stable_id(self.rec.player),
         })
+
+    def _grid_attacks(self, e: dict, stats: Any) -> None:
+        """Combat grid: the attacks a foe makes from its square. Melee attacks (and save actions) when a
+        melee attack reaches the hero, else its ranged attacks in range; an attack out of range is not
+        made (`combat_grid.foe_attack_range`)."""
+        plan = attack_plan(stats, spent=e.get("recharge_spent") or ())
+        in_range = [a for a in plan if foe_attack_range(e, self.rec.player, a)[0]]
+        if any(not a.ranged for a in in_range):
+            plan = tuple(a for a in in_range if not a.ranged or a.save)
+        else:
+            plan = tuple(a for a in in_range if a.ranged)
+        if not plan:
+            self.rec.log_lines.append(f"{e['name']} has no attack that reaches {self.rec.hero} and takes no action.")
+        for attack in plan:
+            if self.rec.hp <= 0 and not self._retarget(e):
+                break
+            bands_for(self.rec.combat_state, self.rec.player)
+            if not foe_attack_range(e, self.rec.player, attack)[0]:
+                continue  # a retargeted hero out of this attack's reach
+            self.exact_attack(e, attack, band_of(e))
+            spend_recharge(e, attack)
 
     def _retarget(self, e: dict) -> bool:
         """EDG-049: the hero a foe was attacking is down; the rest of its attacks go to another standing hero."""
@@ -681,6 +716,14 @@ class EnemyTurns:
             )
         else:
             attack = primary_melee_attack(stats)
+            if grid_active(self.rec.combat_state):
+                # Grid provocations use the longest melee reach, so the reaction must use an
+                # attack with that reach rather than an earlier, shorter entry in the record.
+                attack = max(
+                    (a for a in stats.attacks if not a.ranged and a.save is None),
+                    key=lambda a: a.reach_ft or MELEE_FEET,
+                    default=None,
+                )
             if attack is None:
                 return False
             self.enemy_attack(
@@ -704,10 +747,17 @@ class EnemyTurns:
             return
         if self.party is not None and self.rec.hp <= 0 and not self.party.retarget(e, self):
             return
+        grid = grid_active(self.rec.combat_state)
+        bands_for(self.rec.combat_state, self.rec.player)
         band = band_of(e)
         left = stats.legendary_actions - int(e.get("legendary_spent") or 0)
         option = next(
-            (o for o in legendary_plan(stats, left) if attacks_from_band([o.attack], band)), None
+            (
+                o
+                for o in legendary_plan(stats, left)
+                if (foe_attack_range(e, self.rec.player, o.attack)[0] if grid else attacks_from_band([o.attack], band))
+            ),
+            None,
         )
         if option is None:
             return
@@ -716,7 +766,10 @@ class EnemyTurns:
             f"{e['name']} uses a legendary action: {option.name} (costs {option.cost})."
         )
         self.exact_attack(e, option.attack, band)
-        if option.flight_after and is_standing(e):
+        if option.flight_after and is_standing(e) and grid:
+            fly_away(self.rec, e)
+            self.rec.log_lines.append(f"{e['name']} flies away after its Wing Attack.")
+        elif option.flight_after and is_standing(e):
             e["band"] = RANGED
             if "distance_ft" in e:
                 e["distance_ft"] = RANGED_START_FEET
@@ -810,6 +863,7 @@ class EnemyTurns:
 
     def enemy_turn(self, e: dict) -> None:
         start_turn(e)  # its reaction comes back at the start of its turn (PDF p.191)
+        bands_for(self.rec.combat_state, self.rec.player)  # combat grid: bands from the target's square
         e.pop("legendary_spent", None)  # and its spent legendary actions (MM, PDF p.12)
         if ended_spell := drop_concentration_if_incapacitated(e, [self.rec.player]):
             self.rec.log_lines.append(f"{_display(e)}'s concentration on {ended_spell} ends while incapacitated.")

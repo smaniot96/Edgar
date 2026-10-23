@@ -45,6 +45,7 @@ import structlog
 from sqlalchemy import select
 
 import db.postgres.session as db_session_module
+from agent.battlefield import public_battlefield, public_position, speed_of
 from agent.combat_confirmation import public_pending, public_standing_orders
 from agent.combat_narration import has_authoritative_spell_events
 from agent.combat_telemetry import COMBAT_ROUND_EVENT, combat_round_public
@@ -703,6 +704,7 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
     ):
         current_turn_id = initiative[current_index].get("id")
     party = is_party(combat_state.get("combatants"))
+    battlefield = public_battlefield(combat_state)
     public: dict[str, Any] = {
         "round": combat_state.get("round"),
         "ended": combat_state.get("ended", False),
@@ -721,6 +723,12 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
                 # Additive (EDG-044): a foe's distance band and whether its reaction is spent.
                 "band": None if c.get("is_player") else band_of(c),
                 "reaction_used": bool(c.get("reaction_used", False)),
+                # Additive (combat grid): the square and walking speed; absent off the grid.
+                **(
+                    {"position": public_position(c), "speed_ft": speed_of(c)}
+                    if battlefield is not None
+                    else {}
+                ),
                 **(_hero_fields(c) if party and c.get("is_player") else {}),
             }
             for c in (combat_state.get("combatants") or [])
@@ -740,6 +748,9 @@ def combat_state_public(combat_state: dict[str, Any] | None) -> dict[str, Any] |
         # Additive (EDG-043): the spell the hero is concentrating on, or None.
         "concentration": _concentration_spell(combat_state),
     }
+    # Additive (combat grid): the battlefield the squares are on; absent for an encounter without one.
+    if battlefield is not None:
+        public["battlefield"] = battlefield
     # Additive (EDG-182): a multi-part declaration waiting for the player's yes or no, as its summary.
     if pending := public_pending(combat_state.get("combatants") or []):
         public["pending_declaration"] = pending

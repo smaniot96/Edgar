@@ -129,6 +129,7 @@ const TURN_RESULT_KEYS: Record<keyof TurnResult, true> = {
 };
 
 const COMBAT_STATE_KEYS: Record<keyof CombatState, true> = {
+  battlefield: true,
   round: true,
   ended: true,
   outcome: true,
@@ -152,6 +153,8 @@ const COMBAT_STATE_KEYS: Record<keyof CombatState, true> = {
 };
 
 const COMBATANT_KEYS: Record<keyof Combatant, true> = {
+  position: true,
+  speed_ft: true,
   id: true,
   name: true,
   display_name: true,

@@ -351,6 +351,44 @@
     },
     "done": {
       "$defs": {
+        "BattlefieldPublic": {
+          "additionalProperties": false,
+          "description": "The combat grid the squares are on (agent.battlefield.public_battlefield).",
+          "properties": {
+            "height": {
+              "title": "Height",
+              "type": "integer"
+            },
+            "square_ft": {
+              "title": "Square Ft",
+              "type": "integer"
+            },
+            "terrain": {
+              "items": {
+                "$ref": "#/$defs/TerrainPublic"
+              },
+              "title": "Terrain",
+              "type": "array"
+            },
+            "theme": {
+              "title": "Theme",
+              "type": "string"
+            },
+            "width": {
+              "title": "Width",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "width",
+            "height",
+            "square_ft",
+            "theme",
+            "terrain"
+          ],
+          "title": "BattlefieldPublic",
+          "type": "object"
+        },
         "CharacterPublic": {
           "additionalProperties": false,
           "description": "The hero on a committed turn (`character_play_state`) with its read-only resource views.\n\n`class` is a Python keyword, so the field is named `character_class` and validated by alias.\nThe optional resources are present only for classes that hold them.",
@@ -577,6 +615,17 @@
           "additionalProperties": false,
           "description": "The encounter view attached to `done` (`combat_state_public`).",
           "properties": {
+            "battlefield": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BattlefieldPublic"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "combatants": {
               "items": {
                 "$ref": "#/$defs/CombatantPublic"
@@ -946,9 +995,32 @@
               ],
               "title": "Name"
             },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/GridPositionPublic"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "reaction_used": {
               "title": "Reaction Used",
               "type": "boolean"
+            },
+            "speed_ft": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Speed Ft"
             }
           },
           "required": [
@@ -1000,6 +1072,31 @@
           "title": "EncounterParticipantPublic",
           "type": "object"
         },
+        "GridPositionPublic": {
+          "additionalProperties": false,
+          "description": "A combatant's square on the combat grid: 0-based x (east) and y (south), and its name (\"D4\").",
+          "properties": {
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "x": {
+              "title": "X",
+              "type": "integer"
+            },
+            "y": {
+              "title": "Y",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "label"
+          ],
+          "title": "GridPositionPublic",
+          "type": "object"
+        },
         "HitDicePublic": {
           "additionalProperties": false,
           "description": "The Hit Dice ledger view every class has (`hit_dice_status`).",
@@ -1043,6 +1140,40 @@
             "remaining"
           ],
           "title": "SpellSlotPublic",
+          "type": "object"
+        },
+        "TerrainPublic": {
+          "additionalProperties": false,
+          "description": "One square of scenery: `wall` blocks movement, `difficult` costs double (agent.battlefield).",
+          "properties": {
+            "feature": {
+              "title": "Feature",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "wall",
+                "difficult"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "x": {
+              "title": "X",
+              "type": "integer"
+            },
+            "y": {
+              "title": "Y",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "kind",
+            "feature"
+          ],
+          "title": "TerrainPublic",
           "type": "object"
         },
         "UsesPublic": {
@@ -1561,6 +1692,44 @@
     },
     "CombatStatePublic": {
       "$defs": {
+        "BattlefieldPublic": {
+          "additionalProperties": false,
+          "description": "The combat grid the squares are on (agent.battlefield.public_battlefield).",
+          "properties": {
+            "height": {
+              "title": "Height",
+              "type": "integer"
+            },
+            "square_ft": {
+              "title": "Square Ft",
+              "type": "integer"
+            },
+            "terrain": {
+              "items": {
+                "$ref": "#/$defs/TerrainPublic"
+              },
+              "title": "Terrain",
+              "type": "array"
+            },
+            "theme": {
+              "title": "Theme",
+              "type": "string"
+            },
+            "width": {
+              "title": "Width",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "width",
+            "height",
+            "square_ft",
+            "theme",
+            "terrain"
+          ],
+          "title": "BattlefieldPublic",
+          "type": "object"
+        },
         "CombatRoundEventPublic": {
           "additionalProperties": false,
           "description": "An ordered, engine-written public event from the last resolved round.",
@@ -1771,9 +1940,32 @@
               ],
               "title": "Name"
             },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/GridPositionPublic"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "reaction_used": {
               "title": "Reaction Used",
               "type": "boolean"
+            },
+            "speed_ft": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Speed Ft"
             }
           },
           "required": [
@@ -1824,11 +2016,81 @@
           ],
           "title": "EncounterParticipantPublic",
           "type": "object"
+        },
+        "GridPositionPublic": {
+          "additionalProperties": false,
+          "description": "A combatant's square on the combat grid: 0-based x (east) and y (south), and its name (\"D4\").",
+          "properties": {
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "x": {
+              "title": "X",
+              "type": "integer"
+            },
+            "y": {
+              "title": "Y",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "label"
+          ],
+          "title": "GridPositionPublic",
+          "type": "object"
+        },
+        "TerrainPublic": {
+          "additionalProperties": false,
+          "description": "One square of scenery: `wall` blocks movement, `difficult` costs double (agent.battlefield).",
+          "properties": {
+            "feature": {
+              "title": "Feature",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "wall",
+                "difficult"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "x": {
+              "title": "X",
+              "type": "integer"
+            },
+            "y": {
+              "title": "Y",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "kind",
+            "feature"
+          ],
+          "title": "TerrainPublic",
+          "type": "object"
         }
       },
       "additionalProperties": false,
       "description": "The encounter view attached to `done` (`combat_state_public`).",
       "properties": {
+        "battlefield": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BattlefieldPublic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "combatants": {
           "items": {
             "$ref": "#/$defs/CombatantPublic"
@@ -2083,6 +2345,33 @@
       "type": "object"
     },
     "CombatantPublic": {
+      "$defs": {
+        "GridPositionPublic": {
+          "additionalProperties": false,
+          "description": "A combatant's square on the combat grid: 0-based x (east) and y (south), and its name (\"D4\").",
+          "properties": {
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "x": {
+              "title": "X",
+              "type": "integer"
+            },
+            "y": {
+              "title": "Y",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "label"
+          ],
+          "title": "GridPositionPublic",
+          "type": "object"
+        }
+      },
       "additionalProperties": false,
       "description": "One roster entry as the HUD and narrator may see it (`combat_state_public`).",
       "properties": {
@@ -2198,9 +2487,32 @@
           ],
           "title": "Name"
         },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GridPositionPublic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "reaction_used": {
           "title": "Reaction Used",
           "type": "boolean"
+        },
+        "speed_ft": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speed Ft"
         }
       },
       "required": [

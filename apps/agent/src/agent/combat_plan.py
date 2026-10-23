@@ -6,7 +6,16 @@ import re
 from collections import Counter
 
 from agent.action_economy import BONUS_ACTION, Declared, affirmative_matches
+from agent.battlefield import square_moves
 from agent.positioning import movement_steps
+
+
+def _move_positions(text: str) -> list[int]:
+    squares = square_moves(text)
+    return sorted(
+        [begin for _sq, begin, _end in squares]
+        + [pos for _band, pos in movement_steps(text) if not any(begin <= pos < end for _sq, begin, end in squares)]
+    )
 
 _WORDS = {
     "attack": r"\b(?:attack\w*|strik\w*|stab\w*|swing\w*|slash\w*|shoot\w*|lunge\w*|smash\w*|thrust\w*|hit|bash\w*|punch\w*|kick\w*|throw\w*|hurl\w*)\b",
@@ -36,20 +45,20 @@ def operation_order(declared: list[Declared], moving: bool, parsed, text: str) -
                     position = text.lower().index(snippet.lower())
                     break
         positioned.append((position, index, action.kind))
-    moves = movement_steps(text)
+    moves = _move_positions(text)
     if moving:
-        positioned.append((moves[0][1] if moves else 0, -1, "move"))
+        positioned.append((moves[0] if moves else 0, -1, "move"))
     return tuple(kind for _, _, kind in sorted(positioned))
 
 
 def sequence_question(order: tuple[str, ...], text: str, hero: str) -> str | None:
     """Do not collapse movement around an action into one differently ordered move."""
-    moves = movement_steps(text)
+    moves = _move_positions(text)
     if len(moves) > 1:
         for kind, pattern in _WORDS.items():
             if kind not in order or kind == "off_hand_attack":
                 continue
-            if any(moves[0][1] < m.start() < moves[-1][1] for m in re.finditer(pattern, text, re.I)):
+            if any(moves[0] < m.start() < moves[-1] for m in re.finditer(pattern, text, re.I)):
                 return (
                     f"{hero}'s move before and after an action needs separate movement steps. "
                     "Choose one move before or after the action, or a supported if-then move. "
@@ -73,7 +82,7 @@ def attack_count_question(text: str, parsed, *, available: int, hero: str) -> st
         # Activating the extra-attack feature between attacks is not an item operation.
         # The resulting attacks remain one validated same-target block.
         between = re.sub(r"\b(?:(?:use|activate|spend)\s+(?:my\s+)?)?action\s+surge\b", " ", between, flags=re.I)
-        if movement_steps(between) or any(re.search(pattern, between, re.I) for kind, pattern in _WORDS.items() if kind not in ("attack", "off_hand_attack")):
+        if _move_positions(between) or any(re.search(pattern, between, re.I) for kind, pattern in _WORDS.items() if kind not in ("attack", "off_hand_attack")):
             return "Attacks with another operation between them need separate declarations. Group your attacks before or after that operation; no roll is made and no turn is spent."
     if re.search(r"\b(?:twice|two\s+(?:times|attacks)|2\s+(?:times|attacks))\b", text, re.I):
         requested = max(requested, 2)

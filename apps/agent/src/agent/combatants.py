@@ -389,6 +389,7 @@ def attack_roll_mode(
     *,
     ranged: bool = False,
     within_five_feet: bool = False,
+    long_range: bool = False,
 ) -> str:
     """The 5e attack-roll mode from combatant effects: "advantage", "disadvantage" or "normal".
 
@@ -397,10 +398,13 @@ def attack_roll_mode(
     disadvantage from farther away (PHB Appendix A, PDF p.293); a dodging target with disadvantage.
     `within_five_feet` (EDG-044, the melee band) is the typed source of both the PHB rule that a
     ranged attack made within 5 feet of a hostile creature has disadvantage (it applies only to a
-    ranged attack) and the prone rule above. Opposing sources cancel to normal, as the rules do.
-    Pure: it never rolls and never sets a number.
+    ranged attack) and the prone rule above. `long_range` (the combat grid) is a ranged attack beyond
+    the weapon's normal range, made at disadvantage (PHB p.195). Opposing sources cancel to normal, as
+    the rules do. Pure: it never rolls and never sets a number.
     """
     advantage = disadvantage = False
+    if ranged and long_range:
+        disadvantage = True
     if any(
         e["kind"] in _OWN_ATTACK_DISADVANTAGE
         and not (e["kind"] == "frightened" and e.get("source_defeated"))
@@ -536,7 +540,16 @@ def _status(c: Mapping[str, Any]) -> str:
         return "active, incapacitated (stunned)"
     return _STATUS_TEXT[disposition_of(c)]
 def _position_text(c: Mapping[str, Any]) -> str:
-    """A foe's band, stated for rows that carry one (EDG-044); legacy rows keep their text."""
+    """A foe's band, stated for rows that carry one (EDG-044); legacy rows keep their text. On the
+    combat grid the square and the recorded distance are stated too."""
+    square = c.get("pos")
+    if isinstance(square, (list, tuple)) and len(square) == 2:
+        name = f"{chr(ord('A') + int(square[0]))}{int(square[1]) + 1}"
+        if c.get("is_player"):
+            return f"; position: square {name}"
+        distance = c.get("distance_ft")
+        far = f", {distance} feet from the hero" if isinstance(distance, int) else ""
+        return f"; position: square {name}{far} ({band_text(c)})"
     return f"; position: {band_text(c)}" if "band" in c else ""
 
 

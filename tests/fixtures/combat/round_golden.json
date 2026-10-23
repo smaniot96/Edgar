@@ -671,7 +671,9 @@
                 "damage_dice": "1d6+4",
                 "damage_type": "piercing",
                 "name": "Bite",
+                "range_ft": null,
                 "ranged": false,
+                "reach_ft": 5,
                 "recharge": null,
                 "rider": null,
                 "save": null
@@ -681,7 +683,9 @@
                 "damage_dice": "2d6+4",
                 "damage_type": "slashing",
                 "name": "Claw",
+                "range_ft": null,
                 "ranged": false,
+                "reach_ft": 10,
                 "recharge": null,
                 "rider": null,
                 "save": null
