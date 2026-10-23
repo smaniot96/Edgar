@@ -604,6 +604,17 @@ export interface GridPosition {
   label: string;
 }
 
+export interface CombatRoutePreview {
+  destination: string;
+  budget_ft: number;
+  dash: boolean;
+  reachable: boolean;
+  reason: string | null;
+  path: GridPosition[];
+  cost_ft: number | null;
+  provokes: string[];
+}
+
 /** Experimental backend grid; absent for the default range-band encounters. */
 export interface Battlefield {
   width: number;

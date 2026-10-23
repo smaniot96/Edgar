@@ -31,7 +31,7 @@ def data_dir(tmp_path, monkeypatch):
     async def no_setup(_setup):
         return None
 
-    monkeypatch.setattr("apps.api.services.preparation_commission.capture_setup", no_setup)
+    monkeypatch.setattr("apps.api.services.campaign_prep.runtime.capture_setup", no_setup)
     return tmp_path / "adventures"
 
 
@@ -112,7 +112,7 @@ async def test_replay_does_not_depend_on_current_setup(data_dir, monkeypatch):
     async def gone(_setup):
         raise HTTPException(status_code=422, detail="Choose a hero and a valid preparation budget.")
 
-    monkeypatch.setattr("apps.api.services.preparation_commission.capture_setup", gone)
+    monkeypatch.setattr("apps.api.services.campaign_prep.runtime.capture_setup", gone)
     replay, tasks = await _generate(_body())
     assert replay["slug"] == first["slug"]
     assert tasks == []

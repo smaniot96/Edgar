@@ -19,6 +19,7 @@ import type {
   CharacterRead,
   ChatMessageRead,
   CombatState,
+  CombatRoutePreview,
   InviteAccepted,
   InviteCreated,
   InviteRead,
@@ -496,6 +497,10 @@ export function listSessionMessages(id: number, signal?: AbortSignal): Promise<C
 /** Developer only (EDG-138): stored traces of captured DM turns, oldest first. 404 when debug is off. */
 export function listSessionTurnTraces(id: number, signal?: AbortSignal): Promise<import("./types").TurnTraceList> {
   return getJson(`/api/sessions/${id}/diagnostics/turn-traces`, signal);
+}
+
+export function previewCombatRoute(id: number, destination: string, dash: boolean, signal?: AbortSignal): Promise<CombatRoutePreview> {
+  return getJson(`/api/sessions/${id}/combat/route?destination=${encodeURIComponent(destination)}&dash=${dash}`, signal);
 }
 
 export function getSessionCombat(id: number, signal?: AbortSignal): Promise<CombatState | null> {

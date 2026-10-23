@@ -68,6 +68,7 @@ export function PlayToolPanel({
   onPrepareTravel,
   combat,
   onSelectTarget,
+  onPrepareMove,
   consultation,
 }: {
   activeTool: PlayTool;
@@ -90,6 +91,7 @@ export function PlayToolPanel({
   onPrepareTravel: (place: string) => void;
   combat?: CombatState | null;
   onSelectTarget?: (name: string) => void;
+  onPrepareMove?: (text: string) => void;
   consultation?: ReactNode;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
@@ -175,9 +177,14 @@ export function PlayToolPanel({
               onOpenHistory={onOpenHistory}
               largeText={largeJournalText}
             />
-          ) : activeTool === "recap" ? consultation : encounter && combat ? <EncounterView combat={combat} onSelectTarget={onSelectTarget ? (name) => {
+          ) : activeTool === "recap" ? consultation : encounter && combat ? <EncounterView combat={combat} sessionId={sessionId} onPrepareMove={onPrepareMove ? (text) => {
+            setExpandedMap(false);
+            if (narrow) onClose();
+            onPrepareMove(text);
+          } : undefined} onSelectTarget={onSelectTarget ? (name) => {
             // Release the full-view focus trap before the composer receives the draft.
             setExpandedMap(false);
+            if (narrow) onClose();
             onSelectTarget(name);
           } : undefined} /> : (
             <SessionMapPanel

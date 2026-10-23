@@ -32,6 +32,64 @@ def test_nonaffirmative_offer_is_not_surrender(text):
     assert not is_surrender(text)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I offer to hand over the sheep and come peacefully.",
+        "I lay down my sword.",
+        "I stop fighting.",
+    ],
+)
+def test_natural_handover_terms_are_nonviolent_offers(text):
+    assert is_surrender(text) and not is_flee(text)
+
+
+@pytest.mark.asyncio
+async def test_offer_uses_private_canonical_actor_binding_but_keeps_public_name(
+    fake_llm_schema, fake_retrieval, monkeypatch
+):
+    monkeypatch.setattr(
+        "agent.combat_offers.observation_span_catalog",
+        lambda _: {
+            "terms": {
+                "text": "Guz accepts surrender when the sheep is offered.",
+                "reference_id": "source",
+            },
+        },
+    )
+
+    async def response(*args, **kwargs):
+        return AdjudicationResult(
+            success=True,
+            combat_offer=CombatOffer(
+                decision="accepted",
+                actor_name="Guz",
+                source_span_id="terms",
+                action_quote="hand over the sheep",
+                achievement_basis="The actual offer meets the demand.",
+                public_response="Agreed. We stop fighting.",
+            ),
+        )
+
+    monkeypatch.setattr("agent.graph_combat.adjudicate", response)
+    combat = _guz()
+    combat["combatants"][1].update(
+        name="the half-orc", canonical_name="Guz", target_aliases=["half-orc"]
+    )
+    asked = await _say(
+        fake_llm_schema,
+        combat,
+        "I offer to hand over the sheep and come peacefully.",
+        parsed=ParsedInput(intent="combat", target="the half-orc"),
+    )
+    result = await _say(
+        fake_llm_schema, asked["combat_state"], "yes", parsed=ParsedInput(intent="combat")
+    )
+    assert result["combat_state"]["outcome"] == "surrendered"
+    assert "Agreed. We stop fighting." in result["narration"]
+    assert "Guz" not in result["narration"] and _rolled(result) == []
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", [
     'I lower my sword and surrender to Guz. "Stop! I will come with you to speak to Noke."',

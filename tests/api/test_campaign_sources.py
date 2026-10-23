@@ -80,11 +80,12 @@ async def test_creation_and_binding_changes_require_ready_coverage(api_client, s
         "adventure_collections": ["usable", "absent", "complete"],
     }
     rejected = await api_client.post("/api/campaigns", json=body)
-    assert rejected.status_code == 409
+    assert rejected.status_code == 422  # New campaigns bind exactly one reviewed module.
+    body["adventure_collections"] = ["usable"]
+    rejected = await api_client.post("/api/campaigns", json=body)
+    assert rejected.status_code == 409, rejected.text
     assert [s["status"] for s in rejected.json()["detail"]["sources"]] == [
         "partial",
-        "missing",
-        "ready",
     ]
     assert (await api_client.post("/api/adventures/absent/campaign")).status_code == 409
     body["adventure_collections"] = ["complete"]
@@ -125,7 +126,7 @@ async def test_explicit_homebrew_preserves_bindings_and_empty_means_no_module(
         await api_client.patch(f"/api/campaigns/{cid}", json={"source_mode": "module"})
     ).status_code == 409
     body = {"title": "Homebrew", "system": "5e", "adventure_collections": []}
-    assert (await api_client.post("/api/campaigns", json=body)).status_code == 409
+    assert (await api_client.post("/api/campaigns", json=body)).status_code == 422
     body["source_mode"] = "homebrew"
     fresh = (await api_client.post("/api/campaigns", json=body)).json()
     assert fresh["adventure_collections"] == [] and fresh["play_allowed"]

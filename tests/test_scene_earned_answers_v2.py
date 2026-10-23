@@ -90,6 +90,139 @@ async def prepared(state):
     return state
 
 
+def registry_identity_state(other_visible=False):
+    spine, bundles = sample()
+    template = deepcopy(spine["entities"][0])
+    actor = {
+        **template,
+        "id": "jory",
+        "kind": "npc",
+        "name": "Jory Fen",
+        "description": "Jory Fen is the missing ferryman. He knows how to handle the crossing.",
+        "motive": "PRIVATE_MOTIVE",
+        "knowledge": "PRIVATE_KNOWLEDGE",
+    }
+    hidden = {
+        **actor,
+        "id": "aaron_voss",
+        "name": "Thimble Voss",
+        "description": "PRIVATE_UNMET_IDENTITY",
+    }
+    spine["entities"].extend([actor, hidden])
+    event = bundles["chapters"][0]["events"][0]
+    event["participants"] = ["jory", "aaron_voss"] if other_visible else ["jory"]
+    event["visible_entity_ids"] = list(event["participants"])
+    event["public_description"] = "Jory answers from the upper room."
+    compiled = assemble("fresh", "2014", spine, bundles, [])
+    manifest = AdventureManifest.model_validate(compiled["manifest"])
+    manifest.reviewed_by = "identity-regression"
+    manifest.reviewed_sha256 = manifest_digest(manifest)
+    chunks = [
+        {**c, "collection": "fresh", "kind": "adventure"}
+        for c in manifest_chunks(make_extraction(compiled), manifest)
+    ]
+    return {
+        "source_mode": "module",
+        "manifest_status": "reviewed",
+        "turn_id": "identity-turn",
+        "player_input": "I ask Jory whether he is the ferryman.",
+        "adventure_manifests": {"fresh": manifest.model_dump()},
+        "current_scene_id": "event_square",
+        "rules_edition": "2014",
+        "world_flags": {},
+        "adventure_context": [
+            c for c in chunks if c["audience"] == "player" and "event_square" in c["scene_ids"]
+        ],
+        "planner_context": [
+            c for c in chunks if c["audience"] == "planner" and "event_square" in c["scene_ids"]
+        ],
+        "story_state": {"facts": []},
+    }
+
+
+def test_current_actor_identity_survives_compact_planner_context_without_global_secrets():
+    state = registry_identity_state()
+    spans = observation_span_catalog(state)
+    selected = next(s for s in spans.values() if "Jory Fen is the missing ferryman." in s["text"])
+    registry = next(c for c in state["planner_context"] if c["passage_id"] == "campaign_registry")
+    excerpt = observation_excerpt(registry, spans)
+    assert "Jory Fen is the missing ferryman." in excerpt
+    assert all(
+        secret not in excerpt
+        for secret in ("PRIVATE_MOTIVE", "PRIVATE_KNOWLEDGE", "PRIVATE_UNMET_IDENTITY")
+    )
+    result = validate_story_effects(
+        AdjudicationResult(
+            success=True,
+            source_observations=[
+                {
+                    "source_span_id": selected["source_span_id"],
+                    "source_reference_id": selected["reference_id"],
+                    "text": "Jory Fen is the missing ferryman.",
+                    "action_quote": "ask Jory",
+                    "achievement_basis": "The visible rescued actor can freely confirm his ordinary occupation.",
+                }
+            ],
+        ),
+        state,
+    )
+    assert result.accepted_observations == ["Jory Fen is the missing ferryman."]
+    state["adjudication_result"] = result
+    prompt = str(build_narrator_prompt(state))
+    assert "Jory Fen is the missing ferryman." in prompt
+    assert "PRIVATE_MOTIVE" not in prompt and "PRIVATE_KNOWLEDGE" not in prompt
+
+
+@pytest.mark.parametrize("quote", ["PRIVATE_MOTIVE", "PRIVATE_KNOWLEDGE", "PRIVATE_UNMET_IDENTITY"])
+def test_registry_quote_cannot_escape_the_current_actor_description(quote):
+    state = registry_identity_state()
+    registry = next(c for c in state["planner_context"] if c["passage_id"] == "campaign_registry")
+    result = validate_story_effects(
+        AdjudicationResult(
+            success=True,
+            source_observations=[
+                {
+                    "source_reference_id": source_citation(registry, "2014")["reference_id"],
+                    "text": quote,
+                    "source_quote": quote,
+                    "action_quote": "ask Jory",
+                    "achievement_basis": "Claims ordinary dialogue.",
+                }
+            ],
+        ),
+        state,
+    )
+    assert result.accepted_observations == []
+    assert result.observation_diagnostics["rejected"][0]["reason"] == "ineligible_source_span"
+
+
+def test_multiple_actor_descriptions_survive_registry_order_and_budget_trimming(monkeypatch):
+    from types import SimpleNamespace
+
+    from agent.nodes import rules_adjudicator
+
+    state = registry_identity_state(other_visible=True)
+    spans = observation_span_catalog(state)
+    assert any("Jory Fen is the missing ferryman." in span["text"] for span in spans.values())
+    assert any("PRIVATE_UNMET_IDENTITY" in span["text"] for span in spans.values())
+    monkeypatch.setattr(rules_adjudicator, "effective_profile", lambda _: SimpleNamespace(max_input_tokens=1))
+    evidence = "\n".join(rules_adjudicator._planner_evidence_blocks(state, [], spans))
+    assert "Jory Fen is the missing ferryman." in evidence
+    assert "PRIVATE_MOTIVE" not in evidence and "PRIVATE_KNOWLEDGE" not in evidence
+
+
+def test_known_actor_description_remains_eligible_without_claiming_current_presence():
+    state = registry_identity_state()
+    registry = next(c for c in state["planner_context"] if c["passage_id"] == "campaign_registry")
+    state["adventure_context"] = []
+    assert "Jory Fen" not in str(observation_span_catalog(state))
+    state["story_state"]["facts"] = [{"kind": "encounter", "status": "encountered", "target": {
+        **{key: registry[key] for key in ("collection", "source_sha256", "manifest_sha256")},
+        "canonical_id": "jory",
+    }}]
+    assert "Jory Fen is the missing ferryman." in str(observation_span_catalog(state))
+
+
 def proposal(state, **changes):
     chunk = next(
         c for c in active_observation_chunks(state) if c["passage_id"] == "event_square_dm"

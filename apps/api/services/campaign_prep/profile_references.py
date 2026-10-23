@@ -1,5 +1,6 @@
 """Retained, evidence-backed repair of invalid mechanical profile page provenance."""
 
+import re
 from copy import deepcopy
 from typing import Literal
 
@@ -12,6 +13,21 @@ from .source import evidence_pages
 from .store import NeedsAttention, digest
 
 PROFILE_REFERENCE_POLICY = "profile-physical-page-membership-1"
+PROFILE_VALIDATION_POLICY = "retain-verified-physical-pages-2"
+
+
+def _catalogue_quote(text, quote):
+    """Permit distance abbreviations, while preserving every number and rule word.
+
+    The correction selects an existing verified template; it never authors statistics.
+    OCR/newline spacing and '5 ft.' versus '5 feet' do not change that identity.
+    Bespoke source-stat corrections still require their exact source quotation.
+    """
+    def canonical(value):
+        value = re.sub(r"(?<=\d)\s*(?:ft\.|feet\b|foot\b)", " feet", value)
+        return " ".join(value.split())
+
+    return bool(quote.strip()) and canonical(quote) in canonical(text)
 
 
 class ProfileCorrectionRejected(NeedsAttention):
@@ -67,10 +83,7 @@ async def reconcile_profile_pages(workflow, spine, bundles):
     signature = digest([PROFILE_REFERENCE_POLICY, bundles, source, catalogue])
     key = "profile-page-repair-" + signature
     receipt = workflow.store.get(key) or {}
-    if receipt.get("state") == "rejected":
-        raise ProfileCorrectionRejected(
-            "Retained profile page correction needs attention: " + receipt["error"]
-        )
+    # Revalidate the same paid candidate after a code fix, without another dispatch.
     known = {p["page"] for p in source["pages"]}
     pages = sorted({p for d in defects for p in d["profile"]["source_pages"] if p in known})
     if not pages:
@@ -119,15 +132,16 @@ async def reconcile_profile_pages(workflow, spine, bundles):
             original = allowed[identity]["profile"]
             row = next(p for p in owners[join.owner] if p["id"] == join.expected_id)
             cited = set(join.source_pages)
-            if not cited <= known or not (set(original["source_pages"]) & known) <= cited:
+            if not cited <= known:
                 raise NeedsAttention(
                     "Profile correction must retain valid source pages and cite existing physical pages."
                 )
+            cited |= set(original["source_pages"]) & known
             if join.mode == "catalogue":
                 verified = [
                     r for r in catalogue if r["name"].casefold() == row["creature"].casefold()
                 ]
-                if not any(join.evidence_quote in r["text"] for r in verified):
+                if not any(_catalogue_quote(r["text"], join.evidence_quote) for r in verified):
                     raise NeedsAttention(
                         "Catalogue rebinding requires an exact existing verified template quote."
                     )
@@ -140,7 +154,7 @@ async def reconcile_profile_pages(workflow, spine, bundles):
                         "Source profile correction requires an exact quote from its actual cited PDF pages."
                     )
                 note = "retains its source stat block with corrected physical-page provenance"
-            row["source_pages"] = list(dict.fromkeys(join.source_pages))
+            row["source_pages"] = sorted(cited)
             bound_actors = {
                 appearance["actor_id"]
                 for chapter in candidate["chapters"]

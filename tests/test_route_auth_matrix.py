@@ -48,6 +48,7 @@ ADMIN_ROUTES = {
     ("POST", "/api/adventures/{slug}/preparation/setup"),
     ("POST", "/api/adventures/{slug}/cancel"),
     ("PATCH", "/api/adventures/{slug}"),
+    ("PATCH", "/api/adventures/{slug}/library"),
     ("DELETE", "/api/adventures/{slug}"),
     ("POST", "/api/adventures/{slug}/manifest/compile"),
     ("GET", "/api/adventures/{slug}/manifest"),

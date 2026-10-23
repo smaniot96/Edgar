@@ -26,7 +26,6 @@ FOREIGN = "https://evil.example.net"
 # A pinned list, cross-checked against the live router below, so a new simple-request route fails
 # here until it is added on purpose.
 SIMPLE_REQUEST_ROUTES = {
-    ("POST", "/api/adventures/{slug}/campaign"),
     ("POST", "/api/adventures/{slug}/cancel"),
     ("POST", "/api/adventures/{slug}/manifest/compile"),
     ("POST", "/api/campaigns/{campaign_id}/end"),
@@ -97,7 +96,7 @@ async def client(token_mode_app: Any) -> AsyncIterator[AsyncClient]:
 
 def test_pinned_simple_request_routes_match_the_live_router(token_mode_app: Any) -> None:
     """The nine routes are exactly the POST routes a browser can send cross-site without a preflight."""
-    assert len(SIMPLE_REQUEST_ROUTES) == 10
+    assert len(SIMPLE_REQUEST_ROUTES) == 9
     derived = _simple_request_routes(token_mode_app)
     assert derived == SIMPLE_REQUEST_ROUTES, (
         f"missing from pin: {sorted(derived - SIMPLE_REQUEST_ROUTES)}; "

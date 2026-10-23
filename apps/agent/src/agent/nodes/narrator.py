@@ -168,7 +168,11 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
             "This inventory is authoritative for carried possessions. A spoken claim of "
             "being unarmed does not remove carried equipment. Do not narrate loss, transfer, "
             "consumption or expiry from a new scene's default staging; only a recorded "
-            "outcome can establish that change, and make any established change explicit."
+            "outcome can establish that change, and make any established change explicit. "
+            "Narrate a new pickup as completed only when an accepted acquire consequence "
+            "below records it. An inspection roll does not authorize a pickup, whether it "
+            "succeeds or fails. If acquisition is missing, state that the item remains where "
+            "it was and do not claim it is in the hero's hand."
         )
     party = [m for m in (state.get("party") or []) if isinstance(m, dict) and m.get("name")]
     if len(party) > 1:
@@ -226,7 +230,13 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
         context_parts.append(f"World flags (persisted state): {world_flags}")
     earned = [_live_consequence(fact) for fact in public_earned_facts(state)]
     if earned:
-        context_parts.append(f"Committed player-known story facts: {earned}")
+        context_parts.append(
+            f"Committed player-known story facts: {earned}. "
+            "Completed rescues and resolved dangers supersede opening demands. "
+            "A rescued person is no longer missing. A secured threat is no longer "
+            "approaching. A physically present captive can speak unless an "
+            "established barrier prevents speech; custody alone is not absence."
+        )
     if observations := earned_observation_context(state):
         context_parts.append(observations)
     if adjudication:
@@ -250,17 +260,25 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
             {"kind": effect.kind, "operation": effect.operation}
             for effect in adjudication.story_effects
             if effect.kind in object_changes
-            and not any(accepted_effect.kind == effect.kind
-                        and accepted_effect.target == effect.target
-                        and accepted_effect.operation == effect.operation
-                        and (accepted_effect.destination == effect.destination
-                             or (effect.kind == "acquire" and accepted_effect.destination
-                                 == acquisition_destination(effect.destination, state)))
-                        for accepted_effect in adjudication.accepted_story_effects)
+            and not any(
+                accepted_effect.kind == effect.kind
+                and accepted_effect.target == effect.target
+                and accepted_effect.operation == effect.operation
+                and (
+                    accepted_effect.destination == effect.destination
+                    or (
+                        effect.kind == "acquire"
+                        and accepted_effect.destination
+                        == acquisition_destination(effect.destination, state)
+                    )
+                )
+                for accepted_effect in adjudication.accepted_story_effects
+            )
         ]
         if unaccepted:
             context_parts.append(
-                "Object operations proposed but not accepted: " + str(unaccepted)
+                "Object operations proposed but not accepted: "
+                + str(unaccepted)
                 + ". Do not narrate those operations as completed or change possession. "
                 "Explain that the attempted object change has not been established and keep "
                 "the object in its last recorded state. A success=true check or an engine "
@@ -320,13 +338,11 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
     # Exact-scene opening excerpts already appear once in the conditional baseline
     # above. Repeating them as module evidence gives stale staging undue weight.
     remaining_adventure_context = [
-        chunk for chunk in adventure_context
-        if not scene or chunk not in scene["public_context"]
+        chunk for chunk in adventure_context if not scene or chunk not in scene["public_context"]
     ]
     if remaining_adventure_context:
         block = "\n".join(
-            wrap_retrieved_excerpt(cited_excerpt(c, edition))
-            for c in remaining_adventure_context
+            wrap_retrieved_excerpt(cited_excerpt(c, edition)) for c in remaining_adventure_context
         )
         context_parts.append(f"Adventure module context (story/locations/NPCs):\n{block}")
     if any(getattr(message, "type", None) == "ai" for message in state.get("messages") or []):

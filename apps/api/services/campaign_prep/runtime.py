@@ -10,7 +10,11 @@ from pathlib import Path
 import structlog
 
 from edgar_core.manifests import load_published_manifest, manifest_digest
-from edgar_core.preparation_status import PreparationJobStatus, PublicPreparationStatus
+from edgar_core.preparation_status import (
+    PreparationJobStatus,
+    PublicPreparationStatus,
+    SafePreparationFailure,
+)
 
 from .. import adventures_meta as meta_store
 from .ai_generation import AI_WORKFLOW
@@ -160,6 +164,11 @@ def retry_preparation(slug):
     if store.state().get("status") == "ready" or store.state().get("cancel_requested"):
         raise ValueError("A published or cancelled preparation cannot be resubmitted.")
     with worker_lock(store):
+        if ambiguous_dispatches(store):
+            raise ValueError(
+                "A provider request has no response receipt. Reconcile the existing result "
+                "before retrying; saved work is retained and no duplicate request was submitted."
+            )
         # A new round grants sequential AI steps fresh revision attempts.
         store.update(
             status="queued", error=None, retry_round=store.state().get("retry_round", 0) + 1
@@ -241,6 +250,44 @@ def private_preparation_ready(slug, meta=None):
         return False
 
 
+def ambiguous_dispatches(store):
+    """Private request identities, never a license to repeat an uncertain paid POST."""
+    with store.db() as db:
+        return [
+            dict(row)
+            for row in db.execute(
+                "SELECT id, node FROM task WHERE response IS NULL AND state='dispatching'"
+            )
+        ]
+
+
+def retained_preparation_work(store):
+    with store.db() as db:
+        names = {row[0] for row in db.execute("SELECT name FROM artifact")}
+    if "publication" in names:
+        return "published"
+    if "bundles" in names:
+        return "complete_manuscript"
+    if "spine" in names or "ai-outline" in names or any(n.startswith("ai-bundle-") for n in names):
+        return "outline_and_chapters"
+    if "source" in names:
+        source = store.get("source")
+        if source.get("kind") == "pdf":
+            return "inspected_extraction" if source.get("pages") else "source_pdf"
+    return "none"
+
+
+def retained_correction_rejected(store):
+    # Earlier workers wrapped the typed rejection in NeedsAttention. Project the
+    # durable receipt state instead of parsing or exposing its private error text.
+    with store.db() as db:
+        return bool(db.execute(
+            "SELECT 1 FROM artifact WHERE (name LIKE 'structural-repair-%' "
+            "OR name LIKE 'profile-page-repair-%' OR name LIKE 'secret-chapter-repair-%') "
+            "AND json_extract(payload, '$.state')='rejected' LIMIT 1"
+        ).fetchone())
+
+
 def safe_preparation_status(meta, slug):
     if meta.get("private_preparation") is not True:
         return None
@@ -283,6 +330,34 @@ def safe_preparation_status(meta, slug):
         "queued": PreparationJobStatus.QUEUED,
         "cancelled": PreparationJobStatus.CANCELLED,
     }.get(status, PreparationJobStatus.BLOCKED)
+    failure = None
+    ambiguous = status == "blocked" and bool(ambiguous_dispatches(store))
+    if ambiguous:
+        failure = SafePreparationFailure(
+            code="provider_receipt_missing",
+            category="provider_unavailable",
+            message="A provider request may still have completed. Saved work is retained; "
+            "the existing result must be recovered before preparation can continue.",
+            recovery_action="check_existing_result",
+            retryable=False,
+            support_ref="err-" + digest([slug, "provider_receipt_missing"])[:16],
+            outcome="unknown",
+        )
+    elif status == "blocked" and (state.get("error_type") in (
+        "ProfileCorrectionRejected",
+        "SecretCorrectionRejected",
+        "StructuralCorrectionRejected",
+    ) or retained_correction_rejected(store)):
+        failure = SafePreparationFailure(
+            code="preparation_correction_rejected",
+            category="validation",
+            message="A retained source correction did not pass validation. Saved work is kept. "
+            "Retry after the correction has been repaired.",
+            recovery_action="repair_source",
+            retryable=True,
+            support_ref="err-" + digest([slug, "preparation_correction_rejected"])[:16],
+            outcome="not_committed",
+        )
     return PublicPreparationStatus(
         run_id="graph-" + job_id,
         status=mapped,
@@ -295,12 +370,14 @@ def safe_preparation_status(meta, slug):
         else "Cancelled"
         if status == "cancelled"
         else mapping.get(state.get("node"), "Queued"),
-        retryable=status == "blocked",
+        retryable=status == "blocked" and not ambiguous,
         action="none"
-        if status in ("ready", "cancelled", "invalid_publication")
+        if status in ("ready", "cancelled", "invalid_publication") or ambiguous
         else "retry"
         if status == "blocked"
         else "wait",
+        failure=failure,
+        retained_work=retained_preparation_work(store),
     )
 
 

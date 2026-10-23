@@ -231,7 +231,7 @@ def selected_source_object(state):
 
 
 def active_observation_chunks(state):
-    """Only active scene facts; shared campaign registries cannot authorize disclosure."""
+    """Active scene facts, plus bounded descriptions of visible or already met actors."""
     from agent.nodes.story_effects import _reviewed_chunk
     from edgar_core.manifests import select_scene_context
     from edgar_core.sources import eligible_context
@@ -242,7 +242,7 @@ def active_observation_chunks(state):
     for chunk in eligible_context(
         state.get("adventure_context", []) + state.get("planner_context", []), edition
     ):
-        if chunk.get("passage_id") in ("campaign_registry", "campaign_spine"):
+        if chunk.get("passage_id") == "campaign_spine":
             continue
         value = (state.get("adventure_manifests") or {}).get(chunk.get("collection"))
         if (
@@ -257,8 +257,64 @@ def active_observation_chunks(state):
             chunk.get("passage_id")
             in selected["player_passage_ids"] + selected["planner_passage_ids"]
         ):
+            if chunk.get("passage_id") == "campaign_registry" and not observation_ranges(
+                chunk, state
+            ):
+                continue
             result.append(chunk)
     return result
+
+
+def observation_ranges(chunk, state):
+    """Bound global registry evidence to descriptions of visible or already met actors.
+
+    Keep original text offsets and the full passage's review identity. Private motives,
+    knowledge, other NPCs and future chapters never become observation candidates.
+    A known identity does not prove that the actor is physically present.
+    """
+    text = chunk.get("text", "")
+    if chunk.get("passage_id") != "campaign_registry":
+        return [(0, len(text))]
+    from agent.nodes.story_effects import _reviewed_chunk
+
+    public_ids = {
+        identity
+        for public in state.get("adventure_context") or []
+        if public.get("collection") == chunk.get("collection")
+        and public.get("audience") == "player"
+        and state.get("current_scene_id") in public.get("scene_ids", [])
+        and _reviewed_chunk(public, state)
+        for identity in public.get("entity_ids", [])
+    }
+    public_ids.update(
+        fact["target"]["canonical_id"]
+        for fact in (state.get("story_state") or {}).get("facts", [])
+        if fact.get("kind") == "encounter"
+        and fact.get("status") == "encountered"
+        and all(
+            fact.get("target", {}).get(key) == chunk.get(key)
+            for key in ("collection", "source_sha256", "manifest_sha256")
+        )
+    )
+    ranges = []
+    decoder = json.JSONDecoder()
+    for identity in sorted(public_ids):
+        match = re.search(r'"' + re.escape(identity) + r'"\s*:\s*(\{)', text)
+        if not match:
+            continue
+        try:
+            record, end = decoder.raw_decode(text, match.start(1))
+        except ValueError:
+            continue
+        if record.get("kind") != "entity" or record.get("value", {}).get("kind") != "npc":
+            continue
+        segment = text[match.start(1) : end]
+        description = re.search(r'"description"\s*:\s*"((?:\\.|[^"\\])*)"', segment)
+        if description:
+            ranges.append(
+                (match.start(1) + description.start(1), match.start(1) + description.end(1))
+            )
+    return sorted(ranges)
 
 
 def observation_span_catalog(state, chunks=None):
@@ -269,9 +325,16 @@ def observation_span_catalog(state, chunks=None):
     for chunk in active_observation_chunks(state) if chunks is None else chunks:
         reference = source_citation(chunk, state.get("rules_edition", "2014"))["reference_id"]
         text = chunk["text"]
-        start = 0
-        ends = [m.end() for m in re.finditer(r"(?<=[.!?])\s+|\n{2,}", text)] + [len(text)]
-        for end in ends:
+        ranges = observation_ranges(chunk, state)
+        boundaries = [m.end() for m in re.finditer(r"(?<=[.!?])\s+|\n{2,}", text)]
+        segments = [
+            (begin, end)
+            for begin, limit in ranges
+            for end in [*[b for b in boundaries if begin < b < limit], limit]
+        ]
+        start = ranges[0][0] if ranges else 0
+        for begin, end in segments:
+            start = max(start, begin)
             if not text[start:end].strip():
                 continue
             identity = json.dumps(
@@ -475,10 +538,7 @@ def validate_source_observations(adjudication, state):
         "matches": [],
     }
     adjudication.observation_diagnostics = diagnostics
-    if (
-        state.get("manifest_status") != "reviewed"
-        or not state.get("turn_id")
-    ):
+    if state.get("manifest_status") != "reviewed" or not state.get("turn_id"):
         diagnostics["blocked"] = "turn_not_eligible"
         return
     evidence = {
@@ -537,15 +597,24 @@ def validate_source_observations(adjudication, state):
                 reason = "failed_check"
             elif evidence[matched_reference].get("audience") != "player":
                 reason = "failed_check_private_evidence"
+        if not reason and not any(
+            begin <= match["start"] and match["end"] <= end
+            for begin, end in observation_ranges(evidence[matched_reference], state)
+        ):
+            reason = "ineligible_source_span"
         if not reason and _unearned_visibility_gated_answer(
             proposal, adjudication, state, evidence, match, evidence[matched_reference]
         ):
             reason = "source_visibility_condition_not_met"
-        unsupported_state_clause = any(
-            _OBSERVATION_STATE_CHANGE.search(clause)
-            and match_source_quote(match["text"], clause.strip().rstrip(".;!?")) is None
-            for clause in re.split(r"[;.!?]\s*", proposal.text)
-        ) if not reason else False
+        unsupported_state_clause = (
+            any(
+                _OBSERVATION_STATE_CHANGE.search(clause)
+                and match_source_quote(match["text"], clause.strip().rstrip(".;!?")) is None
+                for clause in re.split(r"[;.!?]\s*", proposal.text)
+            )
+            if not reason
+            else False
+        )
         if unsupported_state_clause:
             # This channel has no authority to mutate the live world. A source
             # span listing rooms cannot remove a fallen actor or transfer an item.

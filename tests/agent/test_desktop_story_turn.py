@@ -502,7 +502,10 @@ def source_object_state(play):
 
 
 @pytest.mark.parametrize("visible", [True, False])
-def test_private_item_procedure_can_commit_pickup_only_with_public_object_binding(source_object_state, visible):
+@pytest.mark.parametrize("inspection_success", [True, False])
+def test_private_item_procedure_can_commit_pickup_only_with_public_object_binding(
+    source_object_state, visible, inspection_success
+):
     state = source_object_state
     if not visible:
         # Same scene and private procedure are insufficient when the object itself
@@ -511,25 +514,66 @@ def test_private_item_procedure_can_commit_pickup_only_with_public_object_bindin
     manifest = AdventureManifest.model_validate(state["adventure_manifests"]["ai_campaign"])
     state["player_input"] = "I take the scroll."
     proposed = StoryEffect(
-        kind="acquire", status="acquired",
+        kind="acquire",
+        status="acquired",
         target=_ref(manifest, "object", "animal_scroll"),
         source_reference_ids=[_cite(state["planner_context"][0])],
         achievement_basis="The hero takes the visible portable scroll.",
     )
-    result = validate_story_effects(AdjudicationResult(success=True, story_effects=[proposed]), state)
+    result = validate_story_effects(
+        AdjudicationResult(success=inspection_success, check="arcana", story_effects=[proposed]),
+        state,
+    )
     assert bool(result.accepted_story_effects) is visible
     state["adjudication_result"] = result
     if visible:
         [acquired] = result.accepted_story_effects
         assert acquired.destination == "character:1" and acquired.quantity == 1
         assert acquired.player_text == QUAY_PUBLIC
-        assert validate_story_effects(
-            AdjudicationResult(success=True, story_effects=[proposed]), state,
-        ).accepted_story_effects == result.accepted_story_effects
+        assert (
+            validate_story_effects(
+                AdjudicationResult(
+                    success=inspection_success, check="arcana", story_effects=[proposed]
+                ),
+                state,
+            ).accepted_story_effects
+            == result.accepted_story_effects
+        )
     else:
         prompt = "\n".join(str(message.content) for message in build_narrator_prompt(state))
-        assert "Object operations proposed but not accepted: [{'kind': 'acquire', 'operation': None}]" in prompt
+        assert (
+            "Object operations proposed but not accepted: [{'kind': 'acquire', 'operation': None}]"
+            in prompt
+        )
         assert "Do not narrate those operations as completed" in prompt
+
+
+@pytest.mark.parametrize(
+    ("check", "text"),
+    [
+        ("athletics", "I retrieve the scroll from the ledge."),
+        ("sleight_of_hand", "I take the scroll from the guard's pocket."),
+        ("arcana", "I do not take the scroll."),
+        ("investigation", 'I say, "take the scroll".'),
+    ],
+)
+def test_failed_retrieval_or_undeclared_pickup_cannot_transfer_an_item(
+    source_object_state, check, text
+):
+    state = source_object_state
+    state["player_input"] = text
+    manifest = AdventureManifest.model_validate(state["adventure_manifests"]["ai_campaign"])
+    proposed = StoryEffect(
+        kind="acquire",
+        status="acquired",
+        target=_ref(manifest, "object", "animal_scroll"),
+        source_reference_ids=[_cite(state["planner_context"][0])],
+        achievement_basis="The hero takes the visible portable scroll.",
+    )
+    result = validate_story_effects(
+        AdjudicationResult(success=False, check=check, story_effects=[proposed]), state
+    )
+    assert not result.accepted_story_effects
 
 
 def test_public_object_label_uses_visible_descriptor_instead_of_private_title():

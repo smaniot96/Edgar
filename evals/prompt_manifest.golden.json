@@ -4,27 +4,27 @@
     "version": "1.0.0"
   },
   "play.combat_narrator": {
-    "sha256": "a00353014ea60166aa313bdab5dda249bace0a742483153262f2e62fdc347fc3",
-    "version": "1.2.0"
-  },
-  "play.consequence_planner": {
-    "sha256": "93eff2bc70b386f8d51563f1ebb21f09b8fd99490eb991877b5650cb9c0183c6",
-    "version": "1.1.0"
-  },
-  "play.memory_summarizer": {
-    "sha256": "b16f16fbf1d1a8fe63edf5c3428fc1557259bfca70c96aa67a8c1abff541d435",
-    "version": "1.0.0"
-  },
-  "play.narrator": {
-    "sha256": "a00353014ea60166aa313bdab5dda249bace0a742483153262f2e62fdc347fc3",
-    "version": "1.2.0"
-  },
-  "play.parser": {
-    "sha256": "a5bed26249152aab08fbb5e222e3e564342b81b52d582609a84da50bfc2333bd",
+    "sha256": "1b3d489e967f481d92f23b331d1c32d91373b38eac6c6bf9ddbaba90fd4c7d5c",
     "version": "1.3.0"
   },
+  "play.consequence_planner": {
+    "sha256": "61cf8b6ed6dd548595dbfbecc31b8404cb561f97520f118c422c4b581906eb7d",
+    "version": "1.2.0"
+  },
+  "play.memory_summarizer": {
+    "sha256": "d29ee666d637f26ed5602b562b44ac79ba5e70644e32027abfea5351c985ab4c",
+    "version": "1.1.0"
+  },
+  "play.narrator": {
+    "sha256": "1b3d489e967f481d92f23b331d1c32d91373b38eac6c6bf9ddbaba90fd4c7d5c",
+    "version": "1.3.0"
+  },
+  "play.parser": {
+    "sha256": "477933581b64c3edefbec751eb0af3c426aa4cf34258dc4297eacd54bdbd99b2",
+    "version": "1.4.0"
+  },
   "play.session_intro": {
-    "sha256": "f24284b94b6fca3f0c05494268743e0517a5de0e3c7be9e264cda735f2e71803",
-    "version": "1.0.0"
+    "sha256": "cbf44799bb671186488196399f75c2f12afd468ab0998c5985c2e62c737239ff",
+    "version": "1.1.0"
   }
 }

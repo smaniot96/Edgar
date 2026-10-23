@@ -398,6 +398,7 @@ async def test_simple_request_body_shapes_on_the_turn_route(
 # (form/plain/multipart or no body). DELETE/PUT/PATCH need a preflight, which the default policy refuses.
 JSON_BODY_ROUTES = {
     ("PATCH", "/api/adventures/{slug}"),
+    ("PATCH", "/api/adventures/{slug}/library"),
     ("PATCH", "/api/campaigns/{campaign_id}"),
     ("PATCH", "/api/campaigns/{campaign_id}/characters/{character_id}"),
     ("PATCH", "/api/campaigns/{campaign_id}/members/{user_id}"),
@@ -409,6 +410,7 @@ JSON_BODY_ROUTES = {
     ("PATCH", "/api/sessions/{session_id}/spotlight"),
     ("PATCH", "/api/users/me"),
     ("POST", "/api/adventures/generate"),
+    ("POST", "/api/adventures/{slug}/campaign"),
     ("POST", "/api/adventures/{slug}/manifest/publish"),
     ("POST", "/api/adventures/{slug}/manifest/solo-review/spoiler-opened"),
     ("POST", "/api/adventures/{slug}/preparation/setup"),
@@ -431,7 +433,6 @@ JSON_BODY_ROUTES = {
     ("PUT", "/api/adventures/{slug}/manifest"),
 }
 BODYLESS_POST_ROUTES = {
-    ("POST", "/api/adventures/{slug}/campaign"),
     ("POST", "/api/adventures/{slug}/cancel"),
     ("POST", "/api/adventures/{slug}/manifest/compile"),
     ("POST", "/api/campaigns/{campaign_id}/end"),
@@ -475,9 +476,9 @@ def test_every_mutating_route_is_classified_in_the_request_mode_table(load_app) 
     app = load_app()
     classified = JSON_BODY_ROUTES | BODYLESS_POST_ROUTES | MULTIPART_ROUTES | DELETE_ROUTES
     assert _mutating_routes(app) == classified
-    assert len(classified) == 52
+    assert len(classified) == 53
     simple_surface = BODYLESS_POST_ROUTES | MULTIPART_ROUTES
-    assert len(simple_surface) == 10
+    assert len(simple_surface) == 9
 
 
 async def test_simple_form_post_reaches_a_bodyless_route_without_a_content_type_check() -> None:

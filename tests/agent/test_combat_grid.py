@@ -7,6 +7,7 @@ dice were rolled and in which mode), never a particular roll.
 
 import json
 import random
+from copy import deepcopy
 
 import pytest
 
@@ -15,6 +16,7 @@ from agent.battlefield import (
     WALL,
     distance_ft,
     label,
+    line_of_sight,
     open_battlefield,
     parse_label,
     pos_of,
@@ -25,6 +27,7 @@ from agent.battlefield import (
     theme_for,
     walking_speed,
 )
+from agent.combat_grid import preview_route
 from agent.graph_combat import combat_round_node
 from agent.models.adjudication import AdjudicationResult
 from agent.models.parsed_input import ParsedInput
@@ -149,6 +152,163 @@ def test_an_allys_square_costs_double_and_cannot_be_the_end_of_a_move() -> None:
     combatants = [hero, ally]
     assert route_to(battlefield, combatants, hero, parse_label("B1"), 30) is None
     assert route_to(battlefield, combatants, hero, parse_label("C1"), 30).cost_ft == 15
+
+
+def test_preview_uses_engine_costs_and_public_reaction_labels_without_mutation():
+    hero = _hero("C1")
+    foe = _at(_brute("Private identity", init=1), "D1")
+    foe["display_name"] = "The guard"
+    combat = {"battlefield": _field(10, 1), "combatants": [hero, foe]}
+    before = deepcopy(combat)
+    preview = preview_route(combat, "A1")
+    assert preview["reachable"] and preview["cost_ft"] == 10
+    assert preview["budget_ft"] == 30 and preview["provokes"] == ["The guard"]
+    assert [row["label"] for row in preview["path"]] == ["C1", "B1", "A1"]
+    assert not preview_route(combat, "D1")["reachable"]
+    assert combat == before
+
+
+def test_preview_obeys_prone_costs_dash_and_ended_encounters():
+    hero = _hero("A1")
+    hero["effects"] = [{"kind": "prone"}]
+    combat = {"battlefield": _field(10, 1), "combatants": [hero]}
+    assert not preview_route(combat, "E1")["reachable"]  # crawling: 40 feet
+    assert preview_route(combat, "E1", dash=True)["cost_ft"] == 40
+    assert preview_route(combat, "E1", dash=True)["reachable"]
+    combat["ended"] = True
+    assert not preview_route(combat, "B1")["reachable"]
+
+
+@pytest.mark.parametrize(
+    ("walls", "end", "visible"),
+    [
+        ([(1, 0)], (2, 0), False),
+        ([(1, 0)], (1, 1), True),
+        ([(1, 0), (0, 1)], (1, 1), False),
+        ([(1, 1)], (3, 2), False),
+        ([(1, 2)], (3, 2), True),
+        ([], (0, 4), True),
+    ],
+)
+def test_walls_and_diagonal_corners_block_sight_symmetrically(walls, end, visible):
+    field = _field(5, 5, [{"x": x, "y": y, "kind": WALL} for x, y in walls])
+    assert line_of_sight(field, (0, 0), end) is visible
+    assert line_of_sight(field, end, (0, 0)) is visible
+
+
+def test_crawling_adds_movement_cost_even_in_difficult_terrain():
+    hero = _hero("A1")
+    hero["effects"] = [{"kind": "prone"}]
+    field = _field(3, 1, [{"x": 1, "y": 0, "kind": DIFFICULT}])
+    assert route_to(field, [hero], hero, (1, 0), 30).cost_ft == 15
+    assert route_to(field, [hero], hero, (2, 0), 30).cost_ft == 25
+
+
+def test_fear_prevents_closer_steps_even_without_a_range_band_change():
+    hero = _hero("B1")
+    hero["effects"] = [{"kind": "frightened", "source": "The guard", "source_id": "Guard"}]
+    foe = _at(_brute("Guard", init=1), "H1")
+    combat = {"battlefield": _field(10, 2), "combatants": [hero, foe]}
+    before = deepcopy(combat)
+    preview = preview_route(combat, "D1")  # still beyond melee range
+    assert not preview["reachable"] and "frightened" in preview["reason"]
+    assert preview_route(combat, "A1")["reachable"]
+    assert combat == before
+
+
+def test_self_healing_is_measured_from_the_casters_planned_square():
+    from agent.combat_grid import spell_reach_check
+    from tests.agent.test_spells import CURE_WOUNDS
+
+    hero = _hero("A1")
+    combat = {"battlefield": _field(), "combatants": [hero]}
+    assert spell_reach_check(combat, CURE_WOUNDS, hero, hero, from_square=(5, 0)) is None
+
+
+@pytest.mark.asyncio
+async def test_an_enemy_cannot_shoot_through_a_solid_wall(fake_llm_schema, fake_retrieval):
+    field = _field(6, 3, [{"x": 2, "y": y, "kind": WALL} for y in range(3)])
+    out = await _grid_turn(fake_llm_schema, [_hero("A2"), _at(_archer("Archer", init=1), "F2")],
+                          "I take the dodge action", battlefield=field)
+    assert not out["adjudication_result"].dice_log
+
+
+@pytest.mark.asyncio
+async def test_negated_standing_keeps_prone_crawl_cost(fake_llm_schema, fake_retrieval):
+    hero = _hero("A1")
+    hero["effects"] = [{"kind": "prone"}]
+    out = await _grid_turn(fake_llm_schema, [hero, _at(_brute("Goblin", init=1), "L3")],
+                          "I do not stand up. I move to C1.")
+    assert pos_of(_me(out)) == parse_label("C1")
+    assert any(e["kind"] == "prone" for e in _me(out).get("effects", []))
+    assert "moves 20 feet" in out["adjudication_result"].mechanical_summary
+
+
+@pytest.mark.asyncio
+async def test_wall_refuses_weapon_and_spell_before_roll_or_slot(fake_llm_schema, fake_retrieval):
+    from tests.agent.test_spells import WIZARD
+
+    field = _field(5, 3, [{"x": 2, "y": 1, "kind": WALL}])
+    rows = [_hero("B2"), _at(_brute("Goblin", init=1), "D2")]
+    out = await _grid_turn(
+        fake_llm_schema, deepcopy(rows), "I shoot the goblin with my longbow", battlefield=field
+    )
+    assert "wall blocks" in out["narration"] and not out["adjudication_result"].dice_log
+    out = await _grid_turn(
+        fake_llm_schema,
+        deepcopy(rows),
+        "I cast Magic Missile at the goblin",
+        battlefield=field,
+        character=deepcopy(WIZARD),
+        parsed=ParsedInput(
+            intent="combat",
+            check="spell_attack",
+            target="goblin",
+            entities={"spell": "Magic Missile"},
+        ),
+    )
+    assert "wall blocks" in out["narration"] and not out["adjudication_result"].dice_log
+    assert not out.get("spell_slots_expended")
+
+
+@pytest.mark.asyncio
+async def test_catalog_spell_range_is_refused_before_slot_or_turn(fake_llm_schema, fake_retrieval):
+    from tests.agent.test_spells import WIZARD
+
+    out = await _grid_turn(
+        fake_llm_schema,
+        [_hero("A1"), _at(_brute("Goblin", init=1), "Z1")],
+        "I cast Magic Missile at the goblin",
+        battlefield=_field(26, 1),
+        character=deepcopy(WIZARD),
+        parsed=ParsedInput(
+            intent="combat",
+            check="spell_attack",
+            target="goblin",
+            entities={"spell": "Magic Missile"},
+        ),
+    )
+    assert "120-foot range" in out["narration"]
+    assert not out["adjudication_result"].dice_log and out["combat_state"]["round"] == 1
+
+
+@pytest.mark.asyncio
+async def test_standing_spends_half_speed_and_cannot_reorder_a_crawl(
+    fake_llm_schema, fake_retrieval
+):
+    hero = _hero("A1")
+    hero["effects"] = [{"kind": "prone"}]
+    rows = [hero, _at(_brute("Goblin", init=1), "L3")]
+    out = await _grid_turn(fake_llm_schema, deepcopy(rows), "I stand up and move to D1")
+    assert pos_of(_me(out)) == parse_label("D1")
+    assert not any(e["kind"] == "prone" for e in _me(out).get("effects", []))
+    out = await _grid_turn(fake_llm_schema, deepcopy(rows), "I stand up and move to E1")
+    assert "15 feet left" in out["narration"] and not out["adjudication_result"].dice_log
+    out = await _grid_turn(fake_llm_schema, deepcopy(rows), "I move to B1 then stand up")
+    assert "standing up before moving" in out["narration"]
+    hero["effects"].append({"kind": "grappled"})
+    out = await _grid_turn(fake_llm_schema, rows, "I stand up")
+    assert "speed is zero" in out["narration"] and not out["adjudication_result"].dice_log
 
 
 def test_walking_speed_reads_the_record_and_flyers_use_their_flying_speed() -> None:

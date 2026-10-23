@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent.action_economy import ACTION, SECOND_WIND, Declared
-from agent.battlefield import Route, pos_of
+from agent.battlefield import Route, battlefield_of, pos_of
 from agent.class_features import (
     ACTION_SURGE,
     RAGE,
@@ -32,6 +32,7 @@ from agent.combat_enemy_turns import EnemyTurns
 from agent.combat_grid import (
     attack_reach_check,
     grid_active,
+    grid_fear_refusal,
     hero_budget,
     plan_route,
     project,
@@ -283,11 +284,19 @@ def _start_slot(t: _Turn) -> None:
     # EDG-044c: the hero's reaction comes back at the start of its own turn (PDF p.191). A readied attack
     # not yet triggered lapses here: it was held until the hero's next turn (PDF p.194).
     if player.get("reaction_used"):
-        start_turn(player)  # written only when a reaction was spent, so a plain turn's row keeps its shape
+        start_turn(
+            player
+        )  # written only when a reaction was spent, so a plain turn's row keeps its shape
     if _lapse_readied(player):
         rec.log_lines.append(f"{hero}'s readied attack lapses: its trigger did not occur.")
-    if t.player_acted and decl.standing_up and release_effect(player, "prone"):
-        rec.log_lines.append(f"{hero} stands up and is no longer prone.")
+    if t.player_acted and decl.standing_up and has_effect(player, "prone"):
+        if grid_active(combat_state) and hero_budget(player, dash=False) == 0:
+            rec.log_lines.append(f"{hero} cannot stand up now: speed is zero.")
+        else:
+            if grid_active(combat_state):
+                t.moved_ft += hero_budget(player, dash=False) // 2
+            release_effect(player, "prone")
+            rec.log_lines.append(f"{hero} stands up and is no longer prone.")
     # A rage lasts 1 minute (PHB, PDF p.49), counted from the round it began in.
     if player.get("raging") and (
         int(combat_state.get("round", 1) or 1) - int(player.get("rage_round") or 1) >= RAGE_ROUNDS
@@ -319,14 +328,31 @@ def _bonus_actions(t: _Turn) -> None:
             t.bonus_text = f"{hero} uses Second Wind and regains {restored} HP."
             if restored != sw.amount:
                 t.bonus_text += f" The healing roll was {sw.amount}; maximum HP limits recovery."
-            t.bonus_record = {"action": "second_wind", "result": "used", "recovered": restored, "rolled": sw.amount}
+            t.bonus_record = {
+                "action": "second_wind",
+                "result": "used",
+                "recovered": restored,
+                "rolled": sw.amount,
+            }
             rec.round_effects.append("bonus_action")
-            rec.events.append({
-                "kind": "second_wind", "text": t.bonus_text,
-                "actor_id": stable_id(player),
-            })
+            rec.events.append(
+                {
+                    "kind": "second_wind",
+                    "text": t.bonus_text,
+                    "actor_id": stable_id(player),
+                }
+            )
         log_lines.append(t.bonus_text)
     if t.player_acted and decl.bonus_spell is not None:
+        from agent.combat_grid import spell_reach_check
+
+        if spell_reach_check(
+            combat_state, decl.bonus_spell.spell, player, decl.ally_target or player
+        ):
+            log_lines.append(
+                f"The current positions prevent {decl.bonus_spell.spell.name}; no spell slot is spent."
+            )
+            return
         heal_result = resolve_spell(character, decl.bonus_spell)
         dice_log += heal_result.dice_log
         t.spell_expended = heal_result.expended
@@ -464,9 +490,7 @@ def _grid_moves(t: _Turn, moves: MovePlan, *, disengage: bool, dash: bool, text:
     if isinstance(route, str):
         rec.log_lines.append(f"{rec.hero} cannot make the declared move now: {route.split('. ')[0]}.")
         route = Route(start)
-    probe = MovePlan()
-    project(probe, route, living)
-    if refusal := fear_refusal(rec.hero, player, probe.steps):
+    if refusal := grid_fear_refusal(rec.combat_state, player, route):
         t.runtime_fear_blocked = True
         rec.log_lines.append(f"{refusal.split('. ')[0]}; {rec.hero} holds position.")
         route = Route(start)
@@ -497,6 +521,7 @@ def _grid_reach(t: _Turn) -> None:
         from_square=pos_of(rec.player),  # type: ignore[arg-type]
         weapon_name=weapon.name if decl.combat_action is None else None,
         ranged=decl.attack_ranged and decl.combat_action is None,
+        battlefield=battlefield_of(rec.combat_state),
     )
     t.out_of_reach = refusal is not None
 
@@ -679,6 +704,15 @@ def _catalog_spell(t: _Turn, spell_plan: CastPlan) -> None:
     decl = inp.decl
     spec = spell_plan.spell
     log_lines = rec.log_lines
+    from agent.combat_grid import spell_reach_check
+
+    recipients = [decl.ally_target or player] if spec.kind == "heal" else decl.spell_targets
+    if any(
+        target is not None and spell_reach_check(combat_state, spec, player, target)
+        for target in recipients
+    ):
+        log_lines.append(f"The current positions prevent {spec.name}; no spell slot is spent.")
+        return
     if spec.concentration:
         # Casting a concentration spell ends the caster's earlier one (EDG-043).
         if previous := drop_concentration(player, enemies):
@@ -735,7 +769,9 @@ def _catalog_spell(t: _Turn, spell_plan: CastPlan) -> None:
             dealt, resist_note = adjust_monster_damage(
                 spell_target, spell_result.damage, spell_type, magical=True
             )
-            status = _strike(spell_target, dealt, inp.parsed, inp.player_input, damage_type=spell_type)
+            status = _strike(
+                spell_target, dealt, inp.parsed, inp.player_input, damage_type=spell_type
+            )
             inp.turns.monster_concentration_damage(spell_target, dealt)
             extra_outcome = f"{extra_outcome}{resist_note} {status}"
         if spell_target is not None and spell_result.attack is not None:

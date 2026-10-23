@@ -26,9 +26,11 @@ from agent.battlefield import (
     distance_ft,
     in_bounds,
     label,
+    line_of_sight,
     melee_reach_ft,
     move_along,
     occupies,
+    parse_label,
     pos_of,
     provocations,
     route_away,
@@ -41,7 +43,7 @@ from agent.battlefield import (
     weapon_range_ft,
     weapon_reach_ft,
 )
-from agent.combatants import can_act, is_standing, stable_id
+from agent.combatants import can_act, has_effect, is_standing, stable_id
 from agent.monster_stats import MonsterAttack, attack_plan, stats_of
 from agent.positioning import MELEE, MELEE_FEET, RANGED, MovePlan
 
@@ -49,6 +51,65 @@ from agent.positioning import MELEE, MELEE_FEET, RANGED, MovePlan
 def grid_active(combat_state: Mapping[str, Any] | None) -> bool:
     """True when the encounter has a battlefield (encounters stored before the grid keep bands)."""
     return battlefield_of(combat_state) is not None
+
+
+def preview_route(combat_state: dict, destination: str, *, dash: bool = False) -> dict:
+    """A pure preview using the exact movement planner; it spends nothing."""
+    from agent.party_combat import holder_row
+
+    battlefield = battlefield_of(combat_state)
+    hero = holder_row(combat_state) or next(
+        (row for row in combat_state.get("combatants", []) if row.get("is_player")), None
+    )
+    square = parse_label(destination)
+    if battlefield is None or hero is None or pos_of(hero) is None or square is None:
+        raise ValueError("This encounter has no tactical route to preview.")
+    foes = [row for row in combat_state.get("combatants", []) if not row.get("is_player")]
+    budget = hero_budget(hero, dash=dash)
+    plan = MovePlan()
+    route = plan_route(
+        combat_state,
+        hero,
+        f"I move to {label(square)}",
+        plan,
+        foes,
+        budget_ft=budget,
+        hero_name=str(hero.get("display_name") or hero["name"]),
+        dash=dash,
+    )
+    reason = route if isinstance(route, str) else None
+    if not reason and isinstance(route, Route):
+        project(plan, route, foes)
+        reason = grid_fear_refusal(combat_state, hero, route)
+    reachable = not reason and not combat_state.get("ended") and can_act(hero)
+    return {
+        "destination": label(square),
+        "budget_ft": budget,
+        "dash": dash,
+        "reachable": bool(reachable),
+        "reason": reason or (None if reachable else "This hero cannot move now."),
+        "path": [
+            {"x": p[0], "y": p[1], "label": label(p)}
+            for p in ([route.start, *route.squares] if isinstance(route, Route) else [])
+        ],
+        "cost_ft": route.cost_ft if isinstance(route, Route) else None,
+        "provokes": list(
+            dict.fromkeys(
+                str(foe.get("display_name") or foe["name"])
+                for _, foe in provocations(
+                    combat_state["combatants"],
+                    hero,
+                    route,
+                    battlefield=battlefield,
+                    can_react=lambda foe: (
+                        can_act(foe) and not foe.get("reaction_used") and not foe.get("surprised")
+                    ),
+                )
+            )
+        )
+        if isinstance(route, Route)
+        else [],
+    }
 
 
 def ensure_positions(combat_state: dict) -> None:
@@ -76,9 +137,29 @@ def ensure_positions(combat_state: dict) -> None:
                 break
 
 
-def hero_budget(hero: Mapping[str, Any], *, dash: bool) -> int:
+def hero_budget(hero: Mapping[str, Any], *, dash: bool, standing_up: bool = False) -> int:
     """The hero's movement this turn: its speed, doubled by Dash (PHB p.192)."""
-    return speed_of(hero) * (2 if dash else 1)
+    cost = speed_of(hero) // 2 if standing_up and has_effect(hero, "prone") else 0
+    return max(0, speed_of(hero) * (2 if dash else 1) - cost)
+
+
+def grid_fear_refusal(combat_state, hero, route):
+    """A frightened hero cannot willingly take a step closer to the fear source."""
+    fear = next((effect for effect in hero.get("effects", [])
+                 if effect.get("kind") == "frightened" and not effect.get("source_defeated")), None)
+    if fear is None:
+        return None
+    source = next((row for row in combat_state.get("combatants", [])
+                   if stable_id(row) == str(fear.get("source_id") or fear.get("source"))), None)
+    if source is None or pos_of(source) is None:
+        return None
+    path = [route.start, *route.squares]
+    if any(distance_ft(after, pos_of(source)) < distance_ft(before, pos_of(source))
+           for before, after in zip(path, path[1:], strict=False)):
+        name = hero.get("display_name") or hero["name"]
+        threat = source.get("display_name") or source["name"]
+        return f"{name} is frightened of {threat} and cannot willingly move closer to it. Choose another move: no roll is made and no turn is spent."
+    return None
 
 
 def plan_route(
@@ -92,6 +173,7 @@ def plan_route(
     hero_name: str,
     dash: bool,
     start: tuple[int, int] | None = None,
+    standing_up: bool = False,
 ) -> Route | str:
     """The hero's route for the moves the text declares, in the order stated, or the refusal.
 
@@ -104,6 +186,15 @@ def plan_route(
     if battlefield is None or origin is None:
         return Route(origin or (0, 0))
     combatants = list(combat_state.get("combatants") or [])
+    if standing_up and has_effect(hero, "prone"):
+        from copy import deepcopy
+
+        from agent.combatants import release_effect
+
+        upright = deepcopy(hero)
+        release_effect(upright, "prone")
+        combatants = [upright if row is hero else row for row in combatants]
+        hero = upright
     legs: list[tuple[int, tuple[Any, ...]]] = [
         (pos, ("leg", band, target, feet)) for band, target, feet, pos in plan.legs
     ]
@@ -196,6 +287,7 @@ def attack_reach_check(
     from_square: tuple[int, int],
     weapon_name: str | None,
     ranged: bool,
+    battlefield: Mapping[str, Any] | None = None,
 ) -> tuple[str | None, bool]:
     """(refusal or None, long range) for the hero's weapon attack from `from_square`.
 
@@ -207,6 +299,11 @@ def attack_reach_check(
         return None, False
     gap = distance_ft(from_square, at)
     name = str(target.get("name") or "the foe")
+    if battlefield is not None and not line_of_sight(battlefield, from_square, at):
+        return (
+            f"A wall blocks the attack on {name}. Choose a clear line: no roll is made and no turn is spent.",
+            False,
+        )
     if not ranged:
         reach = weapon_reach_ft(weapon_name)
         if gap > reach:
@@ -227,6 +324,23 @@ def attack_reach_check(
     return None, gap > span[0]
 
 
+def spell_reach_check(combat_state, spec, caster, target, *, from_square=None):
+    """Exact catalogue range and a clear path apply before resources or dice."""
+    from agent.spells import SPELL_RANGES
+
+    battlefield = battlefield_of(combat_state)
+    origin = from_square or pos_of(caster)
+    destination = origin if caster is target else pos_of(target)
+    if battlefield is None or origin is None or destination is None:
+        return None
+    maximum = SPELL_RANGES[spec.name]
+    if distance_ft(origin, destination) > maximum:
+        return f"{target['name']} is beyond the {maximum}-foot range of {spec.name}. Move closer first; no spell slot or turn is spent."
+    if not line_of_sight(battlefield, origin, destination):
+        return f"A wall blocks {spec.name} from reaching {target['name']}. Choose a clear line; no spell slot or turn is spent."
+    return None
+
+
 def walk_hero(turns: Any, route: Route, *, disengage: bool) -> Route:
     """Move the hero along its route. Each foe whose reach it leaves may make its opportunity attack
     (PHB p.195), unless the hero took Disengage. A hero dropped by one stops where it was hit.
@@ -244,6 +358,7 @@ def walk_hero(turns: Any, route: Route, *, disengage: bool) -> Route:
             combatants,
             hero,
             route,
+            battlefield=battlefield_of(rec.combat_state),
             can_react=lambda f: (
                 can_act(f) and not f.get("surprised") and not f.get("reaction_used")
             ),
@@ -310,26 +425,35 @@ def position_foe(turns: Any, e: dict) -> bool:
     has_melee = stats is None or any(not a.ranged for a in plan)
     ranged = _ranged_attacks(plan)
     gap = distance_ft(pos_of(e), target)  # type: ignore[arg-type]
-    if has_melee and gap <= reach:
+    sight = line_of_sight(battlefield, pos_of(e), target)
+    if has_melee and gap <= reach and sight:
         return True
     speed = speed_of(e)
     combatants = rec.combatants
     was_ranged = gap > MELEE_FEET
     if ranged:
         spans = [a.range_ft for a in ranged]
-        if any(span is None for span in spans):
+        if any(span is None for span in spans) and sight:
             return True  # a range the record does not state is not limited
-        normal = max(span[0] for span in spans if span is not None)
-        if gap <= normal:
+        normal = max((span[0] for span in spans if span is not None), default=gap)
+        if gap <= normal and sight:
             return True
-        route = route_toward(battlefield, combatants, e, target, speed, within_ft=normal)
+        route = route_toward(
+            battlefield, combatants, e, target, speed, within_ft=normal, require_sight=True
+        )
         _walk_foe(rec, e, route, was_ranged=was_ranged, turns=turns)
         return True
-    route = route_toward(battlefield, combatants, e, target, speed, within_ft=reach)
-    if distance_ft(route.destination, target) <= reach:
+    route = route_toward(
+        battlefield, combatants, e, target, speed, within_ft=reach, require_sight=True
+    )
+    if distance_ft(route.destination, target) <= reach and line_of_sight(
+        battlefield, route.destination, target
+    ):
         _walk_foe(rec, e, route, was_ranged=was_ranged, turns=turns)
         return True
-    dash = route_toward(battlefield, combatants, e, target, speed * 2, within_ft=reach)
+    dash = route_toward(
+        battlefield, combatants, e, target, speed * 2, within_ft=reach, require_sight=True
+    )
     _walk_foe(rec, e, dash, was_ranged=was_ranged, turns=turns, dash=True)
     # A Dash that still reaches is the same as walking: it spends the action, so no attack follows.
     rec.log_lines.append(f"{e['name']} takes the Dash action and makes no attack this turn.")
@@ -352,7 +476,10 @@ def _walk_foe(
 
 
 def foe_attack_range(
-    e: Mapping[str, Any], hero: Mapping[str, Any], attack: MonsterAttack
+    e: Mapping[str, Any],
+    hero: Mapping[str, Any],
+    attack: MonsterAttack,
+    battlefield: Mapping[str, Any] | None = None,
 ) -> tuple[bool, bool]:
     """(in range, long range) for one of a foe's attacks against the hero on the grid.
 
@@ -360,8 +487,12 @@ def foe_attack_range(
     range, at disadvantage beyond its normal range. Off the grid every attack is in range.
     """
     here, there = pos_of(e), pos_of(hero)
-    if here is None or there is None or attack.save is not None:
+    if here is None or there is None:
         return True, False
+    if battlefield is not None and not line_of_sight(battlefield, here, there):
+        return False, False
+    if attack.save is not None:
+        return (attack.range_ft is None or distance_ft(here, there) <= attack.range_ft[1]), False
     gap = distance_ft(here, there)
     if not attack.ranged:
         return gap <= int(attack.reach_ft or MELEE_FEET), False

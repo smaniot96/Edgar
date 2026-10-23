@@ -226,6 +226,36 @@ def terrain_at(battlefield: Mapping[str, Any], square: Square) -> dict | None:
     )
 
 
+def line_of_sight(battlefield: Mapping[str, Any], start: Square, end: Square) -> bool:
+    """Trace square centres through solid walls, including a blocked diagonal corner.
+
+    Integer comparisons avoid floating-point gaps. A corner touching one wall can
+    be seen around; two walls meeting at the corner block the ray.
+    """
+    walls = _walls(battlefield)
+    if not in_bounds(battlefield, start) or not in_bounds(battlefield, end):
+        return False
+    x, y = start
+    dx, dy = abs(end[0] - x), abs(end[1] - y)
+    sx, sy = (1 if end[0] > x else -1), (1 if end[1] > y else -1)
+    ix = iy = 0
+    while True:
+        if (x, y) in walls:
+            return False
+        if (x, y) == end:
+            return True
+        horizontal = (2 * ix + 1) * dy
+        vertical = (2 * iy + 1) * dx
+        if horizontal == vertical:
+            if (x + sx, y) in walls and (x, y + sy) in walls:
+                return False
+            x, y, ix, iy = x + sx, y + sy, ix + 1, iy + 1
+        elif horizontal < vertical:
+            x, ix = x + sx, ix + 1
+        else:
+            y, iy = y + sy, iy + 1
+
+
 def _walls(battlefield: Mapping[str, Any]) -> set[Square]:
     return {
         (int(t["x"]), int(t["y"]))
@@ -394,6 +424,8 @@ def reachable(
             if dx and dy and (x + dx, y) in walls and (x, y + dy) in walls:
                 continue  # no squeezing diagonally between two walls
             step = SQUARE_FT * 2 if (nxt in difficult or nxt in ally_squares) else SQUARE_FT
+            if has_effect(mover, "prone"):
+                step += SQUARE_FT  # Crawling adds one foot per foot, also in difficult terrain.
             total = cost + step
             if total > budget_ft or total >= costs.get(nxt, 1 << 30):
                 continue
@@ -432,6 +464,7 @@ def route_toward(
     *,
     within_ft: int = MELEE_FEET,
     start: Square | None = None,
+    require_sight: bool = False,
 ) -> Route:
     """Move toward `target`: the cheapest square within `within_ft` of it, else the nearest one.
 
@@ -439,11 +472,18 @@ def route_toward(
     """
     origin = start or pos_of(mover)
     assert origin is not None
-    if distance_ft(origin, target) <= within_ft:
+    if distance_ft(origin, target) <= within_ft and (
+        not require_sight or line_of_sight(battlefield, origin, target)
+    ):
         return Route(origin)
     reach = reachable(battlefield, combatants, mover, budget_ft, start=origin)
     options = [sq for sq in reach.stoppable if sq != target]
-    close = [sq for sq in options if distance_ft(sq, target) <= within_ft]
+    close = [
+        sq
+        for sq in options
+        if distance_ft(sq, target) <= within_ft
+        and (not require_sight or line_of_sight(battlefield, sq, target))
+    ]
     if close:
         best = min(
             close, key=lambda sq: (reach.costs[sq], distance_squares(sq, target), sq[1], sq[0])
@@ -496,6 +536,7 @@ def provocations(
     route: Route,
     *,
     can_react: Any,
+    battlefield: Mapping[str, Any] | None = None,
 ) -> list[tuple[int, dict]]:
     """Who gets an opportunity attack along a route: (index of the square the mover is leaving, foe).
 
@@ -511,7 +552,9 @@ def provocations(
         at = pos_of(c)
         reach = melee_reach_ft(c)
         for index in range(len(path) - 1):
-            if distance_ft(path[index], at) <= reach < distance_ft(path[index + 1], at):
+            if distance_ft(path[index], at) <= reach < distance_ft(path[index + 1], at) and (
+                battlefield is None or line_of_sight(battlefield, at, path[index])
+            ):
                 if id(c) not in seen:
                     seen.add(id(c))
                     out.append((index, c))  # type: ignore[arg-type]

@@ -20,6 +20,7 @@ from edgar_core.identifiers import Identifier
 from .compile import chapter_source_pages, validate_semantics
 from .profile_references import (
     PROFILE_REFERENCE_POLICY,
+    PROFILE_VALIDATION_POLICY,
     ProfileCorrectionRejected,
     profile_reference_defects,
     reconcile_profile_pages,
@@ -37,6 +38,10 @@ from .store import NeedsAttention, digest
 FIELDS = {"goals": "goal", "events": "event", "new_entities": "entity", "new_secrets": "secret"}
 RECOVERY_POLICY = "sparse-reference-joins-retain-content-5"
 REFERENCE_RESIDUAL_POLICY = "scoped-retained-reference-residuals-1"
+
+
+class StructuralCorrectionRejected(NeedsAttention):
+    """A retained correction failed validation; its paid candidate remains saved."""
 
 
 class ScalarJoin(Record):
@@ -895,8 +900,9 @@ async def repair_structure(workflow):
         )
         and not (secret_refs and prior.get("secret_reference_policy") != SECRET_REFERENCE_POLICY)
         and not (profile_refs and prior.get("profile_reference_policy") != PROFILE_REFERENCE_POLICY)
+        and not (profile_refs and prior.get("profile_validation_policy") != PROFILE_VALIDATION_POLICY)
     ):
-        raise NeedsAttention(
+        raise StructuralCorrectionRejected(
             "Retained structural repair needs attention; unchanged defects were not resubmitted: "
             + prior["error"]
         )
@@ -915,6 +921,7 @@ async def repair_structure(workflow):
         "reference_residual_policy": REFERENCE_RESIDUAL_POLICY,
         "secret_reference_policy": SECRET_REFERENCE_POLICY,
         "profile_reference_policy": PROFILE_REFERENCE_POLICY,
+        "profile_validation_policy": PROFILE_VALIDATION_POLICY,
         "reference_residuals": deepcopy(prior.get("reference_residuals", [])),
     }
     store.put(history_key, history)
@@ -1056,7 +1063,7 @@ async def repair_structure(workflow):
             raise
         history.update(state="rejected", error=str(exc))
         store.put(history_key, history)
-        raise NeedsAttention("Retained structural repair was rejected: " + str(exc)) from exc
+        raise StructuralCorrectionRejected("Retained structural repair was rejected: " + str(exc)) from exc
     history.update(state="accepted", candidate=candidate, result_sha256=digest(candidate))
     store.put(history_key, history)
     original_events = {

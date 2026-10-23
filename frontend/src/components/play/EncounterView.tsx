@@ -3,11 +3,14 @@ import type { CombatState } from "../../api/types";
 import { orderCombatants, type HudCombatant } from "./gameState";
 import { HpBar } from "../ui/HpBar";
 import { EncounterDanger } from "./CombatHud";
+import { TacticalGrid } from "./TacticalGrid";
 
 /** A schematic of engine-owned engagements. Card layout conveys no geometry or scale. */
-export function EncounterView({ combat, onSelectTarget }: {
+export function EncounterView({ combat, onSelectTarget, sessionId, onPrepareMove }: {
   combat: CombatState;
   onSelectTarget?: (name: string) => void;
+  sessionId?: number;
+  onPrepareMove?: (text: string) => void;
 }) {
   const rows = orderCombatants(combat);
   const visibleNonparticipants = combat.participants?.filter((participant) => participant.participation === "visible_nonparticipant") ?? [];
@@ -22,9 +25,10 @@ export function EncounterView({ combat, onSelectTarget }: {
   return <section aria-label="Encounter schematic" className="space-y-4 overflow-y-auto p-4 text-sm">
     <div>
       <h3 className="font-display text-lg font-semibold">Round {combat.round} · {combat.ended ? "Encounter ended" : "Current engagement"}</h3>
-      <p className="mt-1 text-xs text-ink-muted">Schematic, not to scale. Positions show each foe’s engagement with the hero. Card spacing does not represent distance, terrain, or cover.</p>
+      {!combat.battlefield ? <p className="mt-1 text-xs text-ink-muted">Schematic, not to scale. Positions show each foe’s engagement with the hero. Card spacing does not represent distance, terrain, or cover.</p> : null}
     </div>
     <EncounterDanger combat={combat} />
+    {combat.battlefield ? <TacticalGrid combat={combat} sessionId={sessionId} onPrepareMove={onPrepareMove} onInspect={(id) => setSelectedId(rows.find((row) => row.key === id || row.name === id)?.key ?? null)} /> : null}
     {groups.filter((group) => group.rows.length).map((group) => <section key={group.label} aria-label={group.label}>
       <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">{group.label}</h4>
       <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">

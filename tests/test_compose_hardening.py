@@ -35,7 +35,7 @@ PROVIDER = {
     "EMBEDDING_MODEL",
     "MODEL_PROFILES_PATH",
 }
-RETRIEVAL = {"QDRANT_PORT"}
+RETRIEVAL = {"QDRANT_PORT", "EDGAR_SOURCE_PDF_DIR"}
 NEW_API_SETTINGS = (
     "EDGAR_MEMORY_SUMMARY_CONCURRENCY",
     "EDGAR_ALLOWED_ORIGINS",
@@ -63,14 +63,13 @@ LIMIT_SETTINGS = (
 )
 
 API_ONLY = {
+    "EDGAR_COMBAT_GRID",
     "ENV",
     "REDIS_PORT",
     "EDGAR_DEBUG",
     "EDGAR_METRICS_ENABLED",
     "EDGAR_METRICS_TOKEN",
-    "EDGAR_TRUSTED_IMAGE_PRICE_RECORD",
     "EDGAR_VISUAL_REVIEW_PUBLIC_KEY",
-    "EDGAR_VISUAL_REVIEW_PRIVATE_KEY",
     *LIMIT_SETTINGS,
     *NEW_API_SETTINGS,
 }
@@ -99,7 +98,6 @@ SECRET_SCOPE = {
     "VECTOR_DB_API_KEY": {"api", "ingestion", "rules_engine"},
     "POSTGRES_PASSWORD": {"api", "migrate", "db"},
     "EDGAR_METRICS_TOKEN": {"api"},
-    "EDGAR_VISUAL_REVIEW_PRIVATE_KEY": {"api"},
 }
 
 # Names only the hosting profile may add. They must not appear in the default files.
@@ -122,14 +120,13 @@ DATASTORE_SERVICES = ("db", "redis", "qdrant")
 
 # Names whose interpolated default is empty. Code must treat an empty value as unset.
 EMPTY_DEFAULT_OK = {
+    "EDGAR_SOURCE_PDF_DIR",
     "OPENAI_API_KEY",
     "VECTOR_DB_API_KEY",
     "MODEL_PROFILES_PATH",
     "EDGAR_METRICS_ENABLED",
     "EDGAR_METRICS_TOKEN",
-    "EDGAR_TRUSTED_IMAGE_PRICE_RECORD",
     "EDGAR_VISUAL_REVIEW_PUBLIC_KEY",
-    "EDGAR_VISUAL_REVIEW_PRIVATE_KEY",
     # `_int_setting` treats an empty value as unset and falls back to its code default.
     *LIMIT_SETTINGS,
     *NEW_API_SETTINGS,

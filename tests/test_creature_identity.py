@@ -112,7 +112,7 @@ def test_edition_and_source_are_part_of_identity_and_ambiguity_fails(index):
     assert first["creature_id"] != second["creature_id"]
     assert second["source_sha256"] == "a" * 64
     put(index, [stat("Goblin"), stat("Goblin", source="other_mm", hp=20)])
-    with pytest.raises(CreatureResolutionError, match="unique"):
+    with pytest.raises(CreatureResolutionError, match="identity unresolved"):
         resolve_creature("Goblin", client=index)
 
 
@@ -149,7 +149,7 @@ def test_new_encounters_require_explicit_edition_and_verified_provenance(index):
     with pytest.raises(CreatureResolutionError, match="provenance"):
         resolve_creature("Goblin", client=index)
     put(index, [stat("Goblin", edition="unspecified")])
-    with pytest.raises(CreatureResolutionError, match="unique"):
+    with pytest.raises(CreatureResolutionError, match="identity unresolved"):
         resolve_creature("Goblin", client=index)
 
 
@@ -347,7 +347,7 @@ def test_template_wrong_source_checksum_and_future_actor_cannot_use_generic_reco
         "rules_edition": "2014",
     }
     manifest, _ = actor_manifest(reference)
-    with pytest.raises(CreatureResolutionError, match="unique"):
+    with pytest.raises(CreatureResolutionError, match="identity unresolved"):
         resolve_creature(
             "Captain Ash",
             client=index,

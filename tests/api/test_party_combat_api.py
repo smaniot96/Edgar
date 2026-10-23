@@ -147,6 +147,42 @@ async def _events(redis, table, after: int = 0) -> list[tuple[int, dict]]:
 
 
 @pytest.mark.asyncio
+async def test_route_preview_restores_holder_geometry_without_writing_a_turn(api_client, seated):
+    combat_id = await _seed_fight(seated)
+    async with db_session_module.async_session_factory() as db:
+        row = await db.get(CombatState, combat_id)
+        row.battlefield = {"version": 1, "width": 10, "height": 3, "theme": "open", "terrain": []}
+        row.combatants = [{**c, "pos": [index * 3, 1]} for index, c in enumerate(row.combatants)]
+        await db.commit()
+    before = await _fight(combat_id)
+    holder = await _holder(seated)
+    path = f"/api/sessions/{seated['save_id']}/combat/route?destination=B2"
+    result = await api_client.get(path, headers=_auth(seated["tokens"]["alice"]))
+    assert result.status_code == 200, result.text
+    assert result.json()["reachable"] and result.json()["cost_ft"] == 5
+    assert result.json()["path"][0]["label"] == "A2"
+    assert "character_id" not in result.text and "source_sha256" not in result.text
+    denied = await api_client.get(path, headers=_auth(seated["tokens"]["dan"]))
+    assert denied.status_code in (403, 404)
+    after = await _fight(combat_id)
+    assert (after.combatants, after.round, after.battlefield) == (
+        before.combatants,
+        before.round,
+        before.battlefield,
+    )
+    assert await _narrations(seated) == 0 and await _holder(seated) == holder
+
+
+@pytest.mark.asyncio
+async def test_route_preview_holds_legacy_and_missing_encounters(api_client, seated):
+    path = f"/api/sessions/{seated['save_id']}/combat/route?destination=B2"
+    headers = _auth(seated["tokens"]["alice"])
+    assert (await api_client.get(path, headers=headers)).status_code == 409
+    await _seed_fight(seated)
+    assert (await api_client.get(path, headers=headers)).status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_a_hero_out_of_turn_gets_409_and_nothing_changes(api_client, seated, redis_client):
     combat_id = await _seed_fight(seated)
     before = await _fight(combat_id)

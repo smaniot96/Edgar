@@ -4,6 +4,7 @@ Each foe's start-of-turn features, attacks, spells, reactions, legendary and lai
 conditions that end with its turn. Dice are rolled here through `tools.dice` in the same order as
 before the split, so seeded rounds are unchanged. The round's shared state is `RoundRecord`.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from agent.action_economy import (
     ACTION,
     BONUS_ACTION,
 )
+from agent.battlefield import battlefield_of
 from agent.class_features import (
     rage_resists,
 )
@@ -191,7 +193,6 @@ class EnemyTurns:
                 f"{_display(caster)} keeps concentration on {concentration.get('spell')} "
                 f"(rolled {outcome.total} vs DC {dc})."
             )
-
 
     def note_actor(self, e: dict) -> None:
         self.rec.round_actors.append(_display(e))
@@ -432,6 +433,12 @@ class EnemyTurns:
             spec = catalog_spell(name)
             if spec is None or spec.level != level or spec.action != action_cost:
                 continue
+            from agent.combat_grid import spell_reach_check
+
+            if spell_reach_check(
+                self.rec.combat_state, spec, e, e if spec.kind == "heal" else self.rec.player
+            ):
+                continue
             if spec.condition and has_effect(self.rec.player, spec.condition):
                 continue
             if spec.humanoid_only and not self.rec.player.get("humanoid", True):
@@ -449,7 +456,9 @@ class EnemyTurns:
             candidates.append((priority, level, spec))
         if not candidates:
             return None
-        _priority, level, chosen = max(candidates, key=lambda candidate: (candidate[0], candidate[1]))
+        _priority, level, chosen = max(
+            candidates, key=lambda candidate: (candidate[0], candidate[1])
+        )
         if level:
             spent[str(level)] = int(spent.get(str(level), 0) or 0) + 1
         return chosen, level
@@ -672,18 +681,23 @@ class EnemyTurns:
         melee attack reaches the hero, else its ranged attacks in range; an attack out of range is not
         made (`combat_grid.foe_attack_range`)."""
         plan = attack_plan(stats, spent=e.get("recharge_spent") or ())
-        in_range = [a for a in plan if foe_attack_range(e, self.rec.player, a)[0]]
+        from agent.battlefield import battlefield_of
+
+        field = battlefield_of(self.rec.combat_state)
+        in_range = [a for a in plan if foe_attack_range(e, self.rec.player, a, field)[0]]
         if any(not a.ranged for a in in_range):
             plan = tuple(a for a in in_range if not a.ranged or a.save)
         else:
             plan = tuple(a for a in in_range if a.ranged)
         if not plan:
-            self.rec.log_lines.append(f"{e['name']} has no attack that reaches {self.rec.hero} and takes no action.")
+            self.rec.log_lines.append(
+                f"{e['name']} has no attack that reaches {self.rec.hero} and takes no action."
+            )
         for attack in plan:
             if self.rec.hp <= 0 and not self._retarget(e):
                 break
             bands_for(self.rec.combat_state, self.rec.player)
-            if not foe_attack_range(e, self.rec.player, attack)[0]:
+            if not foe_attack_range(e, self.rec.player, attack, field)[0]:
                 continue  # a retargeted hero out of this attack's reach
             self.exact_attack(e, attack, band_of(e))
             spend_recharge(e, attack)
@@ -743,7 +757,13 @@ class EnemyTurns:
     def legendary_action(self, e: dict) -> None:
         """Use at most one option at the end of this other creature's turn (MM, PDF p.12)."""
         stats = stats_of(e)
-        if not self._anyone_standing() or stats is None or not stats.legendary or not can_act(e) or e.get("surprised"):
+        if (
+            not self._anyone_standing()
+            or stats is None
+            or not stats.legendary
+            or not can_act(e)
+            or e.get("surprised")
+        ):
             return
         if self.party is not None and self.rec.hp <= 0 and not self.party.retarget(e, self):
             return
@@ -755,7 +775,13 @@ class EnemyTurns:
             (
                 o
                 for o in legendary_plan(stats, left)
-                if (foe_attack_range(e, self.rec.player, o.attack)[0] if grid else attacks_from_band([o.attack], band))
+                if (
+                    foe_attack_range(
+                        e, self.rec.player, o.attack, battlefield_of(self.rec.combat_state)
+                    )[0]
+                    if grid
+                    else attacks_from_band([o.attack], band)
+                )
             ),
             None,
         )
@@ -841,7 +867,6 @@ class EnemyTurns:
         for e in self.rec.enemies:
             if e is not actor:
                 self.legendary_action(e)
-
 
     def lair_boundary(self) -> None:
         if self.rec.lair_done:

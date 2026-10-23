@@ -344,6 +344,27 @@ async def get_session_combat(
     return combat_state_public(await load_active_combat(db, session_id))
 
 
+@router.get("/sessions/{session_id}/combat/route")
+async def preview_combat_route(
+    session_id: int,
+    auth: Auth,
+    destination: str = Query(pattern=r"^[A-Za-z]{1,2}[1-9][0-9]{0,2}$"),
+    dash: bool = False,
+    db: AsyncSession = Depends(get_session),
+):
+    """Read-only geometry preview, with no model call or turn mutation."""
+    from agent.combat_grid import preview_route
+
+    await member_session(db, session_id, auth)
+    combat = await load_active_combat(db, session_id)
+    if combat is None:
+        raise HTTPException(409, "There is no active encounter to preview.")
+    try:
+        return preview_route(combat, destination, dash=dash)
+    except ValueError as exc:
+        raise HTTPException(409, "This encounter has no tactical route to preview.") from exc
+
+
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageRead])
 async def list_session_messages(
     session_id: int, auth: Auth, db: AsyncSession = Depends(get_session)

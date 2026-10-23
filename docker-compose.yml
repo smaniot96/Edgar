@@ -68,6 +68,7 @@ services:
       - "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}"
       - "POSTGRES_DB=${POSTGRES_DB:-dnd}"
       - "REDIS_PORT=${REDIS_PORT:-6379}"
+      - "EDGAR_SOURCE_PDF_DIR=${EDGAR_SOURCE_PDF_DIR:-}"
       - "QDRANT_PORT=${QDRANT_PORT:-6333}"
       # The API validates the provider key at startup and calls the model and embedding APIs.
       - "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
@@ -103,9 +104,7 @@ services:
       - "LIMIT_UNBUDGETED_JOB_COST_MICROUSD=${LIMIT_UNBUDGETED_JOB_COST_MICROUSD:-}"
       - "LIMIT_TURN_LEASE_SECONDS=${LIMIT_TURN_LEASE_SECONDS:-}"
       - "LIMIT_JOB_LEASE_SECONDS=${LIMIT_JOB_LEASE_SECONDS:-}"
-      - "EDGAR_TRUSTED_IMAGE_PRICE_RECORD=${EDGAR_TRUSTED_IMAGE_PRICE_RECORD:-}"
       - "EDGAR_VISUAL_REVIEW_PUBLIC_KEY=${EDGAR_VISUAL_REVIEW_PUBLIC_KEY:-}"
-      - "EDGAR_VISUAL_REVIEW_PRIVATE_KEY=${EDGAR_VISUAL_REVIEW_PRIVATE_KEY:-}"
     # Localhost only: the API has no authentication yet, so don't expose it to the network.
     ports:
       - "127.0.0.1:8000:8000"
@@ -152,6 +151,7 @@ services:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
       - EDGAR_INDEX_LOCK_DIR=/index-locks
+      - "EDGAR_SOURCE_PDF_DIR=${EDGAR_SOURCE_PDF_DIR:-}"
       - "QDRANT_PORT=${QDRANT_PORT:-6333}"
       - "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
       - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:-}"
@@ -189,6 +189,7 @@ services:
       - DB_HOST=db
       - QDRANT_HOST=qdrant
       - EDGAR_INDEX_LOCK_DIR=/index-locks
+      - "EDGAR_SOURCE_PDF_DIR=${EDGAR_SOURCE_PDF_DIR:-}"
       - "QDRANT_PORT=${QDRANT_PORT:-6333}"
       - "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
       - "VECTOR_DB_API_KEY=${VECTOR_DB_API_KEY:-}"

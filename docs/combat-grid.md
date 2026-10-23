@@ -1,6 +1,6 @@
-# Experimental combat-grid backend
+# Experimental combat grid
 
-The backend can persist an encounter battlefield, resolve typed square moves and expose positions in the existing combat API and turn stream. It is **disabled by default**. The current frontend still presents the range-band encounter view; there is no clickable tactical grid.
+The engine persists an encounter battlefield, resolves typed square moves and exposes positions in the combat API and turn stream. The encounter panel displays a clickable tactical grid when that encounter has a battlefield. Grid creation is **disabled by default** pending a live campaign acceptance run.
 
 Set `EDGAR_COMBAT_GRID=1` in the API process environment to opt newly opened encounters into this experiment. The default is `0`. Existing encounters without a `battlefield` keep their range-band rules. Once an encounter has a persisted battlefield, it keeps grid rules across reloads and configuration changes. Restarting with the flag off only changes future encounter creation. Run migrations before using the new application revision: migration `24_combat_battlefield` adds a nullable JSONB column and leaves existing rows null.
 
@@ -11,16 +11,18 @@ The implemented subset includes:
 - Five-foot diagonals; walls block movement; difficult terrain and allies cost double movement. Creatures cannot end on another occupied square or pass through a hostile square.
 - Typed moves such as `I move to D4`, moves toward a named foe and retreats. Multiple moves consume one shared route budget. A move before and after an attack is clarified instead of silently reordered; supported conditional moves use the remaining budget.
 - Thirty-foot hero speed, recorded monster speed and Dash. Grappled, restrained, stunned and paralyzed creatures have zero movement. Routes are checked before confirmation/dice and replanned when the hero acts because earlier combatants may have moved.
+- Prone crawling costs an extra five feet per square, including difficult terrain. Standing costs half speed, shares the movement budget and requires nonzero speed. Declare standing before moving; moving and then standing is clarified rather than reordered. Frightened heroes cannot take a route step closer to the recorded fear source, even when both squares remain in the ranged band.
 - Weapon melee reach and normal/long ranged distances. Long range imposes disadvantage; an out-of-range attack is refused before dice. Maneuvers use five-foot reach even when the equipped weapon has reach.
+- Solid-wall line of sight for weapon attacks, catalog spells, enemy attacks and legendary attacks. Two walls meeting at a diagonal corner block sight. Recorded save-action ranges and the catalog spell ranges are checked before rolls or slot expenditure; spell areas remain outside this subset.
 - Enemy movement toward its chosen hero, melee Dash without an attack when normal movement cannot reach, and movement-triggered enemy opportunity attacks. Disengage applies in the player's declared order. Grid movements join the existing round-event history.
 - Persisted terrain and creature positions, including insert/update and a fresh database-session reload. Bands remain a projection of squares for older combat consumers.
+- Empty-square selection calls the authenticated, read-only `GET /api/sessions/{session_id}/combat/route?destination=D4&dash=false`. It uses the engine route planner and reports path, cost, budget, refusal and public opportunity-attack labels. It does not submit a turn or call a model. “Add move to draft” explicitly prepares the move in the composer; normal turn validation still applies. A changed combat snapshot invalidates the old preview immediately.
 
 The experiment is not listed as a generally supported preparation capability. These limits require further work and live acceptance before default activation:
 
-- No grid UI, square-selection controls or path preview; backend tests are not a live campaign acceptance run.
-- No line of sight, cover, elevation, flanking, creature footprints, authored terrain or area templates. Walls currently block movement only; attacks and spells can pass through them.
-- Spell/save-action range and area geometry are not enforced by this grid. Existing spell behavior continues; Ray of Frost's speed reduction is not implemented.
-- Prone crawling/standing costs, armor and class speed changes, forced movement, grapple dragging/breaking on separation and complete fear-aware enemy routing are incomplete.
+- Automated UI tests and an isolated Chrome fixture verify inspection, preview, draft preparation and stale-response handling. These are separate from live campaign acceptance. Wide fields scroll inside the encounter panel; this is a minimal grid view without zoom or authored map imagery.
+- Cover, elevation, flanking, creature footprints, authored terrain and area templates remain unsupported. Save actions without a recorded range retain their earlier range abstraction. Lair effects and readied attacks retain their existing abstractions.
+- Ray of Frost's speed reduction, armor and class speed changes, forced movement, grapple dragging/breaking on separation and complete fear-aware enemy routing remain incomplete.
 - Flight uses the legacy fallback movement model; burrowing, climbing and swimming are not modeled. Hero opportunity attacks remain limited to the existing Ready mechanism. Multiple melee reaches use the longest reach for enemy opportunity attacks.
 - Terrain is deterministic scenery inferred from words, not a verified source interpretation. Some existing rule-boundary and monster declaration text still describes the default range-band engine. Party targeting and readied attacks retain their existing abstractions.
 

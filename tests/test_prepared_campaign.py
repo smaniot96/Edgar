@@ -61,10 +61,19 @@ def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCam
             {
                 "scene_id": "dock",
                 "title": "The ferry dock",
-                "links": [{"scene_id": "dock", "requires": {"gate_open": "yes"}}],
+                "links": [{"scene_id": "dock", "requires": {"gate_open": "discovered"}}],
             }
         ],
         "passages": [passage],
+        "entities": [
+            {
+                "entity_id": "gate",
+                "kind": "clue",
+                "title": "Open gate",
+                "discovery_flag": "gate_open",
+            },
+            {"entity_id": "ending", "kind": "ending", "title": "The keeper is safe"},
+        ],
         "objectives": [objective],
         "resolution_policies": [
             {
@@ -72,7 +81,7 @@ def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCam
                 "action": "Convince or outmaneuver the guards",
                 "scene_ids": ["dock"],
                 "passage_ids": ["source_intro"],
-                "requires": {"gate_open": "yes"},
+                "requires": {"gate_open": "discovered"},
                 "mode": "check",
                 "check": "persuasion",
                 "dc": 12,
@@ -136,7 +145,7 @@ def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCam
                 from_scene_id="dock",
                 to_scene_id="dock",
                 visibility="known",
-                traversal_requires={"gate_open": "yes"},
+                traversal_requires={"gate_open": "discovered"},
                 provenance=provenance,
             )
         ],
@@ -146,7 +155,7 @@ def _fixture(source: str = "sample.pdf") -> tuple[AdventureManifest, PreparedCam
                 passage_id="dm_note",
                 scene_ids=["dock"],
                 audience="player",
-                requires={"gate_open": "yes"},
+                requires={"gate_open": "discovered"},
                 text="The guards can be distracted by the ferry bell.",
                 provenance=dm_provenance,
             )
@@ -285,7 +294,7 @@ def test_topology_and_runtime_predicate_must_match_reviewed_routes():
     mismatched = deepcopy(prepared.model_dump())
     mismatched["routes"][0]["traversal_requires"] = {"gate_open": "no"}
     report = validate_prepared_campaign(manifest, mismatched)
-    assert "route_predicate_mismatch" in {row.code for row in report.findings}
+    assert "topology_coverage" in {row.code for row in report.findings}
 
 
 def test_outcomes_cannot_be_cross_wired_or_require_contradictory_conditions():
@@ -319,7 +328,7 @@ def test_extension_projection_requires_earned_gate_and_preserves_private_spans()
         == []
     )
     visible = project_prepared_extension_chunks(
-        approved, scene_id="dock", world_flags={"gate_open": "yes"}, audience="player"
+        approved, scene_id="dock", world_flags={"gate_open": "discovered"}, audience="player"
     )
     assert len(visible) == 1
     chunk = visible[0]
@@ -364,7 +373,7 @@ def test_saved_amendment_receipt_revalidates_binding_and_preserves_privacy():
         "current_scene_id": "dock",
         "adventure_manifests": {"sample.pdf": reviewed.model_dump(mode="json")},
         "prepared_campaign_overlays": {},
-        "world_flags": {"gate_open": "yes"},
+        "world_flags": {"gate_open": "discovered"},
         "story_state": {"facts": []},
     }
     amendment = _additive_amendment(prepared)
@@ -379,9 +388,10 @@ def test_saved_amendment_receipt_revalidates_binding_and_preserves_privacy():
         revalidate_runtime_amendment,
     )
 
-    assert revalidate_runtime_amendment(
-        receipt, state=state, manifests=state["adventure_manifests"]
-    ) == receipt
+    assert (
+        revalidate_runtime_amendment(receipt, state=state, manifests=state["adventure_manifests"])
+        == receipt
+    )
     with pytest.raises(PreparedAmendmentConflict, match="no longer matches"):
         revalidate_runtime_amendment(
             receipt,
@@ -442,7 +452,7 @@ def test_runtime_amendment_rejects_a_reversal_of_a_committed_objective():
         "manifest_status": "reviewed",
         "current_scene_id": "dock",
         "adventure_manifests": {"sample.pdf": reviewed.model_dump(mode="json")},
-        "world_flags": {"gate_open": "yes"},
+        "world_flags": {"gate_open": "discovered"},
         "story_state": {"facts": [fact.model_dump(mode="json")]},
     }
     assert accept_runtime_amendment(_additive_amendment(prepared), state) is None
@@ -451,7 +461,7 @@ def test_runtime_amendment_rejects_a_reversal_of_a_committed_objective():
 def _actor_bound_amendment_fixture():
     manifest, prepared = _fixture()
     body = manifest.model_dump()
-    body["entities"] = [{"entity_id": "guard_eli", "kind": "actor", "title": "Guard Eli"}]
+    body["entities"].append({"entity_id": "guard_eli", "kind": "actor", "title": "Guard Eli"})
     body["passages"][0]["entity_ids"] = ["guard_eli"]
     body["resolution_policies"].append(
         {
@@ -459,7 +469,7 @@ def _actor_bound_amendment_fixture():
             "action": "Confront Guard Eli",
             "scene_ids": ["dock"],
             "passage_ids": ["source_intro"],
-            "requires": {"gate_open": "yes"},
+            "requires": {"gate_open": "discovered"},
             "mode": "check",
             "check": "athletics",
             "dc": 12,
@@ -506,7 +516,7 @@ def test_runtime_amendment_preserves_manifest_bound_combatant_outcomes(
 
     reviewed, prepared, amendment = _actor_bound_amendment_fixture()
     state = {
-        "world_flags": {"gate_open": "yes"},
+        "world_flags": {"gate_open": "discovered"},
         "story_state": {"facts": []},
         "resolved_combat_outcomes": [
             {
@@ -522,6 +532,7 @@ def test_runtime_amendment_preserves_manifest_bound_combatant_outcomes(
                             "actor_id": "guard_eli",
                             "actor_collection": "sample.pdf",
                             "actor_manifest_sha256": reviewed.reviewed_sha256,
+                            "actor_source_sha256": reviewed.source_sha256,
                         },
                     }
                 ],
@@ -559,6 +570,7 @@ def test_combat_fate_requires_the_exact_actor_manifest_binding():
                             "actor_id": "guard_eli",
                             "actor_collection": "other.pdf",
                             "actor_manifest_sha256": reviewed.reviewed_sha256,
+                            "actor_source_sha256": reviewed.source_sha256,
                         },
                     },
                     {
@@ -579,6 +591,7 @@ def test_combat_fate_requires_the_exact_actor_manifest_binding():
                             "actor_id": "guard_eli",
                             "actor_collection": "sample.pdf",
                             "actor_manifest_sha256": reviewed.reviewed_sha256,
+                            "actor_source_sha256": reviewed.source_sha256,
                         },
                     },
                 ],
@@ -609,9 +622,7 @@ def test_released_story_fact_advances_the_immutable_combat_capture_snapshot():
             }
         ],
     )
-    release = StoryFact(
-        **effect.model_dump(), fact_id=story_target_id(target)
-    ).model_dump()
+    release = StoryFact(**effect.model_dump(), fact_id=story_target_id(target)).model_dump()
     state = {
         "world_flags": {},
         "story_state": {"facts": [release]},
@@ -628,6 +639,7 @@ def test_released_story_fact_advances_the_immutable_combat_capture_snapshot():
                             "actor_id": "guard_eli",
                             "actor_collection": "sample.pdf",
                             "actor_manifest_sha256": reviewed.reviewed_sha256,
+                            "actor_source_sha256": reviewed.source_sha256,
                         },
                     }
                 ],
@@ -697,7 +709,7 @@ async def test_session_amendment_event_replay_is_private_and_source_version_boun
         "manifest_status": "reviewed",
         "current_scene_id": "dock",
         "adventure_manifests": {"sample.pdf": reviewed.model_dump(mode="json")},
-        "world_flags": {"gate_open": "yes"},
+        "world_flags": {"gate_open": "discovered"},
         "story_state": {"facts": []},
     }
     from agent.prepared_amendments import accept_runtime_amendment

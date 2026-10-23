@@ -136,15 +136,26 @@ async def test_source_mode_preserves_bespoke_stats_with_actual_physical_evidence
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize(("quote", "accepted"), [
+    ("reach 5 feet, one creature.", True),
+    ("reach 5 foot, one creature.", True),
+    ("reach 10 feet, one creature.", False),
+    ("reach 5 feet, two creatures.", False),
+    ("", False),
+])
+def test_catalogue_distance_abbreviation_preserves_mechanical_values(quote, accepted):
+    from apps.api.services.campaign_prep.profile_references import _catalogue_quote
+
+    assert _catalogue_quote("Attack: reach 5 ft., one creature. Hit: 17 damage.", quote) is accepted
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("defect", ["fake_page", "lost_valid_page", "fake_quote", "wrong_profile"])
+@pytest.mark.parametrize("defect", ["fake_page", "fake_quote", "wrong_profile"])
 async def test_unsupported_provenance_correction_holds_without_repayment(recovery, defect):
     bundles, calls, value = profile_case(recovery)
     join = value["joins"][0]
     if defect == "fake_page":
         join["source_pages"] = [6, 158]
-    elif defect == "lost_valid_page":
-        join["source_pages"] = []
     elif defect == "fake_quote":
         join["evidence_quote"] = "Invented verified statistics"
     else:
@@ -152,9 +163,61 @@ async def test_unsupported_provenance_correction_holds_without_repayment(recover
     original = deepcopy(bundles)
     with pytest.raises(NeedsAttention, match="rejected"):
         await reconcile_profile_pages(recovery, recovery.store.get("spine"), bundles)
-    with pytest.raises(NeedsAttention, match="Retained profile"):
+    with pytest.raises(NeedsAttention, match="rejected"):
         await reconcile_profile_pages(recovery, recovery.store.get("spine"), bundles)
     assert bundles == original and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_correction_keeps_valid_pages_even_when_model_omits_them(recovery):
+    bundles, calls, value = profile_case(recovery)
+    value["joins"][0]["source_pages"] = []
+    fixed = await reconcile_profile_pages(recovery, recovery.store.get("spine"), bundles)
+    assert fixed["mechanical_profiles"][0]["source_pages"] == [6]
+    assert len(calls) == 1
+    # Reopening the durable store must reuse the paid candidate as well.
+    with recovery.store.db() as db:
+        key = db.execute(
+            "SELECT name FROM artifact WHERE name LIKE 'profile-page-repair-%'"
+        ).fetchone()[0]
+    receipt = recovery.store.get(key)
+    recovery.store.put(
+        key, {**receipt, "state": "rejected", "error": "Old validator rejected omitted page 6."}
+    )
+    assert await reconcile_profile_pages(recovery, recovery.store.get("spine"), bundles) == fixed
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_outer_repair_rechecks_retained_profile_after_validation_policy_change(recovery, monkeypatch):
+    from apps.api.services.campaign_prep import structural_repair as repair
+    from apps.api.services.campaign_prep.store import digest
+
+    # Keep the outer gate real. The previously paid profile candidate has already
+    # been exercised above; isolate this regression from unrelated fixture joins.
+    spine = recovery.store.get("spine")
+    bundles = recovery.store.get("bundles")
+    issues, _, _ = repair.structural_defects(spine, bundles)
+    key = "structural-repair-" + digest({"spine": spine, "bundles": bundles, "issues": issues})
+    recovery.store.put(key, {
+        "state": "rejected", "policy": repair.RECOVERY_POLICY,
+        "profile_reference_policy": repair.PROFILE_REFERENCE_POLICY,
+        "secret_reference_policy": repair.SECRET_REFERENCE_POLICY,
+        "error": "Old profile validation rejected the retained candidate.",
+    })
+    monkeypatch.setattr(repair, "profile_reference_defects", lambda *_: [{"retained": True}])
+    calls = []
+
+    async def corrected(_workflow, _spine, original):
+        calls.append("revalidate")
+        result = deepcopy(original)
+        result["chapters"][0]["source_notes"] += "\nRetained physical provenance validated."
+        return result
+
+    monkeypatch.setattr(repair, "reconcile_profile_pages", corrected)
+    assert await repair.repair_structure(recovery)
+    assert calls == ["revalidate"] and not recovery.calls
+    assert recovery.store.get(key)["profile_validation_policy"] == repair.PROFILE_VALIDATION_POLICY
 
 
 @pytest.mark.asyncio

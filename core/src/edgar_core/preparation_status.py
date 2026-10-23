@@ -68,3 +68,11 @@ class PublicPreparationStatus(PreparationRecord):
     retryable: bool
     action: Literal["wait", "retry", "restart", "none"]
     failure: SafePreparationFailure | None = None
+    retained_work: Literal[
+        "none",
+        "outline_and_chapters",
+        "complete_manuscript",
+        "source_pdf",
+        "inspected_extraction",
+        "published",
+    ] = "none"

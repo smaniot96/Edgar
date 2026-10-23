@@ -39,7 +39,9 @@ _FLEE_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:i|we)\s+(?:turn\s+and\s+)?run\s*[.!]*\s*$", re.IGNORECASE),
-    re.compile(r"\brun\s+away\b|\bback\s+away\s+and\s+run\b|\bmake\s+a\s+run\s+for\s+it\b", re.IGNORECASE),
+    re.compile(
+        r"\brun\s+away\b|\bback\s+away\s+and\s+run\b|\bmake\s+a\s+run\s+for\s+it\b", re.IGNORECASE
+    ),
 )
 
 
@@ -58,7 +60,12 @@ def is_flee(text: str | None) -> bool:
     return any(p.search(text) for p in _FLEE_PATTERNS)
 
 
-_SURRENDER = re.compile(r"\b(?:surrender|yield|give\s+up|lay\s+down\s+my\s+(?:arms|weapons))\b", re.I)
+_SURRENDER = re.compile(
+    r"\b(?:surrender|yield|give\s+up|lay\s+down\s+my\s+(?:arms|weapons|sword|bow)|"
+    r"(?:offer|agree)\s+to\s+(?:hand|give|return)\b|hand\s+over\b|"
+    r"stop\s+fighting\b|come\s+peacefully\b)",
+    re.I,
+)
 
 
 def is_surrender(text: str | None) -> bool:

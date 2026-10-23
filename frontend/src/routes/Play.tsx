@@ -496,6 +496,7 @@ function PlayScreen({ sessionId }: { sessionId: number }) {
         <PlayToolPanel
           key={`tools:${encounterViewRevision}`}
           combat={game.combat}
+          onPrepareMove={canAct ? (text) => { editDraft(`${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${text}`); requestAnimationFrame(() => inputRef.current?.focus()); } : undefined}
           onSelectTarget={canAct ? (name) => { editDraft(draft ? `${draft}${/\s$/.test(draft) ? "" : " "}${name}` : name); requestAnimationFrame(() => inputRef.current?.focus()); } : undefined}
           consultation={<>
             {isDev ? <BrowserTurnTimings sessionId={sessionId} /> : null}

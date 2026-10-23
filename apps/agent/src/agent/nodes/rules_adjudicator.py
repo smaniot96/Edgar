@@ -84,9 +84,12 @@ def _planner_evidence_blocks(state, parts, spans):
     from agent.scene_guidance import observation_excerpt
 
     blocks = [
-        (chunk, wrap_retrieved_excerpt(
-            observation_excerpt(chunk, spans, state.get("rules_edition", "2014"))
-        ))
+        (
+            chunk,
+            wrap_retrieved_excerpt(
+                observation_excerpt(chunk, spans, state.get("rules_edition", "2014"))
+            ),
+        )
         for chunk in state.get("planner_context") or []
     ]
     budget = effective_profile("play.consequence_planner").max_input_tokens
@@ -100,8 +103,10 @@ def _planner_evidence_blocks(state, parts, spans):
     removable = sorted(
         range(len(blocks)),
         key=lambda index: (
-            0 if blocks[index][0].get("passage_id") in {"campaign_registry", "campaign_spine"}
-            else 1 if blocks[index][0].get("passage_id", "").startswith("source_page_")
+            0
+            if blocks[index][0].get("passage_id") in {"campaign_registry", "campaign_spine"}
+            else 1
+            if blocks[index][0].get("passage_id", "").startswith("source_page_")
             else 2,
             -index,
         ),
@@ -112,6 +117,12 @@ def _planner_evidence_blocks(state, parts, spans):
             break
         chunk, block = blocks[index]
         passage_id = chunk.get("passage_id", "")
+        if passage_id == "campaign_registry" and any(
+            span["reference_id"]
+            == citations_for([chunk], state.get("rules_edition", "2014"))[0]["reference_id"]
+            for span in spans.values()
+        ):
+            continue  # Compact actor identity evidence must survive removal of the global dossier.
         if not (
             passage_id in {"campaign_registry", "campaign_spine"}
             or passage_id.startswith("source_page_")
@@ -295,8 +306,7 @@ def build_adjudicator_prompt(
         if transitions:
             parts.append(
                 "Linked prepared event opportunities with exact proposal templates "
-                "(available is not triggered; judge the actual action): "
-                + json.dumps(transitions)
+                "(available is not triggered; judge the actual action): " + json.dumps(transitions)
             )
 
     if state.get("source_mode") == "homebrew" and state.get("manifest_status") == "homebrew":
@@ -341,10 +351,19 @@ def build_adjudicator_prompt(
             "effects for current actors directly met or addressed, without revealing their "
             "private knowledge; (4) when the player actually takes an available portable "
             "object, propose its acquire effect, separately from reading/discovering it. "
+            "A failed optional inspection does not prevent an independently available "
+            "ordinary pickup: propose acquire with its own achievement_basis in a mixed action. "
             "A promise to guide is not travel, but actually following that agreed plan is "
             "an action to resolve. Do not repeatedly describe an obstacle-free journey "
             "starting while omitting its earned linked transition. Preserve prior departures, "
             "custody and answered questions when judging source opening conditions. "
+            "An actor's source description fixes their identity and occupation even when the "
+            "current scene calls them by first name only. Use eligible registry description "
+            "spans for ordinary identity answers; do not disclose private motives or knowledge. "
+            "Custody restricts taking or moving a captive, not speaking to a present captive. "
+            "Allow conversation unless a recorded physical barrier actually prevents it. "
+            "Recognize achieved rescue and safety goals from committed outcomes; do not "
+            "repeat their original missing-person or danger premise after it is resolved. "
             "Keep checks scoped to their specific uncertain task; independent player-visible "
             "observations may set requires_check_success=false even after that check fails."
         )

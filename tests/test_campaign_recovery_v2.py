@@ -59,6 +59,70 @@ def durable_store(tmp_path, monkeypatch):
     return value
 
 
+def test_missing_provider_receipt_has_specific_safe_recovery_and_real_retained_progress(
+    durable_store,
+):
+    from apps.api.services.campaign_prep.runtime import retry_preparation, safe_preparation_status
+
+    durable_store.put("ai-outline", {"PRIVATE": "story contents"})
+    durable_store.dispatch("a" * 64, "ai-chapter", {"PRIVATE": "request"})
+    durable_store.update(status="blocked", error="PRIVATE connection error")
+    meta = {"private_preparation": True, "preparation_workflow": "campaign-graph-2.0"}
+    adventures_meta.save_meta(durable_store.slug, meta)
+    projected = safe_preparation_status(meta, durable_store.slug)
+    assert projected.failure.code == "provider_receipt_missing"
+    assert projected.failure.recovery_action == "check_existing_result"
+    assert not projected.retryable and projected.action == "none"
+    assert projected.retained_work == "outline_and_chapters"
+    assert (
+        "PRIVATE" not in projected.model_dump_json() and "a" * 64 not in projected.model_dump_json()
+    )
+    before = durable_store.state()
+    with pytest.raises(ValueError, match="Reconcile the existing result"):
+        retry_preparation(durable_store.slug)
+    assert durable_store.state() == before
+    from apps.api.services.campaign_sources import safe_job_read
+
+    meta["job"] = {"job_id": "b" * 32, "kind": "generation", "state": "failed", "retained_work": "none"}
+    card = safe_job_read(meta, durable_store.slug)
+    assert card.retained_work == "outline_and_chapters" and not card.retryable
+    assert card.explanation == projected.failure.message and card.action_label is None
+
+
+def test_old_wrapped_validation_error_projects_safe_retained_correction(durable_store):
+    from apps.api.services.campaign_prep.runtime import safe_preparation_status
+
+    durable_store.put("structural-repair-local", {"state": "rejected", "error": "PRIVATE source"})
+    durable_store.update(status="blocked", error_type="NeedsAttention", error="PRIVATE source")
+    meta = {"private_preparation": True, "preparation_workflow": "campaign-graph-2.0"}
+    projected = safe_preparation_status(meta, durable_store.slug)
+    assert projected.failure.code == "preparation_correction_rejected"
+    assert projected.retryable and "PRIVATE" not in projected.model_dump_json()
+
+
+def test_cancelled_preparation_card_does_not_claim_the_adventure_is_ready(durable_store):
+    from apps.api.services.campaign_sources import safe_job_read
+
+    durable_store.update(status="cancelled")
+    meta = {"private_preparation": True, "preparation_workflow": "campaign-graph-2.0",
+            "job": {"job_id": "b" * 32, "kind": "generation", "state": "cancelled"}}
+    card = safe_job_read(meta, durable_store.slug)
+    assert card.state == "cancelled" and not card.retryable
+    assert "cancelled" in card.explanation and "ready to play" not in card.explanation
+
+
+@pytest.mark.parametrize(("source", "retained"), [
+    ({"kind": "ai"}, "none"),
+    ({"kind": "pdf", "pages": []}, "source_pdf"),
+    ({"kind": "pdf", "pages": [{"page": 1}]}, "inspected_extraction"),
+])
+def test_retained_progress_distinguishes_brief_pdf_and_inspection(durable_store, source, retained):
+    from apps.api.services.campaign_prep.runtime import retained_preparation_work
+
+    durable_store.put("source", source)
+    assert retained_preparation_work(durable_store) == retained
+
+
 @pytest.mark.asyncio
 async def test_restart_resumes_known_response_instead_of_submitting_again(durable_store):
     calls = {"create": 0, "retrieve": 0}

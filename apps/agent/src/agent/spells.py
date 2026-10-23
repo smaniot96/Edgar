@@ -58,6 +58,19 @@ from tools.dice import roll
 
 _PHB = "Player's Handbook (2014 core rules)"
 
+# Feet from the caster to each target, including touch and bonus-action healing.
+SPELL_RANGES = {
+    "Ray of Frost": 60,
+    "Fire Bolt": 120,
+    "Magic Missile": 120,
+    "Sacred Flame": 60,
+    "Cure Wounds": 5,
+    "Guiding Bolt": 120,
+    "Blindness/Deafness": 30,
+    "Hold Person": 60,
+    "Healing Word": 60,
+}
+
 
 @dataclass(frozen=True)
 class SpellSpec:
@@ -92,7 +105,9 @@ CATALOG: tuple[SpellSpec, ...] = (
         die=8,
         damage_type="cold",
         classes=("sorcerer", "wizard"),
-        declared=("Ray of Frost: the 10-foot speed reduction until the caster's next turn is not simulated",),
+        declared=(
+            "Ray of Frost: the 10-foot speed reduction until the caster's next turn is not simulated",
+        ),
         source=(
             f"{_PHB}, Ray of Frost: ranged spell attack, 1d8 cold damage, scaling at levels 5, 11 and 17. "
             "Executable adaptation: cold damage only; the source's 10-foot speed reduction is not simulated."
@@ -232,6 +247,7 @@ _SLOT_LEVEL_RE = re.compile(
 def catalog_spell(name: str) -> SpellSpec | None:
     """Return a supported spell by its exact normalized catalog name or alias."""
     return _BY_NAME.get(" ".join(str(name or "").casefold().split()))
+
 
 # Total slots per spell level by character level (index = level - 1), PHB full and half casters.
 FULL_CASTER_SLOTS: tuple[tuple[int, ...], ...] = (

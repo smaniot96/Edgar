@@ -1,0 +1,24 @@
+{
+  "isolated_fixture": true,
+  "campaign_connected": false,
+  "route_responses": "local fixture",
+  "draft": "I move to A5.",
+  "turn_submissions": 0,
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 1000,
+      "document_horizontal_overflow": false
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "document_horizontal_overflow": false
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "document_horizontal_overflow": false
+    }
+  ]
+}

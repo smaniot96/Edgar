@@ -20,6 +20,7 @@ from agent.action_economy import (
     OFF_HAND_ATTACK,
     SECOND_WIND,
     Declared,
+    affirmative_matches,
     dash_declared,
     disengage_declared,
     dodge_declared,
@@ -28,15 +29,29 @@ from agent.action_economy import (
     off_hand_refusal,
     refusal_for,
 )
-from agent.battlefield import square_move
+from agent.battlefield import battlefield_of, square_move
 from agent.class_features import ACTION_SURGE, RAGE, max_uses
-from agent.combat_grid import attack_reach_check, grid_active, hero_budget, plan_route, project
+from agent.combat_grid import (
+    attack_reach_check,
+    grid_active,
+    grid_fear_refusal,
+    hero_budget,
+    plan_route,
+    project,
+    spell_reach_check,
+)
 from agent.combat_identity import unique_roster_target
 from agent.combat_intent import _RANGED_HINT, _STAND_UP, _is_attack_action, _name_matches
 from agent.combat_plan import attack_count_question, operation_order, sequence_question
 from agent.combat_targeting import _release_target, additional_spell_targets, select_target
 from agent.combat_view import _ask_player
-from agent.combatants import CombatManeuver, can_act, classify_combat_maneuver, is_standing
+from agent.combatants import (
+    CombatManeuver,
+    can_act,
+    classify_combat_maneuver,
+    has_effect,
+    is_standing,
+)
 from agent.conditions import condition_ends_before_turn, fear_refusal, humanoid_refusal
 from agent.contingency import TARGET_DOWN, Contingency
 from agent.declarations import (
@@ -160,7 +175,9 @@ def declare_action(
             # Refused cast: no roll, no round, no state change (a transparent engine refusal).
             return _ask_player(state, refusal, combat_state=combat_state)
     # EDG-044: a bonus-action spell (Healing Word) is not an action, so it leaves the attack alone.
-    bonus_spell = spell_plan if spell_plan is not None and spell_plan.spell.action == BONUS_ACTION else None
+    bonus_spell = (
+        spell_plan if spell_plan is not None and spell_plan.spell.action == BONUS_ACTION else None
+    )
     if spell_declared or (spell_plan is not None and bonus_spell is None):
         is_attack, is_spell = False, False
     dodge = not fled and dodge_declared(player_input)
@@ -173,25 +190,35 @@ def declare_action(
     moving = not fled and (
         bool(movement_steps(moves_text)) or (grid and square_move(moves_text) is not None)
     )
-    standing_up = not fled and bool(_STAND_UP.search(player_input))
+    standing_up = not fled and bool(affirmative_matches(_STAND_UP, player_input))
     off_hand = not fled and off_hand_declared(player_input)
     # Second Wind is a bonus action (EDG-044): it no longer replaces the attack this turn.
     wants_second_wind = (
-        not fled and "second wind" in player_input.lower() and "fighter" in character_class(character)
-    )
-    if not fled and ACTION_SURGE in cf_requested and max_uses(character, ACTION_SURGE) > 0 and cf_left.get(ACTION_SURGE, 0) <= 0:
-        return _ask_player(state, "Action Surge has no uses left until a short or long rest. "
-                           "Choose one attack or another available action. No roll is made and no turn is spent.",
-                           combat_state=combat_state)
-    if wants_second_wind and second_wind_remaining(character) <= 0:
-        return _ask_player(state, "Second Wind has no uses left until a short or long rest. "
-                           "Choose an available action or healing item. No roll is made and no turn is spent.",
-                           combat_state=combat_state)
-    rage_declared = (
         not fled
-        and RAGE in cf_requested
-        and not player.get("raging")
-        and cf_left.get(RAGE, 0) > 0
+        and "second wind" in player_input.lower()
+        and "fighter" in character_class(character)
+    )
+    if (
+        not fled
+        and ACTION_SURGE in cf_requested
+        and max_uses(character, ACTION_SURGE) > 0
+        and cf_left.get(ACTION_SURGE, 0) <= 0
+    ):
+        return _ask_player(
+            state,
+            "Action Surge has no uses left until a short or long rest. "
+            "Choose one attack or another available action. No roll is made and no turn is spent.",
+            combat_state=combat_state,
+        )
+    if wants_second_wind and second_wind_remaining(character) <= 0:
+        return _ask_player(
+            state,
+            "Second Wind has no uses left until a short or long rest. "
+            "Choose an available action or healing item. No roll is made and no turn is spent.",
+            combat_state=combat_state,
+        )
+    rage_declared = (
+        not fled and RAGE in cf_requested and not player.get("raging") and cf_left.get(RAGE, 0) > 0
     )
     if (
         dodge
@@ -216,9 +243,18 @@ def declare_action(
             is_attack = False
     # EDG-049: a healing spell or potion that names another hero of the party is aimed at that hero.
     ally_target: dict | None = None
-    if allies and not fled and ((spell_plan is not None and spell_plan.spell.kind == "heal") or heal_item):
+    if (
+        allies
+        and not fled
+        and ((spell_plan is not None and spell_plan.spell.kind == "heal") or heal_item)
+    ):
         ally_target = next(
-            (a for n in named for a in allies if _name_matches(n, str(a.get("display_name") or a["name"]))),
+            (
+                a
+                for n in named
+                for a in allies
+                if _name_matches(n, str(a.get("display_name") or a["name"]))
+            ),
             None,
         )
     # A supported contested maneuver (EDG-021) or a declared release replaces the attack this turn.
@@ -261,8 +297,12 @@ def declare_action(
         declared.append(Declared("ready", ACTION, "Ready"))
     if is_attack:
         attack_count = attack_count_question(
-            player_input, parsed, hero=hero,
-            available=1 + int(off_hand) + int(ACTION_SURGE in cf_requested and cf_left.get(ACTION_SURGE, 0) > 0),
+            player_input,
+            parsed,
+            hero=hero,
+            available=1
+            + int(off_hand)
+            + int(ACTION_SURGE in cf_requested and cf_left.get(ACTION_SURGE, 0) > 0),
         )
         if attack_count:
             return _ask_player(state, attack_count, combat_state=combat_state)
@@ -293,11 +333,25 @@ def declare_action(
             question = completeness_question(actions, living, player_input, hero)
         if question:
             return _ask_player(state, question, combat_state=combat_state)
-        idle = bool(re.search(r"\b(?:i|we)\s+(?:wait|do\s+nothing|hold\s+(?:my|our)\s+(?:action|turn))\b", player_input, re.I))
+        idle = bool(
+            re.search(
+                r"\b(?:i|we)\s+(?:wait|do\s+nothing|hold\s+(?:my|our)\s+(?:action|turn))\b",
+                player_input,
+                re.I,
+            )
+        )
         nonattack_check = normalise_check(getattr(parsed, "check", None))
         if nonattack_check and nonattack_check[1] in ("attack", "spell_attack"):
             nonattack_check = None
-        if not declared and not moving and not standing_up and combat_action is None and player_input and not idle and not nonattack_check:
+        if (
+            not declared
+            and not moving
+            and not standing_up
+            and combat_action is None
+            and player_input
+            and not idle
+            and not nonattack_check
+        ):
             return _ask_player(
                 state,
                 "What do you do this turn? I have not declared an attack. You can speak, offer surrender, "
@@ -305,9 +359,23 @@ def declare_action(
                 combat_state=combat_state,
             )
     for name in named:
-        participant = next((p for p in player.get("encounter_participants", []) if p.get("participation") == "visible_nonparticipant" and _name_matches(name, p.get("name", ""))), None)
-        if participant is not None and (is_attack or combat_action is not None or spell_plan is not None):
-            return _ask_player(state, f"{participant['name']} is visible but is outside this encounter's active roster. The engine cannot add that actor to this fight automatically. Choose an active foe or a different approach. No roll is made and no turn is spent.", combat_state=combat_state)
+        participant = next(
+            (
+                p
+                for p in player.get("encounter_participants", [])
+                if p.get("participation") == "visible_nonparticipant"
+                and _name_matches(name, p.get("name", ""))
+            ),
+            None,
+        )
+        if participant is not None and (
+            is_attack or combat_action is not None or spell_plan is not None
+        ):
+            return _ask_player(
+                state,
+                f"{participant['name']} is visible but is outside this encounter's active roster. The engine cannot add that actor to this fight automatically. Choose an active foe or a different approach. No roll is made and no turn is spent.",
+                combat_state=combat_state,
+            )
     target: dict | None = None
     release_target: dict | None = None
     if combat_action is not None and combat_action.kind == "release":
@@ -372,16 +440,43 @@ def declare_action(
         )
         if branch_plan.question:
             return _ask_player(state, branch_plan.question, combat_state=combat_state)
-    fear_will_end_before_turn = condition_ends_before_turn(
-        player, "frightened", before, round_num
-    )
+    fear_will_end_before_turn = condition_ends_before_turn(player, "frightened", before, round_num)
     branch_steps = len(branch_plan.steps) if branch_plan is not None else 0
     if grid and not fled:
         # Combat grid: movement is spent in feet along a route, not counted in band changes.
         living = [e for e in enemies if can_act(e)]
-        budget = hero_budget(player, dash=dash)
+        from agent.battlefield import speed_of, square_moves
+
+        if standing_up and has_effect(player, "prone") and speed_of(player) == 0:
+            return _ask_player(
+                state,
+                "Standing up requires movement, but your speed is zero. No turn is spent.",
+                combat_state=combat_state,
+            )
+        if standing_up and has_effect(player, "prone"):
+            move_offsets = [start for _, start, _ in square_moves(moves_text)] + [
+                offset for _, offset, _ in movement_legs(moves_text)
+            ]
+            if (
+                move_offsets
+                and min(move_offsets) < affirmative_matches(_STAND_UP, player_input)[0].start()
+            ):
+                return _ask_player(
+                    state,
+                    "Declare standing up before moving, or crawl while prone. No turn is spent.",
+                    combat_state=combat_state,
+                )
+        budget = hero_budget(player, dash=dash, standing_up=standing_up)
         route = plan_route(
-            combat_state, player, moves_text, moves, living, budget_ft=budget, hero_name=hero, dash=dash
+            combat_state,
+            player,
+            moves_text,
+            moves,
+            living,
+            budget_ft=budget,
+            hero_name=hero,
+            dash=dash,
+            standing_up=standing_up,
         )
         if isinstance(route, str):
             return _ask_player(state, route, combat_state=combat_state)
@@ -397,11 +492,14 @@ def declare_action(
                 hero_name=hero,
                 dash=dash,
                 start=route.destination,
+                standing_up=standing_up,
             )
             if isinstance(branch_route, str):
                 return _ask_player(state, branch_route, combat_state=combat_state)
             project(branch_plan, branch_route, living)
-        refused_move = None if fear_will_end_before_turn else fear_refusal(hero, player, moves.steps)
+        refused_move = (
+            None if fear_will_end_before_turn else grid_fear_refusal(combat_state, player, route)
+        )
     else:
         refused_move = move_refusal(hero, len(moves.steps) + branch_steps, dash=dash) or (
             None if fear_will_end_before_turn else fear_refusal(hero, player, moves.steps)
@@ -435,7 +533,12 @@ def declare_action(
         and execution_order.index("move") < execution_order.index(attack_kind)
     )
     attack_long_range = False
-    if grid and target is not None and not is_spell and (is_attack or (combat_action is not None and combat_action.kind != "release")):
+    if (
+        grid
+        and target is not None
+        and not is_spell
+        and (is_attack or (combat_action is not None and combat_action.kind != "release"))
+    ):
         # Combat grid: reach and range are measured from the square the hero's moves end on.
         refusal, attack_long_range = attack_reach_check(
             hero,
@@ -443,19 +546,50 @@ def declare_action(
             from_square=(moves.route.destination if move_before_action else moves.route.start),
             weapon_name=attack_weapon.name if combat_action is None else None,
             ranged=attack_ranged and combat_action is None,
+            battlefield=battlefield_of(combat_state),
         )
         if refusal:
             return _ask_player(state, refusal, combat_state=combat_state)
     elif not grid and target is not None and not is_spell and not attack_ranged:
         attack_band = (
             moves.bands.get(id(target), band_of(target))
-            if "move" in execution_order and execution_order.index("move") < execution_order.index("attack" if is_attack else "maneuver")
+            if "move" in execution_order
+            and execution_order.index("move")
+            < execution_order.index("attack" if is_attack else "maneuver")
             else band_of(target)
         )
-        if attack_band == RANGED and (
-            is_attack or combat_action is not None
-        ):
-            return _ask_player(state, reach_refusal(hero, target["name"]), combat_state=combat_state)
+        if attack_band == RANGED and (is_attack or combat_action is not None):
+            return _ask_player(
+                state, reach_refusal(hero, target["name"]), combat_state=combat_state
+            )
+    if grid and spell_plan is not None:
+        origin = (
+            moves.route.destination
+            if "move" in execution_order
+            and "spell" in execution_order
+            and execution_order.index("move") < execution_order.index("spell")
+            else moves.route.start
+        )
+        targets = [ally_target or player] if spell_plan.spell.kind == "heal" else spell_targets
+        for recipient in targets:
+            if recipient is not None and (
+                refusal := spell_reach_check(
+                    combat_state, spell_plan.spell, player, recipient, from_square=origin
+                )
+            ):
+                return _ask_player(state, refusal, combat_state=combat_state)
+        if spell_plan.spell.name == "Hold Person" and len(targets) > 1:
+            from agent.battlefield import distance_ft, pos_of
+
+            first = pos_of(targets[0])
+            if first and any(
+                pos_of(row) and distance_ft(first, pos_of(row)) > 30 for row in targets[1:]
+            ):
+                return _ask_player(
+                    state,
+                    "Hold Person targets must be within 30 feet of the first target. No slot or turn is spent.",
+                    combat_state=combat_state,
+                )
     # EDG-044: the off-hand attack needs this turn's melee Attack action and a second light weapon.
     off_weapon = off_hand_weapon(character, attack_weapon) if off_hand else None
     if off_hand:
@@ -495,7 +629,8 @@ def declare_action(
         contingency_moves=branch_plan,
         ally_target=ally_target,
         execution_order=execution_order,
-        main_attack_count=1 + int(is_attack and ACTION_SURGE in cf_requested and cf_left.get(ACTION_SURGE, 0) > 0),
+        main_attack_count=1
+        + int(is_attack and ACTION_SURGE in cf_requested and cf_left.get(ACTION_SURGE, 0) > 0),
         attack_long_range=attack_long_range,
     )
 

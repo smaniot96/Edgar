@@ -89,7 +89,11 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             if saved_run
             else "No preparation work was saved before this failure. Retrying starts again from the same source and setup.",
             "restart": "Archived preparation is held. Its saved work is preserved. Create a fresh adventure to use the new workflow.",
-            "none": "Your adventure is ready to play.",
+            "none": "Your adventure is ready to play."
+            if projected.status.value == "ready"
+            else "Preparation was cancelled. Saved work is retained."
+            if projected.status.value == "cancelled"
+            else "Preparation is held. Its publication needs verification before play.",
         }.get(projected.action)
         return AdventureJobRead(
             version=1,
@@ -104,7 +108,9 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
             checkpoint_available=saved_run,
             retryable=projected.retryable,
             retained_work=(
-                job.get("retained_work")
+                projected.retained_work
+                if projected.retained_work != "none"
+                else job.get("retained_work")
                 if job.get("retained_work")
                 in {
                     "none",
@@ -117,7 +123,7 @@ def safe_job_read(meta: dict, slug: str) -> AdventureJobRead | None:
                 else "none"
             ),
             action_label=action_label,
-            explanation=explanation,
+            explanation=projected.failure.message if projected.failure else explanation,
             source_version=(meta.get("prepared_bundle") or {}).get("bundle_sha256")
             if projected.status.value == "ready"
             else None,

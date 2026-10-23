@@ -769,6 +769,7 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             and candidate.get("reveal_on", "success") == "success"
             and not adj.success
             and policy_key not in authorized_policy_effects
+            and not _independent_pickup(proposal, adj, state)
         ):
             continue
         if (
@@ -838,8 +839,11 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             # A name learned in an approved introduction must remain in the earned
             # text as well as the label. Public projections intentionally refuse a
             # prepared title that occurs only in hidden metadata.
-            introductions = [answer for answer in adj.accepted_observations
-                             if _earned_actor_name(candidate, candidates, answer)]
+            introductions = [
+                answer
+                for answer in adj.accepted_observations
+                if _earned_actor_name(candidate, candidates, answer)
+            ]
             if introductions:
                 public_text = "\n".join([public_text, *introductions])
             introduced_name = _earned_actor_name(candidate, candidates, public_text)
@@ -875,7 +879,8 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
             origin_turn_id=state["turn_id"] if dm_goal or dm_transition else None,
             display_name=public_place_label(public_text, candidate["title"])
             if proposal.target.kind == "scene" and public_text
-            else introduced_name or (
+            else introduced_name
+            or (
                 candidate["title"]
                 if any(candidate["title"] in c["text"] for c in public)
                 or any(candidate["title"] in answer for answer in adj.accepted_observations)
@@ -893,8 +898,11 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
                         for entry in entries
                     )
                 )
-                else (_public_object_label(candidate, public)
-                      if proposal.target.kind == "object" else None)
+                else (
+                    _public_object_label(candidate, public)
+                    if proposal.target.kind == "object"
+                    else None
+                )
                 or proposal.target.kind.capitalize()
             ),
             knowledge_kind="hint"
@@ -927,6 +935,26 @@ def validate_story_effects(adj: AdjudicationResult, state: AgentState) -> Adjudi
     adj.flags_set = [flag for flag in adj.flags_set if flag.key not in discovery_flags]
     adj.flags_cleared = [flag for flag in adj.flags_cleared if flag not in discovery_flags]
     return adj
+
+
+def _independent_pickup(proposal, adjudication, state):
+    """A failed inspection does not prevent a separately declared ordinary pickup.
+
+    This exemption only removes the unrelated inspection's success gate. Reviewed
+    object availability, ownership, portability and exact source validation still apply.
+    A failed retrieval, theft or strength check receives no such exemption.
+    """
+    from agent.action_economy import affirmative_matches
+
+    return bool(
+        proposal.kind == "acquire"
+        and adjudication.check in {"arcana", "investigation", "perception", "history", "religion"}
+        and proposal.achievement_basis
+        and affirmative_matches(
+            re.compile(r"\b(?:pick\s+up|take|collect|gather|retrieve)\b", re.I),
+            state.get("player_input", ""),
+        )
+    )
 
 
 # EDG-169: homebrew proposals are judged only by engine-owned rules here, never by prose alone.
