@@ -1,0 +1,121 @@
+{
+  "captured_at": "2026-10-23T11:32:05.055Z",
+  "adventures": {
+    "the_wild_sheep_chase_preparation_replay_20261022": {
+      "status": "processing",
+      "readiness": {
+        "play_allowed": false,
+        "history_allowed": true,
+        "state": "preparation_in_progress",
+        "primary_action": "wait_for_preparation",
+        "blockers": [
+          {
+            "code": "preparation_in_progress",
+            "message": "Campaign preparation is in progress. Check back when it finishes.",
+            "action": "wait_for_preparation"
+          }
+        ]
+      },
+      "job": {
+        "job_id": "5d47435bacdd4af4b24a81d5f149bf2e",
+        "kind": "ingestion",
+        "state": "running",
+        "stage": "Repairing affected records",
+        "completed_chapters": 0,
+        "checkpoint_available": true,
+        "retryable": false,
+        "retained_work": "complete_manuscript",
+        "failure": null
+      }
+    },
+    "lanterns_at_greybank_ai_preparation_20261023": {
+      "status": "processing",
+      "readiness": {
+        "play_allowed": false,
+        "history_allowed": true,
+        "state": "preparation_in_progress",
+        "primary_action": "wait_for_preparation",
+        "blockers": [
+          {
+            "code": "preparation_in_progress",
+            "message": "Campaign preparation is in progress. Check back when it finishes.",
+            "action": "wait_for_preparation"
+          }
+        ]
+      },
+      "job": {
+        "job_id": "2618baf039354211af3ad2d8403004c9",
+        "kind": "generation",
+        "state": "running",
+        "stage": "Writing the chapters",
+        "completed_chapters": 0,
+        "checkpoint_available": true,
+        "retryable": false,
+        "retained_work": "outline_and_chapters",
+        "failure": null
+      }
+    },
+    "the_wild_sheep_chase_fresh_acceptance_20261022_1520z": {
+      "status": "failed",
+      "readiness": {
+        "play_allowed": false,
+        "history_allowed": true,
+        "state": "preparation_failed",
+        "primary_action": "repair_preparation",
+        "blockers": [
+          {
+            "code": "preparation_failed",
+            "message": "Campaign preparation needs attention before play can continue.",
+            "action": "repair_preparation"
+          }
+        ]
+      },
+      "job": {
+        "job_id": "746a11f793e74445affe6aaaa4d3fe8a",
+        "kind": "ingestion",
+        "state": "failed",
+        "stage": "Preparation needs attention",
+        "completed_chapters": 0,
+        "checkpoint_available": true,
+        "retryable": false,
+        "retained_work": "outline_and_chapters",
+        "failure": {
+          "code": "provider_receipt_missing",
+          "outcome": "unknown",
+          "retryable": false
+        }
+      }
+    },
+    "the_crooked_ferry_acceptance_20261022_1520z": {
+      "status": "failed",
+      "readiness": {
+        "play_allowed": false,
+        "history_allowed": true,
+        "state": "preparation_failed",
+        "primary_action": "repair_preparation",
+        "blockers": [
+          {
+            "code": "preparation_failed",
+            "message": "Campaign preparation needs attention before play can continue.",
+            "action": "repair_preparation"
+          }
+        ]
+      },
+      "job": {
+        "job_id": "fba799f1208d49f082a57b13cafd7e37",
+        "kind": "generation",
+        "state": "failed",
+        "stage": "Preparation needs attention",
+        "completed_chapters": 0,
+        "checkpoint_available": true,
+        "retryable": false,
+        "retained_work": "outline_and_chapters",
+        "failure": {
+          "code": "provider_receipt_missing",
+          "outcome": "unknown",
+          "retryable": false
+        }
+      }
+    }
+  }
+}

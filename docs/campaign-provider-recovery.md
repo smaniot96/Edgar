@@ -7,6 +7,24 @@ request stay unchanged; transport streaming does not invalidate accepted paid wo
 Every create sends the dispatch ID as metadata, Idempotency-Key and X-Client-Request-Id.
 SDK create retries remain disabled.
 
+Independent capability review also retains valid decisions when a response omits or corrupts
+an identifier. Only unique, exact, locally valid decisions count. The workflow asks for the
+remaining gaps using short request-local selectors and keeps their exact hash bindings in a
+separate durable audit. It never fuzzy-matches a returned hash. A focused response that adds no
+valid coverage holds preparation for attention instead of repeating paid work or publishing an
+incomplete review.
+
+If a retained scoped prose repair contains overlapping replacements or quotes text
+that is absent or ambiguous, the workflow asks for one correction per invalid record
+and field. It supplies the accepted
+original text and every proposed edit for that field, retains the original paid
+candidate, and preserves unrelated edits. The consolidated substitutions must still
+match unique substrings, stay inside the repair closure and pass normal validation
+and independent review. An unmatched quote requires a model to rebase the intended
+correction onto the actual baseline; the application never guesses a near match or
+moves the edit to another record. A second invalid result in the same field holds
+for attention; retry reuses the saved correction receipt instead of submitting it again.
+
 An interruption after the ID is saved resumes by retrieving that same response. A
 connection failure before any response receipt remains ambiguous and blocks ordinary
 retry. An idempotency header alone is not proof that a repeat create is safe.

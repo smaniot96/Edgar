@@ -1,0 +1,26 @@
+{
+  "captured_at_unix": 1792755054.2699862,
+  "implementation_revision": "b36628ae80c9847714fe4cdc006f40e8c48c07aa",
+  "checks": {
+    "the_wild_sheep_chase_preparation_replay_20261022": {
+      "state": "running",
+      "node": "repair",
+      "original_receipt_count_before_final_recovery": 19,
+      "all_existing_receipts_preserved": true,
+      "current_call_count": 25,
+      "new_distinct_calls_since_before_recovery": 6,
+      "physical_source_pages": 6,
+      "original_dispatches_resubmitted": false
+    },
+    "lanterns_at_greybank_ai_preparation_20261023": {
+      "state": "running",
+      "node": "ai_chapter",
+      "original_receipt_count_before_final_recovery": 5,
+      "all_existing_receipts_preserved": true,
+      "current_call_count": 5,
+      "new_distinct_calls_since_before_recovery": 0,
+      "physical_source_pages": 0,
+      "original_dispatches_resubmitted": false
+    }
+  }
+}
