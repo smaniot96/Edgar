@@ -1,0 +1,1011 @@
+{
+  "raw_actions": 57,
+  "eligible_actions": 55,
+  "timing_actions": 54,
+  "excluded": {
+    "016": "Operator named an unseen laboratory after the door attempt failed; invalid earned-knowledge progression sample.",
+    "049": "Operator confirmed after a rejected declaration; no pending action existed."
+  },
+  "timing_excluded": {
+    "006": "Retained play tabs saturated browser connections; server received the request only after stale tabs closed."
+  },
+  "units": "milliseconds",
+  "quantiles": "linear interpolation",
+  "all": {
+    "actions": 54,
+    "busy_paint": {
+      "n": 54,
+      "min_ms": 26,
+      "max_ms": 30.799999997019768,
+      "p50_ms": 28.74999999254942,
+      "p90_ms": 30.170000004768372
+    },
+    "first_token": {
+      "n": 54,
+      "min_ms": 868,
+      "max_ms": 16506.60000000894,
+      "p50_ms": 9433.60000000149,
+      "p90_ms": 14180.580000005664
+    },
+    "first_text_paint": {
+      "n": 54,
+      "min_ms": 895.2000000029802,
+      "max_ms": 16529.5,
+      "p50_ms": 9464.05000000447,
+      "p90_ms": 14204.250000001492
+    },
+    "done": {
+      "n": 54,
+      "min_ms": 1039.800000011921,
+      "max_ms": 17594.40000000596,
+      "p50_ms": 10821.95000000298,
+      "p90_ms": 15669.650000000003
+    },
+    "composer_ready": {
+      "n": 54,
+      "min_ms": 1061.7000000029802,
+      "max_ms": 17630.5,
+      "p50_ms": 10855.39999999851,
+      "p90_ms": 15698.769999997321
+    },
+    "journal_settled": {
+      "n": 51,
+      "min_ms": 1061.1000000089407,
+      "max_ms": 17623,
+      "p50_ms": 10332.29999999702,
+      "p90_ms": 15951.79999999702
+    },
+    "map_settled": {
+      "n": 0
+    },
+    "failed": {
+      "n": 0
+    }
+  },
+  "empty_actions": {
+    "n": 8,
+    "eligible": 55
+  },
+  "by_source": {
+    "wild_sheep": {
+      "all": {
+        "actions": 44,
+        "busy_paint": {
+          "n": 44,
+          "min_ms": 27,
+          "max_ms": 30.799999997019768,
+          "p50_ms": 28.399999998509884,
+          "p90_ms": 30.32000000178814
+        },
+        "first_token": {
+          "n": 44,
+          "min_ms": 868,
+          "max_ms": 15848,
+          "p50_ms": 9063.70000000298,
+          "p90_ms": 13639.619999992847
+        },
+        "first_text_paint": {
+          "n": 44,
+          "min_ms": 895.2000000029802,
+          "max_ms": 15880.09999999404,
+          "p50_ms": 9087.75,
+          "p90_ms": 13664.259999991953
+        },
+        "done": {
+          "n": 44,
+          "min_ms": 1039.800000011921,
+          "max_ms": 16838.79999999702,
+          "p50_ms": 10130.0,
+          "p90_ms": 14967.259999996424
+        },
+        "composer_ready": {
+          "n": 44,
+          "min_ms": 1061.7000000029802,
+          "max_ms": 16880.19999998808,
+          "p50_ms": 10162.80000000447,
+          "p90_ms": 14989.839999990167
+        },
+        "journal_settled": {
+          "n": 43,
+          "min_ms": 1061.1000000089407,
+          "max_ms": 16867.69999998808,
+          "p50_ms": 10104.300000011921,
+          "p90_ms": 14693.179999992253
+        },
+        "map_settled": {
+          "n": 0
+        },
+        "failed": {
+          "n": 0
+        }
+      },
+      "by_category": {
+        "cancel": {
+          "actions": 1,
+          "busy_paint": {
+            "n": 1,
+            "min_ms": 28.5,
+            "max_ms": 28.5,
+            "p50_ms": 28.5,
+            "p90_ms": 28.5
+          },
+          "first_token": {
+            "n": 1,
+            "min_ms": 868,
+            "max_ms": 868,
+            "p50_ms": 868.0,
+            "p90_ms": 868.0
+          },
+          "first_text_paint": {
+            "n": 1,
+            "min_ms": 895.2000000029802,
+            "max_ms": 895.2000000029802,
+            "p50_ms": 895.2000000029802,
+            "p90_ms": 895.2000000029802
+          },
+          "done": {
+            "n": 1,
+            "min_ms": 1039.800000011921,
+            "max_ms": 1039.800000011921,
+            "p50_ms": 1039.800000011921,
+            "p90_ms": 1039.800000011921
+          },
+          "composer_ready": {
+            "n": 1,
+            "min_ms": 1061.7000000029802,
+            "max_ms": 1061.7000000029802,
+            "p50_ms": 1061.7000000029802,
+            "p90_ms": 1061.7000000029802
+          },
+          "journal_settled": {
+            "n": 1,
+            "min_ms": 1061.1000000089407,
+            "max_ms": 1061.1000000089407,
+            "p50_ms": 1061.1000000089407,
+            "p90_ms": 1061.1000000089407
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "combat-round": {
+          "actions": 11,
+          "busy_paint": {
+            "n": 11,
+            "min_ms": 27,
+            "max_ms": 30.599999994039536,
+            "p50_ms": 28.099999994039536,
+            "p90_ms": 29.299999997019768
+          },
+          "first_token": {
+            "n": 11,
+            "min_ms": 6717.29999999702,
+            "max_ms": 12413.89999999106,
+            "p50_ms": 9603.10000000894,
+            "p90_ms": 12395.90000000596
+          },
+          "first_text_paint": {
+            "n": 11,
+            "min_ms": 6743.79999999702,
+            "max_ms": 12445.29999999702,
+            "p50_ms": 9627.5,
+            "p90_ms": 12427.0
+          },
+          "done": {
+            "n": 11,
+            "min_ms": 7446.5,
+            "max_ms": 12639.699999988079,
+            "p50_ms": 10587.29999999702,
+            "p90_ms": 12604.60000000894
+          },
+          "composer_ready": {
+            "n": 11,
+            "min_ms": 7477.0999999940395,
+            "max_ms": 12678.29999999702,
+            "p50_ms": 10613.5,
+            "p90_ms": 12643.60000000894
+          },
+          "journal_settled": {
+            "n": 11,
+            "min_ms": 7465.29999999702,
+            "max_ms": 12671,
+            "p50_ms": 10633.79999999702,
+            "p90_ms": 12638.5
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "declaration": {
+          "actions": 11,
+          "busy_paint": {
+            "n": 11,
+            "min_ms": 27.5,
+            "max_ms": 30.799999997019768,
+            "p50_ms": 28.799999997019768,
+            "p90_ms": 29.900000005960464
+          },
+          "first_token": {
+            "n": 11,
+            "min_ms": 3513.8999999910593,
+            "max_ms": 6138.4000000059605,
+            "p50_ms": 4451.0999999940395,
+            "p90_ms": 5478.5999999940395
+          },
+          "first_text_paint": {
+            "n": 11,
+            "min_ms": 3545.699999988079,
+            "max_ms": 6160.9000000059605,
+            "p50_ms": 4477.79999999702,
+            "p90_ms": 5512.20000000298
+          },
+          "done": {
+            "n": 11,
+            "min_ms": 3716.9000000059605,
+            "max_ms": 6335.300000011921,
+            "p50_ms": 4642.899999991059,
+            "p90_ms": 5673.0999999940395
+          },
+          "composer_ready": {
+            "n": 11,
+            "min_ms": 3747.0999999940395,
+            "max_ms": 6376.9000000059605,
+            "p50_ms": 4677.5999999940395,
+            "p90_ms": 5712.29999999702
+          },
+          "journal_settled": {
+            "n": 11,
+            "min_ms": 3741.0999999940395,
+            "max_ms": 6382.70000000298,
+            "p50_ms": 4672.399999991059,
+            "p90_ms": 5703.5999999940395
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "dialogue": {
+          "actions": 9,
+          "busy_paint": {
+            "n": 9,
+            "min_ms": 27.599999994039536,
+            "max_ms": 30.799999997019768,
+            "p50_ms": 28.69999998807907,
+            "p90_ms": 30.559999999403953
+          },
+          "first_token": {
+            "n": 9,
+            "min_ms": 8397.39999999106,
+            "max_ms": 14732.90000000596,
+            "p50_ms": 11309.40000000596,
+            "p90_ms": 13214.419999998809
+          },
+          "first_text_paint": {
+            "n": 9,
+            "min_ms": 8428,
+            "max_ms": 14762.09999999404,
+            "p50_ms": 11328.0,
+            "p90_ms": 13244.740000003576
+          },
+          "done": {
+            "n": 9,
+            "min_ms": 9301.39999999106,
+            "max_ms": 15968.40000000596,
+            "p50_ms": 12548.90000000596,
+            "p90_ms": 14659.119999998808
+          },
+          "composer_ready": {
+            "n": 9,
+            "min_ms": 9328.59999999404,
+            "max_ms": 15994.90000000596,
+            "p50_ms": 12578.70000000298,
+            "p90_ms": 14691.700000005962
+          },
+          "journal_settled": {
+            "n": 9,
+            "min_ms": 9323.89999999106,
+            "max_ms": 16206,
+            "p50_ms": 12573.29999999702,
+            "p90_ms": 14724.639999997617
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "escape": {
+          "actions": 1,
+          "busy_paint": {
+            "n": 1,
+            "min_ms": 27.600000008940697,
+            "max_ms": 27.600000008940697,
+            "p50_ms": 27.600000008940697,
+            "p90_ms": 27.600000008940697
+          },
+          "first_token": {
+            "n": 1,
+            "min_ms": 5122.5,
+            "max_ms": 5122.5,
+            "p50_ms": 5122.5,
+            "p90_ms": 5122.5
+          },
+          "first_text_paint": {
+            "n": 1,
+            "min_ms": 5144.4000000059605,
+            "max_ms": 5144.4000000059605,
+            "p50_ms": 5144.4000000059605,
+            "p90_ms": 5144.4000000059605
+          },
+          "done": {
+            "n": 1,
+            "min_ms": 6137.70000000298,
+            "max_ms": 6137.70000000298,
+            "p50_ms": 6137.70000000298,
+            "p90_ms": 6137.70000000298
+          },
+          "composer_ready": {
+            "n": 1,
+            "min_ms": 6177.29999999702,
+            "max_ms": 6177.29999999702,
+            "p50_ms": 6177.29999999702,
+            "p90_ms": 6177.29999999702
+          },
+          "journal_settled": {
+            "n": 1,
+            "min_ms": 6168.4000000059605,
+            "max_ms": 6168.4000000059605,
+            "p50_ms": 6168.4000000059605,
+            "p90_ms": 6168.4000000059605
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "exploration": {
+          "actions": 4,
+          "busy_paint": {
+            "n": 4,
+            "min_ms": 27.299999997019768,
+            "max_ms": 29.799999997019768,
+            "p50_ms": 28.899999998509884,
+            "p90_ms": 29.64999999701977
+          },
+          "first_token": {
+            "n": 4,
+            "min_ms": 9366.5,
+            "max_ms": 15848,
+            "p50_ms": 12884.40000000596,
+            "p90_ms": 15669.080000002683
+          },
+          "first_text_paint": {
+            "n": 4,
+            "min_ms": 9396.20000000298,
+            "max_ms": 15880.09999999404,
+            "p50_ms": 12911.79999999702,
+            "p90_ms": 15699.169999995827
+          },
+          "done": {
+            "n": 4,
+            "min_ms": 11056.60000000894,
+            "max_ms": 16838.79999999702,
+            "p50_ms": 14432.79999999702,
+            "p90_ms": 16693.269999998807
+          },
+          "composer_ready": {
+            "n": 4,
+            "min_ms": 11097.29999999702,
+            "max_ms": 16880.19999998808,
+            "p50_ms": 14470.55000000447,
+            "p90_ms": 16734.159999993444
+          },
+          "journal_settled": {
+            "n": 4,
+            "min_ms": 11083.79999999702,
+            "max_ms": 16867.69999998808,
+            "p50_ms": 14462.44999999553,
+            "p90_ms": 16724.029999990762
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "scroll": {
+          "actions": 2,
+          "busy_paint": {
+            "n": 2,
+            "min_ms": 29.700000002980232,
+            "max_ms": 30.5,
+            "p50_ms": 30.100000001490116,
+            "p90_ms": 30.420000000298025
+          },
+          "first_token": {
+            "n": 2,
+            "min_ms": 13606.29999999702,
+            "max_ms": 14406.300000011921,
+            "p50_ms": 14006.30000000447,
+            "p90_ms": 14326.300000010431
+          },
+          "first_text_paint": {
+            "n": 2,
+            "min_ms": 13630.09999999404,
+            "max_ms": 14429.40000000596,
+            "p50_ms": 14029.75,
+            "p90_ms": 14349.470000004769
+          },
+          "done": {
+            "n": 2,
+            "min_ms": 15057.5,
+            "max_ms": 16006.60000000894,
+            "p50_ms": 15532.05000000447,
+            "p90_ms": 15911.690000008046
+          },
+          "composer_ready": {
+            "n": 2,
+            "min_ms": 15079.89999999106,
+            "max_ms": 16029.20000000298,
+            "p50_ms": 15554.54999999702,
+            "p90_ms": 15934.270000001789
+          },
+          "journal_settled": {
+            "n": 1,
+            "min_ms": 16024.70000000298,
+            "max_ms": 16024.70000000298,
+            "p50_ms": 16024.70000000298,
+            "p90_ms": 16024.70000000298
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "surrender-result": {
+          "actions": 2,
+          "busy_paint": {
+            "n": 2,
+            "min_ms": 27.200000002980232,
+            "max_ms": 27.299999997019768,
+            "p50_ms": 27.25,
+            "p90_ms": 27.289999997615816
+          },
+          "first_token": {
+            "n": 2,
+            "min_ms": 5129.79999999702,
+            "max_ms": 9242.90000000596,
+            "p50_ms": 7186.35000000149,
+            "p90_ms": 8831.590000005066
+          },
+          "first_text_paint": {
+            "n": 2,
+            "min_ms": 5160.5999999940395,
+            "max_ms": 9260.90000000596,
+            "p50_ms": 7210.75,
+            "p90_ms": 8850.870000004768
+          },
+          "done": {
+            "n": 2,
+            "min_ms": 5306.899999991059,
+            "max_ms": 9436.20000000298,
+            "p50_ms": 7371.54999999702,
+            "p90_ms": 9023.270000001789
+          },
+          "composer_ready": {
+            "n": 2,
+            "min_ms": 5327.29999999702,
+            "max_ms": 9460.29999999702,
+            "p50_ms": 7393.79999999702,
+            "p90_ms": 9046.99999999702
+          },
+          "journal_settled": {
+            "n": 2,
+            "min_ms": 5325.699999988079,
+            "max_ms": 9457.29999999702,
+            "p50_ms": 7391.499999992549,
+            "p90_ms": 9044.139999996125
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "travel": {
+          "actions": 3,
+          "busy_paint": {
+            "n": 3,
+            "min_ms": 27.600000008940697,
+            "max_ms": 29.099999994039536,
+            "p50_ms": 27.700000002980232,
+            "p90_ms": 28.819999995827676
+          },
+          "first_token": {
+            "n": 3,
+            "min_ms": 8996.10000000894,
+            "max_ms": 13653.89999999106,
+            "p50_ms": 9040.70000000298,
+            "p90_ms": 12731.259999993443
+          },
+          "first_text_paint": {
+            "n": 3,
+            "min_ms": 9027.70000000298,
+            "max_ms": 13678.89999999106,
+            "p50_ms": 9061.40000000596,
+            "p90_ms": 12755.399999994039
+          },
+          "done": {
+            "n": 3,
+            "min_ms": 10024.20000000298,
+            "max_ms": 14756.699999988079,
+            "p50_ms": 10084.20000000298,
+            "p90_ms": 13822.199999991059
+          },
+          "composer_ready": {
+            "n": 3,
+            "min_ms": 10044.40000000596,
+            "max_ms": 14779.699999988079,
+            "p50_ms": 10112.300000011921,
+            "p90_ms": 13846.219999992847
+          },
+          "journal_settled": {
+            "n": 3,
+            "min_ms": 10043,
+            "max_ms": 14777.89999999106,
+            "p50_ms": 10104.300000011921,
+            "p90_ms": 13843.17999999523
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        }
+      }
+    },
+    "retained_ai": {
+      "all": {
+        "actions": 10,
+        "busy_paint": {
+          "n": 10,
+          "min_ms": 26,
+          "max_ms": 30.200000002980232,
+          "p50_ms": 29.850000001490116,
+          "p90_ms": 30.11000000834465
+        },
+        "first_token": {
+          "n": 10,
+          "min_ms": 8704.89999999106,
+          "max_ms": 16506.60000000894,
+          "p50_ms": 10778.60000000149,
+          "p90_ms": 14994.149999995529
+        },
+        "first_text_paint": {
+          "n": 10,
+          "min_ms": 8725.79999999702,
+          "max_ms": 16529.5,
+          "p50_ms": 10805.40000000596,
+          "p90_ms": 15014.080000002681
+        },
+        "done": {
+          "n": 10,
+          "min_ms": 9937.70000000298,
+          "max_ms": 17594.40000000596,
+          "p50_ms": 12490.14999999851,
+          "p90_ms": 16098.240000000595
+        },
+        "composer_ready": {
+          "n": 10,
+          "min_ms": 9959,
+          "max_ms": 17630.5,
+          "p50_ms": 12522.29999999702,
+          "p90_ms": 16130.65
+        },
+        "journal_settled": {
+          "n": 8,
+          "min_ms": 9970,
+          "max_ms": 17623,
+          "p50_ms": 12713.35000000149,
+          "p90_ms": 16453.159999997915
+        },
+        "map_settled": {
+          "n": 0
+        },
+        "failed": {
+          "n": 0
+        }
+      },
+      "by_category": {
+        "dialogue": {
+          "actions": 2,
+          "busy_paint": {
+            "n": 2,
+            "min_ms": 29.900000005960464,
+            "max_ms": 30.100000008940697,
+            "p50_ms": 30.00000000745058,
+            "p90_ms": 30.080000008642674
+          },
+          "first_token": {
+            "n": 2,
+            "min_ms": 9500.70000000298,
+            "max_ms": 16506.60000000894,
+            "p50_ms": 13003.65000000596,
+            "p90_ms": 15806.010000008344
+          },
+          "first_text_paint": {
+            "n": 2,
+            "min_ms": 9531.90000000596,
+            "max_ms": 16529.5,
+            "p50_ms": 13030.70000000298,
+            "p90_ms": 15829.740000000596
+          },
+          "done": {
+            "n": 2,
+            "min_ms": 11059.40000000596,
+            "max_ms": 17594.40000000596,
+            "p50_ms": 14326.90000000596,
+            "p90_ms": 16940.90000000596
+          },
+          "composer_ready": {
+            "n": 2,
+            "min_ms": 11098.40000000596,
+            "max_ms": 17630.5,
+            "p50_ms": 14364.45000000298,
+            "p90_ms": 16977.290000000598
+          },
+          "journal_settled": {
+            "n": 2,
+            "min_ms": 11085.40000000596,
+            "max_ms": 17623,
+            "p50_ms": 14354.20000000298,
+            "p90_ms": 16969.240000000595
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "exploration": {
+          "actions": 5,
+          "busy_paint": {
+            "n": 5,
+            "min_ms": 26,
+            "max_ms": 30.200000002980232,
+            "p50_ms": 29.900000005960464,
+            "p90_ms": 30.080000004172327
+          },
+          "first_token": {
+            "n": 5,
+            "min_ms": 8704.89999999106,
+            "max_ms": 14826.09999999404,
+            "p50_ms": 10865.0,
+            "p90_ms": 13456.139999997617
+          },
+          "first_text_paint": {
+            "n": 5,
+            "min_ms": 8725.79999999702,
+            "max_ms": 14845.70000000298,
+            "p50_ms": 10896.90000000596,
+            "p90_ms": 13479.30000000298
+          },
+          "done": {
+            "n": 5,
+            "min_ms": 9937.70000000298,
+            "max_ms": 15932,
+            "p50_ms": 12381.29999999702,
+            "p90_ms": 14671.4
+          },
+          "composer_ready": {
+            "n": 5,
+            "min_ms": 9959,
+            "max_ms": 15964,
+            "p50_ms": 12412.79999999702,
+            "p90_ms": 14704.4
+          },
+          "journal_settled": {
+            "n": 4,
+            "min_ms": 9970,
+            "max_ms": 15951.79999999702,
+            "p50_ms": 12444.75,
+            "p90_ms": 15007.969999998808
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "rescue": {
+          "actions": 1,
+          "busy_paint": {
+            "n": 1,
+            "min_ms": 28.900000005960464,
+            "max_ms": 28.900000005960464,
+            "p50_ms": 28.900000005960464,
+            "p90_ms": 28.900000005960464
+          },
+          "first_token": {
+            "n": 1,
+            "min_ms": 10199.5,
+            "max_ms": 10199.5,
+            "p50_ms": 10199.5,
+            "p90_ms": 10199.5
+          },
+          "first_text_paint": {
+            "n": 1,
+            "min_ms": 10228.90000000596,
+            "max_ms": 10228.90000000596,
+            "p50_ms": 10228.90000000596,
+            "p90_ms": 10228.90000000596
+          },
+          "done": {
+            "n": 1,
+            "min_ms": 11871.20000000298,
+            "max_ms": 11871.20000000298,
+            "p50_ms": 11871.20000000298,
+            "p90_ms": 11871.20000000298
+          },
+          "composer_ready": {
+            "n": 1,
+            "min_ms": 11895.09999999404,
+            "max_ms": 11895.09999999404,
+            "p50_ms": 11895.09999999404,
+            "p90_ms": 11895.09999999404
+          },
+          "journal_settled": {
+            "n": 0
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        },
+        "resolution": {
+          "actions": 2,
+          "busy_paint": {
+            "n": 2,
+            "min_ms": 29.200000002980232,
+            "max_ms": 29.799999997019768,
+            "p50_ms": 29.5,
+            "p90_ms": 29.739999997615815
+          },
+          "first_token": {
+            "n": 2,
+            "min_ms": 10468.70000000298,
+            "max_ms": 12927.09999999404,
+            "p50_ms": 11697.89999999851,
+            "p90_ms": 12681.259999994934
+          },
+          "first_text_paint": {
+            "n": 2,
+            "min_ms": 10496.40000000596,
+            "max_ms": 12946.20000000298,
+            "p50_ms": 11721.30000000447,
+            "p90_ms": 12701.220000003279
+          },
+          "done": {
+            "n": 2,
+            "min_ms": 12599,
+            "max_ms": 14501.20000000298,
+            "p50_ms": 13550.10000000149,
+            "p90_ms": 14310.980000002683
+          },
+          "composer_ready": {
+            "n": 2,
+            "min_ms": 12631.79999999702,
+            "max_ms": 14530.70000000298,
+            "p50_ms": 13581.25,
+            "p90_ms": 14340.810000002384
+          },
+          "journal_settled": {
+            "n": 2,
+            "min_ms": 12621,
+            "max_ms": 14524.09999999404,
+            "p50_ms": 13572.54999999702,
+            "p90_ms": 14333.789999994635
+          },
+          "map_settled": {
+            "n": 0
+          },
+          "failed": {
+            "n": 0
+          }
+        }
+      }
+    }
+  },
+  "exact_input_matches": [
+    {
+      "current_id": "007",
+      "baseline_id": "004",
+      "input": "I keep my sword sheathed. If Master Noke wants Finethir returned, I will accompany him peacefully so I can hear both sides. Will you guide us to Noke?",
+      "current_ms": {
+        "busy_paint": 29.299999997019768,
+        "headers": 322.09999999403954,
+        "first_token": 12384.5,
+        "first_text_paint": 12413.199999988079,
+        "done": 14029.5,
+        "journal_settled": 14051.39999999106,
+        "composer_ready": 14064
+      },
+      "baseline_ms": {
+        "busy_paint": 29,
+        "headers": 336.69999998807907,
+        "first_token": 9000.59999999404,
+        "first_text_paint": 9028.89999999106,
+        "done": 10584.09999999404,
+        "journal_settled": 10604,
+        "composer_ready": 10612.89999999106
+      },
+      "caveat": "Exact text only; context, dice, outcome and reply length differ."
+    },
+    {
+      "current_id": "009",
+      "baseline_id": "007",
+      "input": "I follow Guz openly along the route toward Noke\u2019s home.",
+      "current_ms": {
+        "busy_paint": 29.099999994039536,
+        "headers": 292.59999999403954,
+        "first_token": 13653.89999999106,
+        "first_text_paint": 13678.89999999106,
+        "done": 14756.699999988079,
+        "journal_settled": 14777.89999999106,
+        "composer_ready": 14779.699999988079
+      },
+      "baseline_ms": {
+        "busy_paint": 29.200000002980232,
+        "headers": 349.59999999403954,
+        "first_token": 10054.5,
+        "first_text_paint": 10078.89999999106,
+        "done": 11687,
+        "journal_settled": 11709.39999999106,
+        "composer_ready": 11714
+      },
+      "caveat": "Exact text only; context, dice, outcome and reply length differ."
+    },
+    {
+      "current_id": "010",
+      "baseline_id": "008",
+      "input": "I continue along the well-trodden track through the tall oaks until I reach Noke\u2019s home.",
+      "current_ms": {
+        "busy_paint": 27.700000002980232,
+        "headers": 282.5,
+        "first_token": 9040.70000000298,
+        "first_text_paint": 9061.40000000596,
+        "done": 10024.20000000298,
+        "journal_settled": 10043,
+        "composer_ready": 10044.40000000596
+      },
+      "baseline_ms": {
+        "busy_paint": 30.599999994039536,
+        "headers": 483.3999999910593,
+        "first_token": 10389.39999999106,
+        "first_text_paint": 10414.5,
+        "done": 12881.5,
+        "journal_settled": 12909.29999999702,
+        "composer_ready": 12915.5,
+        "map_settled": 12972.5
+      },
+      "caveat": "Exact text only; context, dice, outcome and reply length differ."
+    },
+    {
+      "current_id": "011",
+      "baseline_id": "009",
+      "input": "I look around Noke\u2019s home. Describe the buildings, doors, terrain, and visible inhabitants so I can decide how to approach.",
+      "current_ms": {
+        "busy_paint": 29.799999997019768,
+        "headers": 320.3999999910593,
+        "first_token": 10517.20000000298,
+        "first_text_paint": 10546.59999999404,
+        "done": 12511.89999999106,
+        "journal_settled": 12536.09999999404,
+        "composer_ready": 12547.70000000298
+      },
+      "baseline_ms": {
+        "busy_paint": 29,
+        "headers": 328.19999998807907,
+        "first_token": 19105.79999999702,
+        "first_text_paint": 19128.89999999106,
+        "done": 20592,
+        "journal_settled": 20616.29999999702,
+        "composer_ready": 20629.89999999106
+      },
+      "caveat": "Exact text only; context, dice, outcome and reply length differ."
+    },
+    {
+      "current_id": "012",
+      "baseline_id": "010",
+      "input": "I stay in plain view on the lawn and call out, \"Noke! I have come to talk about Finethir. Please show yourself.\"",
+      "current_ms": {
+        "busy_paint": 27.799999997019768,
+        "headers": 288.3999999910593,
+        "first_token": 9013.699999988079,
+        "first_text_paint": 9044.5,
+        "done": 10305.5,
+        "journal_settled": 10332.29999999702,
+        "composer_ready": 10345.699999988079
+      },
+      "baseline_ms": {
+        "busy_paint": 30.100000008940697,
+        "headers": 849.6000000089407,
+        "first_token": 12106.5,
+        "first_text_paint": 12131.79999999702,
+        "done": 13689.79999999702,
+        "journal_settled": 13711.60000000894,
+        "composer_ready": 13714.40000000596
+      },
+      "caveat": "Exact text only; context, dice, outcome and reply length differ."
+    },
+    {
+      "current_id": "018",
+      "baseline_id": "021",
+      "input": "I attack Noke with my longsword.",
+      "current_ms": {
+        "busy_paint": 27.600000008940697,
+        "headers": 348.80000001192093,
+        "first_token": 6138.4000000059605,
+        "first_text_paint": 6160.9000000059605,
+        "done": 6335.300000011921,
+        "composer_ready": 6376.9000000059605,
+        "journal_settled": 6382.70000000298
+      },
+      "baseline_ms": {
+        "busy_paint": 29.399999991059303,
+        "headers": 292.29999999701977,
+        "first_token": 6826.199999988079,
+        "first_text_paint": 6846.79999999702,
+        "done": 7033.199999988079,
+        "composer_ready": 7078.899999991059,
+        "journal_settled": 7081.399999991059
+      },
+      "caveat": "Exact text only; context, dice, outcome and reply length differ."
+    },
+    {
+      "current_id": "042",
+      "baseline_id": "001",
+      "input": "I take the scroll and read it.",
+      "current_ms": {
+        "busy_paint": 29.700000002980232,
+        "headers": 329,
+        "first_token": 14406.300000011921,
+        "first_text_paint": 14429.40000000596,
+        "done": 16006.60000000894,
+        "journal_settled": 16024.70000000298,
+        "composer_ready": 16029.20000000298
+      },
+      "baseline_ms": {
+        "busy_paint": 30,
+        "headers": 640.7999999970198,
+        "first_token": 13590.5,
+        "first_text_paint": 13613.20000000298,
+        "done": 15065.79999999702,
+        "journal_settled": 15083.79999999702,
+        "composer_ready": 15096.79999999702
+      },
+      "caveat": "Exact text only; context, dice, outcome and reply length differ."
+    }
+  ]
+}

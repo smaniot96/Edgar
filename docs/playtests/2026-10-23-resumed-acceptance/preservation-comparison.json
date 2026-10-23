@@ -1,0 +1,29 @@
+{
+  "/api/campaigns": {
+    "before": 19,
+    "after": 20,
+    "missing": [],
+    "added": [
+      33
+    ],
+    "changed_existing": [
+      32
+    ]
+  },
+  "/api/characters": {
+    "before": 22,
+    "after": 22,
+    "missing": [],
+    "added": [],
+    "changed_existing": [
+      43
+    ]
+  },
+  "/api/adventures": {
+    "before": 16,
+    "after": 16,
+    "missing": [],
+    "added": [],
+    "changed_existing": []
+  }
+}
