@@ -7,6 +7,7 @@ projection; no model quantity, bonus, damage or resource value is applied here.
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 
 from edgar_core.manifests import require_published
 from edgar_core.story import StoryEffect, StoryRef, story_target_id
@@ -37,6 +38,48 @@ def inventory_entries(character: dict | None):
     for entries in ((character or {}).get("inventory") or {}).values():
         if isinstance(entries, list):
             yield from entries
+
+
+def project_object_inventory(inventory, effects, state):
+    """One pure projection for narration and transactional assignment persistence.
+
+    Callers supply accepted effects; persistence still revalidates them under its
+    lock. Never mutate the pre-turn snapshot while preparing narration.
+    """
+    from agent.resolution import match_inventory_item
+
+    result = deepcopy(inventory or {})
+    for effect in effects:
+        if effect.kind not in {"acquire", "consume", "transfer"}:
+            continue
+        identity = story_target_id(effect.target)
+        if effect.kind == "acquire":
+            result["items"] = [*(result.get("items") or []), {
+                "name": effect.display_name or "Recovered item", "story_object_id": identity,
+            }]
+            continue
+        found = False
+        for entries in result.values():
+            if not isinstance(entries, list):
+                continue
+            for index, entry in enumerate(entries):
+                if isinstance(entry, dict) and entry.get("story_object_id") == identity:
+                    entries.pop(index)
+                    found = True
+                    break
+            if found:
+                break
+        definition = object_definition(effect, state)
+        if not found and definition and definition.initial_owner == "character":
+            for entries in result.values():
+                if not isinstance(entries, list):
+                    continue
+                names = [entry.get("name", "") if isinstance(entry, dict) else str(entry) for entry in entries]
+                match = match_inventory_item(names, definition.title)
+                if match is not None:
+                    entries.pop(names.index(match))
+                    break
+    return result
 
 
 def object_state(target: StoryRef, state: dict, accepted_so_far=()) -> dict:

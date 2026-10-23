@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from agent.object_effects import object_state, validate_object_effect
+from agent.object_effects import object_state, project_object_inventory, validate_object_effect
 from edgar_core.artifacts import text_digest
 from edgar_core.manifests import AdventureManifest, manifest_digest
 from edgar_core.story import StoryEffect, StoryRef, accept_story_effect, story_target_id
@@ -142,6 +142,19 @@ def test_planner_custody_bindings_support_drop_and_reacquire_without_accepting_l
     ))
     assert dropped.destination == "room"
     assert validate_object_effect(effect("acquire"), state, [acquired, dropped]).destination == "character:7"
+
+
+def test_inventory_projection_replays_object_order_without_mutating_snapshot(object_state_fixture):
+    state, effect = object_state_fixture
+    before = deepcopy(state)
+    acquired = seal(validate_object_effect(effect("acquire"), state))
+    dropped = seal(validate_object_effect(effect("transfer", destination="room"), state, [acquired]))
+    consumed = seal(validate_object_effect(effect("consume", "cord"), state))
+    picked_up = seal(validate_object_effect(effect("acquire"), state, [acquired, dropped]))
+    assert project_object_inventory(state["character"]["inventory"], [acquired, dropped, consumed], state) == {"items": []}
+    inventory = project_object_inventory(state["character"]["inventory"], [acquired, dropped, consumed, picked_up], state)
+    assert inventory == {"items": [{"name": "Fixture", "story_object_id": story_target_id(acquired.target)}]}
+    assert state == before
 
 
 @pytest.mark.parametrize("destination", [

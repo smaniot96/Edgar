@@ -31,7 +31,7 @@ from agent.history import (
     public_earned_facts,
 )
 from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
-from agent.object_effects import acquisition_destination
+from agent.object_effects import acquisition_destination, project_object_inventory
 from agent.prompts import NARRATOR, wrap_player_action, wrap_retrieved_excerpt
 from agent.provider_trace import traced_call
 from agent.scene_guidance import known_actor_identity_context
@@ -126,11 +126,17 @@ def narrator_context(state: AgentState) -> tuple[list[dict], list[dict]]:
 
 def _live_consequence(public: dict) -> dict:
     """A validated visit proves position, not every actor assumption in arrival prose."""
-    if public.get("provenance") != "module" or public.get("kind") not in {"move", "visit"}:
+    if public.get("provenance") != "module" or public.get("kind") not in {
+        "move", "visit", "acquire", "consume", "transfer", "use", "environment",
+    }:
         return public
     return {
         **{key: value for key, value in public.items() if key != "text"},
-        "scope": "Place visit only; authored arrival staging is conditional reference context.",
+        "scope": (
+            "Place visit only; authored arrival staging is conditional reference context."
+            if public["kind"] in {"move", "visit"} else
+            "Object consequence only; source room staging does not describe its live custody."
+        ),
     }
 
 
@@ -160,10 +166,13 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
     continuity_slot = len(context_parts)
     character = state.get("character")
     if character:
+        inventory = project_object_inventory(
+            character.get("inventory"), adjudication.accepted_story_effects if adjudication else [], state,
+        )
         context_parts.append(
             f"Player character: {character.get('name')}, level {character.get('level')} "
             f"{character.get('class')}, HP {character.get('hp_current')}/{character.get('hp_max')}, "
-            f"inventory {character.get('inventory')}. Use HP only to calibrate wounds and fatigue "
+            f"inventory after accepted object consequences {inventory}. Use HP only to calibrate wounds and fatigue "
             f"(do not describe the PC as unhurt if HP is low, or dying if HP is still moderate); "
             "never print the numbers, and do not invent status conditions. "
             "This inventory is authoritative for carried possessions. A spoken claim of "
@@ -258,6 +267,26 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
         context_parts.append(
             f"Validated canonical story consequences this turn (persistent discoveries/accomplishments; validated source observations also answer this action): {accepted}"
         )
+        custody = []
+        for effect in adjudication.accepted_story_effects:
+            public = player_story_effect(effect)
+            if public is None or effect.kind not in {"acquire", "consume", "transfer"}:
+                continue
+            custody.append({
+                "object": public["name"],
+                "result": {
+                    "acquire": "picked up and carried by the acting character",
+                    "transfer": "set down in the current scene; no longer carried by the acting character",
+                    "consume": "consumed; no longer in inventory",
+                }[effect.kind],
+            })
+        if custody:
+            context_parts.append(
+                "Resolved object custody this turn (authoritative, in order; supersedes older "
+                "inventory and narration): " + str(custody)
+                + ". Convey these completed changes explicitly. Do not describe an accepted "
+                "drop as a failed pickup or preserve the earlier possession."
+            )
         object_changes = {"acquire", "consume", "transfer", "use", "environment"}
         unaccepted = [
             {"kind": effect.kind, "operation": effect.operation}

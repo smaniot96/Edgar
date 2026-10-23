@@ -501,6 +501,29 @@ def source_object_state(play):
     return state
 
 
+def test_narrator_inventory_and_custody_follow_accepted_drop_over_stale_history(source_object_state):
+    state = source_object_state
+    manifest = AdventureManifest.model_validate(state["adventure_manifests"]["ai_campaign"])
+    pickup = StoryEffect(
+        kind="acquire", target=_ref(manifest, "object", "animal_scroll"),
+        source_reference_ids=[_cite(state["planner_context"][0])],
+    )
+    acquired = validate_story_effects(AdjudicationResult(success=True, story_effects=[pickup]), state).accepted_story_effects[0]
+    state["story_state"] = {"facts": [StoryFact(**acquired.model_dump(), fact_id=story_target_id(acquired.target)).model_dump()]}
+    state["character"]["inventory"] = {"items": [{"name": acquired.display_name, "story_object_id": story_target_id(acquired.target)}]}
+    state["player_input"] = "I put the scroll down on the nearby table."
+    state["messages"] = [AIMessage(content="The drop was not established; you still carry the scroll.")]
+    drop = pickup.model_copy(update={"kind": "transfer", "destination": state["current_scene_id"]})
+    state["adjudication_result"] = validate_story_effects(AdjudicationResult(success=True, story_effects=[drop]), state)
+    assert state["adjudication_result"].accepted_story_effects[0].kind == "transfer"
+    prompt = "\n".join(str(message.content) for message in build_narrator_prompt(state))
+    assert "inventory after accepted object consequences {'items': []}" in prompt
+    assert "set down in the current scene; no longer carried by the acting character" in prompt
+    assert "Object operations proposed but not accepted" not in prompt
+    assert "source room staging does not describe its live custody" in prompt
+    assert state["character"]["inventory"]["items"]  # original transaction snapshot stays intact
+
+
 @pytest.mark.parametrize("visible", [True, False])
 @pytest.mark.parametrize("inspection_success", [True, False])
 def test_private_item_procedure_can_commit_pickup_only_with_public_object_binding(
