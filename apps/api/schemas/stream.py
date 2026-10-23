@@ -38,6 +38,33 @@ class _Frame(BaseModel):
 # --- Public projections -------------------------------------------------------------------------
 
 
+class GridPositionPublic(_Frame):
+    """A combatant's square on the combat grid: 0-based x (east) and y (south), and its name ("D4")."""
+
+    x: int
+    y: int
+    label: str
+
+
+class TerrainPublic(_Frame):
+    """One square of scenery: `wall` blocks movement, `difficult` costs double (agent.battlefield)."""
+
+    x: int
+    y: int
+    kind: Literal["wall", "difficult"]
+    feature: str
+
+
+class BattlefieldPublic(_Frame):
+    """The combat grid the squares are on (agent.battlefield.public_battlefield)."""
+
+    width: int
+    height: int
+    square_ft: int
+    theme: str
+    terrain: list[TerrainPublic]
+
+
 class CombatantPublic(_Frame):
     """One roster entry as the HUD and narrator may see it (`combat_state_public`)."""
 
@@ -56,6 +83,9 @@ class CombatantPublic(_Frame):
     character_id: int | None = None
     fled: bool | None = None
     death_saves: dict[str, Any] | None = None
+    # Additive (combat grid), present when the encounter has a battlefield.
+    position: GridPositionPublic | None = None
+    speed_ft: int | None = None
 
 
 class EncounterParticipantPublic(_Frame):
@@ -105,6 +135,8 @@ class CombatStatePublic(_Frame):
     party: bool | None = None
     current_turn_character_id: int | None = None
     round_events: list[CombatRoundEventPublic] | None = None
+    # Additive (combat grid): the battlefield, absent for an encounter opened before the grid.
+    battlefield: BattlefieldPublic | None = None
 
 
 class CombatOutcomeEntryPublic(_Frame):

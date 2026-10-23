@@ -1,0 +1,23 @@
+{
+  "source": "/Users/psmaniotto/.claude-worktrees/edgar-b3/combat-grid",
+  "head": "80028b7203c1e57d85c8b23f6bd9d4bb77799c8a",
+  "files": {
+    "apps/agent/src/agent/combat_declaration.py": "2e3de7c129011a770d826c1a6632927ca1766b04117a9397d6ea006c7bf7efd1",
+    "apps/agent/src/agent/combat_enemy_turns.py": "c298fa913c85a32ea4b0e992496f9c54a4ab157a3f271f49cc40b2f019dd4d8f",
+    "apps/agent/src/agent/combat_player_phase.py": "1bf196a13f851f81b876dd1a0580134ab7e62381d91a6df2bd1eccd4c59bd31a",
+    "apps/agent/src/agent/combatants.py": "f8d8428fccc76d712a915250f03a4cfe01b722370a4e7a99dc63ba79ec46c9c3",
+    "apps/agent/src/agent/graph_combat.py": "cdf400b4bc11db0b9dcae7b3496db2151e339ba0bc7e16c18e3c7df42caa7c68",
+    "apps/agent/src/agent/monster_stats.py": "eda5f3eca0d6749b1285cc76570a1699971ef8db43339ae57f63d0f15c7c2c6e",
+    "apps/agent/src/agent/positioning.py": "c1cf607e97e8b2247aadd839bc6c4e4222f0971ae9515a7bf510cac13c98e641",
+    "apps/agent/src/agent/supported_rules.py": "31b26725c5070b5ac37df7d646fef32f2175ab67a18ef7af83050a8dc5066087",
+    "apps/api/schemas/stream.py": "6b94f9993da53fbd671be00a7553855eeade2a84fce1e79b3958f391d3364cdf",
+    "apps/api/services/combat.py": "e019ab21c573f71e5db7c0169eed1a8aff73c988d7d5a5ea1315255f00898d60",
+    "apps/api/services/turn_runner.py": "43fdabb2e119b0bdc8f9a5c739da9a64295378c2392bd19d1be02a5735d6b812",
+    "db/postgres/models/combat_states.py": "77e107c7b1cca0346cbcc61af3a0ae97ddf158a6c97e10c407ecdcb2b55b5481",
+    "frontend/src/api/stream.schema.json": "150641d89ee00b2a82224de666b31007489a81764dbe18147db293a58d98757a",
+    "apps/agent/src/agent/battlefield.py": "6864d88b217688b84206e4fdac2a18570582d33df33eae582fdb9d90ee3bb886",
+    "apps/agent/src/agent/combat_grid.py": "697ec614df79fe92996c75b8aa206c3a49ca6c8666d4b81ab84f3e2d8536089d",
+    "db/alembic/versions/24_combat_battlefield.py": "42e9025a45e55b6e203f536a03898cdf027a80eb1ad0e857618f793ff4b87f13",
+    "tests/agent/test_combat_grid.py": "caf82581ba15db0bd29de90433bea4bd0a7ee6224ebb0ac5ecf55bf827ff016b"
+  }
+}

@@ -63,6 +63,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-6-luna")
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "low")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
+# Experimental backend grid. New encounters opt in; persisted grids keep their rules after restart.
+# Leave off until the tactical UI and the remaining movement/spell rules are complete.
+COMBAT_GRID_ENABLED = os.getenv("EDGAR_COMBAT_GRID", "0").strip() == "1"
+
 # Request, upload, concurrency and spend limits (EDG-066). Non-secret integers only; defaults are
 # documented in docs/request-limits.md. A malformed value fails at import, naming the setting but
 # never echoing its value.

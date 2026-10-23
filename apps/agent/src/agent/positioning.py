@@ -196,6 +196,11 @@ class MovePlan:
     question: str | None = None
     # Foe rows whose recorded distance a feet move changes, with the distance after the move.
     distances: list[tuple[dict, int]] = field(default_factory=list)
+    # Each declared move as (destination band, the foe it is aimed at or None, feet or None, position in
+    # the text), in the order stated. The combat grid (agent.combat_grid) plans its route from these.
+    legs: list[tuple[str, dict | None, int | None, int]] = field(default_factory=list)
+    # The combat grid's route for these moves (agent.battlefield.Route), when the fight has a grid.
+    route: Any = None
 
 
 def plan_moves(
@@ -235,6 +240,14 @@ def plan_moves(
             else (max(before, key=lambda m: m[0]) if before else None)
         )
         target = chosen[1] if chosen else None
+        if target is None and len(foes) == 1 and (feet is not None or band == MELEE):
+            leg_target = foes[0]
+        else:
+            leg_target = target
+        if target is None and band == MELEE and feet is None:
+            at_range_now = [f for f in foes if bands[id(f)] == RANGED]
+            leg_target = at_range_now[0] if len(at_range_now) == 1 else leg_target
+        plan.legs.append((band, leg_target, feet, pos))
         if feet is not None:
             # A move in feet is measured from the foe's recorded distance (see `distance_of`).
             if target is None and len(foes) == 1:

@@ -1,0 +1,93 @@
+{
+  "base_revision": "02487e92c056d9a142e4e51b1239bff13c209737",
+  "default_grid_enabled": false,
+  "source_files_preserved": 17,
+  "same_failures_in_candidate_and_baseline": true,
+  "inherited_order_sensitive_failures": [
+    "FAILED tests/api/test_combat_diagnostics_api.py::test_sync_combat_turn_stores_round_and_reload_returns_it",
+    "FAILED tests/api/test_combat_diagnostics_api.py::test_sync_combat_turn_without_debug_returns_no_diagnostics",
+    "FAILED tests/api/test_party_combat_api.py::test_the_turn_passes_hero_to_hero_and_each_hero_acts_on_its_own_turn",
+    "FAILED tests/api/test_party_combat_api.py::test_the_table_hears_the_shared_fight_and_private_data_stays_private",
+    "FAILED tests/api/test_party_combat_api.py::test_a_hero_dropped_by_a_foe_is_written_to_that_heros_own_sheet_and_announced_privately",
+    "FAILED tests/api/test_party_combat_api.py::test_an_idle_holder_is_skipped_with_a_default_dodge_after_the_timeout",
+    "FAILED tests/api/test_party_combat_api.py::test_a_reload_mid_fight_restores_the_shared_fight_and_the_holder",
+    "FAILED tests/api/test_party_combat_api.py::test_a_won_fight_grants_every_surviving_hero_its_milestone_once",
+    "FAILED tests/api/test_party_combat_api.py::test_a_fight_opened_by_one_hero_gives_the_first_slot_to_whoever_rolled_highest"
+  ],
+  "candidate_affected_selection": {
+    "passed": 1740,
+    "failed": 9,
+    "skipped": 1
+  },
+  "baseline_affected_selection": {
+    "passed": 1701,
+    "failed": 9,
+    "skipped": 1
+  },
+  "grid_and_contract": {
+    "passed": 55
+  },
+  "grid_cases": 38,
+  "frontend": {
+    "passed": 479,
+    "files": 74
+  },
+  "raw_evidence": {
+    "initial-backend-tests.log": {
+      "bytes": 5494,
+      "sha256": "b04cf9da1264e77f75f6cad06587f593af9ba8ba01d2a6f63f9de017a551ec43"
+    },
+    "grid-regressions.log": {
+      "bytes": 1306,
+      "sha256": "38e905131257b17d811e6bb8e94026d4672ac0cfa97371443bec03fefd6a63e4"
+    },
+    "final-backend-tests.log": {
+      "bytes": 98219,
+      "sha256": "1bd79ef13d5f30b087f730c23a07b894638de97d80fec4c6a1fded701ef00e2f"
+    },
+    "baseline-existing-failures.log": {
+      "bytes": 30335,
+      "sha256": "88be177653a10f50d1d46207d524ec5603e577d33d83cff07729f04db21828e5"
+    },
+    "final-impacted-tests.log": {
+      "bytes": 107672,
+      "sha256": "ec59fe5fc6599069002d47861cb0f7a81bbe949b35094179e83eed0eb4725ac8"
+    },
+    "baseline-impacted-order.log": {
+      "bytes": 107558,
+      "sha256": "26a9f269af71b6c5bd0134ff313fe29a35f77d24cb03911bf4d9b785aa729c1b"
+    },
+    "isolated-combat-api-tests.log": {
+      "bytes": 1373,
+      "sha256": "f9e5743b4e328c8866cf4b07b6367c884a0179ff52b7909038f1dce0a6b48d4a"
+    },
+    "baseline-combat-api-tests.log": {
+      "bytes": 1373,
+      "sha256": "b2b2cde0c0b7c1b77fa17527a238f663d8b7e7ff34c604e5256b77f22b100822"
+    },
+    "api-persistence-migrations.log": {
+      "bytes": 1468,
+      "sha256": "3043fd5d42d2948e3beb0afb9f997c3fb2cfc9ad542bcab11d98e66399809a02"
+    },
+    "final-grid-contract-tests.log": {
+      "bytes": 1306,
+      "sha256": "ce729ecad3bbb0de6576b665db5d7a902b79ae61e477f677c18c01ac287a374b"
+    },
+    "frontend-tests.log": {
+      "bytes": 17914,
+      "sha256": "214088c3824a0543af6717da0edf80d0e469fc83c7fdd17a1a3776273ca218bf"
+    },
+    "final-frontend-tests.log": {
+      "bytes": 16676,
+      "sha256": "21b310e8c81bf246f5d8f00e310944bf0f3d7e9a4ba254f18c92a42a5671c85e"
+    },
+    "frontend-build.log": {
+      "bytes": 1990,
+      "sha256": "55a525d972550eedb83c5635b17bb8b9d7873fd284a19b2f27a84813ffacb0b0"
+    },
+    "frontend-lint.log": {
+      "bytes": 35,
+      "sha256": "0d4695f4da2780a75fa8d28ae5fabe88093b7de3774417c514e2ecd90774e01f"
+    }
+  }
+}

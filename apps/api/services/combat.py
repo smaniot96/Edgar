@@ -54,6 +54,8 @@ async def load_active_combat(db: AsyncSession, session_id: int) -> dict | None:
         "ended": cs.ended,
         "combatants": combatants,
         "outcome": cs.outcome,
+        # Combat grid: the battlefield; absent for an encounter opened before the grid.
+        **({"battlefield": cs.battlefield} if cs.battlefield else {}),
         # Per-encounter facts live on the player combatant (the table has no columns for them).
         "player_ac": player.get("ac"),
         "second_wind_used": bool(player.get("second_wind_used", False)),
@@ -170,6 +172,7 @@ async def persist_combat(
         cs.ended = combat_state.get("ended", cs.ended)
         cs.combatants = combat_state.get("combatants", cs.combatants)
         cs.outcome = combat_state.get("outcome", cs.outcome)
+        cs.battlefield = combat_state.get("battlefield", cs.battlefield)
         return cs.id
     row = CombatState(
         session_id=session_id,
@@ -179,6 +182,7 @@ async def persist_combat(
         ended=combat_state.get("ended", False),
         combatants=combat_state.get("combatants", []),
         outcome=combat_state.get("outcome"),
+        battlefield=combat_state.get("battlefield"),
     )
     db.add(row)
     await db.flush()
