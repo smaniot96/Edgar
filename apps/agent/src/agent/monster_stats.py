@@ -1257,9 +1257,19 @@ def narrator_note(combatant: Mapping[str, Any]) -> str:
     return "".join(f"; {part}" for part in parts)
 
 
-def declared_line(combatant: Mapping[str, Any]) -> str | None:
+def declared_line(combatant: Mapping[str, Any], *, battlefield: bool = False) -> str | None:
     """The combat-start line naming what this creature's record declares but the engine does not run."""
     stats = stats_of(combatant)
     if stats is None or not stats.declared:
         return None
-    return f"Declared, not executed for {stats.name}: " + "; ".join(stats.declared) + "."
+    notes = list(stats.declared)
+    if battlefield:
+        notes = [
+            (f"speed {stats.speed}: walking and Dash use the battlefield; other movement modes "
+             "and special movement traits are not simulated")
+            if note == f"speed {stats.speed}: movement is not simulated" else note
+            for note in notes
+        ]
+    return f"Movement and other record limits for {stats.name}: " + "; ".join(notes) + "." if battlefield else (
+        f"Declared, not executed for {stats.name}: " + "; ".join(notes) + "."
+    )

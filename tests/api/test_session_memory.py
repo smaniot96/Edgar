@@ -104,6 +104,27 @@ async def test_earned_answers_load_independently_of_narration_and_session(memory
     assert len(rows) == 1
     assert rows[0]["texts"] == [clue] and rows[0]["scene_id"] == "cove"
     assert rows[0]["action"] == "I search the reeds."
+    assert rows[0]["evidence"] == []
+
+
+async def test_earned_answer_provenance_uses_only_sealed_accepted_matches(memory_db):
+    _, factory, (sid, _) = memory_db
+    answer = "The rescued sailor is the ferryman."
+    async with factory() as db, db.begin():
+        db.add(EventLog(session_id=sid, event_type="adjudication", payload={
+            "accepted_observations": [answer],
+            "source_observations": [{"text": "REJECTED"}, {"text": answer}],
+            "observation_diagnostics": {"matches": [
+                {"index": 0, "source_reference_id": "rejected", "start": 0, "end": 8},
+                {"index": 1, "source_reference_id": "exact", "start": 12, "end": 50},
+                {"index": 8, "source_reference_id": "invalid"},
+            ]},
+        }))
+    async with factory() as db:
+        rows = await memory.load_earned_observations(db, sid)
+    assert rows[0]["evidence"] == [{
+        "text": answer, "source_reference_id": "exact", "start": 12, "end": 50,
+    }]
 
 
 async def _assert_context(factory, sid, through, stop):

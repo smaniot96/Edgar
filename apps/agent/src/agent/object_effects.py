@@ -6,6 +6,8 @@ projection; no model quantity, bonus, damage or resource value is applied here.
 
 from __future__ import annotations
 
+import re
+
 from edgar_core.manifests import require_published
 from edgar_core.story import StoryEffect, StoryRef, story_target_id
 
@@ -76,11 +78,15 @@ def acquisition_destination(destination: str | None, state: dict) -> str | None:
             *(state.get("npcs") or []),
         ]
     ]
+    # A pack describes this hero's custody, not another world destination. Strip
+    # only an explicit possessive container; keep other actors and free prose out.
+    holder = re.fullmatch(r"(.+?)(?:'s|’s|')\s+(?:pack|backpack|inventory)", destination, re.I)
+    binding = holder[1] if holder else destination
     ambiguous = any(
-        destination.casefold() in {other.casefold(), other.split()[0].casefold()}
+        binding.casefold() in {other.casefold(), other.split()[0].casefold()}
         for other in other_names if other
     )
-    if destination.casefold() in aliases and not ambiguous:
+    if binding.casefold() in aliases and not ambiguous:
         return owner
     return destination
 

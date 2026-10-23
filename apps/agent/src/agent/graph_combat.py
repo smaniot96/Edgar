@@ -573,7 +573,10 @@ async def _open_encounter(
     if adaptation := adaptation_sentence(budget_summary):
         log_lines.append(adaptation)
     # What each exact record declares but the engine does not run is stated, never implied.
-    log_lines += [line for e in enemies if (line := declared_line(e))]
+    log_lines += [
+        line for e in enemies
+        if (line := declared_line(e, battlefield=bool(combat_state.get("battlefield"))))
+    ]
     return None
 
 

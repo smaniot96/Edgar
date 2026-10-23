@@ -390,7 +390,9 @@ async def test_a_new_encounter_opens_a_battlefield_with_every_combatant_on_it(
     monkeypatch.setattr(graph_combat.config, "COMBAT_GRID_ENABLED", True)
 
     async def roster(state, targets, *, budget_summary=None):
-        return [_brute("Goblin", init=1), _archer("Archer", init=2)]
+        brute = _brute("Goblin", init=1)
+        brute["monster_stats"].update(speed="30 ft.", declared=["speed 30 ft.: movement is not simulated"])
+        return [brute, _archer("Archer", init=2)]
 
     monkeypatch.setattr(graph_combat, "_build_enemy_roster", roster)
     fake_llm_schema.responses[AdjudicationResult] = AdjudicationResult(success=True)
@@ -403,6 +405,8 @@ async def test_a_new_encounter_opens_a_battlefield_with_every_combatant_on_it(
     assert all(pos_of(c) is not None for c in cs["combatants"])
     assert _foe(out, "Goblin")["band"] == MELEE and _foe(out, "Archer")["band"] == RANGED
     assert "square battlefield" in out["adjudication_result"].mechanical_summary
+    assert "walking and Dash use the battlefield" in out["adjudication_result"].mechanical_summary
+    assert "movement is not simulated" not in out["adjudication_result"].mechanical_summary
 
 
 # --- the hero's route ---------------------------------------------------------------------------

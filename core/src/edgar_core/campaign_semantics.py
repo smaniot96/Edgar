@@ -207,7 +207,7 @@ class Review(Record):
 
 class FieldEdit(Record):
     record_id: Identifier
-    field: Literal["source_notes", "dm_notes"]
+    field: Literal["source_notes", "dm_notes", "public_description", "trigger", "timing"]
     old_text: str = Field(min_length=1, description="Exact unique substring of the accepted field.")
     new_text: str = Field(description="Replacement for only that substring; empty removes it.")
 
@@ -223,7 +223,7 @@ class Patch(Record):
     mechanical_profiles: list[MechanicalProfile] = Field(default_factory=list)
     field_edits: list[FieldEdit] = Field(
         default_factory=list,
-        description="Sparse exact-text corrections to an allowed chapter source_notes or event dm_notes field. Preserve all surrounding text; do not restate that field in a record replacement.",
+        description="Sparse exact-text corrections to allowed chapter source_notes or event prose (dm_notes, public_description, trigger, timing). Preserve surrounding text; do not restate the field in a record replacement.",
     )
     chapters: list[Bundle] = Field(
         default_factory=list,

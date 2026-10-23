@@ -262,7 +262,7 @@ def build_adjudicator_prompt(
     continuity_slot = len(parts)
     from agent.history import earned_observation_context
 
-    if earned := earned_observation_context(state):
+    if earned := earned_observation_context(state, source_evidence=True):
         parts.append(earned)
     from agent.scene_guidance import known_actor_identity_context
 

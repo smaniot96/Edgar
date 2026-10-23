@@ -58,6 +58,7 @@ async def load_earned_observations(db: AsyncSession, session_id: int) -> list[di
             EventLog.id, EventLog.payload["scene_id"].astext,
             EventLog.payload["turn_id"].astext, EventLog.payload["accepted_observations"],
             narration.payload["player_input"].astext,
+            EventLog.payload["source_observations"], EventLog.payload["observation_diagnostics"],
         )
         .outerjoin(narration, and_(
             narration.session_id == EventLog.session_id,
@@ -68,7 +69,7 @@ async def load_earned_observations(db: AsyncSession, session_id: int) -> list[di
         .order_by(EventLog.id)
     )
     result = []
-    for event_id, scene_id, turn_id, observations, action in rows:
+    for event_id, scene_id, turn_id, observations, action, proposals, diagnostics in rows:
         if not isinstance(observations, list):
             continue
         texts = list(dict.fromkeys(
@@ -76,12 +77,26 @@ async def load_earned_observations(db: AsyncSession, session_id: int) -> list[di
             if isinstance(text, str) and text.strip() and player_safe_observation(text)
         ))
         if texts:
+            # Only sealed matches may bind a previous interpretation to its source.
+            # Rejected proposals must never become memory through this join.
+            evidence = []
+            for match in (diagnostics or {}).get("matches", []):
+                index = match.get("index")
+                if not isinstance(index, int) or not isinstance(proposals, list) or not 0 <= index < len(proposals):
+                    continue
+                proposal = proposals[index]
+                if isinstance(proposal, dict) and proposal.get("text") in texts:
+                    evidence.append({
+                        "text": proposal["text"],
+                        **{key: match.get(key) for key in ("source_reference_id", "start", "end")},
+                    })
             result.append({
                 "event_id": event_id,
                 "turn_id": turn_id,
                 "scene_id": scene_id,
                 "action": action,
                 "texts": texts,
+                "evidence": evidence,
             })
     return result
 

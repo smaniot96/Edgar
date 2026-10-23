@@ -16,7 +16,7 @@ from apps.api.services.campaign_prep.provider import (
     response_format,
 )
 from apps.api.services.campaign_prep.store import NeedsAttention, Store, digest
-from edgar_core.campaign_semantics import SCHEMA_VERSION, Review
+from edgar_core.campaign_semantics import SCHEMA_VERSION, Patch, Review
 
 
 @pytest.fixture
@@ -145,6 +145,31 @@ async def test_completed_response_still_accepts_and_replays_without_new_create(s
         )
     ).model_dump() == value
     assert len(responses.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_scoped_repair_adopts_frozen_exhausted_request_after_prose_schema_extension(store, monkeypatch):
+    original_format = provider.response_format
+
+    def older_format(schema):
+        value = original_format(schema)
+        value["schema"]["$defs"]["FieldEdit"]["properties"]["field"]["enum"] = ["dm_notes", "source_notes"]
+        return value
+
+    monkeypatch.setattr(provider, "response_format", older_format)
+    responses = Responses(retained_response(text='{"events":['))
+    client = SemanticClient(store, SimpleNamespace(responses=responses))
+    evidence = {"findings": ["Unsafe opening"], "affected_records": {"scene": "accepted prose"}}
+    with pytest.raises(OutputExhausted) as original:
+        await client.call("scoped-repair", "repair", Patch, evidence)
+    saved = store.task(original.value.task_id)
+    monkeypatch.setattr(provider, "response_format", original_format)
+    monkeypatch.setattr(provider, "instructions", lambda _: "New instructions for sparse public prose")
+    with pytest.raises(OutputExhausted) as reopened:
+        await client.call("scoped-repair", "repair", Patch, evidence, reuse_saved_request=True)
+    assert reopened.value.task_id == original.value.task_id
+    assert store.task(original.value.task_id) == saved
+    assert len(responses.requests) == 1 and store.usage()["call_count"] == 1
 
 
 @pytest.mark.asyncio

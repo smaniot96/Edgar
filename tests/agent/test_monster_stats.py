@@ -561,6 +561,18 @@ Slam. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 8 (1d10 + 3)
 """  # fmt: skip
 
 
+def test_active_battlefield_warning_preserves_special_movement_limitations():
+    foe = {"monster_stats": parse_monster_stats(WYRMLING_TEXT, name="Stone Wyrmling").to_dict()}
+    legacy = declared_line(foe)
+    assert "movement is not simulated" in legacy
+    warning = declared_line(foe, battlefield=True)
+    assert "walking and Dash use the battlefield" in warning
+    assert "fly 60 ft." in warning
+    assert "other movement modes and special movement traits are not simulated" in warning
+    assert "movement is not simulated" not in warning
+    assert "Breath Weapon" in warning
+
+
 def test_text_layer_spacing_and_melee_or_ranged_attacks_are_read() -> None:
     # fixed: "(- 1)" with a space and "Melee or Ranged Weapon Attack" were not read, so the
     # Wisdom modifier was lost and the attack was declared as a trait.

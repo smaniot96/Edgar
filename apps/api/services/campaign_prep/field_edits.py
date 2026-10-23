@@ -4,11 +4,57 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from pydantic import Field
+from pydantic import Field, create_model
 
 from edgar_core.campaign_semantics import FieldEdit, Record
 
 from .store import NeedsAttention, digest
+
+
+async def recover_exhausted_prose(exc, evidence, semantic, store, images):
+    """One distinct sparse repair after a definitive terminal output exhaustion.
+
+    The incomplete Patch remains rejected and immutable. A finite schema permits
+    at most one edit per textual field of the findings' own records, without
+    regenerating their dependency closure or accepting a truncated candidate.
+    Structural/non-prose work must stay held for an appropriate repair strategy.
+    """
+    changed = {key for finding in evidence["findings"] for key in finding["record_ids"]}
+    selected = {key: evidence["affected_records"][key] for key in sorted(changed)}
+    if not selected or any(record["kind"] not in {"event", "chapter"} for record in selected.values()):
+        raise exc
+    fields = {
+        key: (["source_notes"] if record["kind"] == "chapter" else
+              ["dm_notes", "public_description", "trigger", "timing"])
+        for key, record in selected.items()
+    }
+    schema = create_model(
+        "ProseRepair", __base__=Record,
+        field_edits=(list[FieldEdit], Field(max_length=sum(map(len, fields.values())))),
+    )
+    narrowed = {
+        "parent_task_id": exc.task_id,
+        "parent_response_id": exc.response_id,
+        "retained_output_sha256": digest(exc.output_text),
+        "findings": evidence["findings"],
+        "affected_records": selected,
+        "allowed_fields": fields,
+        "source_evidence": evidence["source_evidence"],
+        "map_context": evidence["map_context"],
+    }
+    store.put("repair-exhaustion-" + exc.task_id, {
+        "response_id": exc.response_id, "output_sha256": digest(exc.output_text),
+        "recovery_evidence_sha256": digest(narrowed), "incomplete_patch_accepted": False,
+    })
+    value = await semantic.call(
+        "repair-prose-" + digest(narrowed)[:16], "repair-prose", schema, narrowed, images,
+    )
+    groups = [(row.record_id, row.field) for row in value.field_edits]
+    if not groups or len(set(groups)) != len(groups) or any(
+        field not in fields.get(key, []) for key, field in groups
+    ):
+        raise NeedsAttention("Sparse recovery made no progress or exceeded its retained prose scope.")
+    return value.field_edits
 
 
 class InvalidFieldEdits(NeedsAttention):

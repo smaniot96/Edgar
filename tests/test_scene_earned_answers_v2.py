@@ -252,6 +252,44 @@ def test_reviewed_identity_can_correct_a_conflicting_saved_answer_in_both_stages
         assert "PRIVATE_MOTIVE" not in prompt and "PRIVATE_KNOWLEDGE" not in prompt
 
 
+def test_planner_reconstructs_reviewed_basis_instead_of_repeating_wrong_identity():
+    state = registry_identity_state()
+    span = next(s for s in observation_span_catalog(state).values()
+                if "Jory Fen is the missing ferryman." in s["text"])
+    wrong = "Jory is not the ferryman; another ferryman remains missing."
+    state["earned_observations"] = [{
+        "scene_id": state["current_scene_id"], "action": "I ask who Jory is.",
+        "texts": [wrong], "evidence": [{"text": wrong,
+            "source_reference_id": span["reference_id"], "start": span["start"], "end": span["end"]}],
+    }]
+    planner = str(build_adjudicator_prompt(state, None))
+    assert wrong not in planner
+    assert "Jory Fen is the missing ferryman." in planner
+    assert "source_basis_for_prior_answers" in planner
+    assert "PRIVATE_KNOWLEDGE" not in planner
+    # A mismatched receipt must not hide the historical answer or borrow another source.
+    state["earned_observations"][0]["evidence"][0]["source_reference_id"] = "foreign"
+    planner = str(build_adjudicator_prompt(state, None))
+    assert wrong in planner
+    assert "source_basis_for_prior_answers':" not in planner
+
+
+def test_private_recalled_source_basis_does_not_reach_narration():
+    from agent.history import earned_observation_context
+
+    state = registry_identity_state()
+    chunk = next(c for c in active_observation_chunks(state) if c["passage_id"] == "event_square_dm")
+    answer = "Jory can answer questions."
+    state["earned_observations"] = [{"texts": [answer], "evidence": [{
+        "text": answer, "source_reference_id": source_citation(chunk)["reference_id"],
+        "start": 0, "end": len(chunk["text"]),
+    }]}]
+    private = earned_observation_context(state, source_evidence=True)
+    public = earned_observation_context(state)
+    assert str([chunk["text"]]) in private
+    assert "Discovery opportunities" not in public and answer in public
+
+
 def proposal(state, **changes):
     chunk = next(
         c for c in active_observation_chunks(state) if c["passage_id"] == "event_square_dm"
@@ -293,7 +331,7 @@ async def test_earned_answers_feed_all_three_stages_even_when_prose_omitted_them
     planner = str(build_adjudicator_prompt(state, None))
     narrator = str(build_narrator_prompt(state))
     assert all(signs in prompt for prompt in [parser, planner, narrator])
-    assert all("never deny these discoveries" in prompt for prompt in [parser, planner, narrator])
+    assert all("Remember earned discoveries without another check" in prompt for prompt in [parser, planner, narrator])
 
 
 @pytest.mark.asyncio

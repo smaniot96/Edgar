@@ -130,7 +130,10 @@ def test_shared_assignment_stable_identity_blocks_second_session_pickup(object_s
     assert validate_object_effect(effect("acquire"), state) is None
 
 
-@pytest.mark.parametrize("destination", ["Hazel", "Hazel Preparation Replay Peace L4", "character:7", None])
+@pytest.mark.parametrize("destination", [
+    "Hazel", "Hazel Preparation Replay Peace L4", "character:7", None,
+    "Hazel's pack", "Hazel’s backpack", "Hazel Preparation Replay Peace L4's inventory",
+])
 def test_pickup_normalizes_only_the_active_hero_binding(object_state_fixture, destination):
     state, effect = object_state_fixture
     state["character"]["name"] = "Hazel Preparation Replay Peace L4"
@@ -140,6 +143,8 @@ def test_pickup_normalizes_only_the_active_hero_binding(object_state_fixture, de
 
 @pytest.mark.parametrize("destination,npcs", [
     ("Mara", []), ("Hazel", [{"id": 7, "name": "Hazel the ferryman"}]),
+    ("Mara's pack", []), ("Hazel's pack", [{"id": 8, "name": "Hazel the ferryman"}]),
+    ("Hazel's pack and Mara's pack", []), ("Hazel's bag of holding", []),
 ])
 def test_pickup_does_not_normalize_another_actor_or_ambiguous_alias(object_state_fixture, destination, npcs):
     state, effect = object_state_fixture

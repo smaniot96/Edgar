@@ -14,7 +14,8 @@ from apps.api.services.campaign_prep.field_edits import (
     recover_field_edits,
 )
 from apps.api.services.campaign_prep.graph import Workflow
-from apps.api.services.campaign_prep.store import NeedsAttention, Store
+from apps.api.services.campaign_prep.provider import OutputExhausted
+from apps.api.services.campaign_prep.store import NeedsAttention, Store, digest
 from edgar_core.campaign_semantics import Bundles, FieldEdit, Patch, Spine
 
 
@@ -28,9 +29,16 @@ def fixture():
     return spine, bundles, deepcopy(records(spine, bundles))
 
 
-@pytest.mark.parametrize("field,key", [("source_notes", "ch_bell_content"), ("dm_notes", "event_square")])
+@pytest.mark.parametrize("field,key", [
+    ("source_notes", "ch_bell_content"), ("dm_notes", "event_square"),
+    ("public_description", "event_square"), ("trigger", "event_square"), ("timing", "event_square"),
+])
 def test_exact_edit_removes_conflict_and_preserves_surrounding_reference(field, key):
     _, bundles, registry = fixture()
+    if field not in {"source_notes", "dm_notes"}:
+        text = registry["event_square"]["value"]["dm_notes"]
+        bundles["chapters"][0]["events"][0][field] = text
+        registry[key]["value"][field] = text
     original = deepcopy(bundles)
     edit = FieldEdit(
         record_id=key, field=field, old_text="Do not promise castle directions.",
@@ -226,3 +234,67 @@ async def test_workflow_sparse_repair_does_not_reintroduce_superseded_guidance(t
         ).fetchone()[0])
     assert receipt["field_edits"][0]["original_text"] == bundles["chapters"][0]["source_notes"]
     assert Patch.model_validate({"events": []}).field_edits == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["fixed", "empty", "duplicate", "outside", "exhausted"])
+async def test_exhausted_patch_gets_one_finite_prose_recovery_and_normal_validation(
+    tmp_path, monkeypatch, outcome,
+):
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path / "adventures")
+    store = Store("exhausted_prose")
+    store.initialize({"source_kind": "ai", "rules_edition": "2014"})
+    spine, bundles, _ = fixture()
+    event = bundles["chapters"][0]["events"][0]
+    event["public_description"] = "The immediate danger has passed. The shelves remain crowded."
+    for key, value in {"source": {"kind": "ai", "pages": []}, "spine": spine,
+                       "bundles": bundles, "mechanics": [], "findings": [{"owner": "critic", "value": {
+                           "id": "opening_assumption", "severity": "material", "record_ids": [event["id"]],
+                           "evidence": "The trigger permits an unresolved threat.",
+                           "instruction": "Make the opening neutral; preserve the threat's committed status.",
+                       }}]}.items():
+        store.put(key, value)
+    response = {"id": "resp_original", "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {"output_tokens": 128000}, "output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": '{"events":[{"id":"unfinished'}]}]}
+    original = OutputExhausted("parent", response)
+    before = digest(response)
+    calls = []
+
+    class Repair:
+        async def call(self, node, prompt, schema, evidence, images=None):
+            calls.append(node)
+            if node == "scoped-repair":
+                assert schema is Patch
+                raise original
+            assert prompt == "repair-prose" and evidence["parent_task_id"] == "parent"
+            assert list(evidence["affected_records"]) == [event["id"]]
+            assert schema.model_json_schema()["properties"]["field_edits"]["maxItems"] == 4
+            if outcome == "exhausted":
+                raise OutputExhausted("recovery", response)
+            edits = [{"record_id": event["id"], "field": "public_description",
+                      "old_text": "The immediate danger has passed.",
+                      "new_text": "The laboratory waits on your next decision."}]
+            if outcome == "empty":
+                edits = []
+            elif outcome == "duplicate":
+                edits *= 2
+            elif outcome == "outside":
+                edits[0]["record_id"] = "other_event"
+            return schema(field_edits=edits)
+
+    if outcome == "fixed":
+        await Workflow(store, semantic=Repair()).repair({"slug": store.slug})
+        expected = deepcopy(bundles)
+        expected["chapters"][0]["events"][0]["public_description"] = (
+            "The laboratory waits on your next decision. The shelves remain crowded."
+        )
+        assert store.get("bundles") == expected
+        assert store.get("repair-history")  # unchanged-problem loop protection is still active
+    else:
+        with pytest.raises(NeedsAttention):
+            await Workflow(store, semantic=Repair()).repair({"slug": store.slug})
+        assert store.get("bundles") == bundles
+    assert len(calls) == 2 and digest(response) == before
+    assert store.get("repair-exhaustion-parent")["incomplete_patch_accepted"] is False

@@ -134,25 +134,57 @@ def public_earned_facts(state: dict) -> list[dict]:
     return facts
 
 
-def earned_observation_context(state: dict) -> str:
-    """Validated answers remain known even when an earlier narrator omitted them."""
-    from agent.scene_guidance import player_safe_observation
+def earned_observation_context(state: dict, *, source_evidence: bool = False) -> str:
+    """Keep reported discoveries while distinguishing source proof from inference.
 
-    rows = [
-        {"scene": row.get("scene_id"), "answers": [
-            text for text in row.get("texts", []) if player_safe_observation(text)
-        ]}
-        for row in state.get("earned_observations") or []
-    ]
-    rows = [row for row in rows if row["answers"]]
+    Exact reviewed evidence is private to the planner. Narration receives only the
+    player-safe answers previously delivered, never adjacent private source clauses.
+    """
+    from agent.scene_guidance import (
+        active_observation_chunks,
+        observation_ranges,
+        player_safe_observation,
+    )
+    from edgar_core.sources import source_citation
+
+    chunks = {
+        source_citation(c, state.get("rules_edition", "2014"))["reference_id"]: c
+        for c in active_observation_chunks(state)
+    } if source_evidence else {}
+    rows = []
+    for row in state.get("earned_observations") or []:
+        answers = [text for text in row.get("texts", []) if player_safe_observation(text)]
+        if not answers:
+            continue
+        bases = {}
+        for match in row.get("evidence", []):
+            chunk = chunks.get(match.get("source_reference_id"))
+            start, end = match.get("start"), match.get("end")
+            if (
+                match.get("text") in answers and chunk
+                and isinstance(start, int) and isinstance(end, int)
+                and 0 <= start < end <= len(chunk["text"])
+                and any(begin <= start < end <= limit for begin, limit in observation_ranges(chunk, state))
+            ):
+                bases[match.get("text")] = chunk["text"][start:end]
+        rows.append({
+            "scene": row.get("scene_id"),
+            "earlier_action": wrap_player_action(row["action"]) if row.get("action") else None,
+            "reported_answers": [text for text in answers if text not in bases],
+            **({"source_basis_for_prior_answers": list(dict.fromkeys(bases.values()))} if bases else {}),
+        })
     if not rows:
         return ""
     return (
-        "Previously earned answers (committed adjudication, independent of narration; "
-        "never deny these discoveries or require another check to remember them. "
+        "Previously reported answers (earlier adjudication, independent of narration). "
         "These are earlier source interpretations, not authority to contradict reviewed actor "
         "identities or later resolved actions. Correct a mistaken interpretation explicitly; "
         "never invent another person to preserve it. An earlier absence, unknown answer or "
-        "unresolved danger does not remain true after the person is found or danger resolved): "
+        "unresolved danger does not remain true after the person is found or danger resolved. "
+        "Where source_basis_for_prior_answers is supplied, use that exact reviewed evidence "
+        "with the earlier action and current state to answer afresh; it replaces the prior "
+        "paraphrase as evidence. It is private evidence, not automatically player disclosure. "
+        "Remember earned discoveries without another check, but do not treat an earlier "
+        "negative answer or inferred identity as an immutable fact: "
         + str(rows)
     )

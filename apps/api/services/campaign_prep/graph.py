@@ -38,7 +38,7 @@ from .compile import (
     records,
     validate_semantics,
 )
-from .field_edits import recover_field_edits
+from .field_edits import recover_exhausted_prose, recover_field_edits
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
 from .playability import (
@@ -53,7 +53,7 @@ from .playability import (
     topology_findings,
 )
 from .profiles import canonical_profiles
-from .provider import SemanticClient, request_context
+from .provider import OutputExhausted, SemanticClient, request_context
 from .secret_references import reconcile_secret_chapters
 from .source import (
     VISUAL_CANDIDATE_VERSION,
@@ -1397,9 +1397,18 @@ class Workflow:
             raise NeedsAttention(
                 "Semantic repair returned to an unchanged problem; paid loop stopped with findings retained."
             )
-        value = await self.semantic.call(
-            "scoped-repair", "repair", Patch, evidence, self.source_images(source_pages)
-        )
+        with self.store.db() as db:
+            retained = db.execute("SELECT 1 FROM task WHERE node='scoped-repair' LIMIT 1").fetchone()
+        images = self.source_images(source_pages)
+        try:
+            value = await self.semantic.call(
+                "scoped-repair", "repair", Patch, evidence, images,
+                **({"reuse_saved_request": True} if retained else {}),
+            )
+        except OutputExhausted as exc:
+            value = Patch(field_edits=await recover_exhausted_prose(
+                exc, evidence, self.semantic, self.store, images,
+            ))
         patches = [
             (kind, row)
             for kind, rows in (

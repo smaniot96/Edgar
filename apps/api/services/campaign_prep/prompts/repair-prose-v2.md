@@ -1,0 +1,7 @@
+# Sparse recovery of an exhausted repair — v2.0
+
+The original scoped repair definitively exhausted its output window. Its exact output and usage remain retained under parent_task_id; no part of that incomplete Patch has been accepted. Perform only the outstanding prose correction from the concrete findings against the actual accepted affected_records.
+
+Return at most one exact field edit for each allowed record/field pair. old_text must be a unique exact substring of that accepted field. If correcting multiple occurrences, select one unique encompassing span and preserve all unrelated bytes in new_text. Do not repeat edits or regenerate any records, chapter bundles, statistics or dependency closure. Fields listed in allowed_fields are the entire write scope. Use original source_evidence/map_context/images as evidence, not as permission to enlarge it.
+
+Correct public openings so they are safe at the earliest valid trigger. Preserve actor custody, position, HP and prior committed outcomes; a conditional unresolved actor cannot be declared defeated or gone by an opening. Preserve useful private details and source-supported alternatives. Resolve the material defect rather than appending a conflicting disclaimer. If the finding requires structural or executable changes beyond these textual fields, return an empty field_edits list and retain the blocker. Normal atomic validation and independent review still follow.
