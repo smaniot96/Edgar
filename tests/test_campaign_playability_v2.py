@@ -135,6 +135,24 @@ def test_required_gap_cannot_be_dismissed_or_adaptation_fabricated(capability_ca
         compatibility_findings(compiled, CompatibilityReview(decisions=[]))
 
 
+def test_capability_check_reference_resolves_to_exact_authored_chapter_owner(capability_case):
+    _, compiled = capability_case
+    compiled["registry"]["chapter_content"] = {
+        "kind": "chapter",
+        "value": {"checks": [{"id": "door_check", "success_text": "The door opens."}]},
+    }
+    review = decision(compiled, record_ids=["door_check", "event_square"])
+    finding = compatibility_findings(compiled, review)[0]
+    assert finding["record_ids"] == ["chapter_content", "event_square"]
+    assert review.decisions[0].record_ids == ["door_check", "event_square"]
+    assert compatibility_findings(compiled, decision(
+        compiled, disposition="supported_adaptation", record_ids=["door_check"],
+        alternative_quote="The door opens.",
+    )) == []
+    with pytest.raises(NeedsAttention, match="nonexistent authored records"):
+        compatibility_findings(compiled, decision(compiled, record_ids=["invented_check"]))
+
+
 def test_optional_gap_receipt_is_bound_to_exact_compilation_and_preserves_old_publication(
     capability_case,
 ):

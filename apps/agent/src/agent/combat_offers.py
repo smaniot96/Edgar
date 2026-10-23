@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 from agent.combat_confirmation import stored_declaration
@@ -97,13 +98,28 @@ async def resolve_offer(
         "player_input": text,
         "parsed_input": ParsedInput(intent="rp", target=getattr(parsed, "target", None)),
     }
+    roster = [
+        {
+            "name": foe["name"],
+            "canonical_name": foe.get("canonical_name"),
+            "aliases": foe.get("target_aliases") or [],
+        }
+        for foe in enemies
+    ]
     ruling = await adjudicate(
         offer_state,
         in_combat=True,
         extra_outcome=(
             "No attack, flight, check or damage occurred. Resolve this explicit nonviolent offer with "
-            "combat_offer only. Select a current eligible source_span_id supporting the present foe's "
-            "acceptance or refusal of these actual terms. If the source does not support a response or "
+            "combat_offer only. Current foes (canonical names are private identity bindings): "
+            + json.dumps(roster)
+            + ". Select a current eligible source_span_id supporting the present foe's "
+            "acceptance or refusal of these actual terms. Judge a reasonable immediate NPC response "
+            "from the authored demand, conditions and disposition; the source need not contain a "
+            "verbatim surrender script. An offer that meets the foe's stated demand can establish "
+            "agreement to cease fighting, without yet performing the exchange. Additional player "
+            "conditions still need support; do not promise safety or escort merely because requested. "
+            "If the source does not support a response or "
             "a required condition is unmet/unknown, return uncertain and state the specific condition "
             "in public_response. For rejected, explain the source-supported reason in public_response; "
             "do not substitute 'insufficient evidence' for an NPC response. For accepted, give the NPC's "

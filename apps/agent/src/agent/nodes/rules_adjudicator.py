@@ -264,6 +264,10 @@ def build_adjudicator_prompt(
 
     if earned := earned_observation_context(state):
         parts.append(earned)
+    from agent.scene_guidance import known_actor_identity_context
+
+    if identities := known_actor_identity_context(state):
+        parts.append(identities)
     from agent.scene_guidance import observation_excerpt, observation_span_catalog
 
     answer_spans = (

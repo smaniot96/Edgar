@@ -139,16 +139,27 @@ def compatibility_findings(compiled, review):
             "Capability review must assess every exact compiled capability gap once."
         )
     registry = compiled["registry"]
+    # Checks are authored subrecords stored inside the chapter content record,
+    # while the reviewer also receives their compiled policy IDs. Resolve those
+    # exact IDs back to their owner so a finding remains repairable by registry ID.
+    owners = {key: key for key in registry}
+    for key, record in registry.items():
+        if record["kind"] != "chapter":
+            continue
+        for check in record["value"].get("checks", []):
+            if check["id"] not in registry:
+                owners[check["id"]] = key
     findings = []
     for decision in decisions:
-        if not set(decision.record_ids) <= registry.keys():
+        if not set(decision.record_ids) <= owners.keys():
             raise NeedsAttention("Capability review references nonexistent authored records.")
+        record_ids = sorted({owners[key] for key in decision.record_ids})
         if decision.disposition == "optional" and decision.required_for_completion:
             raise NeedsAttention("A required capability cannot be classified as optional.")
         if decision.disposition == "supported_adaptation":
             if not decision.alternative_quote.strip() or not any(
                 _contains_quote(registry[key], decision.alternative_quote)
-                for key in decision.record_ids
+                for key in record_ids
             ):
                 raise NeedsAttention(
                     "Supported adaptation requires exact existing authored evidence."
@@ -158,7 +169,7 @@ def compatibility_findings(compiled, review):
                 {
                     "id": "capability_" + decision.capability_id[:16],
                     "severity": "material",
-                    "record_ids": decision.record_ids,
+                    "record_ids": record_ids,
                     "evidence": decision.evidence,
                     "instruction": "Required outcome lacks executable support. Preserve the "
                     "source procedure and disclose the exact limitation. Use an explicit "

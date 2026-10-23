@@ -367,6 +367,20 @@ def known_actor_descriptions(state):
     ]
 
 
+def known_actor_identity_context(state):
+    if not (identities := known_actor_descriptions(state)):
+        return ""
+    return (
+        "Reviewed identities of visible or previously encountered actors: "
+        + str(identities)
+        + ". These descriptions fix who each actor is, not their current position. "
+        "They override identity errors in older dialogue, summaries or inferred answers. "
+        "Correct those errors explicitly when answering; do not split one actor into "
+        "additional people to preserve conflicting prose. Keep completed rescues resolved "
+        "and do not invent another missing person."
+    )
+
+
 def observation_excerpt(chunk, spans, edition="2014"):
     """Annotate existing evidence inline; never duplicate it or rehash altered text."""
     from edgar_core.sources import cited_excerpt, source_citation

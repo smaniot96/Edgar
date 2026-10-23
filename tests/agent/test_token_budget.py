@@ -23,10 +23,10 @@ from edgar_core.model_profiles import (
 from edgar_core.token_budget import estimate_tokens, fit_count
 from tests.agent.test_history_context import _state
 
-# The pinned input budget for these prompts. Raised from 26000 by EDG-045: the supported-scope
-# contract gained three executed and two declared mechanic titles, which add about 21 tokens to the
-# scope notice every play prompt embeds. Scope text is kept, not trimmed, so the budget moves.
-TEST_INPUT_BUDGET = 26100
+# Leave room for the fixed referee/continuity contract plus the newest short exchange.
+# Identity correction and resolved-custody guidance added fixed text; the long history must
+# still be trimmed while preserving every committed fact and the newest delivered result.
+TEST_INPUT_BUDGET = 26500
 
 PLAY_BUDGET_STAGES = (
     "play.parser",

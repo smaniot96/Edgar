@@ -59,6 +59,11 @@ async def test_offer_uses_private_canonical_actor_binding_but_keeps_public_name(
     )
 
     async def response(*args, **kwargs):
+        instruction = kwargs["extra_outcome"]
+        assert '"canonical_name": "Guz"' in instruction
+        assert '"name": "the half-orc"' in instruction
+        assert "authored demand, conditions and disposition" in instruction
+        assert "without yet performing the exchange" in instruction
         return AdjudicationResult(
             success=True,
             combat_offer=CombatOffer(

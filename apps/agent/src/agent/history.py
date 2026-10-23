@@ -149,6 +149,10 @@ def earned_observation_context(state: dict) -> str:
         return ""
     return (
         "Previously earned answers (committed adjudication, independent of narration; "
-        "never deny these discoveries or require another check to remember them): "
+        "never deny these discoveries or require another check to remember them. "
+        "These are earlier source interpretations, not authority to contradict reviewed actor "
+        "identities or later resolved actions. Correct a mistaken interpretation explicitly; "
+        "never invent another person to preserve it. An earlier absence, unknown answer or "
+        "unresolved danger does not remain true after the person is found or danger resolved): "
         + str(rows)
     )

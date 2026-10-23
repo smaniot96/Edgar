@@ -238,6 +238,20 @@ def test_known_actor_description_remains_eligible_without_claiming_current_prese
     assert "Jory Fen is the missing ferryman." in str(observation_span_catalog(state))
 
 
+def test_reviewed_identity_can_correct_a_conflicting_saved_answer_in_both_stages():
+    state = registry_identity_state()
+    state["earned_observations"] = [{
+        "scene_id": state["current_scene_id"],
+        "texts": ["Jory is not the ferryman; another ferryman remains missing."],
+    }]
+    for prompt in [str(build_adjudicator_prompt(state, None)), str(build_narrator_prompt(state))]:
+        assert "Jory Fen is the missing ferryman." in prompt
+        assert "These are earlier source interpretations" in prompt
+        assert "Correct those errors explicitly" in prompt
+        assert "do not split one actor" in prompt
+        assert "PRIVATE_MOTIVE" not in prompt and "PRIVATE_KNOWLEDGE" not in prompt
+
+
 def proposal(state, **changes):
     chunk = next(
         c for c in active_observation_chunks(state) if c["passage_id"] == "event_square_dm"

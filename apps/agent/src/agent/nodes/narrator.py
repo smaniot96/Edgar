@@ -34,7 +34,7 @@ from agent.llm import NARRATOR_MAX_TOKENS, make_chat_model, message_text
 from agent.object_effects import acquisition_destination
 from agent.prompts import NARRATOR, wrap_player_action, wrap_retrieved_excerpt
 from agent.provider_trace import traced_call
-from agent.scene_guidance import known_actor_descriptions
+from agent.scene_guidance import known_actor_identity_context
 from agent.state import AgentState
 from agent.story_turn import resolved_scene
 from agent.supported_rules import (
@@ -240,15 +240,8 @@ def build_narrator_prompt(state: AgentState, profile: str = "play.narrator") -> 
         )
     if observations := earned_observation_context(state):
         context_parts.append(observations)
-    if identities := known_actor_descriptions(state):
-        context_parts.append(
-            "Reviewed identities of visible or previously encountered actors: "
-            + str(identities)
-            + ". These descriptions fix who each actor is, not their current position. "
-            "They override identity errors in older dialogue, summaries or inferred answers. "
-            "Do not split one actor into additional people to preserve conflicting prose. "
-            "Keep completed rescues resolved and do not invent another missing person."
-        )
+    if identities := known_actor_identity_context(state):
+        context_parts.append(identities)
     if adjudication:
         if adjudication.accepted_observations:
             context_parts.append(
