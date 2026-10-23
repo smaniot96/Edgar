@@ -182,6 +182,28 @@ def compatibility_findings(compiled, review):
     return findings
 
 
+def exact_capability_decisions(compiled, review):
+    """Keep unique, exact and locally valid decisions; never fuzzy-match a hash."""
+    from collections import Counter
+
+    counts = Counter(row.capability_id for row in review.decisions)
+    expected = {row["capability_id"]: row for row in capability_inventory(compiled)}
+    accepted = {}
+    for decision in review.decisions:
+        if decision.capability_id not in expected or counts[decision.capability_id] != 1:
+            continue
+        one = {**compiled, "capability_findings": [
+            {key: value for key, value in expected[decision.capability_id].items()
+             if key != "capability_id"}
+        ]}
+        try:
+            compatibility_findings(one, CompatibilityReview(decisions=[decision]))
+        except NeedsAttention:
+            continue
+        accepted[decision.capability_id] = decision
+    return accepted
+
+
 def require_compatibility_review(store, compiled):
     """New compiled artifacts with gaps need a receipt bound to the exact assembly."""
     if not compiled.get("capability_findings"):

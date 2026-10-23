@@ -14,6 +14,7 @@ from apps.api.services.campaign_prep.playability import (
     capability_inventory,
     compatibility_findings,
     compatibility_signature,
+    exact_capability_decisions,
     require_compatibility_review,
     topology,
 )
@@ -196,6 +197,52 @@ async def test_compatibility_review_replays_exact_receipt_without_another_paid_c
     compiled["semantic_sha256"] = "changed goal requires a fresh assessment"
     await workflow.review_compatibility(compiled)
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("progress", [True, False])
+async def test_malformed_capability_hash_gets_focused_exact_review_without_guessing(
+    capability_case, progress,
+):
+    store, compiled = capability_case
+    spine, bundles = sample()
+    store.put("spine", spine)
+    store.put("bundles", bundles)
+    first = compiled["capability_findings"][0]
+    compiled["capability_findings"].append({**first, "detail": "A different missing operation."})
+    ids = [row["capability_id"] for row in capability_inventory(compiled)]
+    initial = decision(compiled, disposition="optional", required_for_completion=False)
+    malformed = initial.decisions[0].model_copy(update={"capability_id": ids[1][:-1] + "?"})
+    initial.decisions.append(malformed)
+    calls = []
+
+    async def call(node, prompt, schema, evidence):
+        calls.append(node)
+        if node == "capability-review":
+            return initial
+        assert node.startswith("capability-review-missing-")
+        assert len(evidence["capabilities"]) == 1
+        assert evidence["capabilities"][0]["capability_id"] == "gap_1"
+        assert evidence["capabilities"][0]["detail"] == "A different missing operation."
+        return CompatibilityReview(decisions=[
+            malformed.model_copy(update={"capability_id": "gap_1"})
+        ] if progress else [])
+
+    workflow = Workflow(store, semantic=SimpleNamespace(call=call))
+    assert set(exact_capability_decisions(compiled, initial)) == {ids[0]}
+    if not progress:
+        with pytest.raises(NeedsAttention, match="no exact coverage progress"):
+            await workflow.review_compatibility(compiled)
+        assert store.get("compatibility-review") is None
+        assert len(store.get("compatibility-progress")["decisions"]) == 1
+    else:
+        await workflow.review_compatibility(compiled)
+        require_compatibility_review(store, compiled)
+        saved = store.get("compatibility-review")
+        assert [row["capability_id"] for row in saved["decisions"]] == ids
+        await workflow.review_compatibility(compiled)
+    assert len(calls) == 2
+    assert initial.decisions[1].capability_id.endswith("?")
 
 
 @pytest.mark.asyncio

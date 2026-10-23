@@ -47,6 +47,7 @@ from .playability import (
     capability_inventory,
     compatibility_findings,
     compatibility_signature,
+    exact_capability_decisions,
     require_compatibility_review,
     topology,
     topology_findings,
@@ -1209,22 +1210,58 @@ class Workflow:
         signature = compatibility_signature(compiled)
         retained = self.store.get("compatibility-review", signature)
         if retained is None:
-            result = await self.semantic.call(
-                "capability-review",
-                "capability-review",
-                CompatibilityReview,
-                {
-                    "capabilities": capability_inventory(compiled),
-                    "records": compiled["registry"],
-                    "campaign": self.store.get("spine"),
-                    "compiled_objects": compiled["manifest"]["objects"],
-                    "compiled_checks": compiled["manifest"]["resolution_policies"],
-                    "mechanics": compiled["grounded"],
-                    "playability_audit": topology(
-                        self.store.get("spine"), self.store.get("bundles")
-                    ),
-                },
-            )
+            evidence = {
+                "capabilities": capability_inventory(compiled),
+                "records": compiled["registry"],
+                "campaign": self.store.get("spine"),
+                "compiled_objects": compiled["manifest"]["objects"],
+                "compiled_checks": compiled["manifest"]["resolution_policies"],
+                "mechanics": compiled["grounded"],
+                "playability_audit": topology(
+                    self.store.get("spine"), self.store.get("bundles")
+                ),
+            }
+            progress = self.store.get("compatibility-progress", signature)
+            if progress is None:
+                result = await self.semantic.call(
+                    "capability-review", "capability-review", CompatibilityReview, evidence,
+                )
+            else:
+                result = CompatibilityReview.model_validate(progress)
+            accepted = exact_capability_decisions(compiled, result)
+            inventory = capability_inventory(compiled)
+            while missing := [row for row in inventory if row["capability_id"] not in accepted]:
+                self.store.put("compatibility-progress", {
+                    "decisions": [row.model_dump() for row in accepted.values()],
+                }, signature)
+                # Short request-local selectors avoid asking the model to copy hashes.
+                # The exact hash bindings stay engine-owned and are never inferred.
+                aliases = {f"gap_{i + 1}": row["capability_id"] for i, row in enumerate(missing)}
+                focused = {
+                    **evidence,
+                    "capabilities": [
+                        {**row, "capability_id": alias}
+                        for alias, row in zip(aliases, missing, strict=True)
+                    ],
+                }
+                audit = {"signature": signature, "aliases": aliases,
+                         "already_assessed_ids": sorted(accepted)}
+                self.store.put("compatibility-coverage-" + digest(audit), audit)
+                supplement = await self.semantic.call(
+                    "capability-review-missing-" + digest(audit)[:12],
+                    "capability-review", CompatibilityReview, focused,
+                )
+                normalized = CompatibilityReview(decisions=[
+                    row.model_copy(update={"capability_id": aliases[row.capability_id]})
+                    for row in supplement.decisions if row.capability_id in aliases
+                ])
+                additional = exact_capability_decisions(compiled, normalized)
+                if not additional:
+                    raise NeedsAttention(
+                        "Focused capability review made no exact coverage progress; retained responses require attention."
+                    )
+                accepted.update(additional)
+            result = CompatibilityReview(decisions=[accepted[row["capability_id"]] for row in inventory])
         else:
             result = CompatibilityReview.model_validate(retained)
         local_findings = compatibility_findings(compiled, result)
