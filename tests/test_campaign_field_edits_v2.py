@@ -8,7 +8,11 @@ from test_campaign_graph_v2 import sample
 
 from apps.api.services import adventures_meta
 from apps.api.services.campaign_prep.compile import records
-from apps.api.services.campaign_prep.field_edits import apply_field_edits
+from apps.api.services.campaign_prep.field_edits import (
+    FieldEditBatch,
+    apply_field_edits,
+    recover_field_edits,
+)
 from apps.api.services.campaign_prep.graph import Workflow
 from apps.api.services.campaign_prep.store import NeedsAttention, Store
 from edgar_core.campaign_semantics import Bundles, FieldEdit, Patch, Spine
@@ -85,6 +89,58 @@ def test_invalid_second_record_keeps_first_record_unchanged():
     with pytest.raises(NeedsAttention, match="not found"):
         apply_field_edits(registry, bundles, edits, {"ch_bell_content", "event_square"})
     assert bundles == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["merged", "still_overlaps", "wrong_field"])
+async def test_overlap_consolidation_is_bounded_atomic_and_preserves_other_edits(
+    tmp_path, monkeypatch, outcome,
+):
+    monkeypatch.setattr(adventures_meta, "ADVENTURES_DIR", tmp_path)
+    store = Store("overlap_probe")
+    store.initialize({"source_kind": "ai", "rules_edition": "2014"})
+    _, bundles, registry = fixture()
+    broad = FieldEdit(record_id="ch_bell_content", field="source_notes",
+                      old_text="Do not promise castle directions.", new_text="A captive can give directions.")
+    inner = broad.model_copy(update={"old_text": "promise castle directions.", "new_text": "deny directions."})
+    unrelated = FieldEdit(record_id="event_square", field="dm_notes",
+                          old_text="Retain the rescue reward.", new_text="Keep the earned reward.")
+    proposed = [broad, inner, unrelated]
+    raw = [row.model_dump() for row in proposed]
+    before = deepcopy(bundles)
+    calls = []
+
+    class Consolidator:
+        async def call(self, node, prompt, schema, evidence):
+            calls.append(node)
+            assert prompt == "field-edit-overlap" and schema is FieldEditBatch
+            assert evidence["proposed_edits"] == raw[:2]
+            assert bundles == before
+            merged = broad.model_copy(update={"new_text": "A questioned captive can give castle directions."})
+            edits = [merged]
+            if outcome == "still_overlaps":
+                edits = [broad, inner]
+            elif outcome == "wrong_field":
+                edits = [unrelated]
+            return FieldEditBatch(field_edits=edits)
+
+    if outcome == "merged":
+        receipts = await recover_field_edits(
+            registry, bundles, proposed, {"ch_bell_content", "event_square"}, Consolidator(), store,
+        )
+        assert len(receipts) == 2
+        assert "A questioned captive can give castle directions." in bundles["chapters"][0]["source_notes"]
+        assert "Keep the trail and its traps." in bundles["chapters"][0]["source_notes"]
+        assert "Keep the earned reward." in bundles["chapters"][0]["events"][0]["dm_notes"]
+        with store.db() as db:
+            assert db.execute("SELECT count(*) FROM artifact WHERE name LIKE 'field-edit-consolidation-%'").fetchone()[0] == 1
+    else:
+        with pytest.raises(NeedsAttention):
+            await recover_field_edits(
+                registry, bundles, proposed, {"ch_bell_content", "event_square"}, Consolidator(), store,
+            )
+        assert bundles == before
+    assert len(calls) == 1 and [row.model_dump() for row in proposed] == raw
 
 
 @pytest.mark.asyncio

@@ -38,7 +38,7 @@ from .compile import (
     records,
     validate_semantics,
 )
-from .field_edits import apply_field_edits
+from .field_edits import recover_field_edits
 from .mechanical_findings import mechanical_findings
 from .mechanics import catalogue
 from .playability import (
@@ -1654,7 +1654,9 @@ class Workflow:
         event_normalizations = retain_repair_event_inventory(
             registry, bundles, findings, explicit_event_ids=patched_events
         )
-        field_normalizations = apply_field_edits(registry, bundles, value.field_edits, allowed)
+        field_normalizations = await recover_field_edits(
+            registry, bundles, value.field_edits, allowed, self.semantic, self.store
+        )
         validate_semantics(spine, bundles, self.store.get("source"))
         if digest([spine, bundles]) == before:
             raise NeedsAttention(
