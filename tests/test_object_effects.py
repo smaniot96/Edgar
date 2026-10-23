@@ -130,6 +130,20 @@ def test_shared_assignment_stable_identity_blocks_second_session_pickup(object_s
     assert validate_object_effect(effect("acquire"), state) is None
 
 
+def test_planner_custody_bindings_support_drop_and_reacquire_without_accepting_location_prose(object_state_fixture):
+    from agent.nodes.story_effects import story_candidates
+
+    state, effect = object_state_fixture
+    candidate = next(c for c in story_candidates(state) if c["target"]["canonical_id"] == "note")
+    acquired = seal(validate_object_effect(effect("acquire", destination=candidate["acquire_destination"]), state))
+    assert validate_object_effect(effect("transfer", destination="table beside the hero"), state, [acquired]) is None
+    dropped = seal(validate_object_effect(
+        effect("transfer", destination=candidate["transfer_destination"]), state, [acquired],
+    ))
+    assert dropped.destination == "room"
+    assert validate_object_effect(effect("acquire"), state, [acquired, dropped]).destination == "character:7"
+
+
 @pytest.mark.parametrize("destination", [
     "Hazel", "Hazel Preparation Replay Peace L4", "character:7", None,
     "Hazel's pack", "Hazel’s backpack", "Hazel Preparation Replay Peace L4's inventory",

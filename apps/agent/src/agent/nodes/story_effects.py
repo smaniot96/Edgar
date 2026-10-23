@@ -287,6 +287,11 @@ def story_candidates(state: AgentState) -> list[dict]:
                         consumable=definition.consumable,
                         initial_owner=definition.initial_owner,
                         operations=definition.operations,
+                        **({
+                            "acquire_destination": f"character:{state['character']['id']}"
+                            if (state.get("character") or {}).get("id") else None,
+                            "transfer_destination": state.get("current_scene_id"),
+                        } if kind == "object" else {}),
                         announcement_passage_ids=definition.announcement_passage_ids,
                         clock_reveal=definition.clock_reveal.model_dump()
                         if definition.clock_reveal
