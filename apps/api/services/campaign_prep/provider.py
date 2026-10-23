@@ -240,6 +240,39 @@ class SemanticClient:
         )
         self.semaphore = asyncio.Semaphore(3)
 
+    async def dispatch_receipt(self, task_id, request):
+        """Save the first background response ID before waiting for model output.
+
+        Closing a background stream does not cancel the response. Polling below
+        retrieves the complete receipt, including all output and usage. Transport
+        streaming does not change the frozen semantic request/dispatch identity.
+        """
+        result = await self.client.responses.create(
+            **request,
+            stream=True,
+            metadata={"edgar_dispatch_id": task_id, "edgar_workflow": "campaign-v2"},
+            extra_headers={"Idempotency-Key": task_id, "X-Client-Request-Id": task_id},
+        )
+        # Accept response objects from compatible injected clients too. The SDK's
+        # streaming transport yields events with the same response representation.
+        if hasattr(result, "model_dump"):
+            response = result.model_dump(mode="json")
+            self.store.response(task_id, response)
+            return response
+        try:
+            async for event in result:
+                response = getattr(event, "response", None)
+                if response is not None and getattr(response, "id", None):
+                    receipt = response.model_dump(mode="json")
+                    self.store.response(task_id, receipt)
+                    return receipt
+        finally:
+            await result.close()
+        raise NeedsAttention(
+            "Provider stream ended without a response receipt: " + task_id
+            + "; reconcile the existing dispatch before retry."
+        )
+
     async def call(
         self,
         node: str,
@@ -366,22 +399,17 @@ class SemanticClient:
                 # Commit dispatch identity before touching the network. SDK retries disabled.
                 self.store.dispatch(task_id, node, request)
                 try:
-                    result = await self.client.responses.create(
-                        **request,
-                        metadata={"edgar_dispatch_id": task_id, "edgar_workflow": "campaign-v2"},
-                        extra_headers={"Idempotency-Key": task_id},
-                    )
+                    response = await self.dispatch_receipt(task_id, request)
                 except (APIConnectionError, APIStatusError) as exc:
-                    # Even an HTTP error is retained for diagnosis. No automatic create retry.
-                    raise NeedsAttention(
-                        "Provider submission needs reconciliation: "
-                        + task_id
-                        + " ("
-                        + type(exc).__name__
-                        + ")"
-                    ) from exc
-                response = result.model_dump(mode="json")
-                self.store.response(task_id, response)
+                    saved = self.store.task(task_id)
+                    if not saved["response"]:
+                        # No automatic create retry; the provider may have accepted it.
+                        raise NeedsAttention(
+                            "Provider submission needs reconciliation: " + task_id
+                            + " (" + type(exc).__name__ + ")"
+                        ) from exc
+                    # A disconnect while closing cannot erase an already saved ID.
+                    response = json.loads(saved["response"])
             delay = 2
             while response.get("status") in ("queued", "in_progress"):
                 try:

@@ -154,6 +154,79 @@ async def test_restart_resumes_known_response_instead_of_submitting_again(durabl
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", [None, "connection", "shutdown"])
+async def test_stream_saves_created_id_before_close_and_restart_never_creates_again(
+    durable_store, interruption
+):
+    calls = {"create": 0, "close": 0, "retrieve": 0}
+
+    class Stream:
+        async def __aiter__(self):
+            yield SimpleNamespace(type="response.created", response=SimpleNamespace(
+                id="resp_local_durable", model_dump=lambda **_: receipt("queued")
+            ))
+            pytest.fail("Creation stream must close after saving its first response ID")
+
+        async def close(self):
+            calls["close"] += 1
+            assert json.loads(_task(durable_store)["response"])["id"] == "resp_local_durable"
+            if interruption == "connection":
+                raise APIConnectionError(request=httpx.Request("POST", "https://provider.invalid/responses"))
+            if interruption == "shutdown":
+                raise asyncio.CancelledError()
+
+    class Responses:
+        async def create(self, **request):
+            calls["create"] += 1
+            assert request["stream"] and request["background"]
+            dispatch_id = _task(durable_store)["id"]
+            assert request["extra_headers"]["X-Client-Request-Id"] == dispatch_id
+            assert request["metadata"]["edgar_dispatch_id"] == dispatch_id
+            return Stream()
+
+        async def retrieve(self, response_id):
+            assert response_id == "resp_local_durable"
+            calls["retrieve"] += 1
+            return response(receipt())
+
+    client = SimpleNamespace(responses=Responses())
+    semantic = SemanticClient(durable_store, client)
+    if interruption == "shutdown":
+        with pytest.raises(asyncio.CancelledError):
+            await semantic.call("review_probe", "review", Review, {})
+    result = await SemanticClient(Store(durable_store.slug), client).call(
+        "review_probe", "review", Review, {}
+    ) if interruption == "shutdown" else await semantic.call("review_probe", "review", Review, {})
+    assert result == Review(covered_ids=[])
+    assert calls == {"create": 1, "close": 1, "retrieve": 1}
+
+
+@pytest.mark.asyncio
+async def test_stream_ending_before_created_id_remains_ambiguous_and_cannot_resubmit(durable_store):
+    creates = []
+
+    class Stream:
+        async def __aiter__(self):
+            yield SimpleNamespace(type="ping")
+
+        async def close(self):
+            pass
+
+    class Responses:
+        async def create(self, **request):
+            creates.append(request)
+            return Stream()
+
+    semantic = SemanticClient(durable_store, SimpleNamespace(responses=Responses()))
+    with pytest.raises(NeedsAttention, match="without a response receipt"):
+        await semantic.call("review_probe", "review", Review, {})
+    assert _task(durable_store)["response"] is None
+    with pytest.raises(NeedsAttention, match="Ambiguous provider submission"):
+        await semantic.call("review_probe", "review", Review, {})
+    assert len(creates) == 1
+
+
+@pytest.mark.asyncio
 async def test_transient_poll_errors_keep_the_same_paid_response(durable_store):
     calls = {"create": 0, "retrieve": 0}
 
